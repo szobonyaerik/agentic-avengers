@@ -1,0 +1,11 @@
+{
+  "name": "erik-tools",
+  "owner": { "name": "Erik" },
+  "plugins": [
+    {
+      "name": "plan-build-verify",
+      "source": "./",
+      "description": "Spec-driven, test-first agentic development pipeline with cross-family gates."
+    }
+  ]
+}

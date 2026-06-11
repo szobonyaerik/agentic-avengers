@@ -1,0 +1,10 @@
+{
+  "name": "plan-build-verify",
+  "description": "Spec-driven, test-first agentic development pipeline: isolated spec review, a cross-family fidelity gate, locked RED tests, and mutation + adversarial verification.",
+  "version": "0.1.0",
+  "author": { "name": "Erik" },
+  "license": "MIT",
+  "homepage": "https://github.com/<you>/plan-build-verify",
+  "repository": "https://github.com/<you>/plan-build-verify",
+  "keywords": ["agents", "tdd", "spec-driven", "mutation-testing", "code-review", "pipeline"]
+}
