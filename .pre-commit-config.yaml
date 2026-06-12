@@ -1,0 +1,12 @@
+# Install once:  pip install pre-commit  &&  pre-commit install
+# Runs the fast gates (fidelity on staged specs + pytest) before every commit.
+# Set GATE_PROVIDER=openrouter (and export OPENROUTER_API_KEY) if you don't run opencode locally.
+repos:
+  - repo: local
+    hooks:
+      - id: pipeline-gates
+        name: pipeline gates (fidelity + tests)
+        entry: bash scripts/gate_ci.sh
+        language: system
+        pass_filenames: false
+        always_run: true
