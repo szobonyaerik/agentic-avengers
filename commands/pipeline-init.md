@@ -1,34 +1,36 @@
 ---
-description: Scaffold the plan-build-verify pipeline into this repository (dirs, gitignore, conventions, prereq check).
+description: Scaffold the plan-build-verify pipeline into this repository (dirs, gitignore, conventions, prereq check, optional multi-runtime vendoring).
 allowed-tools: Bash, Read, Write, Edit
-argument-hint: "[feature-id]  # optional: also scaffold docs/features/<feature-id>/"
+argument-hint: "[feature-id] [--runtime claude|opencode|copilot|all]"
 ---
 
-Set up the plan-build-verify pipeline in the current repository. Do each step and report a short
-summary at the end. Do not write any production code.
+Set up the plan-build-verify pipeline in the current repository. Parse `$ARGUMENTS` for an optional
+feature id and an optional `--runtime` (default: `claude`). Do each step, report a short summary, and
+write no production code.
 
-1. **Artifact tree.** Create `docs/features/` if missing. If a feature id was passed
-   (`$ARGUMENTS`), also create `docs/features/$ARGUMENTS/` and `docs/features/$ARGUMENTS/phases/`.
+1. **Artifact tree.** Create `docs/features/`; if a feature id was given, also
+   `docs/features/<id>/` and `docs/features/<id>/phases/`.
 
-2. **gitignore.** Ensure `.gitignore` contains these lines (append any that are missing):
-   ```
-   .mutmut-cache/
-   **/.pytest_cache/
-   ```
+2. **gitignore.** Ensure `.gitignore` contains `.mutmut-cache/` and `**/.pytest_cache/`.
 
-3. **Conventions in context.** The pipeline rules live in the `pipeline-conventions` skill. Read
-   that skill and ensure the project's own `CLAUDE.md` has a "## Pipeline conventions" section
-   reproducing them (create `CLAUDE.md` if absent, append the section if missing, leave it alone if
-   already present). This makes the rules always-on as project context, not just on skill load.
+3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
+   present for the chosen runtime(s): `CLAUDE.md` (Claude), `AGENTS.md` (opencode), and/or
+   `.github/copilot-instructions.md` (Copilot). Create/append the section if missing.
 
-4. **Prerequisite check.** Verify and report the status of each, without failing the command:
-   - `python3`, `pytest`, `mutmut`, `jq` on PATH
-   - a cross-family provider: either `OPENROUTER_API_KEY` is set, or `opencode` is on PATH
-   - the gate hooks are active (the plan-build-verify plugin is installed/enabled)
-   List anything missing with the one-line fix.
+4. **Runtime files.**
+   - `claude` (default): nothing to vendor — the installed plugin already provides agents, skills,
+     and the in-session hooks.
+   - `opencode` | `copilot` | `all`: run
+     `bash "${CLAUDE_PLUGIN_ROOT}/scripts/vendor_runtime.sh" "$PWD" <runtime>`
+     to copy the adapter(s) plus the git enforcement floor into this repo.
 
-5. **Code-path note.** Check where source lives (`src/`, `app/`, or a package dir). If it is not
-   `src/`, remind the user to update the path glob in `hook_verifier.sh`.
+5. **Prereq check.** Report the status of `python3`, `pytest`, `mutmut`, `jq`, and a cross-family
+   provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH). List anything missing with its fix.
 
-6. **Summary.** Print what was created/changed and the first commands to run:
-   `/task-analyst "<feature brief>"` → `/solution-architect` → `/impl-planner` → `/spec-writer`.
+6. **Code-path note.** If source is not under `src/`, remind the user to update the path glob in both
+   `hook_verifier.sh` and `gate_ci.sh`.
+
+7. **Summary.** Print what changed and the first commands:
+   `/task-analyst "<feature brief>"` -> `/solution-architect` -> `/impl-planner` -> `/spec-writer`.
+   For `opencode`/`copilot`/`all`, also print:
+   `pip install pre-commit && pre-commit install`, and add `OPENROUTER_API_KEY` as a CI secret.
