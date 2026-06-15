@@ -24,4 +24,4 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GATE_PROVIDER: openrouter
-        run: bash scripts/gate_ci.sh --full
+        run: bash agentic_development/scripts/gate_ci.sh --full

@@ -10,12 +10,12 @@ TARGET_IN="${1:-}"; RUNTIME="${2:-}"
 mkdir -p "$TARGET_IN"; TARGET="$(cd "$TARGET_IN" && pwd)"
 
 need() { [ -e "$SRC/$1" ] || { echo "missing $1 — run python3 scripts/sync_$2.py first" >&2; exit 1; }; }
-vendor_skills() { rm -rf "$TARGET/skills"; cp -rL "$SRC/skills" "$TARGET/skills"; }
+vendor_skills() { rm -rf "$TARGET/agentic_development/skills"; cp -rL "$SRC/skills" "$TARGET/agentic_development/skills"; }
 
 # --- git floor (every runtime) ---
-mkdir -p "$TARGET/scripts" "$TARGET/prompts" "$TARGET/docs/features" "$TARGET/.github/workflows"
-cp "$SRC/scripts/gate_runner.py" "$SRC/scripts/gate_ci.sh" "$TARGET/scripts/"
-cp -L "$SRC"/prompts/*.md "$TARGET/prompts/"
+mkdir -p "$TARGET/agentic_development/scripts" "$TARGET/agentic_development/prompts" "$TARGET/docs/features" "$TARGET/.github/workflows"
+cp "$SRC/scripts/gate_runner.py" "$SRC/scripts/gate_ci.sh" "$TARGET/agentic_development/scripts/"
+cp -L "$SRC"/prompts/*.md "$TARGET/agentic_development/prompts/"
 [ -f "$SRC/.pre-commit-config.yaml" ] && cp "$SRC/.pre-commit-config.yaml" "$TARGET/"
 [ -f "$SRC/.github/workflows/pipeline-gates.yml" ] && cp "$SRC/.github/workflows/pipeline-gates.yml" "$TARGET/.github/workflows/"
 echo "+ git floor (gate_runner, gate_ci, prompts, pre-commit, CI)"
@@ -27,7 +27,7 @@ case "$RUNTIME" in opencode|all)
   cp -rL "$SRC/.opencode/agents" "$TARGET/.opencode/agents"
   cp "$SRC/AGENTS.md" "$TARGET/AGENTS.md"
   [ -f "$SRC/opencode.json" ] && cp "$SRC/opencode.json" "$TARGET/opencode.json"
-  ln -sfn ../skills "$TARGET/.opencode/skills"
+  ln -sfn ../agentic_development/skills "$TARGET/.opencode/skills"
   echo "+ opencode adapter (.opencode/agents, AGENTS.md, skills)"
 ;; esac
 
@@ -38,7 +38,7 @@ case "$RUNTIME" in copilot|all)
   cp -rL "$SRC/.github/agents" "$TARGET/.github/agents"
   [ -d "$SRC/.github/prompts" ] && cp -rL "$SRC/.github/prompts" "$TARGET/.github/prompts"
   cp "$SRC/.github/copilot-instructions.md" "$TARGET/.github/copilot-instructions.md"
-  ln -sfn ../skills "$TARGET/.github/skills"
+  ln -sfn ../agentic_development/skills "$TARGET/.github/skills"
   echo "+ copilot adapter (.github/agents, prompts, copilot-instructions, skills)"
 ;; esac
 
