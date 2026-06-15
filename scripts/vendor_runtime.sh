@@ -37,7 +37,7 @@ case "$RUNTIME" in copilot|all)
   mkdir -p "$TARGET/.github"
   cp -rL "$SRC/.github/agents" "$TARGET/.github/agents"
   [ -d "$SRC/.github/prompts" ] && cp -rL "$SRC/.github/prompts" "$TARGET/.github/prompts"
-  cp "$SRC/.github/copilot-instructions.md" "$TARGET/.github/copilot-instructions.md"
+  [ -f "$SRC/.github/copilot-instructions.md" ] && cp "$SRC/.github/copilot-instructions.md" "$TARGET/.github/copilot-instructions.md"
   ln -sfn ../agentic_development/skills "$TARGET/.github/skills"
   echo "+ copilot adapter (.github/agents, prompts, copilot-instructions, skills)"
 ;; esac
