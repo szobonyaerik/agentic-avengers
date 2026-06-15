@@ -1,188 +1,164 @@
 # agentic-avengers · plan-build-verify
 
-A spec-driven, test-first agentic development pipeline, packaged as a **Claude Code plugin** so it
-drops into any repository. Specialised agents plan a feature; a cross-family gate decides whether
-the spec is ready; locked RED tests are written before code; and every phase is verified by a fresh
+A spec-driven, test-first agentic development pipeline that runs under **Claude Code**, **opencode**,
+and **GitHub Copilot**. Specialised agents plan a feature; a cross-family gate decides whether the
+spec is ready; locked RED tests are written before code; and every phase is verified by a fresh
 model plus mutation testing before it ships.
 
-It is designed to grow: adding a skill or an agent is dropping one file in a folder and bumping a
-version — see [Extending the pipeline](#extending-the-pipeline).
+The skill files (`SKILL.md`) and the gate brain (`gate_runner.py` + the rubric prompts) are a shared,
+portable core; everything else is a thin per-runtime adapter generated from canonical sources.
+
+---
+
+## Enforcement model (the important part)
+
+Gates fire **mid-session by default** in Claude Code and opencode, and at **commit/PR time** in
+Copilot. The git floor (pre-commit + CI) runs everywhere as a backstop, and is the *source of truth*
+for Copilot since it has no in-session tool hooks.
+
+| Runtime | In-session gates | Backstop |
+|---|---|---|
+| Claude Code | native hooks (`hooks/hooks.json`) | git floor |
+| opencode | native plugin (`.opencode/plugin/pipeline-gates.ts`) | git floor |
+| GitHub Copilot | — (none) | **git floor = source of truth** (pre-commit + CI) |
+
+All three gate paths call the same `gate_runner.py` on a **cross-family** model (DeepSeek/Gemini via
+OpenRouter), decorrelated from whatever model authored the work. Gates fail **closed**.
 
 ---
 
 ## How it works (one paragraph)
 
 `Plan → Quality wall → (Build & verify loop ×phases) → Ship`. Planning agents produce a spec; N
-**isolated reviewers** inspect scoped slices; a **Fidelity Gate** (fresh cross-family model) returns
-GO / REVIEW / NO-GO. Per phase, the **Test-Author** writes paired pass/fail RED tests and *locks*
-them, the **Implementer** turns them green without touching tests, then two hook gates run on a
-fresh model — the **Verifier** (runs the suite) and the **Mutation gate** (proves the tests catch
-real bugs) — with the **Breaker** on critical paths. Any gate failure stops with a written report
-and a route-back target; gates fail **closed**.
+isolated reviewers inspect scoped slices; a Fidelity Gate returns GO / REVIEW / NO-GO. Per phase, the
+Test-Author writes paired pass/fail RED tests and *locks* them, the Implementer turns them green
+without touching tests, then the Verifier (runs the suite) and the Mutation gate (proves the tests
+catch real bugs) run on a fresh model, with the Breaker on critical paths. Any gate failure stops
+with a report and a route-back target.
 
 ---
 
-## Repository layout
+## Component locations
+
+| Component | Claude Code | opencode | GitHub Copilot |
+|---|---|---|---|
+| Skills (`SKILL.md`) | `skills/` (plugin) | `.opencode/skills/` (symlink → `../skills`) | `.github/skills/` (symlink → `../skills`) |
+| Agents | `agents/*.md` | `.opencode/agents/*.md` | `.github/agents/*.agent.md` |
+| Conventions | `pipeline-conventions` skill | `AGENTS.md` | `.github/copilot-instructions.md` |
+| Commands | `commands/*.md` | (n/a) | `.github/prompts/*.prompt.md` |
+| Gates (in-session) | `hooks/hooks.json` | `.opencode/plugin/pipeline-gates.ts` | — |
+| Gates (floor, all) | git pre-commit + CI → `gate_runner.py` | same | same |
+| Distribution | `/plugin install` | vendor into repo | vendor into `.github/` |
+
+> `agents/`, `skills/`, `prompts/`, `scripts/`, `commands/` are the **canonical sources**. The
+> opencode and Copilot copies are **generated** — do not hand-edit them.
+
+---
+
+## Canonical layout
 
 ```
-agentic-avengers/                       # repo root = plugin root
-├── .claude-plugin/
-│   ├── plugin.json                     # manifest (only this + marketplace.json live here)
-│   └── marketplace.json                # lets the repo be installed as a marketplace
-├── agents/                             # auto-discovered subagents
-│   ├── task-analyst.md                 # scope & route by risk
-│   ├── solution-architect.md           # architecture + data model
-│   ├── implementation-planner.md       # phases in dependency/risk order
-│   ├── spec-writer.md                  # testable spec per phase
-│   ├── backend-architect.md            # implements backend specs
-│   ├── frontend-developer.md           # implements UI specs
-│   ├── test-author.md                  # writes locked RED tests, never production code
-│   ├── breaker.md                      # adversarial, critical paths only
-│   ├── bug-hunter.md                   # (your agent — see note)
-│   ├── handover.md                     # documents each phase
-│   └── agent-factory.md                # templates the suite into a project
-├── skills/                             # auto-discovered skills
-│   ├── tdd-red-author/SKILL.md
-│   ├── spec-isolation-review/SKILL.md  # context: fork (isolated)
-│   ├── phase-handover/SKILL.md
-│   └── pipeline-conventions/SKILL.md   # ships the rules into context (CLAUDE.md isn't loaded)
-├── commands/
-│   └── pipeline-init.md                # /pipeline-init — scaffolds a target repo
-├── hooks/
-│   └── hooks.json                      # the 4 gate hooks (paths via ${CLAUDE_PLUGIN_ROOT})
-├── prompts/                            # cross-family rubric prompts (gate_runner reads these)
-│   ├── fidelity-rubric.md
-│   ├── verifier-triage.md
-│   ├── mutation-interpret.md
-│   └── project-setup.md                # (your addition — see note)
+agentic-avengers/
+├── .claude-plugin/        plugin.json, marketplace.json
+├── agents/                canonical subagents (Claude format)
+├── skills/                portable SKILL.md skills (incl. pipeline-conventions)
+├── commands/              pipeline-init.md
+├── hooks/                 hooks.json  (Claude Code in-session gates)
+├── prompts/               fidelity-rubric.md, verifier-triage.md, mutation-interpret.md, project-setup.md
 ├── scripts/
-│   ├── gate_runner.py                  # opencode (default) | openrouter verdict caller
-│   ├── hook_fidelity.sh
-│   ├── hook_verifier.sh
-│   ├── hook_mutation.sh
-│   └── hook_artifact_check.sh
+│   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter)
+│   ├── gate_ci.sh             git/CI floor entry point
+│   ├── hook_*.sh              Claude Code hook wrappers
+│   ├── sync_opencode.py       canonical agents -> .opencode/agents + skills symlink
+│   ├── sync_copilot.py        canonical agents -> .github/agents (+ handoffs) + skills + prompts
+│   ├── sync_runtimes.sh       run both transpilers
+│   └── vendor_runtime.sh      copy the pipeline into a target repo (opencode/copilot)
+├── .opencode/
+│   ├── agents/            generated
+│   ├── skills/            symlink -> ../skills
+│   └── plugin/pipeline-gates.ts   in-session gates for opencode
+├── .github/
+│   ├── agents/            generated (*.agent.md, with handoffs)
+│   ├── skills/            symlink -> ../skills
+│   ├── prompts/           generated
+│   ├── copilot-instructions.md
+│   └── workflows/pipeline-gates.yml   CI floor
+├── AGENTS.md              opencode conventions
+├── opencode.json
+├── .pre-commit-config.yaml
+├── CLAUDE.md
 └── README.md
 ```
-
-> **The Verifier is not an agent** — the old `Verifier` role is `hook_verifier.sh`. Verification is
-> enforced by hooks.
->
-> **`CLAUDE.md` is not loaded from a plugin** — rules that must always be in context (test-lock,
-> artifact paths, phase ordering) ship as the `pipeline-conventions` skill, and `/pipeline-init`
-> can also copy them into the *target* repo's CLAUDE.md.
->
-> **`docs/features/` and `tests/` are not in the plugin** — they're written into the target repo at
-> runtime by `/pipeline-init`, not shipped here.
 
 ---
 
 ## Requirements
 
-- **Claude Code** recent enough for Skills, `context: fork`, and the 4 hook types.
-- **Python 3** (gate runner is stdlib-only) plus **`pytest`** and **`mutmut`** in the target repo.
-- **`jq`** (the hook wrappers parse stdin JSON).
-- A cross-family provider for the gates — **opencode** configured with your models (default), or
-  **`OPENROUTER_API_KEY`** exported (when a gate uses `--provider openrouter`).
+- **Claude Code** (Skills, `context: fork`, hooks) and/or **opencode** and/or **GitHub Copilot**.
+- **Python 3**, **`pytest`**, **`mutmut`**, **`jq`** in the target repo.
+- A cross-family provider: **`OPENROUTER_API_KEY`** exported (gates use OpenRouter), and/or opencode
+  configured. The opencode in-session plugin uses OpenRouter for gate calls.
 
 ---
 
-## Install
+## Setup per runtime
 
+**Claude Code**
 ```text
-# from a published repo:
-/plugin marketplace add <your-github-user>/agentic-avengers
+/plugin marketplace add <you>/agentic-avengers
 /plugin install plan-build-verify@erik-tools
-
-# local development (point at the repo on disk):
-/plugin marketplace add /abs/path/to/agentic-avengers
-/plugin install plan-build-verify@erik-tools
+chmod +x scripts/*.sh
+/pipeline-init                       # scaffold docs/features, gitignore, conventions, prereqs
 ```
+Hooks in `hooks/hooks.json` fire the gates mid-session.
 
-Make the scripts executable once: `chmod +x scripts/*.sh`. Then, per target repo:
-
+**opencode**
 ```text
-/pipeline-init            # creates docs/features/, gitignore entries, conventions, prereq check
+python3 scripts/sync_opencode.py     # generate .opencode/agents + link .opencode/skills
+# .opencode/plugin/pipeline-gates.ts loads at startup -> mid-session gates
+export OPENROUTER_API_KEY=...         # the plugin's gates call OpenRouter
+```
+Drive agents with `@task-analyst "…"`, etc. (see `AGENTS.md`).
+
+**GitHub Copilot**
+```text
+python3 scripts/sync_copilot.py      # generate .github/agents (+handoffs), prompts, link skills
+pip install pre-commit && pre-commit install
+# add OPENROUTER_API_KEY as a GitHub Actions secret
+```
+Gates run via pre-commit + the `pipeline-gates` workflow (the source of truth for Copilot).
+
+**Into another repo** (opencode/Copilot can't use `/plugin install`):
+```text
+scripts/vendor_runtime.sh /path/to/target  opencode|copilot|all
 ```
 
 ---
 
-## Configure
+## Keeping runtimes in sync
 
-- **Provider & models** — gates default to `--provider opencode`; pass `--provider openrouter` per
-  gate to route there. Set model ids in the `hook_*.sh` wrappers (fidelity → `deepseek/deepseek-chat`,
-  verifier/mutation → `google/gemini-2.5-pro`). Use ids that exist in the targeted provider.
-- **Code path** — `hook_verifier.sh` matches `*/src/*`; if your code lives in `app/` or a package
-  dir, edit that glob (it's commented).
-- **Strictness** — tune `prompts/fidelity-rubric.md` (defaults to NO-GO when torn) and
-  `prompts/mutation-interpret.md`.
-
----
-
-## Use
-
-Once per feature (Plan + wall):
+The canonical sources are `agents/`, `skills/`, `commands/`. After editing any of them:
 ```text
-/task-analyst "<feature brief>"
-/solution-architect
-/impl-planner            # (implementation-planner)
-/spec-writer             # writing spec.md fires the Fidelity Gate hook → GO to proceed
-/spec-review slice=<slice>     # run once per slice
+scripts/sync_runtimes.sh             # regenerates .opencode/ and .github/ adapters
 ```
-Per phase, in dependency order:
-```text
-use the test-author subagent for phase <n>-<slug>     # locked RED tests
-/implement --phase <n>-<slug>                          # RED→GREEN; verifier hook runs
-# writing implementation-report.md fires the mutation gate
-use the breaker subagent on phase <n>-<slug>           # critical paths only
-/handover --phase <n>-<slug>
-```
-Ship when every phase is green, mutation thresholds met, and all handovers present.
+`AGENTS.md` and `.github/copilot-instructions.md` carry the conventions and are hand-maintained from
+`skills/pipeline-conventions/SKILL.md` — update them only when the rules themselves change.
 
 ---
 
 ## Extending the pipeline
-
-Plugins **auto-discover** `agents/`, `skills/`, and `commands/`. Growing the pipeline is: add a
-file, bump `version` in `plugin.json`, commit. Consumers run `/plugin update`.
-
-**Add a skill** — `skills/<name>/SKILL.md` with `name` + `description` frontmatter. Add
-`context: fork` (+ optional `model:`) only for isolated workers like reviewers; inline skills inherit
-the caller's model/context. Stack skills (e.g. `fastapi-conventions`, `pgvector-query`) go here too.
-
-**Add an agent** — `agents/<name>.md` with `name`, `description` (the routing trigger), `tools`,
-`model`. Keep boundaries explicit (e.g. "writes only `tests/`"). For a gate-like reviewer, pin a
-model ≠ the work it reviews.
-
-**Add a gate** (the only multi-file extension):
-1. `prompts/<gate>-rubric.md` — reply as strict JSON `{"verdict","report","route_back"}`.
-2. `scripts/hook_<gate>.sh` — path-filter, then call
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/gate_runner.py" --rubric "${CLAUDE_PLUGIN_ROOT}/prompts/<gate>-rubric.md" --model <id>`.
-3. Add a `command` entry to `hooks/hooks.json`.
-
----
-
-## Plugin path convention
-
-Inside a plugin, **plugin-owned files** use `${CLAUDE_PLUGIN_ROOT}` and the **target project** uses
-`$CLAUDE_PROJECT_DIR`. If you wrote the wrappers against `$CLAUDE_PROJECT_DIR` during dev, change
-only the plugin-owned references:
-
-| Reference | Dev (single repo) | Plugin |
-|---|---|---|
-| `gate_runner.py`, rubric prompts | `$CLAUDE_PROJECT_DIR/scripts`, `/prompts` | `${CLAUDE_PLUGIN_ROOT}/scripts`, `/prompts` |
-| `cd` for pytest/mutmut, `docs/features`, file being judged | `$CLAUDE_PROJECT_DIR` | `$CLAUDE_PROJECT_DIR` (unchanged) |
-
-Both variables are available to plugin hooks.
+Add a skill (`skills/<name>/SKILL.md`) or an agent (`agents/<name>.md`), then run
+`scripts/sync_runtimes.sh` and bump `version` in `plugin.json`. Adding a gate is three files: a
+rubric in `prompts/`, a path branch in the gate scripts/plugin, and (for Claude Code) an entry in
+`hooks/hooks.json`.
 
 ---
 
 ## Notes
-- Gates **fail closed**: a missing key, absent `opencode`, or network error → the gate's error and
-  an exit-2 stop, never a silent pass.
-- The mutation gate sends mutmut's output to the model rather than parsing it in bash, so it
-  survives mutmut version changes (cost: one model call per phase).
-- **`fidelity-rubric.md` must use a hyphen** to match `hook_fidelity.sh` (rename from `fidelity_rubric.md`).
-- `bug-hunter.md` and `project-setup.md` are your additions — replace their one-liners above with
-  their real roles. If `project-setup.md` is a gate rubric, wire it as a gate (see Add a gate); if
-  it's an init prompt, reference it from `/pipeline-init`.
+- Gates **fail closed** — a missing key, unreachable model, or non-JSON verdict stops, never passes.
+- The mutation gate sends mutmut's output to the model rather than parsing it, so it survives mutmut
+  version changes (one model call per phase).
+- Skills are symlinked across runtimes (`SKILL.md` is identical). On Windows, copy instead.
+- `hook_verifier.sh`, `gate_ci.sh`, and the opencode plugin all match `*/src/*`; change that to your
+  code layout if it isn't `src/`.
 - License: MIT.
