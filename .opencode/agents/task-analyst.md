@@ -67,7 +67,7 @@ Structure your output as follows:
 
 ## Output Location
 - Plan: `docs/plans/[task-name]-plan.md`
-- Specs: `docs/specs/` (numbered sequentially)
+- Specs: `docs/features/<feature>/phases/<n>-<slug>/spec.md` (one per phase)
 ```
 
 ## Guidelines

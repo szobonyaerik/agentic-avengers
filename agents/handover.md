@@ -65,12 +65,12 @@ Create or overwrite `HANDOFF.md` in the project root with:
 ## Spec Progress
 | Spec | Status |
 |------|--------|
-| docs/specs/1_xxx.md | ✅ DONE |
-| docs/specs/2_xxx.md | ⬜ TODO |
+| docs/features/<feature>/phases/1-xxx/spec.md | ✅ DONE |
+| docs/features/<feature>/phases/2-xxx/spec.md | ⬜ TODO |
 
 ## Next Step
 > Exact instruction for the next session. Be specific:
-> e.g., "Implement docs/specs/3_api_endpoints.md using the Backend Architect agent"
+> e.g., "Implement docs/features/<feature>/phases/3-api-endpoints/spec.md using the Backend Architect agent"
 ```
 
 ## Step 3 — Generate Commit Message
