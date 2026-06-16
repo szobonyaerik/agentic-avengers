@@ -20,10 +20,11 @@ You receive an implementation plan (from the Planner) and produce **one spec fil
 
 ## Workflow
 
-1. **Read the feature overview** at `docs/features/<feature>/overview.md` for the architecture, phase breakdown, dependencies, and risk ordering.
-2. **Study the codebase**: Use search and read tools to gather concrete details — existing interfaces, patterns, file structures.
-3. **Generate one spec file per phase** at `docs/features/<feature>/phases/<n>-<slug>/spec.md`, following the per-phase spec contract below.
-4. **Reference the overview** in each spec — do not restate the full architecture. Point to overview.md sections.
+1. **Read the plan** at `docs/features/<feature>/plan.md` — the definitive, dependency-ordered phase list, each phase's goal/scope/dependencies, and the "Notes for the Spec Writer" (cross-phase contracts and naming to keep consistent). This is your primary input.
+2. **Read the overview** at `docs/features/<feature>/overview.md` for architecture, interfaces, and decisions to reference — don't restate them.
+3. **Study the codebase**: gather concrete details — existing interfaces, patterns, real file paths.
+4. **Write the spec file(s)** for the phase(s) you've been asked to produce (all up front, or just the current phase) at `docs/features/<feature>/phases/<n>-<slug>/spec.md`, using the phase number/slug from the plan and following the contract below.
+5. **Hold coherence**: honor the plan's "Notes for the Spec Writer", and for phase 2+ don't contradict any contract a prior phase's `handover.md` marked delivered.
 
 ## Output location — one spec per phase
 
