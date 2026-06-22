@@ -6,7 +6,7 @@ repos:
     hooks:
       - id: pipeline-gates
         name: pipeline gates (fidelity + tests)
-        entry: bash scripts/gate_ci.sh
+        entry: bash agentic_development/scripts/gate_ci.sh
         language: system
         pass_filenames: false
         always_run: true

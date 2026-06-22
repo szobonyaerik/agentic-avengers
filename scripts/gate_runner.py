@@ -47,6 +47,31 @@ def call_openrouter(model, system, user):
         return json.loads(resp.read().decode())["choices"][0]["message"]["content"]
 
 
+def opencode_text(raw):
+    """Reconstruct the assistant's reply from opencode's NDJSON event stream.
+
+    `opencode run --format json` streams one JSON event per line; the reply text
+    lives in the `part.text` of `type:"text"` events. opencode sends the full
+    text per part (snapshot), so we keep the latest text seen for each part id
+    and join the parts. Returns "" if no text events were found.
+    """
+    parts = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "text":
+            p = ev.get("part") or {}
+            pid, txt = p.get("id"), p.get("text")
+            if pid and isinstance(txt, str):
+                parts[pid] = txt
+    return "\n".join(parts.values())
+
+
 def call_opencode(model, system, user):
     prompt = f"{system}\n\n=== ARTIFACT TO JUDGE ===\n{user}"
     cmd = ["opencode", "run", "--format", "json", "-m", model, prompt]
@@ -56,7 +81,9 @@ def call_opencode(model, system, user):
         raise RuntimeError("opencode CLI not found on PATH")
     if proc.returncode != 0:
         raise RuntimeError(f"opencode run failed: {proc.stderr.strip()[:400]}")
-    return proc.stdout
+    # Reconstruct the model's reply from the event stream; fall back to raw
+    # stdout if the output shape was unexpected (so extract_verdict can still try).
+    return opencode_text(proc.stdout) or proc.stdout
 
 
 def extract_verdict(raw):
@@ -104,7 +131,7 @@ def main():
         raw = call(args.model, rubric, artifact)
         verdict = extract_verdict(raw)
         if verdict is None:
-            raise RuntimeError(f"no JSON verdict in {args.provider} output:\n{raw[:500]}")
+            raise RuntimeError(f"no JSON verdict in {args.provider} output:\n{raw[:800]}")
     except Exception as e:  # any failure is a hard stop
         print(f"[gate_runner] error: {e}", file=sys.stderr)
         sys.exit(2)

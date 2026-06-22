@@ -6,7 +6,11 @@
 # bash 3.2-compatible (macOS default).
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+GATE_RUNNER="$SCRIPT_DIR/gate_runner.py"
+FIDELITY_RUBRIC="$SCRIPT_DIR/../prompts/fidelity-rubric.md"
+MUTATION_RUBRIC="$SCRIPT_DIR/../prompts/mutation-interpret.md"
 cd "$ROOT"
 
 FULL=0
@@ -34,7 +38,7 @@ fi
 for spec in "${SPECS[@]:-}"; do
   [ -n "$spec" ] || continue
   echo "• fidelity gate: $spec"
-  python3 scripts/gate_runner.py --rubric prompts/fidelity-rubric.md \
+  python3 "$GATE_RUNNER" --rubric "$FIDELITY_RUBRIC" \
     --model deepseek/deepseek-chat "${PARGS[@]}" --target "$spec" || fail=1
 done
 
@@ -49,7 +53,7 @@ if [ "$FULL" -eq 1 ]; then
   echo "• mutation: mutmut"
   TMP=$(mktemp)
   { mutmut run; echo "---- results ----"; mutmut results; } >"$TMP" 2>&1 || true
-  python3 scripts/gate_runner.py --rubric prompts/mutation-interpret.md \
+  python3 "$GATE_RUNNER" --rubric "$MUTATION_RUBRIC" \
     --model google/gemini-2.5-pro "${PARGS[@]}" --target "$TMP" || fail=1
   rm -f "$TMP"
 fi
