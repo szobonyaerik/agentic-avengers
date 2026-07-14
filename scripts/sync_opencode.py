@@ -40,9 +40,18 @@ def parse(md):
 
 
 def tools_block(claude_tools):
-    t = [x.strip() for x in claude_tools.split(",")] if claude_tools else []
-    has_write = ("Write" in t) or ("Edit" in t)
-    return {"write": has_write, "edit": has_write, "bash": "Bash" in t}
+    """Map a canonical agent's tool list to opencode's {write, edit, bash} booleans.
+
+    Recognizes both the clean Claude names (Read/Write/Edit/Bash/Glob/Grep, any case, with or
+    without a YAML flow-list `[...]`) and the older snake_case names some agents still use
+    (replace_string_in_file, run_in_terminal). Case-insensitive.
+    """
+    raw = (claude_tools or "").strip().strip("[]")
+    toks = {x.strip().strip("[]").lower() for x in raw.split(",") if x.strip()}
+    write_names = {"write", "edit", "multiedit", "replace_string_in_file", "create_file"}
+    bash_names = {"bash", "run_in_terminal", "run_in_bash", "shell"}
+    has_write = bool(toks & write_names)
+    return {"write": has_write, "edit": has_write, "bash": bool(toks & bash_names)}
 
 
 def main():

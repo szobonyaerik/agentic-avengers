@@ -44,7 +44,7 @@ next: <next-phase-slug | ship>
 depends on. No narration — just what a teammate picking up the next phase needs to know.>
 
 ### Artifacts
-- spec:                  docs/features/<feature>/spec.md  (section: <phase>)
+- specs:                 docs/features/<feature>/phases/<phase>/specs/   (one per <n>.<k>)
 - tests:                 tests/<phase>/
 - test-mapping:          docs/features/<feature>/phases/<phase>/test-mapping.md
 - implementation-report: docs/features/<feature>/phases/<phase>/implementation-report.md
@@ -76,7 +76,7 @@ Persisted schema: tasks(task_id, delivery_id, raw, received_at).
 Phase 2 reads these rows; delivery_id is the dedup key it must not re-create.
 
 ### Artifacts
-- spec:                  docs/features/clickup-intake/spec.md  (section: 1-webhook)
+- specs:                 docs/features/clickup-intake/phases/1-webhook/specs/   (1.1-verify, 1.2-persist)
 - tests:                 tests/1-webhook/
 - test-mapping:          docs/features/clickup-intake/phases/1-webhook/test-mapping.md
 - implementation-report: docs/features/clickup-intake/phases/1-webhook/implementation-report.md

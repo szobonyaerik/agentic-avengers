@@ -16,7 +16,11 @@ printf '%s\n' "$OUT" >"$TMP"
 python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
   --rubric "$CLAUDE_PROJECT_DIR/prompts/verifier-triage.md" \
   --model google/gemini-2.5-pro \
+  --author-family "${AUTHOR_FAMILY:-anthropic}" \
   --target "$TMP"
 rc=$?
 rm -f "$TMP"
+if [ "$rc" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
+  exec "$CLAUDE_PROJECT_DIR/scripts/bypass_log.sh" "verifier"
+fi
 exit $rc

@@ -1,0 +1,16 @@
+# pytest / cosmic-ray / gate scratch
+**/.pytest_cache/
+session.sqlite
+.gate-tmp.txt
+
+# codemap output cache (regenerate with scripts/codemap.py)
+codemap/
+
+# python
+__pycache__/
+*.pyc
+
+# opencode local deps
+.opencode/node_modules/
+
+# note: gate-overrides.log is intentionally NOT ignored — break-glass must stay visible/auditable.

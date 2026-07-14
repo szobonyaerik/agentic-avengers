@@ -19,6 +19,33 @@ import argparse, json, os, re, subprocess, sys, urllib.request
 VERDICT_OK = {"GO", "PASS"}
 
 
+def model_family(model):
+    """Vendor family of a model id, ignoring an OpenRouter prefix.
+
+    deepseek/deepseek-chat            -> deepseek
+    google/gemini-2.5-pro             -> google
+    openrouter/anthropic/claude-opus  -> anthropic
+    anthropic/claude-sonnet-4         -> anthropic
+    """
+    parts = [p for p in str(model).split("/") if p]
+    if parts and parts[0] == "openrouter":
+        parts = parts[1:]
+    return parts[0].lower() if parts else ""
+
+
+def assert_cross_family(model, author_family):
+    """Fail closed if the gate model shares the author's family (no decorrelation)."""
+    if not author_family:
+        return
+    gate_family = model_family(model)
+    if gate_family and gate_family == author_family.strip().lower():
+        raise RuntimeError(
+            f"cross-family violation: gate model '{model}' (family '{gate_family}') "
+            f"is the same family as the author '{author_family}'. A gate must run on a "
+            "different family than the work it judges."
+        )
+
+
 def stdin_target():
     """Pull .tool_input.file_path from the hook JSON on stdin (if any)."""
     if sys.stdin.isatty():
@@ -72,9 +99,23 @@ def opencode_text(raw):
     return "\n".join(parts.values())
 
 
+def opencode_model(model):
+    """Adapt a canonical OpenRouter model id to opencode's `provider/model` form.
+
+    The pipeline names gate models as OpenRouter ids (e.g. `deepseek/deepseek-chat`,
+    `google/gemini-2.5-pro`) — the shape the openrouter HTTP provider wants. opencode routes the
+    same models through its OpenRouter credential, so it needs an explicit `openrouter/` provider
+    prefix. Ids that already carry a provider prefix are left untouched.
+    """
+    known_providers = ("openrouter/", "anthropic/", "openai/", "google/vertex", "zai/", "opencode/")
+    if model.startswith(known_providers):
+        return model
+    return "openrouter/" + model
+
+
 def call_opencode(model, system, user):
     prompt = f"{system}\n\n=== ARTIFACT TO JUDGE ===\n{user}"
-    cmd = ["opencode", "run", "--format", "json", "-m", model, prompt]
+    cmd = ["opencode", "run", "--format", "json", "-m", opencode_model(model), prompt]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     except FileNotFoundError:
@@ -110,10 +151,19 @@ def main():
     ap.add_argument("--model", default="deepseek/deepseek-chat")
     ap.add_argument("--provider", choices=["openrouter", "opencode"], default="opencode")
     ap.add_argument("--target", help="file to judge (else read from stdin hook JSON)")
+    ap.add_argument("--author-family",
+                    default=os.environ.get("AUTHOR_FAMILY"),
+                    help="vendor family of the model that authored the work (e.g. 'anthropic'); "
+                         "the gate fails closed if its own model shares this family")
+    ap.add_argument("--print-verdict", action="store_true",
+                    help="print the raw verdict token (GO/REVIEW/NO-GO) to stdout and exit 0 for any "
+                         "reached verdict; the caller decides. Still fails closed (exit 2) on error.")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
     try:
+        # Cross-family invariant: a gate must not run on the author's family.
+        assert_cross_family(args.model, args.author_family)
         if args.selftest:
             rubric = ('Return ONLY JSON {"verdict":"GO|REVIEW|NO-GO",'
                       '"report":"...","route_back":"..."}. Reply GO if the text says OK.')
@@ -137,6 +187,15 @@ def main():
         sys.exit(2)
 
     v = str(verdict.get("verdict", "")).upper()
+    if args.print_verdict:
+        # Hand the token to the caller (e.g. spec-review-auto branches GO/REVIEW vs NO-GO).
+        # A verdict was reached, so this is not a fail-closed error -> exit 0.
+        print(v or "NO-GO")
+        if verdict.get("report"):
+            print(verdict["report"], file=sys.stderr)
+        if verdict.get("route_back"):
+            print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
+        sys.exit(0)
     if v in VERDICT_OK:
         print(f"OK ({v})")
         sys.exit(0)
