@@ -6,6 +6,7 @@ set -uo pipefail
 
 [ "${SPEC_REVIEW_MODE:-}" = "auto" ] || exit 0   # HITL (default) -> nothing to do
 
+SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (gate_runner, prompts, bypass_log)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 case "$FILE" in
@@ -14,15 +15,15 @@ case "$FILE" in
 esac
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
-VERDICT=$(python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
-  --rubric "$CLAUDE_PROJECT_DIR/prompts/spec-review-rubric.md" \
+VERDICT=$(python3 "$SD/gate_runner.py" \
+  --rubric "$SD/../prompts/spec-review-rubric.md" \
   --model "${GATE_MODEL:-google/gemini-2.5-pro}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
   --print-verdict --target "$FILE" 2> >(cat >&2))
 rc=$?
 
 # Fail closed: any error (missing key, same-family, no verdict) stops — do not approve.
 if [ "$rc" -ne 0 ]; then
-  [ -n "${GATE_BYPASS:-}" ] && exec "$CLAUDE_PROJECT_DIR/scripts/bypass_log.sh" "spec-review-auto"
+  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-review-auto"
   echo "spec-review (auto): gate errored (fail closed) — review_status left pending" >&2
   exit 2
 fi
@@ -37,7 +38,7 @@ case "$VERDICT" in
     exit 0
     ;;
   *)  # NO-GO or anything unexpected
-    [ -n "${GATE_BYPASS:-}" ] && exec "$CLAUDE_PROJECT_DIR/scripts/bypass_log.sh" "spec-review-auto"
+    [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-review-auto"
     echo "spec-review (auto): NO-GO — review_status stays pending; route back to avenger-spec-writer" >&2
     exit 2
     ;;

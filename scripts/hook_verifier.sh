@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse: when src/ changes, run the suite; on failure, triage and stop.
 set -uo pipefail
+SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (gate_runner, prompts, bypass_log)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 case "$FILE" in
@@ -13,14 +14,14 @@ if OUT=$(pytest -q 2>&1); then
 fi
 TMP=$(mktemp)
 printf '%s\n' "$OUT" >"$TMP"
-python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
-  --rubric "$CLAUDE_PROJECT_DIR/prompts/verifier-triage.md" \
+python3 "$SD/gate_runner.py" \
+  --rubric "$SD/../prompts/verifier-triage.md" \
   --model "${GATE_MODEL:-google/gemini-2.5-pro}" \
   --author-family "${AUTHOR_FAMILY:-anthropic}" \
   --target "$TMP"
 rc=$?
 rm -f "$TMP"
 if [ "$rc" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
-  exec "$CLAUDE_PROJECT_DIR/scripts/bypass_log.sh" "verifier"
+  exec "$SD/bypass_log.sh" "verifier"
 fi
 exit $rc
