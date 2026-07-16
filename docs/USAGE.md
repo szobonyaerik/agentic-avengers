@@ -148,6 +148,10 @@ python3 "$AV/scripts/gate_runner.py" \
 - **Break-glass** (only override): `GATE_BYPASS="why" git commit …`, or export it for in-session hooks.
   It overrides a *failing* gate, appends who/when/which-gate/why to `gate-overrides.log`, prints a
   visible `⚠ BYPASSED`, and you must record it in the phase `handover.md`. Never silent.
+- **Gate model**: gates default to a decorrelated deepseek (fidelity) / gemini (verifier, mutation,
+  spec-review) mix. Set `GATE_MODEL=<id>` to route **every** gate to one model, e.g.
+  `export GATE_MODEL=opencode-go/deepseek-v4-pro` (OpenCode's DeepSeek V4 Pro, provider `opencode`).
+  Keep `AUTHOR_FAMILY` a different family than `GATE_MODEL` or the gate fails closed.
 - **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` still points at
   `claude-opus-4/sonnet-4/haiku-4`. Update these to current OpenRouter ids before driving opencode
   agents (the gate models DeepSeek/Gemini are already correct).

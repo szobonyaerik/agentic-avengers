@@ -7,7 +7,7 @@ case "$FILE" in
   */spec.md)
     python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
       --rubric "$CLAUDE_PROJECT_DIR/prompts/fidelity-rubric.md" \
-      --model deepseek/deepseek-chat \
+      --model "${GATE_MODEL:-deepseek/deepseek-chat}" \
       --author-family "${AUTHOR_FAMILY:-anthropic}" \
       --target "$FILE"
     rc=$?

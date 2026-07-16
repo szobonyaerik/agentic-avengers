@@ -16,6 +16,8 @@ MUTATION_RUBRIC="$SCRIPT_DIR/../prompts/mutation-interpret.md"
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 OVERRIDE_LOG="$ROOT/gate-overrides.log"
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
+FID_MODEL="${GATE_MODEL:-deepseek/deepseek-chat}"     # GATE_MODEL overrides all gates
+MUT_MODEL="${GATE_MODEL:-google/gemini-2.5-pro}"
 cd "$ROOT"
 
 FULL=0
@@ -47,7 +49,7 @@ for spec in "${SPECS[@]:-}"; do
   [ -n "$spec" ] || continue
   echo "• fidelity gate: $spec"
   python3 "$GATE_RUNNER" --rubric "$FIDELITY_RUBRIC" \
-    --model deepseek/deepseek-chat "${PARGS[@]}" --target "$spec" || record_fail "fidelity:$spec"
+    --model "$FID_MODEL" "${PARGS[@]}" --target "$spec" || record_fail "fidelity:$spec"
 done
 
 # 2) Test suite (always). Exit 5 = "no tests collected" -> not a failure.
@@ -76,7 +78,7 @@ if [ "$FULL" -eq 1 ]; then
       { echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>>"$TMP"; \
         echo "---- survival rate (cr-rate) ----"; cr-rate "$SESSION" 2>>"$TMP"; } >>"$TMP" 2>&1
       python3 "$GATE_RUNNER" --rubric "$MUTATION_RUBRIC" \
-        --model google/gemini-2.5-pro "${PARGS[@]}" --target "$TMP" || record_fail "mutation"
+        --model "$MUT_MODEL" "${PARGS[@]}" --target "$TMP" || record_fail "mutation"
     else
       echo "  ✗ cosmic-ray run errored (fail closed):" >&2; tail -5 "$TMP" >&2
       record_fail "mutation:errored"

@@ -15,7 +15,7 @@ TMP=$(mktemp)
 printf '%s\n' "$OUT" >"$TMP"
 python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
   --rubric "$CLAUDE_PROJECT_DIR/prompts/verifier-triage.md" \
-  --model google/gemini-2.5-pro \
+  --model "${GATE_MODEL:-google/gemini-2.5-pro}" \
   --author-family "${AUTHOR_FAMILY:-anthropic}" \
   --target "$TMP"
 rc=$?

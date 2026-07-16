@@ -32,7 +32,7 @@ fi
 # Feed the survivor report to the model (one call per phase); it decides GO vs NO-GO.
 python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
   --rubric "$CLAUDE_PROJECT_DIR/prompts/mutation-interpret.md" \
-  --model google/gemini-2.5-pro --author-family "$AUTHOR_FAMILY" \
+  --model "${GATE_MODEL:-google/gemini-2.5-pro}" --author-family "$AUTHOR_FAMILY" \
   --target "$TMP"
 rc=$?
 rm -f "$TMP" "$SESSION"

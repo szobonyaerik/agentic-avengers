@@ -16,7 +16,7 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 
 VERDICT=$(python3 "$CLAUDE_PROJECT_DIR/scripts/gate_runner.py" \
   --rubric "$CLAUDE_PROJECT_DIR/prompts/spec-review-rubric.md" \
-  --model google/gemini-2.5-pro --author-family "${AUTHOR_FAMILY:-anthropic}" \
+  --model "${GATE_MODEL:-google/gemini-2.5-pro}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
   --print-verdict --target "$FILE" 2> >(cat >&2))
 rc=$?
 

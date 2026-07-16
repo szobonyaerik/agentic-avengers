@@ -14,9 +14,11 @@ declare const process: any
 //
 // Place at .opencode/plugin/pipeline-gates.ts. Adjust the "/src/" match to your code layout.
 
-const FIDELITY_MODEL = "deepseek/deepseek-chat"
-const TRIAGE_MODEL = "google/gemini-2.5-pro"
-const REVIEW_MODEL = "google/gemini-2.5-pro"
+// GATE_MODEL, if set, routes every gate to one model; otherwise the decorrelated defaults apply.
+const GATE_MODEL = process.env.GATE_MODEL
+const FIDELITY_MODEL = GATE_MODEL || "deepseek/deepseek-chat"
+const TRIAGE_MODEL = GATE_MODEL || "google/gemini-2.5-pro"
+const REVIEW_MODEL = GATE_MODEL || "google/gemini-2.5-pro"
 const AUTHOR_FAMILY = process.env.AUTHOR_FAMILY || "anthropic"
 
 export const PipelineGates: Plugin = async ({ $, worktree, directory }) => {

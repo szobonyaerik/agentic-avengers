@@ -107,7 +107,8 @@ def opencode_model(model):
     same models through its OpenRouter credential, so it needs an explicit `openrouter/` provider
     prefix. Ids that already carry a provider prefix are left untouched.
     """
-    known_providers = ("openrouter/", "anthropic/", "openai/", "google/vertex", "zai/", "opencode/")
+    known_providers = ("openrouter/", "anthropic/", "openai/", "google/vertex", "zai/",
+                       "opencode/", "opencode-go/")
     if model.startswith(known_providers):
         return model
     return "openrouter/" + model
