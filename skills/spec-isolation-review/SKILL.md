@@ -12,7 +12,7 @@ isolated fork, you have no knowledge of the other reviewers and must not try to 
 Your value is precisely that you judge your slice on its own merits, with no anchoring.
 
 ## Inputs
-- The spec: `docs/features/<feature>/spec.md`.
+- The spec: `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md` (passed in the invocation).
 - Your assigned **slice**, passed in the invocation (e.g. `slice=idempotency`,
   `slice=data-model`, `slice=security`, `slice=testability`).
 

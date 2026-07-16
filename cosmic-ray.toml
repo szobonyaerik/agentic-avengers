@@ -1,0 +1,18 @@
+# cosmic-ray mutation config (replaces mutmut). One session per phase; the Verifier feeds the
+# survivor `dump` to prompts/mutation-interpret.md and uses `cr-rate` for the survival rate.
+# Point module-path at the package under test and test-command at how to run the suite.
+# For REFACTOR work the pipeline generates a diff-scoped copy (module-path limited to changed files)
+# so mutation only targets the changed surface.
+#
+# Sanity check once:
+#   cosmic-ray init cosmic-ray.toml session.sqlite \
+#     && cosmic-ray exec cosmic-ray.toml session.sqlite \
+#     && cr-rate session.sqlite
+[cosmic-ray]
+module-path = "src"                # your package/dir under test
+timeout = 30.0
+excluded-modules = []
+test-command = "pytest -x -q"
+
+[cosmic-ray.distributor]
+name = "local"

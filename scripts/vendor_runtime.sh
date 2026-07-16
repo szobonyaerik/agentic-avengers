@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Vendor the pipeline into a target repo for a runtime that can't use the Claude Code plugin.
-# Usage: scripts/vendor_runtime.sh <target-dir> <claude|opencode|copilot|all>
+# Usage: scripts/vendor_runtime.sh <target-dir> <claude|opencode|all>
+#
+# NOTE: superseded by scripts/install.sh, which vendors the same surface WITH update
+# detection (a manifest, NEW/UPDATE/DRIFT/GONE). Prefer install.sh for new targets.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_IN="${1:-}"; RUNTIME="${2:-}"
 [ -n "$TARGET_IN" ] && [ -n "$RUNTIME" ] || {
-  echo "usage: scripts/vendor_runtime.sh <target-dir> <claude|opencode|copilot|all>" >&2; exit 2; }
+  echo "usage: scripts/vendor_runtime.sh <target-dir> <claude|opencode|all>" >&2; exit 2; }
 mkdir -p "$TARGET_IN"; TARGET="$(cd "$TARGET_IN" && pwd)"
 
 need() { [ -e "$SRC/$1" ] || { echo "missing $1 — run python3 scripts/sync_$2.py first" >&2; exit 1; }; }
@@ -29,17 +32,6 @@ case "$RUNTIME" in opencode|all)
   [ -f "$SRC/opencode.json" ] && cp "$SRC/opencode.json" "$TARGET/opencode.json"
   ln -sfn ../agentic_development/skills "$TARGET/.opencode/skills"
   echo "+ opencode adapter (.opencode/agents, AGENTS.md, skills)"
-;; esac
-
-case "$RUNTIME" in copilot|all)
-  need ".github/agents" copilot
-  vendor_skills
-  mkdir -p "$TARGET/.github"
-  cp -rL "$SRC/.github/agents" "$TARGET/.github/agents"
-  [ -d "$SRC/.github/prompts" ] && cp -rL "$SRC/.github/prompts" "$TARGET/.github/prompts"
-  [ -f "$SRC/.github/copilot-instructions.md" ] && cp "$SRC/.github/copilot-instructions.md" "$TARGET/.github/copilot-instructions.md"
-  ln -sfn ../agentic_development/skills "$TARGET/.github/skills"
-  echo "+ copilot adapter (.github/agents, prompts, copilot-instructions, skills)"
 ;; esac
 
 case "$RUNTIME" in claude)

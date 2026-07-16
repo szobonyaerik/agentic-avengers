@@ -16,7 +16,7 @@ jobs:
 
       - name: Install tools and project deps
         run: |
-          pip install pytest mutmut
+          pip install pytest cosmic-ray
           [ -f requirements.txt ] && pip install -r requirements.txt || true
           [ -f pyproject.toml ] && pip install -e . || true
 
@@ -24,4 +24,5 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GATE_PROVIDER: openrouter
-        run: bash agentic_development/scripts/gate_ci.sh --full
+          AUTHOR_FAMILY: anthropic
+        run: bash scripts/gate_ci.sh --full
