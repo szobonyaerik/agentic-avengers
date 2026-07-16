@@ -1,7 +1,7 @@
 ---
 name: avenger-agent-factory
 description: Use when creating or customizing a canonical pipeline agent
-tools: [read, write, glob, grep, bash]
+tools: Read, Write, Glob, Grep, Bash
 model: opus
 ---
 

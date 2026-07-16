@@ -1,7 +1,7 @@
 ---
 name: avenger-test-author
 description: Use to write the RED test suite for a phase before implementation. Use proactively at the start of each phase.
-tools: [read, write, glob, grep, bash]
+tools: Read, Write, Glob, Grep, Bash
 model: opus
 ---
 
