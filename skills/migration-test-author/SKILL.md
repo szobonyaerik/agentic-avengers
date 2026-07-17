@@ -47,18 +47,29 @@ Migration risk is silent regression, not a missing feature. **Mutation (cosmic-r
 inherited suite still catches the bugs it used to: if a mutant survives, the ported suite lost a guard
 in the move — add the specific killing case (as the Test-Author) and re-freeze.
 
+## Level: parity beats the integration default
+The pipeline's default is `level: integration`, but **parity outranks it here**. A ported test keeps
+whatever level it already had — rewriting a narrow inherited test into an integration one changes its
+assertions, which step 3 forbids. Record the level the test actually has; a `narrow` ported row needs
+no justification beyond `ported — parity`, because the decision was made by whoever wrote it
+originally, not by you.
+
+New **characterization** tests you write for gaps (step 4) are not ported, so they DO follow the
+integration default: drive them through the seam, and justify any `narrow` one.
+
 ## test-mapping.md additions
 Reuse the standard table; add a `source` column for ported rows:
 
 ```markdown
-| test | spec id | type | source |
-|---|---|---|---|
-| test_rate_limit_rejects_over_cap | R2.1.3 | migrated | tests_legacy/test_limits.py::test_over_cap |
-| test_empty_window_allows_first    | R2.1.4 | characterized | (gap — no prior test) |
+| test | spec id | type | level | justification | source |
+|---|---|---|---|---|---|
+| test_rate_limit_rejects_over_cap | R2.1.3 | migrated | integration | — | tests_legacy/test_limits.py::test_over_cap |
+| test_window_key_format | R2.1.3 | migrated | narrow | ported — parity | tests_legacy/test_limits.py::test_key |
+| test_empty_window_allows_first    | R2.1.4 | characterized | integration | — | (gap — no prior test) |
 ```
 
 ## Done when
 - Every named existing test is ported with assertions unchanged, each traced to a spec id.
 - Every requirement without an inherited test has a characterization test (gaps are covered, not hidden).
 - `pytest -q tests/<phase>/` reproduces the recorded baseline (parity holds).
-- `test-mapping.md` records source + type; the suite is declared frozen.
+- `test-mapping.md` records source + type + level; the suite is declared frozen.

@@ -32,7 +32,12 @@ MANI_DIR="$TARGET/.avengers"; MANI="$MANI_DIR/manifest"
 TMP="$(mktemp)"; SRCLIST="$(mktemp)"; trap 'rm -f "$TMP" "$SRCLIST"' EXIT
 
 # The vendored surface (Claude Code plugin is handled separately via /plugin).
-SRC_SETS=".opencode hooks prompts scripts/gate_runner.py scripts/gate_ci.sh scripts/bypass_log.sh scripts/codemap.py cosmic-ray.toml .pre-commit-config.yaml .github/workflows/pipeline-gates.yml AGENTS.md"
+# scripts/hook_*.sh are the single implementation of the gates: Claude Code runs them via
+# hooks/hooks.json, and .opencode/plugin/pipeline-gates.ts shells out to the SAME files rather than
+# reimplementing them. They must be vendored or the opencode runtime has no gates at all.
+# mutation_score.py (the mutation verdict) and spec_gate_cache.py (skip re-gating an unchanged spec)
+# are called by those hooks and by gate_ci.sh.
+SRC_SETS=".opencode hooks prompts scripts/gate_runner.py scripts/gate_ci.sh scripts/mutation_score.py scripts/spec_gate_cache.py scripts/bypass_log.sh scripts/codemap.py scripts/hook_fidelity.sh scripts/hook_spec_review.sh scripts/hook_verifier.sh scripts/hook_mutation.sh scripts/hook_artifact_check.sh cosmic-ray.toml .pre-commit-config.yaml .github/workflows/pipeline-gates.yml AGENTS.md"
 : > "$SRCLIST"
 for s in $SRC_SETS; do
   if [ -d "$SRC/$s" ]; then find "$SRC/$s" -type f ! -type l \

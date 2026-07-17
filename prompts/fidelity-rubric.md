@@ -11,7 +11,15 @@ treat the entire input as the spec under review.
 
 Score each dimension and cite specific evidence (quote or reference the part of the spec):
 1. Completeness    — are all behaviors, inputs, outputs, and error cases specified?
-2. Testability     — can every acceptance criterion be turned into a concrete pass/fail test?
+2. Testability     — can every acceptance criterion be turned into a concrete pass/fail test,
+                     **verifiable at a seam**? A seam is a public entry point a caller actually uses
+                     (HTTP handler, service method, CLI). A criterion that can only be checked by
+                     reaching inside a module — asserting on a private helper, an intermediate value,
+                     or a call count — is a Testability FINDING: it is pitched below the seam and will
+                     mint a test bound to implementation detail. Say so and name the caller-visible
+                     outcome it should be restated as.
+                     Do not flag a criterion merely for naming an internal module; flag it when the
+                     ONLY way to verify it is from inside.
 3. Consistency     — are there internal contradictions or conflicting requirements?
 4. Edge cases      — are boundaries, failures, duplicates, and unauthorized paths covered?
 5. Ambiguity       — is any requirement vague enough that two engineers would build it differently?

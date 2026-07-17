@@ -19,9 +19,13 @@ would. Run only on critical or security-sensitive paths.
 
 ## When you find a break
 1. Write a **new failing test** under `tests/<phase>/` that reproduces it, and confirm it fails
-   against the current code.
+   against the current code. Drive it through the **seam** — the entry point the attacker or caller
+   actually reaches — not an internal helper. A break you can only trigger by calling a private
+   function directly is usually not a break: if no caller can reach that state, say so instead of
+   locking a test against it.
 2. Route back to the **Test-Author**, who folds it into the locked suite (traces it to a spec id
-   in `test-mapping.md` and owns it). The Implementer then fixes the code to make it pass.
+   in `test-mapping.md`, records its `level`, and owns it). The Implementer then fixes the code to
+   make it pass.
 
 ## Hard boundaries
 - You write **only** files under `tests/`. You **never** edit production code — finding and

@@ -11,8 +11,9 @@ write no production code.
 1. **Artifact tree.** Create `docs/features/`; if a feature id was given, also
    `docs/features/<id>/` and `docs/features/<id>/phases/`.
 
-2. **gitignore.** Ensure `.gitignore` contains `**/.pytest_cache/`, `session.sqlite`
-   (cosmic-ray sessions), and `.gate-tmp.txt`.
+2. **gitignore.** Ensure `.gitignore` contains `**/.pytest_cache/`, `session.sqlite` and
+   `.gate-session.sqlite` (cosmic-ray sessions), `.gate-cosmic-ray.toml` (the generated diff-scoped
+   config), and `.gate-tmp.txt`.
 
 3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
    present for the chosen runtime(s): `CLAUDE.md` (Claude Code) and/or `AGENTS.md` (opencode). Create
@@ -29,17 +30,25 @@ write no production code.
    `python "${CLAUDE_PLUGIN_ROOT}/scripts/codemap.py" . --lang <python|java|c> --output codebase`
    → `codebase/MOC.md` (the Solution Architect and implementers read it).
 
-6. **Prereq check.** Report the status of `python3`, `pytest`, `cosmic-ray`, `jq`, `tree-sitter`
-   (for codemap), and a cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH). List
-   anything missing with its fix (`pip install cosmic-ray tree-sitter tree-sitter-python`, `brew install jq`).
+6. **Prereq check.** Report the status of `python3`, `pytest`, `cosmic-ray` (incl. `cr-filter-git` on
+   PATH — the mutation gate diff-scopes with it), `jq`, `tree-sitter` (for codemap), and a
+   cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH). List anything missing with
+   its fix (`pip install cosmic-ray tree-sitter tree-sitter-python`, `brew install jq`).
 
 7. **Code-path note.** If source is not under `src/`, remind the user to update the path glob in
    `hook_verifier.sh`, `gate_ci.sh`, `.opencode/plugin/pipeline-gates.ts`, and `module-path` in
    `cosmic-ray.toml`.
 
-8. **Summary.** Print what changed and the first commands:
+8. **Mutation baseline sanity check.** The gate requires a green suite before it will score anything
+   (a mutant counts as killed whenever the test command fails, so a broken suite scores a perfect
+   1.0). If a suite already exists, run `cosmic-ray baseline cosmic-ray.toml` once and report the
+   result. Mention the tunables: `MUTATION_MIN_SCORE` (default `0.85`) and `MUTATION_BASE` (default:
+   merge-base with the default branch).
+
+9. **Summary.** Print what changed and the first commands:
    `@avenger-task-analyst "<feature brief>"` → `@avenger-solution-architect` →
    `@avenger-implementation-planner` → `@avenger-spec-writer` → `/spec-review <spec>` →
-   per phase: `@avenger-test-author` → `@avenger-backend-architect` → `@avenger-handover`.
+   per phase: `@avenger-test-author` → `@avenger-backend-architect` → `@avenger-handover` →
+   once, after the last phase: `@avenger-test-author` in `e2e-author` mode.
    For `opencode`/`all`, also print: `pip install pre-commit && pre-commit install`, and add
    `OPENROUTER_API_KEY` as a CI secret.

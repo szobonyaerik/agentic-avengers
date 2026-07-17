@@ -49,11 +49,17 @@ QUALITY WALL (per spec, both gates)
 
 BUILD & VERIFY (looped per phase)
   test-author  -> tests/ + test-mapping.md   (mode by work_kind: greenfield | migration | refactor)
+                 integration-level by default; `narrow` needs a written justification
   backend/frontend-architect -> src/          (implement to locked tests; never edit tests)
   [repeat for each spec in the phase]
-  verifier (once per phase, cross-family) -> full suite + R<n>.<k>.<m> trace + cosmic-ray mutation
+  verifier (once per phase, cross-family) -> phase suite + R<n>.<k>.<m> trace + cosmic-ray mutation
+                 mutation: diff-scoped, deterministic verdict at MUTATION_MIN_SCORE (default 0.85)
   breaker (critical paths) -> counterexample -> new locked test
   handover -> docs/features/<feat>/phases/<n>-<slug>/handover.md
+
+FEATURE CLOSE (once, after the final phase is green)
+  test-author (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
+                 1-3 tests (5 max) proving overview.md's goal through the assembled system
 
 SHIP
   commit (pre-commit floor) -> PR (CI floor). Break-glass overrides logged + visible.
@@ -92,14 +98,16 @@ agentic-avengers/
 ├── .claude-plugin/        plugin.json, marketplace.json
 ├── agents/                canonical subagents (Claude format)
 ├── skills/                portable SKILL.md skills (pipeline-conventions, grill-me,
-│                          spec-review-checklist, tdd/migration/brownfield test-author, …)
+│                          spec-review-checklist, tdd/migration/brownfield test-author,
+│                          e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, verifier-triage.md, mutation-interpret.md, project-setup.md
-├── cosmic-ray.toml        mutation config (session-based; diff-scoped for refactor)
+├── cosmic-ray.toml        mutation base config (the gate diff-scopes a copy per phase)
 ├── scripts/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
+│   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md

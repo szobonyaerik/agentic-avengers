@@ -52,38 +52,83 @@ for spec in "${SPECS[@]:-}"; do
     --model "$FID_MODEL" "${PARGS[@]}" --target "$spec" || record_fail "fidelity:$spec"
 done
 
-# 2) Test suite (always). Exit 5 = "no tests collected" -> not a failure.
-echo "• tests: pytest -q"
-pytest -q; pc=$?
+# 2) Test suite. Exit 5 = "no tests collected" -> not a failure.
+#    Pre-commit runs the phase suites only; --full (CI) also runs the feature-level e2e tests, which
+#    are slow, need the assembled system, and have nothing useful to say about an uncommitted edit.
+if [ "$FULL" -eq 1 ]; then
+  echo "• tests: pytest -q (incl. e2e)"
+  pytest -q; pc=$?
+else
+  echo "• tests: pytest -q --ignore=tests/e2e"
+  pytest -q --ignore=tests/e2e; pc=$?
+fi
 if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
 [ "$pc" -eq 5 ] && echo "  (no tests collected — skipping)"
 
 # 3) Mutation gate via cosmic-ray (CI / --full only). Fail closed: an errored run stops.
+#    Same contract as scripts/hook_mutation.sh: baseline first, diff-scoped, deterministic verdict
+#    at MUTATION_MIN_SCORE. Keep the two in step — CI and in-session must not disagree.
 if [ "$FULL" -eq 1 ]; then
-  echo "• mutation: cosmic-ray"
+  echo "• mutation: cosmic-ray (min score ${MUTATION_MIN_SCORE:-0.85})"
   # Module under test, read from cosmic-ray.toml. If it doesn't exist, there's nothing to mutate
   # (e.g. a docs/config-only repo) — skip like "no tests collected", don't fail closed.
+  # Only a SCALAR module-path is skippable this way. `module-path` also accepts a TOML list, which
+  # this scalar parser cannot read — and treating an unparsed value as "missing" would silently skip
+  # the whole gate (fail OPEN). Anything that isn't a plain existing-or-missing scalar runs the gate
+  # and lets cosmic-ray decide; it fails closed on a bad path.
   MODPATH=""
   [ -f "$COSMIC_CFG" ] && MODPATH="$(grep -m1 '^[[:space:]]*module-path' "$COSMIC_CFG" | sed 's/.*=[[:space:]]*//; s/^["'\'']//; s/["'\'']$//')"
+  case "$MODPATH" in
+    \[*) MODPATH="" ;;   # list form -> not skippable, fall through to the gate
+  esac
   if [ ! -f "$COSMIC_CFG" ]; then
     echo "  ✗ cosmic-ray.toml missing at repo root — mutation gate cannot run (fail closed)" >&2
     record_fail "mutation:no-config"
   elif [ -n "$MODPATH" ] && [ ! -e "$ROOT/$MODPATH" ]; then
     echo "  (module-path '$MODPATH' not present — no code to mutate, skipping)"
   else
-    SESSION="$ROOT/session.sqlite"; TMP=$(mktemp)
-    rm -f "$SESSION"
-    if cosmic-ray init "$COSMIC_CFG" "$SESSION" >>"$TMP" 2>&1 \
-       && cosmic-ray exec "$COSMIC_CFG" "$SESSION" >>"$TMP" 2>&1; then
-      { echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>>"$TMP"; \
-        echo "---- survival rate (cr-rate) ----"; cr-rate "$SESSION" 2>>"$TMP"; } >>"$TMP" 2>&1
-      python3 "$GATE_RUNNER" --rubric "$MUTATION_RUBRIC" \
-        --model "$MUT_MODEL" "${PARGS[@]}" --target "$TMP" || record_fail "mutation"
+    WORK=$(mktemp -d); SESSION="$WORK/session.sqlite"; TMP="$WORK/report.txt"; SCOPED="$WORK/cosmic-ray.toml"
+    cp "$COSMIC_CFG" "$SCOPED"
+    # Diff-scope to the branch's changes when a base is resolvable; otherwise mutate everything
+    # rather than silently scoping to nothing.
+    CI_BASE="${MUTATION_BASE:-$(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)}"
+    if [ -n "$CI_BASE" ]; then
+      printf '\n[cosmic-ray.filters.git-filter]\nbranch = "%s"\n' "$CI_BASE" >>"$SCOPED"
+    else
+      echo "  (no diff base resolvable — mutating the full module-path)"
+    fi
+    # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
+    # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
+    # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
+    if [ "$pc" -eq 5 ]; then
+      echo "  (no tests collected — nothing for mutation to measure, skipping)"
+    # Baseline first: a mutant counts as killed whenever the test command fails, so a broken suite
+    # would score a perfect 1.0. No kill means anything until the unmutated suite is green.
+    elif ! cosmic-ray baseline "$SCOPED" >>"$TMP" 2>&1; then
+      echo "  ✗ mutation baseline FAILED — suite is not green on unmutated code (fail closed):" >&2
+      tail -5 "$TMP" >&2
+      record_fail "mutation:baseline-failed"
+    elif cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1 \
+       && { [ -z "$CI_BASE" ] || cr-filter-git --config "$SCOPED" "$SESSION" >>"$TMP" 2>&1; } \
+       && cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+      # Deterministic verdict: 0 = GO (no model call), 1 = below threshold, 2 = cannot score.
+      python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" "$SESSION"
+      msc=$?
+      if [ "$msc" -eq 1 ]; then
+        { echo "---- mutation score (deterministic gate verdict: NO-GO) ----"
+          python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" --json "$SESSION" 2>&1
+          echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>&1; } >>"$TMP"
+        python3 "$GATE_RUNNER" --rubric "$MUTATION_RUBRIC" \
+          --model "$MUT_MODEL" "${PARGS[@]}" --target "$TMP" || true
+        record_fail "mutation"
+      elif [ "$msc" -ne 0 ]; then
+        record_fail "mutation:unscorable"
+      fi
     else
       echo "  ✗ cosmic-ray run errored (fail closed):" >&2; tail -5 "$TMP" >&2
       record_fail "mutation:errored"
     fi
-    rm -f "$TMP" "$SESSION"
+    rm -rf "$WORK"
   fi
 fi
 
