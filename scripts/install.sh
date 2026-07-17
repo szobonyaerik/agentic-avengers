@@ -32,7 +32,9 @@ MANI_DIR="$TARGET/.avengers"; MANI="$MANI_DIR/manifest"
 TMP="$(mktemp)"; SRCLIST="$(mktemp)"; trap 'rm -f "$TMP" "$SRCLIST"' EXIT
 
 # The vendored surface (Claude Code plugin is handled separately via /plugin).
-SRC_SETS=".opencode hooks prompts scripts/gate_runner.py scripts/gate_ci.sh scripts/bypass_log.sh scripts/codemap.py cosmic-ray.toml .pre-commit-config.yaml .github/workflows/pipeline-gates.yml AGENTS.md"
+# NOTE: scripts/mutation_score.py is required by BOTH gate_ci.sh and .opencode/plugin/pipeline-gates.ts —
+# it computes the mutation gate's verdict. Leaving it out breaks the gate in the target repo.
+SRC_SETS=".opencode hooks prompts scripts/gate_runner.py scripts/gate_ci.sh scripts/mutation_score.py scripts/bypass_log.sh scripts/codemap.py cosmic-ray.toml .pre-commit-config.yaml .github/workflows/pipeline-gates.yml AGENTS.md"
 : > "$SRCLIST"
 for s in $SRC_SETS; do
   if [ -d "$SRC/$s" ]; then find "$SRC/$s" -type f ! -type l \

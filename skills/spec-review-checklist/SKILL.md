@@ -14,6 +14,12 @@ lock. Use it with `grill-me`: each unmet item becomes a one-at-a-time question. 
       requirements hiding two behaviors under one id.
 - [ ] **Verifiable.** Each requirement can be turned into a concrete pass/fail test. No unmeasurable
       wording ("handles gracefully", "fast enough") survives.
+- [ ] **Observable at a seam.** Each requirement is an outcome a **caller** can observe through a
+      public entry point (HTTP handler, service method, CLI) — not an internal step. Ask: *"who calls
+      this, and what do they see?"* If the only answer involves reaching inside a module — asserting on
+      a private helper, an intermediate value, a call count — the requirement is pitched below the seam
+      and will mint a frozen test bound to implementation detail. Make them restate it as the
+      caller-visible outcome, or fold it into the requirement it is really a detail of.
 - [ ] **Stable IDs.** Every requirement carries an `R<n>.<k>.<m>` id; nothing is un-ID'd.
 - [ ] **Paired criteria.** Every requirement states at least one pass condition AND at least one
       failure/edge condition (the Test-Author's positive/negative pair).
@@ -35,7 +41,8 @@ lock. Use it with `grill-me`: each unmet item becomes a one-at-a-time question. 
 - [ ] **Preserve-vs-change declared.** Every requirement is tagged **preserve** (must not regress) or
       **change** (deliberately new). No requirement is ambiguous about which it is.
 - [ ] **Blast radius stated.** The files/modules the change may touch are named (this bounds the
-      diff-scoped mutation surface).
+      *preserve* characterization work; the mutation surface itself is scoped automatically from the
+      phase's git diff, not from this list).
 - [ ] **Pre-existing failures excluded.** The spec does not fold already-broken behavior into its scope.
 
 ## Verdict

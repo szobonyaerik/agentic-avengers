@@ -24,12 +24,26 @@ that doesn't exist yet.
    requirement, each with its stable id `R<n>.<k>.<m>` from the spec. A requirement is one observable
    behavior, including its failure/edge behavior.
 
-2. **Write paired cases per requirement.** For EACH requirement write at least:
+2. **Write paired cases per requirement — at the seam.** For EACH requirement write at least:
    - one **positive** test (the behavior succeeds / the right thing is produced), and
    - one **negative** test (bad input, duplicate, unauthorized, or boundary is correctly
      rejected or has no effect).
    Annotate every test with the spec id it traces to, as the first docstring line:
    `"""spec: R1.1.1 | positive — ..."""`. One requirement may need several negatives.
+
+   **Drive every case through the seam** — the public entry point a caller actually uses (the HTTP
+   handler, the service method, the CLI command), with its real collaborators wired up. Do not
+   reach past the seam to assert on an internal helper, and do not mock a collaborator that lives
+   inside it. Tests that bind to internal structure are the ones that get rewritten every time the
+   implementation moves; tests bound to the seam survive refactors, which is the whole point of a
+   frozen contract. Use real infrastructure where the project provides it (a real database, not a
+   mock); mock only what crosses a trust or cost boundary — a third-party API, an LLM, a vault.
+
+   This is the **default and it is `level: integration`.** A `narrow` test — asserting on a single
+   function in isolation — is allowed ONLY when a requirement has no reachable seam, and then you
+   must record the reason in `test-mapping.md`'s `justification` column. "It was easier to write"
+   is not a justification. If a requirement seems to *need* a narrow test, first ask whether the
+   requirement itself is pitched below the seam and should route back to the Spec Writer.
 
 3. **Write the files.**
    - Tests go in `tests/<phase>/` (e.g. `tests/1-webhook/test_idempotency.py`), using pytest. Name
@@ -57,12 +71,17 @@ stage: test-author
 model: <model>
 created: <date>
 ---
-| test | spec id | type |
-|---|---|---|
-| test_signed_payload_persists_once | R1.1.1 | positive |
-| test_replay_does_not_double_insert | R1.1.1 | negative |
-| test_invalid_signature_rejected | R1.1.2 | negative |
+| test | spec id | type | level | justification |
+|---|---|---|---|---|
+| test_signed_payload_persists_once | R1.1.1 | positive | integration | — |
+| test_replay_does_not_double_insert | R1.1.1 | negative | integration | — |
+| test_invalid_signature_rejected | R1.1.2 | negative | integration | — |
+| test_cron_expr_rejects_bad_field | R1.1.3 | negative | narrow | pure parser; no caller seam exists until phase 3 wires the scheduler |
 ```
+
+`level` is one of `integration` (the default), `e2e` (feature-level only — see `e2e-author`), or
+`narrow`. `justification` is `—` unless the level is `narrow`, in which case it must say why no seam
+was reachable. A `narrow` row with an empty or hand-waved justification is a review finding.
 
 ## Worked example — spec `1.1` in phase `1-webhook` (idempotent ClickUp webhook)
 
@@ -97,7 +116,14 @@ All three fail now (`handle_webhook` doesn't exist) → the suite is correctly R
 `test_replay_does_not_double_insert` is the one that later survives a mutation flip if the
 implementer's dedup is wrong — which is exactly why it is written up front and locked.
 
+Note the level these are pitched at: every case goes through `handle_webhook` — the seam — with a
+real `db`. None of them names the dedup helper, the signature verifier, or the persistence layer.
+The implementer can restructure all three internally and this suite never moves. That is what
+`level: integration` buys, and why it is the default.
+
 ## Done when
 - Every requirement has ≥1 positive and ≥1 negative test, each traced to a spec id `R<n>.<k>.<m>`.
+- Every test drives its requirement through a public seam; every `narrow` row carries a real
+  justification.
 - `pytest -q tests/<phase>/` shows all new tests RED.
-- `test-mapping.md` exists with the table and the frozen-contract note.
+- `test-mapping.md` exists with the table (incl. `level`) and the frozen-contract note.

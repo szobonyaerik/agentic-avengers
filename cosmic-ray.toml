@@ -1,18 +1,34 @@
-# cosmic-ray mutation config (replaces mutmut). One session per phase; the Verifier feeds the
-# survivor `dump` to prompts/mutation-interpret.md and uses `cr-rate` for the survival rate.
+# cosmic-ray mutation config (replaces mutmut). One session per phase.
+#
+# This is the BASE config. The gate does not run it as-is: scripts/hook_mutation.sh (and gate_ci.sh
+# --full) copy it, append a [cosmic-ray.filters.git-filter] section naming the diff base, and run
+# `cr-filter-git` so mutants outside the phase's changed lines are skipped. Every mode is diff-scoped
+# now — a phase is judged on the code it changed, not on the whole package.
+#
 # Point module-path at the package under test and test-command at how to run the suite.
-# For REFACTOR work the pipeline generates a diff-scoped copy (module-path limited to changed files)
-# so mutation only targets the changed surface.
+# module-path accepts a string OR a list of paths/files.
+#
+# The verdict is deterministic and computed by scripts/mutation_score.py — NOT by a model and NOT by
+# `cr-rate`. (cr-rate fails open three ways: it counts skipped mutants as kills, reports 0% survival
+# for an empty session, and silently ignores `--fail-over 0`.) The gate runs `cosmic-ray baseline`
+# first, because a mutant counts as killed whenever the test command fails — so a broken suite would
+# otherwise score a perfect 1.0.
+#
+# Tuning (env):
+#   MUTATION_MIN_SCORE   minimum score to pass, in [0,1]. Default 0.85. NOT 1.0 on purpose:
+#                        demanding zero survivors turns the Test-Author into a mutant-farming loop.
+#   MUTATION_BASE        diff base for scoping. Default: merge-base with the default branch.
 #
 # Sanity check once:
-#   cosmic-ray init cosmic-ray.toml session.sqlite \
+#   cosmic-ray baseline cosmic-ray.toml \
+#     && cosmic-ray init cosmic-ray.toml session.sqlite \
 #     && cosmic-ray exec cosmic-ray.toml session.sqlite \
-#     && cr-rate session.sqlite
+#     && python3 scripts/mutation_score.py --json session.sqlite
 [cosmic-ray]
-module-path = "src"                # your package/dir under test
+module-path = "src"                # your package/dir under test (string or list)
 timeout = 30.0
 excluded-modules = []
-test-command = "pytest -x -q"
+test-command = "pytest -x -q --ignore=tests/e2e"   # e2e is feature-level; not a mutation signal
 
 [cosmic-ray.distributor]
 name = "local"

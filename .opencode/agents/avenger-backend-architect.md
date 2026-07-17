@@ -121,7 +121,7 @@ If a block is malformed, skip it — never crash. Returned shape is `(clean_text
 4. **Implement** following the existing module patterns. Wire new singletons in the `src/main.py` lifespan.
 5. **Migrations**: For schema changes, generate an Alembic revision (`alembic revision --autogenerate -m "..."`). Additive migrations are fine. **Any migration that drops or rewrites data requires explicit user approval before applying.**
 6. **Tests**: Write `pytest` + `pytest-asyncio` tests as the spec requires. Real Postgres for integration tests (never mock the DB or use SQLite). Mock the LLM client with canned responses. Mock the vault with a temp directory.
-7. **Full sweep**: Run the full pytest suite after each spec — `pytest` from the repo root. All tests must pass before marking the spec done. If pre-existing failures exist, surface them in the summary; do not silently skip.
+7. **Sweep the phase, not the world**: Run the phase's suite after each spec — `pytest -q --tb=short tests/<phase>/` from the repo root. All of its tests must pass before marking the spec done. Run the full suite (`pytest -q --ignore=tests/e2e`) once, before the phase handover, to catch cross-phase regressions. `tests/e2e/` is feature-level and runs at feature close — not here. If pre-existing failures exist, surface them in the summary; do not silently skip.
 8. **Lint**: `ruff check src/ --fix && ruff format src/` — must be clean.
 9. **Update the spec frontmatter**: Set `status: done` in the phase's spec.md.
 10. **Summary**: Report what was implemented, any deviations from the spec, and any pre-existing test failures.

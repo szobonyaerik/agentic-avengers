@@ -41,29 +41,39 @@ genuinely wrong test routes back to you.
    behaviors already broken before your change, **report them**; do not fix them, do not fold them into
    this spec's contract, and do not let them expand scope. They are out of the blast radius.
 
-5. **Scope mutation to the changed surface.** Refactor mode runs **cosmic-ray diff-scoped**: the
-   mutation config's `module-path`/filters are limited to the files the spec's *change* set touches, so
-   mutants are only planted where behavior is actually changing. (The verifier generates this
-   diff-scoped `cosmic-ray.toml` from the changed files — see `mutation-interpret` + `pipeline-conventions`.)
+5. **Mutation is already diff-scoped — you don't configure it.** Every mode now runs cosmic-ray
+   scoped to the phase's diff: `scripts/hook_mutation.sh` appends a `[cosmic-ray.filters.git-filter]`
+   section naming the diff base and runs `cr-filter-git`, which skips mutants outside the changed
+   lines. Mutants are only planted where behavior actually changed. You do not hand-write a
+   diff-scoped config; if you think the scope is wrong, say so in the handover rather than editing
+   `cosmic-ray.toml`. (See `mutation-interpret` + `pipeline-conventions` §8.)
 
 6. **Confirm the split state, then freeze.** Run `pytest -q tests/<phase>/`: preserve tests **green**,
    change tests **RED**. Record every test in `test-mapping.md` with its `preserve`/`change` tag and
    spec id, and declare the suite frozen.
 
+## Level: pin behavior at the seam
+Both partitions follow the pipeline default, `level: integration` — characterize and test through the
+public seam (the entry point a caller uses), not the internals. This matters more here than anywhere
+else: a *preserve* test that asserts on an internal helper pins the **current implementation** rather
+than the behavior, so the refactor you are guarding breaks it by design and you get a route-back on a
+test that was never wrong. Pin what the caller observes and the refactor is free to move everything
+behind it. `narrow` needs a justification, exactly as in greenfield.
+
 ## test-mapping.md additions
-Add a `partition` column:
+Add a `partition` column alongside the standard `level`/`justification`:
 
 ```markdown
-| test | spec id | type | partition |
-|---|---|---|---|
-| test_existing_orders_still_fill | R3.1.1 | characterization | preserve |
-| test_new_trailing_stop_triggers | R3.1.4 | positive | change |
-| test_trailing_stop_ignores_noise | R3.1.4 | negative | change |
+| test | spec id | type | level | justification | partition |
+|---|---|---|---|---|---|
+| test_existing_orders_still_fill | R3.1.1 | characterization | integration | — | preserve |
+| test_new_trailing_stop_triggers | R3.1.4 | positive | integration | — | change |
+| test_trailing_stop_ignores_noise | R3.1.4 | negative | integration | — | change |
 ```
 
 ## Done when
 - Every requirement is partitioned preserve vs change; the split is explicit.
 - Preserve tests are green against current code (regression guard); change tests are RED.
+- Every test pins its behavior at a seam; any `narrow` row carries a justification.
 - Any pre-existing failures are reported, not adopted or fixed.
-- The diff-scoped mutation surface (changed files) is identified for the verifier.
-- `test-mapping.md` records partition + spec id; the suite is declared frozen.
+- `test-mapping.md` records partition + level + spec id; the suite is declared frozen.

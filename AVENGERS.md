@@ -42,9 +42,13 @@ hands-on setup to configure it for a real project.
 - **Quality wall = automated Fidelity Gate AND human grill-me review** (both, composed).
 - **Multi-spec phases**: a phase holds one or more numbered specs `<n>.<k>`; requirement IDs
   `R<n>.<k>.<m>`; the **Verifier runs once per phase**, after every spec in it is green.
-- **Three test-author modes**: greenfield · migration · refactor (brownfield).
-- **Mutation via cosmic-ray** (replaces mutmut): session-based, diff-scopable for refactor mode; one
-  model call per phase interpreting survivors.
+- **Three test-author modes**: greenfield · migration · refactor (brownfield). Plus **e2e-author**,
+  once per feature at close — not selected by `work_kind`.
+- **Tests are integration-level by default**; `narrow` needs a written justification. Requirements are
+  pitched at a **seam**, enforced from the Spec Writer down through both spec gates.
+- **Mutation via cosmic-ray** (replaces mutmut): session-based, **diff-scoped in every mode**,
+  baseline-guarded, with a **deterministic verdict** at `MUTATION_MIN_SCORE` (default 0.85 — not 100%).
+  Zero model calls on a clean phase; one call to interpret survivors only when below threshold.
 - **codemap.py** (real, tree-sitter, multi-language) replaces the old cartographer.
 - **Break-glass bypass**: logged + visible, never silent.
 - **Versioned install with update detection**: `scripts/install.sh <target> [--check]` vendors the
@@ -90,16 +94,39 @@ firing automatically on spec write; grill-me is the human judgment pass that fol
 NO-GO` **and** `review_status: approved`.
 
 ### 3.2 The three test-author modes (set by `work_kind`)
-- **greenfield** (`skills/tdd-red-author`): ≥1 positive + ≥1 negative RED test per `R<n>.<k>.<m>`;
-  confirm all RED; lock.
+- **greenfield** (`skills/tdd-red-author`): ≥1 positive + ≥1 negative RED test per `R<n>.<k>.<m>`,
+  each driven through the requirement's **seam**; confirm all RED; lock.
 - **migration** (`skills/migration-test-author`): inventory → assess coverage (flag gaps) → port
   without changing assertions (parity) → characterize gaps → freeze. Mutation proves the inherited
-  suite catches regressions.
+  suite catches regressions. **Exempt from the integration default** — parity outranks it, so ported
+  tests keep their original level.
 - **refactor / brownfield** (`skills/brownfield-test-author`, NEW — pioneer it here): **partition the
   blast radius.** Characterize-and-freeze the surrounding behavior that must NOT regress; write fresh
   RED tests for the behavior that IS changing; the spec declares which requirements are *preserve* and
-  which are *change*. **Scope cosmic-ray to the changed surface** (diff-scoped). Surface pre-existing
-  failures; never adopt or fix-creep into them.
+  which are *change*. Surface pre-existing failures; never adopt or fix-creep into them.
+  (Diff-scoped mutation is no longer this mode's special case — see §3.3, every mode is scoped now.)
+
+### 3.3 Test level: integration by default
+Every test drives its requirement through a **seam** — the public entry point a caller actually uses
+(HTTP handler, service method, CLI) — with real collaborators wired up. Mock only what crosses a trust
+or cost boundary (third-party API, LLM, vault).
+
+`test-mapping.md` carries a `level` column: `integration` (default) · `e2e` · `narrow`. A **`narrow`
+test requires a written justification** and is permitted only when a requirement has no reachable seam.
+Requirements with no integration surface of their own (pure parsers, mappers, helpers) get **no
+dedicated test** — they are covered transitively; if that hides a blind spot, the mutation gate names it.
+
+Why: tests bound to internal structure are the ones rewritten on every refactor, which is what made the
+frozen contract expensive. The upstream half of this rule lives in the Spec Writer and both spec gates —
+a requirement pitched *below* the seam mints a narrow test no matter what the Test-Author intends, so
+"observable at a seam" is now part of the Testability bar.
+
+### 3.4 Feature-level e2e (`skills/e2e-author`)
+**1-3 tests, 5 is a hard ceiling**, written **once per feature after the final phase is green** — not
+per phase, and not selected by `work_kind`. They prove the assembled system delivers the goal in
+`overview.md`, trace to that goal rather than a spec id (the single exception to "no spec id → no
+test"), live in `tests/e2e/<feature>/`, and are recorded in `e2e-mapping.md`. Excluded from the
+mutation gate and from the per-edit verifier hook; they run at feature close and in CI.
 
 ## 4. Deltas to execute
 
@@ -135,8 +162,10 @@ NO-GO` **and** `review_status: approved`.
 - `task-analyst`: capture `work_kind: greenfield|migration|refactor`; for migration record the
   existing-test situation; for refactor record preserve-vs-change intent.
 - Skills: keep/clean `tdd-red-author`; add `migration-test-author`; add `brownfield-test-author`
-  (§3.2). Add a `mutation-scope` note: refactor mode runs cosmic-ray diff-scoped.
-- `test-author` agent: select mode by `work_kind`; keep all three hard boundaries.
+  (§3.2); add `e2e-author` (§3.4). Mutation scope is no longer a per-mode concern — the gate
+  diff-scopes every mode automatically (§I).
+- `test-author` agent: select mode by `work_kind`; keep all three hard boundaries; apply the
+  integration-level default (§3.3) across every mode except migration (parity outranks it).
 
 ### E. codemap
 - Drop the real `scripts/codemap.py` in (tree-sitter; Python rich, Java, C; C++ needs a `cpp` spec).
@@ -155,21 +184,37 @@ NO-GO` **and** `review_status: approved`.
 
 ### I. Swap mutmut → cosmic-ray
 - Prereqs: add `cosmic-ray`, drop `mutmut`.
-- Add a repo-root `cosmic-ray.toml` (template in §9). Refactor mode generates a **diff-scoped** config
-  (module-path/filters limited to the changed files).
-- In `gate_runner.py` / `hook_verifier.sh` / `.opencode/plugin/pipeline-gates.ts` / `gate_ci.sh`,
-  replace the mutmut call with the cosmic-ray session flow:
+- Add a repo-root `cosmic-ray.toml` (template in §9). **Every mode is diff-scoped** (not just
+  refactor): the gate appends a `[cosmic-ray.filters.git-filter]` section naming the diff base and runs
+  `cr-filter-git`, which skips mutants outside the phase's changed **lines**.
+- The session flow in `scripts/hook_mutation.sh` / `.opencode/plugin/pipeline-gates.ts` / `gate_ci.sh`:
   ```
-  cosmic-ray init cosmic-ray.toml session.sqlite
-  cosmic-ray exec cosmic-ray.toml session.sqlite
-  cosmic-ray dump session.sqlite        # survivors → fed to the model (one call per phase)
-  cr-rate session.sqlite                # quick survival-rate score for the threshold check
+  cosmic-ray baseline <scoped.toml>                  # suite must be green FIRST — see below
+  cosmic-ray init     <scoped.toml> session.sqlite
+  cr-filter-git --config <scoped.toml> session.sqlite # skip mutants outside the diff
+  cosmic-ray exec     <scoped.toml> session.sqlite
+  python3 scripts/mutation_score.py --min-score $MUTATION_MIN_SCORE session.sqlite
+  cosmic-ray dump session.sqlite                     # survivors → model, only when below threshold
   ```
-  Keep the "send the report to the model, don't parse it" philosophy — feed `dump` output to
-  `prompts/mutation-interpret.md`. Update that rubric to cosmic-ray's shape (survivors as job-id +
-  location + operator). Mutation score = 1 − survival rate; below threshold → route survivors to the
-  test-author. Python/Java fail-closed (cosmic-ray for Python, PIT for Java), C++ advisory.
-- Fail closed: a cosmic-ray run that errors or yields no verdict stops.
+- **The verdict is deterministic, not a model call and not `cr-rate`.** `scripts/mutation_score.py`
+  computes it; the model is called *only* when the score is already below threshold, purely to turn
+  each survivor into the missing test case. A clean phase costs zero gate tokens.
+- **Why not `cr-rate --fail-over`** (all three verified against cosmic-ray 8.4.6, not assumed):
+  1. `WorkResult.is_killed` is `test_outcome != SURVIVED`, and filtered jobs are stored with
+     `test_outcome=None` → **skipped mutants count as kills**; a fully-filtered session scores 1.0.
+  2. `survival_rate()` returns 0 for an empty session → a broken `module-path` reports a clean run.
+  3. `--fail-over 0` is falsy in `if fail_over and ...` → demanding a perfect score silently disables
+     the check. (Confirmed live: `cr-rate --fail-over 0` exits 0 on a 100%-survival session.)
+- **Baseline guard.** A mutant counts as killed whenever the test command fails, so a suite that is
+  already broken scores a **perfect 1.0**. The gate runs `cosmic-ray baseline` first and refuses to
+  score until the unmutated suite is green. (Observed: with an import error in the suite, all 7 fixture
+  mutants reported `killed`.)
+- **Threshold `MUTATION_MIN_SCORE`, default 0.85 — deliberately not 1.0.** Demanding zero survivors is
+  what turns the Test-Author into a mutant-farming loop and multiplies narrow tests bound to internals.
+  Below threshold → survivors route to the test-author. Python/Java fail-closed (cosmic-ray for Python,
+  PIT for Java), C++ advisory.
+- Fail closed: a cosmic-ray run that errors, a failing baseline, or a session that cannot be scored
+  honestly (no mutants generated, nothing actually tested) stops.
 
 ### G. Break-glass bypass
 - `gate_ci.sh` + hooks/plugin: `GATE_BYPASS="reason"` overrides a failing gate, appends
@@ -268,17 +313,28 @@ Drive agents with `@task-analyst "…"` (see `AGENTS.md`).
 Create `cosmic-ray.toml` at the project root, pointing at your code and test command:
 ```toml
 [cosmic-ray]
-module-path = "src"                # your package/dir under test
+module-path = "src"                # your package/dir under test (string OR list of paths/files)
 timeout = 30.0
 excluded-modules = []
-test-command = "pytest -x -q"
+test-command = "pytest -x -q --ignore=tests/e2e"   # e2e is feature-level; not a mutation signal
 
 [cosmic-ray.distributor]
 name = "local"
 ```
-Sanity check once: `cosmic-ray init cosmic-ray.toml s.sqlite && cosmic-ray exec cosmic-ray.toml s.sqlite && cr-rate s.sqlite`.
-For **refactor** work the pipeline generates a diff-scoped copy of this config (module-path limited to
-the changed files) so mutation only targets the changed surface.
+Sanity check once:
+```bash
+cosmic-ray baseline cosmic-ray.toml \
+  && cosmic-ray init cosmic-ray.toml s.sqlite \
+  && cosmic-ray exec cosmic-ray.toml s.sqlite \
+  && python3 scripts/mutation_score.py --json s.sqlite
+```
+This is the **base** config; the gate never runs it as-is. For **every** work_kind it copies this file,
+appends a `[cosmic-ray.filters.git-filter]` section naming the diff base, and runs `cr-filter-git` so
+only mutants on the phase's changed lines are scored.
+
+Score with `scripts/mutation_score.py`, not `cr-rate` — `cr-rate` counts skipped mutants as kills,
+reports 0% survival for an empty session, and ignores `--fail-over 0`. Tune with `MUTATION_MIN_SCORE`
+(default `0.85`) and `MUTATION_BASE` (default: merge-base with the default branch).
 
 ### 9.5 Generate the codemap
 ```bash

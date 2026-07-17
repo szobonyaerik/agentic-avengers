@@ -59,12 +59,14 @@ What this spec delivers — and explicitly what it does NOT (deferred to a later
 
 ## Requirements
 Each requirement has a stable id R<n>.<k>.<m> so tests can trace to it.
-- R<n>.<k>.1 — <single, verifiable behavior>
+Each is ONE behavior observable at a seam — a caller-visible outcome, not an internal step.
+- R<n>.<k>.1 — <single, verifiable behavior, observable through a public entry point>
 - R<n>.<k>.2 — …
 
 ## Acceptance criteria
 For each requirement: the observable pass condition AND at least one failure/edge condition,
-so the Test-Author can write paired pass/fail tests.
+so the Test-Author can write paired pass/fail tests. State them in terms of what a caller of the
+seam observes.
 - R<n>.<k>.1 — passes when: …; fails when: …
 
 ## Interfaces / contracts
@@ -95,6 +97,17 @@ Until both hold, do not hand off — the tests do not lock.
 - **Concrete**: Include actual file paths, function signatures, data types — no hand-waving.
 - **Stable requirement IDs**: Every requirement gets an id `R<n>.<k>.<m>` (e.g. `R1.1.1`, `R1.1.2`). These IDs are the contract — the Test-Author traces each test to one in `test-mapping.md`.
 - **Paired acceptance criteria**: Every requirement must specify at least one pass condition AND at least one failure/edge condition. This feeds the Test-Author's paired positive/negative RED tests.
+- **Observable at a seam**: A requirement is one behavior a **caller** can observe through a public
+  entry point (HTTP handler, service method, CLI) — never an internal step. Write "a replayed delivery
+  does not create a second row", not "the dedup helper returns True for a seen key". Split by
+  observable outcome, not by function.
+  This is load-bearing: the Test-Author writes ≥1 positive + ≥1 negative test per requirement, at the
+  level the requirement is pitched. A requirement written below the seam mints tests bound to
+  internals, and those are the tests that get rewritten on every refactor. Requirements pitched at the
+  seam produce integration tests by construction — and fewer of them, because one seam-level behavior
+  absorbs several internal steps.
+  If a behavior genuinely has no caller-visible surface, it is not a requirement of its own — it is an
+  implementation detail of one that does. Fold it in.
 - **Ordered by dependency**: Specs are numbered in dependency/risk order. `depends_on` lists prior spec ids.
 - **Spec-only output**: Produce spec files only. No implementation code, no tests — those belong to the Backend/Frontend Architect and Test-Author respectively.
 

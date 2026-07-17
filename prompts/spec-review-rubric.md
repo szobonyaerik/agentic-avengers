@@ -17,6 +17,12 @@ Universal:
    "and"-compound requirements hiding two behaviors under one id).
 2. **Verifiable** — each requirement can become a concrete pass/fail test; no unmeasurable wording
    ("handles gracefully", "fast enough").
+2b. **Observable at a seam** — each requirement is stated as an outcome a **caller** observes through
+   a public entry point (HTTP handler, service method, CLI), not as an internal step. "A replayed
+   delivery does not create a second row" clears the bar; "the dedup helper returns True for a seen
+   key" does not — it is pitched below the seam and will mint a frozen test bound to implementation
+   detail. Flag it and name the caller-visible restatement. A requirement whose only verification is
+   from inside a module is a finding; merely *mentioning* an internal module is not.
 3. **Stable IDs** — every requirement carries an `R<n>.<k>.<m>` id.
 4. **Paired criteria** — every requirement states ≥1 pass condition AND ≥1 failure/edge condition.
 5. **Edge cases** — boundaries, duplicates, empty/oversized input, unauthorized paths are specified.

@@ -8,7 +8,12 @@ jobs:
   gates:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 is required — the mutation gate diff-scopes via `git merge-base HEAD <base>`,
+      # and the default shallow clone has no merge-base, which silently falls back to mutating the
+      # entire module-path (correct, but slow and it re-mutates every earlier phase).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -25,4 +30,9 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GATE_PROVIDER: openrouter
           AUTHOR_FAMILY: anthropic
+          # Mutation gate threshold. Override repo-wide with the MUTATION_MIN_SCORE variable.
+          MUTATION_MIN_SCORE: ${{ vars.MUTATION_MIN_SCORE || '0.85' }}
+          # Scope mutants to this PR's diff; on a push to main there is no PR base, so gate_ci.sh
+          # falls back to the merge-base with the default branch.
+          MUTATION_BASE: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/gate_ci.sh --full

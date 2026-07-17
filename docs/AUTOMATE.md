@@ -30,18 +30,24 @@ task-analyst → solution-architect → implementation-planner → spec-writer
   → (fidelity gate auto) → (spec-review auto)                      # per spec
   → per phase, per spec: test-author → backend/frontend-architect
   → handover  → (per-phase verifier + cosmic-ray mutation, auto)
-  → next phase … → ship
+  → next phase … → e2e-author (once, after the final phase) → ship
 ```
 Route-backs it must honor (all already emitted by the gates):
 - fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate.
 - verifier code failure → back to `avenger-backend-architect`.
-- surviving mutant / coverage gap / breaker counterexample → back to `avenger-test-author`.
+- mutation score below `MUTATION_MIN_SCORE` / breaker counterexample → back to `avenger-test-author`.
 - Stop after N retries on the same stage and surface the report (don't loop forever).
+- **A mutation route-back loop is a signal, not a grind.** The gate passes at a threshold (default
+  0.85), not at zero survivors. If the same phase bounces twice, stop and surface it: either the
+  requirement is pitched below the seam (→ spec-writer) or the threshold is wrong for this codebase
+  (→ ask). Do not let the Test-Author farm narrow tests to chase mutants.
 
 ### Hard rules it must keep (same invariants as manual)
 - **Never edits `tests/`** except via the Test-Author (frozen contract).
 - **Never bypasses a gate** except with an explicit `GATE_BYPASS="reason"` (logged, visible).
-- Respects `work_kind` (greenfield | migration | refactor) for the Test-Author mode.
+- Respects `work_kind` (greenfield | migration | refactor) for the Test-Author mode; `e2e-author` is
+  not selected by `work_kind` — it runs once, at feature close.
+- **Integration-level by default**; a `narrow` test needs a written justification in `test-mapping.md`.
 - Stops-and-explains on any fail-closed gate rather than pushing past it.
 
 ### How to build it (canonical-source driven)
