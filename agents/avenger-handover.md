@@ -75,31 +75,57 @@ Generate a git commit message:
 - Max 72 characters, lowercase, imperative mood
 - Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
 
-## Step 4 — Codebase Docs Staleness Check
+## Step 4 — Regenerate the codemap (MANDATORY — always the last step)
 
-Check if `codebase/MOC.md` exists. If it does:
+**This is a hard rule. The phase does not end until the codemap has been regenerated.** No staleness
+check, no threshold, no "it's probably fine" — you just run it, every time, as the final action.
 
-1. Read the `Last updated:` date from the MOC.
-2. Run: `git diff --name-only --since="<last_updated_date>" -- '*.py' '*.ts' '*.tsx' '*.js' '*.jsx' | wc -l`
-3. If the count is **10 or more**, add a reminder to the final output:
-   ```
-   📚 Codebase docs are ~[N] source files behind (last updated: [date]).
-      Run: python scripts/codemap.py . --lang <python|java|c> --output codebase
-   ```
+Why it is unconditional: `codebase/MOC.md` is what the Solution Architect and every implementer read
+to learn which module owns what. The phase you just closed is exactly the thing that made it stale.
+If you skip this, the *next* phase starts by reading a map of a codebase that no longer exists, and
+plans against modules that moved — and nobody will notice, because a stale map looks identical to a
+fresh one. A judgement call about whether it's "stale enough" is how that happens, so there is no
+judgement call.
 
-If `codebase/MOC.md` does not exist, skip this step silently.
+Run it from the repo root:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/codemap.py" . --lang <langs> --output codebase
+```
+
+- **`--lang`**: comma-separated, from `python,kotlin,java,c`. Use `$CODEMAP_LANG` if the project sets
+  it; otherwise infer from what the repo actually contains and say which you chose. Getting this wrong
+  produces an empty map, so check rather than assume `python`.
+- It is **incremental** (a manifest cache means only changed files are re-resolved), so this is cheap
+  per phase. Do not pass `--force` unless the map is visibly wrong.
+- It uses an LLM to resolve each module's *purpose* (`--provider ollama|openrouter|openai`). That
+  prose is the valuable half of the map.
+
+**If the LLM provider is unreachable**, do not fail the handover and do not silently skip: re-run with
+`--no-llm` (structure + docstrings only, works offline) and say so plainly in your final output —
+"structure regenerated, purposes NOT refreshed, provider unreachable". A partial map that is labelled
+partial is useful; one that is silently partial is a trap.
+
+**If codemap fails entirely**, report it loudly and do **not** print "Handover complete". State that
+the next phase will be starting from a stale map, and what to run.
 
 ## Final Output
 
 After all steps, output:
 
 ```
-✅ Handover complete.
+✅ Handover complete. Codemap regenerated (<langs>, <N> files).
 
 Run to finish:
   git add -A
   git commit -m "[generated message]"
   Then start a fresh session for the next phase.
+```
 
-[📚 Codebase docs reminder here, if triggered]
+If the codemap did not fully regenerate, replace the first line with the honest version, e.g.:
+
+```
+⚠ Handover written, but the codemap is NOT current.
+  <what failed> — the next phase would start from a stale map.
+  Fix and run: python3 scripts/codemap.py . --lang <langs> --output codebase
 ```

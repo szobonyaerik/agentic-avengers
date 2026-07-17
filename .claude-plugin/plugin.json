@@ -1,10 +1,19 @@
 {
   "name": "plan-build-verify",
   "description": "Spec-driven, test-first agentic development pipeline: isolated spec review, a cross-family fidelity gate, locked RED tests, and mutation + adversarial verification.",
-  "version": "0.2.1",
-  "author": { "name": "Erik" },
+  "version": "0.3.0",
+  "author": {
+    "name": "Erik"
+  },
   "license": "MIT",
   "homepage": "https://github.com/szobonyaerik/agentic-avengers",
   "repository": "https://github.com/szobonyaerik/agentic-avengers",
-  "keywords": ["agents", "tdd", "spec-driven", "mutation-testing", "code-review", "pipeline"]
+  "keywords": [
+    "agents",
+    "tdd",
+    "spec-driven",
+    "mutation-testing",
+    "code-review",
+    "pipeline"
+  ]
 }

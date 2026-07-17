@@ -108,5 +108,10 @@ Phase 2 reads these rows; delivery_id is the dedup key it must not re-create.
 `handover.md` exists with `status: green`, a ≤5-line summary, all artifact links, the phase's
 `mutation_score`, and a `next` value (a phase slug, `e2e` if this was the last phase, or `ship`).
 
+**And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
+codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you
+just closed is what made `codebase/MOC.md` stale; the next phase reads that map to learn which module
+owns what. A phase that ends without it hands the next one a map of a codebase that no longer exists.
+
 If any gate was overridden with `GATE_BYPASS`, that is recorded here too — never silently. Name the
 gate and the reason, exactly as it appears in `gate-overrides.log`.
