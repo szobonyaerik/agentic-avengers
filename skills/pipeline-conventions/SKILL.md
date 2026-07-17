@@ -45,8 +45,20 @@ Every spec passes both, in order, before the Test-Author touches it:
 A spec reaches the Test-Author only when `fidelity_verdict != NO-GO` **and** `review_status: approved`.
 
 ## 4. Tests are a frozen contract
-- Only the **Test-Author** writes or edits files under `tests/`.
-- The **Implementer never edits tests** — it changes the implementation to satisfy them.
+**The principle: whoever changed the code may not write or change the test that judges it.** Everything
+below follows from that, and it is the reason the suite is worth anything — a test its own author's
+code has to pass proves only that the author agreed with themselves.
+
+- Only the **Test-Author** writes or edits files under `tests/`, and the Test-Author never writes
+  production code.
+- The **Implementer never touches `tests/`** — not to fix, relax, skip, `xfail`, or delete. It changes
+  the implementation to satisfy them. This binds every implementing agent (backend, frontend,
+  bug-hunter), for every reason, including "the test is obviously wrong".
+- The **bug-hunter** fixes code, so it may not write its own regression test: reproduce outside
+  `tests/`, fix, then route the reproduction to the Test-Author to write and lock.
+- The **Breaker** is the one non-Test-Author that may land a file under `tests/` — and only because it
+  **never edits production code**, so it cannot grade its own work. It writes a failing counterexample
+  and routes it to the Test-Author, who traces, owns, and locks it.
 - If a test is genuinely wrong, route back to the Test-Author; never reshape a test to make code pass.
 - Every phase test traces to a spec id `R<n>.<k>.<m>` (recorded in `test-mapping.md`). No spec id →
   the test should not exist. **The one exception is the feature-level e2e suite** (§4b), which traces

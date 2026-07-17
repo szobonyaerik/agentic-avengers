@@ -115,12 +115,14 @@ If a block is malformed, skip it — never crash. Returned shape is `(clean_text
 
 ## Implementation Workflow (per spec)
 
-1. **Read the spec end-to-end** before touching code. Note acceptance criteria and testing requirements.
+1. **Read the spec end-to-end** before touching code, then **read the locked tests** for it in `tests/<phase>/` — they are the contract you must satisfy, and they are more precise than the prose. Note the acceptance criteria and which `R<n>.<k>.<m>` each test traces to (`test-mapping.md`).
 2. **Read the relevant `codebase/<module>.md` notes** for every module you'll touch.
 3. **Phase check**: If the spec item is marked for a future phase (see `JARVIS_PROJECT_SPEC.md` Section 15), STOP and ask the user — present the phase mismatch and offer to (a) skip, (b) continue anyway, or (c) stub the future interface. Wait for the answer before proceeding.
 4. **Implement** following the existing module patterns. Wire new singletons in the `src/main.py` lifespan.
 5. **Migrations**: For schema changes, generate an Alembic revision (`alembic revision --autogenerate -m "..."`). Additive migrations are fine. **Any migration that drops or rewrites data requires explicit user approval before applying.**
-6. **Tests**: Write `pytest` + `pytest-asyncio` tests as the spec requires. Real Postgres for integration tests (never mock the DB or use SQLite). Mock the LLM client with canned responses. Mock the vault with a temp directory.
+6. **Tests: you never write them.** The Test-Author wrote the locked RED suite before you started; your job is turning it green by changing `src/`, never by touching `tests/`. If a test looks wrong, is missing a case, or needs a fixture that doesn't exist, **route it back to the Test-Author** — do not write, edit, relax, skip, or xfail it. This is the frozen contract (`pipeline-conventions` §4), and it is what makes the tests worth anything: a suite the implementer can edit only ever proves the implementer agreed with themselves.
+
+   Your code must be testable against the environment those tests assume: **real Postgres** (never SQLite, never a mocked DB), the LLM client mockable through the `LLMClient` interface, and the vault redirectable to a temp directory. If a locked test can't reach your code because you wired a dependency in a way that can't be substituted, that's a defect in your code, not in the test.
 7. **Sweep the phase, not the world**: Run the phase's suite after each spec — `pytest -q --tb=short tests/<phase>/` from the repo root. All of its tests must pass before marking the spec done. Run the full suite (`pytest -q --ignore=tests/e2e`) once, before the phase handover, to catch cross-phase regressions. `tests/e2e/` is feature-level and runs at feature close — not here. If pre-existing failures exist, surface them in the summary; do not silently skip.
 8. **Lint**: `ruff check src/ --fix && ruff format src/` — must be clean.
 9. **Update the spec frontmatter**: Set `status: done` in the phase's spec.md.
@@ -133,16 +135,18 @@ Never commit. That is handled by the user or a seperate agent!
 ## What You Deliver
 
 For each spec:
-1. **Working code** that passes the spec's acceptance criteria and obeys the 10 critical rules.
-2. **Tests** as specified — unit + integration with real Postgres + LLM/vault mocks.
-3. **Migrations** if schema changed (additive without asking; destructive only with approval).
-4. **Clean ruff** on every touched file.
-5. **Full pytest pass** (or surfaced pre-existing failures).
-6. **Updated phase spec status** to `status: done`.
-7. **Summary** of changes, deviations, and follow-ups.
+1. **Working code** that turns the locked tests GREEN, satisfies the spec's acceptance criteria, and obeys the 10 critical rules.
+2. **Migrations** if schema changed (additive without asking; destructive only with approval).
+3. **Clean ruff** on every touched file.
+4. **A green phase suite** — `pytest -q --tb=short tests/<phase>/` — with no test file modified. `git status` must show zero changes under `tests/`; if it doesn't, you broke the contract.
+5. **Updated phase spec status** to `status: done`.
+6. **Summary** of changes, deviations, follow-ups, and anything you routed back to the Test-Author.
+
+You do **not** deliver tests. If the phase needs a test that doesn't exist, that is a route-back, not a deliverable.
 
 ## What You Do NOT Do
 
+- You do **NOT** write, edit, delete, relax, skip, or `xfail` anything under `tests/` — **ever**, for any reason, including "the test is obviously wrong" or "it just needs one small fixture". Tests are a frozen contract owned by the Test-Author; you change `src/` to satisfy them and route every test concern back. Writing the test that judges your own code is the one thing that makes the whole pipeline meaningless.
 - You do **NOT** introduce Redis, Celery, Kubernetes, SQLite, or any message queue — APScheduler + async Python handles everything.
 - You do **NOT** add a web frontend — Telegram only (ADR-002).
 - You do **NOT** use synchronous libraries (`requests`, sync `psycopg2`, blocking file I/O, `time.sleep`).
