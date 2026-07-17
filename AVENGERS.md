@@ -143,8 +143,10 @@ mutation gate and from the per-edit verifier hook; they run at feature close and
   `docs/features/<feat>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`; IDs `R<n>.<k>.<m>`; paired
   pass/fail acceptance criteria; add the §3.1 frontmatter fields.
 - `skills/pipeline-conventions`: update layout, ID scheme, "verifier runs once per phase".
-- Update path assumptions in `hooks/`, `.opencode/plugin/pipeline-gates.ts`, `gate_ci.sh`,
-  `hook_verifier.sh` (they match `*/src/*` and per-phase paths).
+- Update path assumptions in `hooks/`, `gate_ci.sh`, and `hook_verifier.sh` — the latter derives the
+  phase slug from the written artifact path (`*/phases/<n>-<slug>/…`) rather than guessing.
+  `.opencode/plugin/pipeline-gates.ts` no longer carries path logic of its own: it is a thin adapter
+  that runs the same `scripts/hook_*.sh`, so routing lives in one place.
 
 ### C. Add grill-me to the quality wall
 - New `skills/grill-me/SKILL.md` (interview one question at a time, each with a recommendation;

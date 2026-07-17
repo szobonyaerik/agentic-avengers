@@ -30,6 +30,18 @@ Frontmatter on every artifact: `feature`, `phase` (omit for feature-level), `sta
 - Requirement ids are `R<n>.<k>.<m>` (phase.spec.requirement). Every requirement is single + verifiable,
   carries an id, and has paired pass/fail acceptance criteria.
 - The **Verifier runs once per phase**, after every spec in the phase is green — not per spec.
+- **Gates fire when work is declared done, never mid-implementation.** The Test-Author locks the suite
+  RED before the implementer starts, so red is the *expected* state for the whole build. Firing the
+  verifier on every code edit meant paying a gate model to triage "not finished yet" and stopping the
+  implementer to route it back to itself — that was the pipeline's real context burn. The triggers are:
+  a spec reaching `status: done` (smoke-check that phase's suite) and `handover.md` (the Verifier
+  proper, then mutation). The implementer's own `pytest tests/<phase>/` is the inner loop — free, no
+  model, as often as it likes.
+- **A gate never re-judges work it already judged.** The spec gates fire on any `spec.md` write, so
+  frontmatter-only edits (`status: done`, a verdict stamp) would otherwise re-run a paid gate and
+  re-roll a fresh nondeterministic verdict over an approved spec — able to flip GO to NO-GO with no
+  content change. `scripts/spec_gate_cache.py` hashes the spec **body** per gate; unchanged body →
+  skip, changed body → re-gate (correctly: it is no longer the spec that was approved).
 
 ## 3. The composed quality wall (per spec)
 Every spec passes both, in order, before the Test-Author touches it:

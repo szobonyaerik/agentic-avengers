@@ -1,9 +1,14 @@
 # Plan-Build-Verify pipeline (opencode)
 
 This repository runs the plan-build-verify pipeline. Agents live in `.opencode/agents/`, skills in
-`.opencode/skills/` (the same `SKILL.md` files Claude Code uses). **Gates fire mid-session** via the
-native plugin `.opencode/plugin/pipeline-gates.ts`, and the git floor (pre-commit + CI in
-`scripts/gate_ci.sh`) backstops them — both call `gate_runner.py` on a fresh cross-family model.
+`.opencode/skills/` (the same `SKILL.md` files Claude Code uses). **Gates fire in-session** via the
+plugin `.opencode/plugin/pipeline-gates.ts`, which is an adapter over the same `scripts/hook_*.sh`
+that Claude Code runs — one implementation, two runtimes. The git floor (pre-commit + CI in
+`scripts/gate_ci.sh`) backstops them; all of it calls `gate_runner.py` on a fresh cross-family model.
+
+Gates fire when work is **declared done** (a spec reaching `status: done`, a `handover.md`), never on
+every code edit — tests are locked RED before implementation, so red is the expected state while you
+build. Run `pytest tests/<phase>/` yourself as often as you like; it costs nothing.
 
 ## Conventions (always apply)
 1. **Artifacts** under `docs/features/<feature>/` (feature-level: `task-analysis.md`, `overview.md`,
@@ -66,10 +71,12 @@ python3 scripts/sync_opencode.py
 This re-transpiles `.opencode/agents/` and ensures `.opencode/skills/` is linked. Do not edit
 `.opencode/agents/` by hand — it is generated.
 
-**`.opencode/plugin/pipeline-gates.ts` is the exception:** it is NOT generated. It reimplements the
-gate routing (fidelity, verifier, mutation) natively for opencode, so any change to
-`scripts/hook_*.sh` — thresholds, scoping, fail-closed rules — must be mirrored there by hand. If the
-two drift, the runtimes enforce different rules and only one of them is the one you tested.
+**`.opencode/plugin/pipeline-gates.ts` is not generated either — but it needs no maintenance.** It is
+a thin adapter: it turns an opencode tool event into the same PostToolUse payload and runs the same
+`scripts/hook_*.sh`. The gates have **one** implementation. Change a threshold, a trigger, or a
+fail-closed rule in `scripts/` and both runtimes get it; the plugin does not need editing and must not
+grow logic of its own. (It used to reimplement every gate in TypeScript, and the two copies drifted —
+the TS side kept a zero-survivor mutation gate and an unscoped verifier after the bash side moved on.)
 
 ## Environment
 | var | default | effect |
