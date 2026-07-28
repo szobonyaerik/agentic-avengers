@@ -14,7 +14,13 @@ The model must reply with strict JSON:
 Model ids use the chosen provider's namespace (e.g. deepseek/deepseek-chat,
 google/gemini-2.5-pro). Stdlib only.
 """
-import argparse, json, os, re, subprocess, sys, urllib.request
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
 
 VERDICT_OK = {"GO", "PASS"}
 
@@ -156,6 +162,10 @@ def main():
                     default=os.environ.get("AUTHOR_FAMILY"),
                     help="vendor family of the model that authored the work (e.g. 'anthropic'); "
                          "the gate fails closed if its own model shares this family")
+    ap.add_argument("--emit-json", metavar="PATH",
+                    help="write the full parsed verdict object to PATH (machine-readable). "
+                         "Used by the Verifier review, which needs the findings array, not just "
+                         "the verdict token.")
     ap.add_argument("--print-verdict", action="store_true",
                     help="print the raw verdict token (GO/REVIEW/NO-GO) to stdout and exit 0 for any "
                          "reached verdict; the caller decides. Still fails closed (exit 2) on error.")
@@ -188,6 +198,15 @@ def main():
         sys.exit(2)
 
     v = str(verdict.get("verdict", "")).upper()
+    if args.emit_json:
+        # Written before any exit branch: a NO-GO verdict is exactly when the caller most needs the
+        # findings. Failing to persist them is itself fail-closed.
+        try:
+            with open(args.emit_json, "w", encoding="utf-8") as fh:
+                json.dump(verdict, fh, indent=2)
+        except OSError as e:
+            print(f"[gate_runner] could not write --emit-json {args.emit_json}: {e}", file=sys.stderr)
+            sys.exit(2)
     if args.print_verdict:
         # Hand the token to the caller (e.g. spec-review-auto branches GO/REVIEW vs NO-GO).
         # A verdict was reached, so this is not a fail-closed error -> exit 0.

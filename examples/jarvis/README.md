@@ -1,7 +1,7 @@
 # Worked example — project-grounded agents (Jarvis)
 
 The agents in `agents/` at the repo root are **canonical and generic**: they carry pipeline mechanics
-(the frozen contract, the spec workflow, the boundaries) and learn each project's rules by reading
+(the test-first loop, the Verifier lock, the spec workflow, the boundaries) and learn each project's rules by reading
 that project's `CLAUDE.md`, spec, and `codebase/MOC.md` at run time. That is what makes the plugin
 installable into any repo.
 

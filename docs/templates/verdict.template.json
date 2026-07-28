@@ -1,0 +1,59 @@
+{
+  "feature": "<feature>",
+  "phase": "<n>-<slug>",
+  "run": {
+    "at": "YYYY-MM-DDThh:mm:ssZ",
+    "verifier_family": "<B>",
+    "implementer_family": "<A>",
+    "cross_family_ok": true
+  },
+  "tests": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0
+  },
+  "coverage": {
+    "requirements": 0,
+    "traced": 0,
+    "untraced": []
+  },
+  "test_quality": {
+    "reviewed": true,
+    "scope": {
+      "mode": "targeted",
+      "test_files": [],
+      "dependency_files": [],
+      "expansion_reasons": []
+    },
+    "reviewed_by": "<VERIFIER_GATE_MODEL \u2014 must not be the implementer's family>"
+  },
+  "findings": [
+    {
+      "id": "<12-char hash of kind|spec_id|normalized_target>",
+      "kind": "code",
+      "spec_id": "R<n>.<k>.<m>",
+      "target": "<repo-relative test/file/requirement>",
+      "severity": "blocker",
+      "instruction": "<concrete fix directions for the routed agent>",
+      "route_to": "avenger-backend-architect",
+      "status": "open",
+      "break_glass": false,
+      "waiver_reason": null,
+      "waived_by": null,
+      "waived_at": null
+    }
+  ],
+  "mutation": {
+    "enabled": false
+  },
+  "routed": [
+    {
+      "to": "avenger-backend-architect",
+      "finding_id": "<hash>",
+      "reason": "code",
+      "spec_id": "R<n>.<k>.<m>"
+    }
+  ],
+  "verdict": "fail",
+  "bypassed": false
+}

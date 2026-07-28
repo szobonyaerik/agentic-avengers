@@ -112,15 +112,17 @@ If a block is malformed, skip it — never crash. Returned shape is `(clean_text
 
 ## Implementation Workflow (per spec)
 
-1. **Read the spec end-to-end** before touching code, then **read the locked tests** for it in `tests/<phase>/` — they are the contract you must satisfy, and they are more precise than the prose. Note the acceptance criteria and which `R<n>.<k>.<m>` each test traces to (`test-mapping.md`).
+1. **Read the spec end-to-end** before touching code. Enumerate its `R<n>.<k>.<m>` requirements and the seam each is observable at — that list is your slice queue. Load `skills/tdd`.
 2. **Read the relevant `codebase/<module>.md` notes** for every module you'll touch.
 3. **Phase check**: If the spec item is marked for a future phase (see `JARVIS_PROJECT_SPEC.md` Section 15), STOP and ask the user — present the phase mismatch and offer to (a) skip, (b) continue anyway, or (c) stub the future interface. Wait for the answer before proceeding.
 4. **Implement** following the existing module patterns. Wire new singletons in the `src/main.py` lifespan.
 5. **Migrations**: For schema changes, generate an Alembic revision (`alembic revision --autogenerate -m "..."`). Additive migrations are fine. **Any migration that drops or rewrites data requires explicit user approval before applying.**
-6. **Tests: you never write them.** The Test-Author wrote the locked RED suite before you started; your job is turning it green by changing `src/`, never by touching `tests/`. If a test looks wrong, is missing a case, or needs a fixture that doesn't exist, **route it back to the Test-Author** — do not write, edit, relax, skip, or xfail it. This is the frozen contract (`pipeline-conventions` §4), and it is what makes the tests worth anything: a suite the implementer can edit only ever proves the implementer agreed with themselves.
+6. **You write the tests, test-first, one vertical slice at a time** (`skills/tdd`): one failing test at the requirement's seam in `tests/<feature>/<n>-<slug>/`, confirm it fails for the right reason, then the minimal `src/` change to pass it, then record the row in `test-mapping.md` and take the next slice. Never write the whole suite up front. Never write a test whose expected value is recomputed the way `src/` computes it — the expected value comes from the spec's acceptance criteria.
 
-   Your code must be testable against the environment those tests assume: **real Postgres** (never SQLite, never a mocked DB), the LLM client mockable through the `LLMClient` interface, and the vault redirectable to a temp directory. If a locked test can't reach your code because you wired a dependency in a way that can't be substituted, that's a defect in your code, not in the test.
-7. **Sweep the phase, not the world**: Run the phase's suite after each spec — `pytest -q --tb=short tests/<phase>/` from the repo root. All of its tests must pass before marking the spec done. Run the full suite (`pytest -q --ignore=tests/e2e`) once, before the phase handover, to catch cross-phase regressions. `tests/e2e/` is feature-level and runs at feature close — not here. If pre-existing failures exist, surface them in the summary; do not silently skip.
+   Drive those tests through Jarvis's real environment: **real Postgres** (never SQLite, never a mocked DB), the LLM client mocked only through the `LLMClient` interface (a cost boundary), and the vault redirected to a temp directory. Never mock your own services, repositories, or routers. If a test can't reach your code because you wired a dependency in a way that can't be substituted, that's a defect in your code — fix the wiring, not the test.
+
+   **Once the Verifier passes the phase, its suite is LOCKED** (`pipeline-conventions` §4): you may add a test a later gate demands, but never fix, relax, skip, or `xfail` an existing one.
+7. **Sweep the phase, not the world**: Run the phase's suite after each spec — `pytest -q --tb=short tests/<feature>/<n>-<slug>/` from the repo root. All of its tests must pass before marking the spec done. Run the full suite (`pytest -q --ignore=tests/e2e`) once, before the phase handover, to catch cross-phase regressions. `tests/e2e/` is feature-level and runs at feature close — not here. If pre-existing failures exist, surface them in the summary; do not silently skip.
 8. **Lint**: `ruff check src/ --fix && ruff format src/` — must be clean.
 9. **Update the spec frontmatter**: Set `status: done` in the phase's spec.md.
 10. **Summary**: Report what was implemented, any deviations from the spec, and any pre-existing test failures.
@@ -132,18 +134,19 @@ Never commit. That is handled by the user or a seperate agent!
 ## What You Deliver
 
 For each spec:
-1. **Working code** that turns the locked tests GREEN, satisfies the spec's acceptance criteria, and obeys the 10 critical rules.
+1. **Tests** at the requirement seams in `tests/<feature>/<n>-<slug>/`, each written failing-first and traced to an `R<n>.<k>.<m>` in `test-mapping.md`, and **working code** that turns them GREEN, satisfies the spec's acceptance criteria, and obeys the 10 critical rules.
 2. **Migrations** if schema changed (additive without asking; destructive only with approval).
 3. **Clean ruff** on every touched file.
-4. **A green phase suite** — `pytest -q --tb=short tests/<phase>/` — with no test file modified. `git status` must show zero changes under `tests/`; if it doesn't, you broke the contract.
+4. **A green phase suite** — `pytest -q --tb=short tests/<feature>/<n>-<slug>/` — with no modification to any test locked by a previous Verifier pass.
 5. **Updated phase spec status** to `status: done`.
-6. **Summary** of changes, deviations, follow-ups, and anything you routed back to the Test-Author.
+6. **Summary** of changes, deviations, follow-ups, and anything you routed back to the Spec Writer.
 
 You do **not** deliver tests. If the phase needs a test that doesn't exist, that is a route-back, not a deliverable.
 
 ## What You Do NOT Do
 
-- You do **NOT** write, edit, delete, relax, skip, or `xfail` anything under `tests/` — **ever**, for any reason, including "the test is obviously wrong" or "it just needs one small fixture". Tests are a frozen contract owned by the Test-Author; you change `src/` to satisfy them and route every test concern back. Writing the test that judges your own code is the one thing that makes the whole pipeline meaningless.
+- You do **NOT** write code before a failing test demands it, and you do **NOT** write the whole suite up front.
+- You do **NOT** fix, relax, skip, `xfail`, or delete a **locked** test — one from a phase the Verifier has already passed — for any reason, including "the test is obviously wrong". Adding a test a later gate demands is allowed; weakening an existing one requires a new spec.
 - You do **NOT** introduce Redis, Celery, Kubernetes, SQLite, or any message queue — APScheduler + async Python handles everything.
 - You do **NOT** add a web frontend — Telegram only (ADR-002).
 - You do **NOT** use synchronous libraries (`requests`, sync `psycopg2`, blocking file I/O, `time.sleep`).

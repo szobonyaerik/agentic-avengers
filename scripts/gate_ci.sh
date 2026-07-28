@@ -1,42 +1,40 @@
 #!/usr/bin/env bash
-# Runtime-agnostic gate floor. Runs the pipeline gates against the working tree.
-#   default (pre-commit): fidelity on STAGED specs + pytest              (fast)
-#   --full (CI):          fidelity on ALL specs + pytest + cosmic-ray    (thorough)
-# Provider: --provider <p> or $GATE_PROVIDER (default opencode; CI sets openrouter).
-# Author family: $AUTHOR_FAMILY (default anthropic) — gates fail closed if same-family.
+# Runtime-agnostic gate floor — the MECHANICAL gates, against the working tree.
+#   default (pre-commit): staged-spec artifact checks + pytest                     (fast)
+#   --full (CI):          all artifact checks + cross-family + pytest + mutation   (thorough)
+#
+# NO MODEL RUNS HERE. Model-based gates (the Verifier's triage and test-quality review, the grill-me
+# spec review) run in-chat; this floor only checks their COMMITTED ARTIFACTS — `review_status:
+# approved` on specs, a passing `verdict.json` per phase — plus the suite, the static cross-family
+# assertion, and mutation if a team turned it on. See pipeline-conventions: "Where the models run".
+# The Fidelity Gate is the one model gate in this repo and it runs as an in-session hook
+# (scripts/hook_fidelity.sh), never in CI.
+#
 # Break-glass: GATE_BYPASS="reason" overrides a FAILING gate; logged + visible, never silent.
 # bash 3.2-compatible (macOS default).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
-GATE_RUNNER="$SCRIPT_DIR/gate_runner.py"
-FIDELITY_RUBRIC="$SCRIPT_DIR/../prompts/fidelity-rubric.md"
-MUTATION_RUBRIC="$SCRIPT_DIR/../prompts/mutation-interpret.md"
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 OVERRIDE_LOG="$ROOT/gate-overrides.log"
-AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
-FID_MODEL="${GATE_MODEL:-deepseek/deepseek-chat}"     # GATE_MODEL overrides all gates
-MUT_MODEL="${GATE_MODEL:-google/gemini-2.5-pro}"
 cd "$ROOT"
 
 FULL=0
-PROVIDER="${GATE_PROVIDER:-opencode}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) FULL=1 ;;
-    --provider) PROVIDER="$2"; shift ;;
+    --provider) shift ;;   # accepted and ignored: no model runs in this floor any more
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
 done
-PARGS=(--provider "$PROVIDER" --author-family "$AUTHOR_FAMILY")
 fail=0
 failed_gates=""
 
 record_fail() { fail=1; failed_gates="${failed_gates} $1"; }
 
-# 1) Fidelity gate — changed specs (pre-commit) or all specs (--full)
+# 1) Spec artifact checks — the committed output of the in-chat gates. No model call.
 SPECS=()
 if [ "$FULL" -eq 1 ]; then
   while IFS= read -r f; do [ -n "$f" ] && SPECS+=("$f"); done \
@@ -47,10 +45,83 @@ else
 fi
 for spec in "${SPECS[@]:-}"; do
   [ -n "$spec" ] || continue
-  echo "• fidelity gate: $spec"
-  python3 "$GATE_RUNNER" --rubric "$FIDELITY_RUBRIC" \
-    --model "$FID_MODEL" "${PARGS[@]}" --target "$spec" || record_fail "fidelity:$spec"
+  [ -f "$spec" ] || continue
+  # A spec that has not reached the implementer yet is not a CI failure — only a spec claiming to be
+  # built must carry its approvals.
+  grep -qE '^status:[[:space:]]*(done|in-progress)[[:space:]]*$' "$spec" 2>/dev/null || continue
+  echo "• spec artifacts: $spec"
+  grep -qE '^review_status:[[:space:]]*approved[[:space:]]*$' "$spec" 2>/dev/null \
+    || { echo "  ✗ review_status is not 'approved' — the human spec review never passed." >&2
+         record_fail "spec-review:$spec"; }
+  if grep -qE '^fidelity_verdict:[[:space:]]*NO-GO' "$spec" 2>/dev/null; then
+    echo "  ✗ fidelity_verdict is NO-GO — the spec was routed back and never re-gated." >&2
+    record_fail "fidelity:$spec"
+  fi
 done
+
+# 1b) Verdict artifacts — every phase with a handover must carry a passing Verifier verdict.
+if [ "$FULL" -eq 1 ]; then
+  while IFS= read -r ho; do
+    [ -n "$ho" ] || continue
+    vd="$(dirname "$ho")/verdict.json"
+    echo "• verdict: $vd"
+    if [ ! -f "$vd" ]; then
+      echo "  ✗ no verdict.json — the phase closed without an independent Verifier run." >&2
+      record_fail "verifier:no-verdict"; continue
+    fi
+    v="$(jq -r '.verdict // "missing"' "$vd" 2>/dev/null || echo unparseable)"
+    if [ "$v" != "pass" ]; then
+      echo "  ✗ verdict is '$v'." >&2; record_fail "verifier:$v"
+    else
+      if [ "$(jq -r '.bypassed // false' "$vd" 2>/dev/null)" = "true" ]; then
+        echo "  ⚠ verdict is 'pass' with waived findings (bypassed: true) — visible bypass, not a clean green." >&2
+      fi
+      # Same rule as the in-session hook: a pass must evidence the cross-family test-quality review.
+      rv="$(jq -r '.test_quality.reviewed // false' "$vd" 2>/dev/null)"
+      nf="$(jq -r '[.test_quality.scope.test_files[]?] | length' "$vd" 2>/dev/null || echo 0)"
+      if [ "$rv" != "true" ] || [ "${nf:-0}" -eq 0 ]; then
+        echo "  ✗ verdict is 'pass' but records no completed test-quality review (reviewed=$rv, ${nf:-0} files)." >&2
+        record_fail "verifier:unreviewed"
+      fi
+    fi
+  done < <(find docs/features -type f -name handover.md 2>/dev/null)
+fi
+
+# 1c) Cross-family assertion — on the model that actually FORMS THE JUDGEMENT.
+#     Checking the Verifier agent's own `model:` would be meaningless here: every subagent in this
+#     runtime is Anthropic, so the agent can never differ in family from the implementer. What must be
+#     decorrelated is $VERIFIER_GATE_MODEL, the model scripts/verifier_review.sh sends the tests to.
+model_token () { grep -m1 '^model:' "$1" 2>/dev/null | sed 's/.*:[[:space:]]*//;s/[[:space:]].*//' | tr '[:upper:]' '[:lower:]'; }
+model_family () {
+  case "$1" in
+    claude*|opus*|sonnet*|haiku*) echo anthropic ;;
+    gpt*|o[0-9]*)                 echo openai ;;
+    gemini*|google*)              echo google ;;
+    deepseek*)                    echo deepseek ;;
+    */*)                          model_family "${1#*/}" ;;   # strip a vendor/ or openrouter/ prefix
+    *) return 1 ;;
+  esac
+}
+cross_family_check () {
+  local gate="${VERIFIER_GATE_MODEL:-google/gemini-2.5-pro}" gfam impl itok ifam
+  gfam="$(model_family "$gate")" || { echo "  ✗ unknown VERIFIER_GATE_MODEL family: '$gate'" >&2; return 1; }
+  for impl in "$ROOT/agents/avenger-backend-architect.md" "$ROOT/agents/avenger-frontend-developer.md"; do
+    [ -f "$impl" ] || continue
+    itok="$(model_token "$impl")"
+    ifam="$(model_family "$itok")" || { echo "  ✗ unknown implementer model family in $(basename "$impl"): '$itok'" >&2; return 1; }
+    if [ "$gfam" = "$ifam" ]; then
+      echo "  ✗ VERIFIER_GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2
+      echo "    Same-family verification is theater — point it at another vendor." >&2
+      return 1
+    fi
+  done
+  echo "  verifier judgement runs on '$gate' (family '$gfam'); implementers are '$ifam'."
+  return 0
+}
+if [ "$FULL" -eq 1 ]; then
+  echo "• cross-family: verifier vs implementers"
+  cross_family_check || record_fail "cross-family"
+fi
 
 # 2) Test suite. Exit 5 = "no tests collected" -> not a failure.
 #    Pre-commit runs the phase suites only; --full (CI) also runs the feature-level e2e tests, which
@@ -67,9 +138,30 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
 
 # 3) Mutation gate via cosmic-ray (CI / --full only). Fail closed: an errored run stops.
 #    Same contract as scripts/hook_mutation.sh: baseline first, diff-scoped, deterministic verdict
-#    at MUTATION_MIN_SCORE. Keep the two in step — CI and in-session must not disagree.
-if [ "$FULL" -eq 1 ]; then
-  echo "• mutation: cosmic-ray (min score ${MUTATION_MIN_SCORE:-0.85})"
+#    at MUTATION_MIN_SCORE, and the same MUTATION_POLICY authority switch (blocking|advisory|off).
+#    Keep the two in step — CI and in-session must not disagree.
+MUTATION_POLICY="${MUTATION_POLICY:-off}"
+case "$MUTATION_POLICY" in
+  enforce|advisory|off) ;;
+  *) echo "  ✗ MUTATION_POLICY='$MUTATION_POLICY' is not one of enforce|advisory|off (fail closed)" >&2
+     record_fail "mutation:bad-mode" ;;
+esac
+
+# In advisory mode a mutation finding is reported but never counts against the run. Every mutation
+# failure path goes through this instead of record_fail, so the mode cannot be missed at one of them.
+mutation_fail() {
+  if [ "$MUTATION_POLICY" = "advisory" ]; then
+    echo "  ⓘ mutation [advisory]: $1 — reporting only, not failing the run" >&2
+    return 0
+  fi
+  record_fail "$1"
+}
+
+if [ "$FULL" -eq 1 ] && [ "$MUTATION_POLICY" = "off" ]; then
+  echo "• mutation: skipped (MUTATION_POLICY=off)"
+fi
+if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POLICY" = "advisory" ]; }; then
+  echo "• mutation: cosmic-ray (min score ${MUTATION_MIN_SCORE:-0.85}, gate ${MUTATION_POLICY})"
   # Module under test, read from cosmic-ray.toml. If it doesn't exist, there's nothing to mutate
   # (e.g. a docs/config-only repo) — skip like "no tests collected", don't fail closed.
   # Only a SCALAR module-path is skippable this way. `module-path` also accepts a TOML list, which
@@ -83,7 +175,7 @@ if [ "$FULL" -eq 1 ]; then
   esac
   if [ ! -f "$COSMIC_CFG" ]; then
     echo "  ✗ cosmic-ray.toml missing at repo root — mutation gate cannot run (fail closed)" >&2
-    record_fail "mutation:no-config"
+    mutation_fail "mutation:no-config"
   elif [ -n "$MODPATH" ] && [ ! -e "$ROOT/$MODPATH" ]; then
     echo "  (module-path '$MODPATH' not present — no code to mutate, skipping)"
   else
@@ -107,7 +199,7 @@ if [ "$FULL" -eq 1 ]; then
     elif ! cosmic-ray baseline "$SCOPED" >>"$TMP" 2>&1; then
       echo "  ✗ mutation baseline FAILED — suite is not green on unmutated code (fail closed):" >&2
       tail -5 "$TMP" >&2
-      record_fail "mutation:baseline-failed"
+      mutation_fail "mutation:baseline-failed"
     elif cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1 \
        && { [ -z "$CI_BASE" ] || cr-filter-git --config "$SCOPED" "$SESSION" >>"$TMP" 2>&1; } \
        && cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
@@ -118,15 +210,14 @@ if [ "$FULL" -eq 1 ]; then
         { echo "---- mutation score (deterministic gate verdict: NO-GO) ----"
           python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" --json "$SESSION" 2>&1
           echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>&1; } >>"$TMP"
-        python3 "$GATE_RUNNER" --rubric "$MUTATION_RUBRIC" \
-          --model "$MUT_MODEL" "${PARGS[@]}" --target "$TMP" || true
-        record_fail "mutation"
+        cat "$TMP" >&2   # survivors; the Verifier interprets them in chat, no model here
+        mutation_fail "mutation"
       elif [ "$msc" -ne 0 ]; then
-        record_fail "mutation:unscorable"
+        mutation_fail "mutation:unscorable"
       fi
     else
       echo "  ✗ cosmic-ray run errored (fail closed):" >&2; tail -5 "$TMP" >&2
-      record_fail "mutation:errored"
+      mutation_fail "mutation:errored"
     fi
     rm -rf "$WORK"
   fi

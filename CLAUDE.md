@@ -8,8 +8,9 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
 - Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`)
-- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`test-mapping.md`, `implementation-report.md`, `test-execution-report.md`, `handover.md`)
-- Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`
+- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `handover.md`)
+- Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`)
+- Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
 ```yaml
 ---
 feature: <feature-name>
@@ -30,14 +31,37 @@ ids are `R<n>.<k>.<m>`. **The Verifier runs once per phase**, after every spec i
 Both gates, in order: (1) automated **Fidelity Gate** on spec write → sets `fidelity_verdict`; NO-GO
 routes back. (2) **spec-review** → sets `review_status: approved`, in either **HITL** mode
 (`/spec-review` grill-me) or **automated** mode (`/spec-review --auto` / `SPEC_REVIEW_MODE=auto`, a
-cross-family AI reviewer). A spec reaches the Test-Author only when `fidelity_verdict != NO-GO` AND
-`review_status: approved`.
+cross-family AI reviewer). A spec reaches the implementer only when `fidelity_verdict != NO-GO` AND
+`review_status: approved`. Both gates are also what pre-agrees the **seams** the tests get written at.
+The Fidelity Gate is this repo's only automated model gate and is the main deliberate divergence from
+`klm-agentic-pipeline`, which has no such gate.
 
-### 4. Tests as Frozen Contract
-Tests are a **FROZEN CONTRACT**. No agent may edit files under `tests/` except the Test-Author. If a
-test looks wrong, route the concern back to the Test-Author — never reshape a test to pass. Three
-test-author modes by `work_kind`: greenfield · migration · refactor/brownfield. Plus **e2e-author**,
-which is not selected by `work_kind` — it runs once per feature, after the final phase is green.
+### 4. The implementer writes the tests, test-first — and they lock at the Verifier
+The **implementer** writes both the tests and the code, in a red → green loop (`skills/tdd`, vendored
+from mattpocock/skills): one seam, one failing test, minimal code, repeat. **Vertical slices, never
+the whole suite up front.** Red is the expected state *during* a build, not a failure.
+
+**Locked-after-verify.** The implementer owns the phase's tests *until* `avenger-verifier` passes it;
+from that point they are **locked** and weakening one requires re-verification. Locked forbids
+*weakening*, not *adding* — a Breaker counterexample or a surviving mutant routes back to the
+implementer to add a case.
+
+Because the author of the code also authored its judge, **the tests get read** — on a green suite as
+much as a red one — for tautological, implementation-coupled and missing-negative patterns, over a
+**bounded review set** (tests mapped to the phase ∪ test files it changed, plus their directly
+referenced helpers; expand only on evidence). `avenger-verifier` picks that set and persists
+`verdict.json`, but the **judgement itself runs on another vendor's model** via
+`scripts/verifier_review.sh` → `gate_runner.py` on `$VERIFIER_GATE_MODEL` — every subagent here is
+Anthropic, so the agent cannot be its own cross-family check. It routes `wrong/gamed test` and
+`coverage gap` back alongside `code issue`. That review is the pipeline's independence; it is not
+optional, and it fails closed.
+
+Three test modes by `work_kind`, all inside `skills/tdd`: **greenfield** (red → green per vertical
+slice) · **migration** (parity-first — the *existing suite is the contract*, run it rather than
+re-authoring it; characterize only genuine gaps at critical seams) · **refactor** (baseline-first
+parity, no port; an intentional behavior change is greenfield work with its own requirement). Plus
+**e2e-author**, not selected by `work_kind` — the implementer runs it once per feature, after the
+final phase is green.
 
 ### 4a. Tests are integration-level by default
 Every test drives its requirement through a **seam** — the public entry point a caller uses (HTTP
@@ -51,7 +75,7 @@ Rationale: tests bound to internals are the ones rewritten on every refactor.
 ### 4b. Feature-level e2e
 **1-3 tests (5 max)**, written once after the last phase is green, in `tests/e2e/<feature>/`, tracing
 to the goal in `overview.md` rather than a spec id (the one exception to "no spec id → no test").
-Excluded from the mutation gate and the per-edit verifier hook.
+Excluded from the mutation gate and the phase verifier hook.
 
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.
@@ -65,16 +89,24 @@ reach a verdict (missing key, provider down, non-JSON, same-family) stops. **Bre
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
 score `>= MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors go to the
-gate model to be named as missing cases, and the phase routes back to the Test-Author. The threshold is
+gate model to be named as missing cases, and the phase routes back to the implementer. The threshold is
 **not 100%** on purpose — chasing zero survivors is what multiplies narrow tests. Runs
 `cosmic-ray baseline` first: a mutant counts as killed whenever the test command fails, so a broken
 suite would otherwise score a perfect 1.0.
 
+**Mutation is optional and OFF by default**: `MUTATION_POLICY` = `off` (default) · `advisory` (runs
+and reports the score + survivors, never blocks) · `enforce` (fails closed). It is an *extra* signal,
+**not** the independence mechanism — that is the Verifier's test-quality review. When off, no mutation
+tool runs anywhere. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
+`cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
+
 ### 6a. Gates fire on "done", not on every edit
-Tests are locked RED before the implementer starts, so red is the expected state during a build.
-Gates trigger on a spec reaching `status: done` (smoke-check the phase suite) and on `handover.md`
-(Verifier, then mutation) — never per code edit. The implementer's own `pytest tests/<phase>/` is the
-inner loop: free, no model call. A gate also never re-judges an unchanged spec —
+The implementer runs a red → green loop, so red is an expected state throughout a build. Gates trigger
+on a spec reaching `status: done` (smoke-check the phase suite; model called only on failure) and on
+`handover.md` — never per code edit. **No model runs in these hooks** except the Fidelity Gate: the
+Verifier is an *agent* that runs in chat and commits `verdict.json`, and the hook only checks that
+artifact exists and passes. Mechanical gates in hooks and CI; model gates in chat. The implementer's
+own `pytest tests/<feature>/<n>-<slug>/` is the inner loop: free, no model call. A gate also never re-judges an unchanged spec —
 `scripts/spec_gate_cache.py` hashes the spec body per gate, so `status: done` can't re-roll a fresh
 verdict over an approved spec.
 

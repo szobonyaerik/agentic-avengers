@@ -10,14 +10,19 @@ phase has proven its own slice at its own seam; nothing has yet proven the slice
 the feature was for. That is the only job here.
 
 > Runs **once per feature**, not per phase. Not selected by `work_kind` — every feature gets this
-> stage regardless of greenfield/migration/refactor.
+> stage regardless of greenfield/migration/refactor. The implementer (backend or frontend, whichever
+> owns the feature's primary surface) writes it at feature close.
+
+**This is not a red → green loop.** The system already works — every phase is green and locked. These
+tests are written against the assembled, finished feature and should pass on the first run. One that
+fails has found a real integration defect between phases, which is the whole point of the stage.
 
 ## Keep it small — this is a hard rule
 Target **1-3 tests. More than 5 is a defect**, not thoroughness. E2E tests are the slowest, flakiest,
 and worst-localizing tests in the repo: when one goes red it names a broken *feature*, not a broken
 line. They earn their keep only by being few and by covering the path that actually matters. If you
 want a sixth, the behavior you have in mind almost certainly belongs in a phase's integration suite —
-route it to the Test-Author's phase work instead.
+it belongs in a phase's integration suite instead — which means a new spec, not a sixth e2e test.
 
 Do not enumerate edge cases here. Do not re-test what a phase already covers. Error paths belong at
 the phase level unless the *feature's stated goal* is about that error path.
@@ -48,11 +53,12 @@ the phase level unless the *feature's stated goal* is about that error path.
    be **green** on first run. A red e2e here means either the feature genuinely does not work end to
    end — a real finding, route it back with the failure — or your test is wrong. Do not ship it red.
 
-5. **Record them** in `docs/features/<feature>/e2e-mapping.md` and state the suite is frozen: e2e
-   tests live under `tests/`, so the frozen contract applies exactly as it does to phase tests.
+5. **Record them** in `docs/features/<feature>/e2e-mapping.md`. E2E tests live under `tests/`, so they
+   lock exactly as phase tests do (`pipeline-conventions`: *locked-after-verify*) — from feature close onward they are
+   not edited to make a change pass.
 
 ## Where e2e sits in the pipeline
-- **Excluded from the per-edit verifier hook.** `scripts/hook_verifier.sh` scopes to the active phase
+- **Excluded from the phase verifier hook.** `scripts/hook_verifier.sh` scopes to the active phase
   and passes `--ignore=tests/e2e`; these never run on a code edit.
 - **Excluded from the mutation gate.** Mutation is diff-scoped per phase and judges phase suites. E2E
   tests are not there to kill mutants and must never be written to farm them.
@@ -78,4 +84,4 @@ links: [overview.md]
 - 1-3 (max 5) tests exist under `tests/e2e/<feature>/`, each tracing to a quoted goal in `overview.md`.
 - Each drives the outermost real boundary, with nothing internal mocked.
 - All are green, and `pytest -q tests/e2e/<feature>/` proves it.
-- `e2e-mapping.md` exists; the suite is declared frozen.
+- `e2e-mapping.md` exists and every test traces to the goal quoted from `overview.md`.

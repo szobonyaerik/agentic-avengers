@@ -6,13 +6,20 @@ description: Use at the end of a phase to document it.
 # phase-handover
 
 Close out a finished phase: write a short, durable record and point to what comes next. This
-runs after the phase is green (tests pass, mutation gate cleared). Writing `handover.md` is also
+runs after the Verifier passes the phase. Writing `handover.md` is also
 what satisfies the Stop-hook artifact check, so the phase isn't considered done until it exists.
 
 ## Precondition
-The phase must actually be complete: the Verifier passed and the Mutation gate returned GO
-(see `test-execution-report.md`). If it isn't green, stop and report what's outstanding instead
-of writing a handover.
+The phase must actually be complete: the **Verifier passed** — `verdict.json` in the phase directory
+says `verdict: pass` — which is what locks the phase suite (`pipeline-conventions`:
+*locked-after-verify*). If it isn't green, stop and report what's outstanding instead of writing a
+handover.
+
+Mirror the gate record out of `verdict.json`:
+- `verdict: pass` with `bypassed: true` means the phase passed only because findings were **waived**.
+  Name each waived finding (id / who / when / reason) — a visible bypass, never a silent green.
+- Mutation is **off by default**. If it ran (`MUTATION_POLICY` = `advisory`/`enforce`), record the
+  score and the policy; if it did not, write `n/a (off)` rather than leaving it blank.
 
 ## Inputs
 - The finished phase (`<feature>`, `<phase>` slug).
@@ -31,16 +38,16 @@ of writing a handover.
 The feature is not done yet. Every phase has proven its own slice at its own seam; nothing has yet
 proven the slices add up to the feature's goal. Before the feature ships:
 1. Set `next: e2e` in this handover.
-2. Hand to the **Test-Author in `e2e-author` mode** — it writes the 1-3 feature-level e2e tests that
-   prove `overview.md`'s goal holds through the assembled system, into `tests/e2e/<feature>/` +
-   `docs/features/<feature>/e2e-mapping.md`.
+2. Hand to the **implementer in `e2e-author` mode** (`skills/e2e-author`) — it writes the 1-3
+   feature-level e2e tests that prove `overview.md`'s goal holds through the assembled system, into
+   `tests/e2e/<feature>/` + `docs/features/<feature>/e2e-mapping.md`.
 3. E2E tests are written **after** implementation, so they must be green on the first run. A red one
    is a real finding: the feature does not work end to end. Route it back rather than shipping.
 4. Once they are green, the feature is `ship`.
 
-Note the mutation gate does not cover e2e (it is diff-scoped per phase, and e2e tests must never be
-written to farm mutants), and the per-edit verifier hook skips `tests/e2e/` — they run at feature
-close and in CI (`gate_ci.sh --full`).
+Note the mutation gate (when a project turns it on) does not cover e2e — it is diff-scoped per phase,
+and e2e tests must never be written to farm mutants. The phase verifier skips `tests/e2e/` too; they
+run at feature close and in CI (`gate_ci.sh --full`).
 
 ## Output format
 
@@ -53,7 +60,8 @@ model: <model>
 created: <date>
 status: green
 next: <next-phase-slug | e2e | ship>
-mutation_score: <score> (threshold <MUTATION_MIN_SCORE>)
+verdict: pass | pass (bypassed) | fail
+mutation: n/a (off) | <score> (policy: advisory|enforce)
 ---
 ## Phase <phase> — handover
 
@@ -61,8 +69,9 @@ mutation_score: <score> (threshold <MUTATION_MIN_SCORE>)
 depends on. No narration — just what a teammate picking up the next phase needs to know.>
 
 ### Artifacts
+- verdict:               docs/features/<feature>/phases/<phase>/verdict.json
 - specs:                 docs/features/<feature>/phases/<phase>/specs/   (one per <n>.<k>)
-- tests:                 tests/<phase>/
+- tests:                 tests/<feature>/<phase>/
 - test-mapping:          docs/features/<feature>/phases/<phase>/test-mapping.md
 - implementation-report: docs/features/<feature>/phases/<phase>/implementation-report.md
 - test-execution-report: docs/features/<feature>/phases/<phase>/test-execution-report.md
@@ -83,7 +92,8 @@ model: haiku
 created: 2026-06-10
 status: green
 next: 2-analysis
-mutation_score: 0.93 (threshold 0.85)
+verdict: pass
+mutation: n/a (off)
 ---
 ## Phase 1-webhook — handover
 
@@ -106,7 +116,7 @@ Phase 2 reads these rows; delivery_id is the dedup key it must not re-create.
 
 ## Done when
 `handover.md` exists with `status: green`, a ≤5-line summary, all artifact links, the phase's
-`mutation_score`, and a `next` value (a phase slug, `e2e` if this was the last phase, or `ship`).
+Verifier verdict (plus any waived findings), the mutation line, and a `next` value (a phase slug, `e2e` if this was the last phase, or `ship`).
 
 **And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
 codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you

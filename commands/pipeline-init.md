@@ -48,7 +48,7 @@ write no production code.
 9. **Summary.** Print what changed and the first commands:
    `@avenger-task-analyst "<feature brief>"` → `@avenger-solution-architect` →
    `@avenger-implementation-planner` → `@avenger-spec-writer` → `/spec-review <spec>` →
-   per phase: `@avenger-test-author` → `@avenger-backend-architect` → `@avenger-handover` →
-   once, after the last phase: `@avenger-test-author` in `e2e-author` mode.
+   per phase: `@avenger-backend-architect` (writes tests + code, test-first) → `@avenger-handover` →
+   once, after the last phase: the implementer in `e2e-author` mode.
    For `opencode`/`all`, also print: `pip install pre-commit && pre-commit install`, and add
    `OPENROUTER_API_KEY` as a CI secret.

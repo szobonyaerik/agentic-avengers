@@ -90,16 +90,27 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 5. /spec-review docs/features/health-endpoint/phases/1-endpoint/specs/1.1-health/spec.md
       • You are grilled ONE question at a time against the spec-review checklist, each with a
         recommendation. Answer them; when the bar is met it sets review_status: approved.
-      • Tests do NOT lock until review_status: approved AND fidelity_verdict != NO-GO.
+      • Implementation does NOT start until review_status: approved AND fidelity_verdict != NO-GO.
+        Those two gates are what pre-agree the seams the tests get written at.
 
 # per spec in the phase:
-6. @avenger-test-author  <spec>       -> tests/1-endpoint/ + test-mapping.md   (locked RED, greenfield mode)
-7. @avenger-backend-architect <spec>  -> src/...   (turn RED green; never edits tests)
+6. @avenger-backend-architect <spec>  -> tests/1-endpoint/ + test-mapping.md + src/...
+      • Red -> green, one vertical slice at a time (skills/tdd): one failing test at the
+        requirement's seam, then the minimal code to pass it, then the next slice.
+      • Setting status: done smoke-checks the phase suite (model called only if it fails).
 
 # once every spec in the phase is green:
+7. @avenger-verifier 1-endpoint
+      • Cross-family (family B != the implementer's A). Runs the full phase suite, traces every
+        R<n>.<k>.<m> to a passing test, and READS THE TESTS over a bounded review set — the tests
+        mapped to the phase plus the test files it changed, and their direct helpers. A gamed test
+        (tautological / implementation-coupled / missing-negative) fails the phase even when green.
+      • Writes docs/features/<feat>/phases/1-endpoint/verdict.json. On pass the phase's tests LOCK.
+      • Mutation only if MUTATION_POLICY is advisory|enforce (default off).
+
 8. @avenger-handover 1-endpoint
-      • Writing handover.md fires the PER-PHASE verifier: full suite + R<n>.<k>.<m> coverage trace +
-        cosmic-ray mutation. Survivors route back to the Test-Author; code failures to the implementer.
+      • Mirrors the verdict + any waived findings into handover.md. The hook checks verdict.json is
+        present and passing; it never calls a model.
 
 9. Ship: git commit (pre-commit floor runs fidelity on staged specs + tests) -> PR (CI floor: + mutation).
 ```
@@ -122,7 +133,7 @@ export SPEC_REVIEW_MODE=auto        # set BEFORE launching Claude Code / opencod
 What happens in auto mode:
 - A cross-family AI reviewer (Gemini) runs `prompts/spec-review-rubric.md` — the same checklist a human
   would defend.
-- **GO / REVIEW** → it stamps `review_status: approved` and the chain continues to the Test-Author.
+- **GO / REVIEW** → it stamps `review_status: approved` and the chain continues to the implementer.
 - **NO-GO** → `review_status` stays `pending`, it prints the findings, and routes back to
   `avenger-spec-writer`. It is a real second opinion, **not** a rubber stamp.
 - Any error (missing key, same-family model, no verdict) → **fails closed**, no approval.
