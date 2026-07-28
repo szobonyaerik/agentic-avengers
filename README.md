@@ -2,9 +2,10 @@
 
 A spec-driven, test-first agentic development pipeline that runs under **Claude Code** and
 **opencode**. Specialised agents plan a feature; a **composed quality wall** (an automated fidelity
-gate *and* a human grill-me review) decides whether each spec is ready; locked RED tests are written
-before code; and every phase is verified once — by a fresh cross-family model plus cosmic-ray mutation
-— before it ships.
+gate *and* a grill-me review) decides whether each spec is ready; the implementer then builds it
+**test-first**, one vertical slice at a time; and every phase is verified once — by a fresh
+cross-family model that reviews the tests as well as running them, plus cosmic-ray mutation — before
+the suite locks and it ships.
 
 The skill files (`SKILL.md`) and the gate brain (`gate_runner.py` + the rubric prompts) are a shared,
 portable core; the opencode surface is a thin adapter generated from canonical sources.
@@ -33,44 +34,109 @@ recorded in the phase `handover.md`.
 
 `Plan → Quality wall → (Build & verify loop ×phases) → Ship`.
 
+```mermaid
+flowchart TD
+    start(["New task"]) --> ta["task-analyst"]
+    ta -.-> taA[/"task-analysis.md · sets work_kind"/]
+    ta --> sa["solution-architect"]
+    sa -.-> saA[/"overview.md"/]
+    sa --> ip["implementation-planner"]
+    ip -.-> ipA[/"plan.md · ordered phases"/]
+    ip --> sw
+
+    subgraph phase ["per phase — specs iterate · the verifier runs once, after all specs are green"]
+        sw["spec-writer"] -.-> swA[/"spec.md · R n.k.m + paired criteria"/]
+        sw --> fg{"fidelity gate?<br/>automated · cross-family"}
+        fg -->|"NO-GO"| sw
+        fg -->|"GO / REVIEW"| sr{"spec approved?<br/>grill-me + checklist"}
+        sr -->|"rework"| sw
+        sr -->|"approved"| impl["backend / frontend implementer<br/>writes tests + code · test-first · skills-tdd"]
+        impl -.-> implA[/"tests + src + test-mapping.md"/]
+        impl -->|"next spec"| sw
+    end
+
+    impl -->|"all specs green"| ver{"avenger-verifier · family B is not A<br/>suite + R-trace + bounded TEST REVIEW"}
+    ver -->|"cannot reach verdict"| stop(["fail-closed / stop"])
+    ver -->|"senior override"| bg[/"break-glass · gate-overrides.log · bypassed on PR"/]
+    ver -->|"code issue · wrong test · coverage gap"| impl
+    ver -.-> verA[/"verdict.json · findings + waivers"/]
+    ver -->|"pass — TESTS LOCK"| mut{"mutation · optional<br/>off (default) / advisory / enforce"}
+    mut -->|"survivors · enforce only"| impl
+    mut --> brk["breaker<br/>optional · critical paths"]
+    brk -->|"counterexample"| impl
+    brk --> ho["handover"]
+    ho -.-> hoA[/"handover.md + PROJECT_STATE"/]
+    ho --> done(["phase done — next phase / shipped"])
+```
+
 ```
 PLAN
   task-analyst        -> docs/features/<feat>/task-analysis.md   (scope via grill-me; sets work_kind)
   solution-architect  -> docs/features/<feat>/overview.md
   implementation-planner -> docs/features/<feat>/plan.md         (phases; each = 1+ candidate specs <n>.<k>)
-  spec-writer         -> docs/features/<feat>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md
 
-QUALITY WALL (per spec, both gates)
-  1. Automated Fidelity Gate (cross-family)   NO-GO -> back to spec-writer
-  2. Spec-review -> sets review_status: approved
-       HITL:      /spec-review <spec>            (grill-me, one question at a time)
-       Automated: /spec-review <spec> --auto     (cross-family AI reviewer; SPEC_REVIEW_MODE=auto = hands-off)
-  Tests lock only when fidelity_verdict != NO-GO AND review_status: approved.
+PER PHASE (specs iterate; the verifier runs once, after all specs are green)
+  spec-writer         -> .../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md
+  QUALITY WALL (per spec, both gates)
+    1. Automated Fidelity Gate (cross-family)   NO-GO -> back to spec-writer     [this repo only]
+    2. Human spec review -> sets review_status: approved
+         HITL:      /spec-review <spec>            (grill-me, one question at a time)
+         Automated: /spec-review <spec> --auto     (SPEC_REVIEW_MODE=auto)
+    A spec reaches the implementer only when fidelity_verdict != NO-GO AND review_status: approved.
+    Those two gates are also what pre-agrees the SEAMS the tests will be written at.
 
-BUILD & VERIFY (looped per phase)
-  test-author  -> tests/ + test-mapping.md   (mode by work_kind: greenfield | migration | refactor)
-                 integration-level by default; `narrow` needs a written justification
-  backend/frontend-architect -> src/          (implement to locked tests; never edit tests)
+  backend/frontend implementer -> tests/<feat>/<n>-<slug>/<n>.<k>-<subslug>/ + src/
+                 + that spec's test-mapping.md
+                 skills/tdd, mode by work_kind:
+                   greenfield -> red -> green, one vertical slice at a time
+                   migration  -> parity-first; the EXISTING suite is the contract
+                   refactor   -> baseline-first; behavior unchanged
   [repeat for each spec in the phase]
-  verifier (once per phase, cross-family) -> phase suite + R<n>.<k>.<m> trace + cosmic-ray mutation
-                 mutation: diff-scoped, deterministic verdict at MUTATION_MIN_SCORE (default 0.85)
-  breaker (critical paths) -> counterexample -> new locked test
-  handover -> docs/features/<feat>/phases/<n>-<slug>/handover.md
+
+  avenger-verifier (once per phase, cross-family) -> verdict.json
+                 full suite + R<n>.<k>.<m> trace + a BOUNDED test-quality review:
+                 the tests mapped to the phase + test files it changed + their direct helpers.
+                 Tautological / implementation-coupled / missing-negative = fail, even when green.
+                 route-backs: code | wrong-gamed test | coverage gap -> implementer
+  PASS -> THE PHASE SUITE LOCKS (locked-after-verify). Weakening a test then needs re-verification;
+          adding one a later gate demands is always allowed.
+  mutation (optional; MUTATION_POLICY off by default | advisory | enforce)
+                 an extra signal, NOT the independence mechanism
+  breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
+  handover -> .../phases/<n>-<slug>/handover.md   (mirrors the verdict + any waived findings)
 
 FEATURE CLOSE (once, after the final phase is green)
-  test-author (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
+  implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
                  1-3 tests (5 max) proving overview.md's goal through the assembled system
 
 SHIP
   commit (pre-commit floor) -> PR (CI floor). Break-glass overrides logged + visible.
 ```
 
-### The three test-author modes (set by `work_kind`)
-- **greenfield** (`skills/tdd-red-author`) — paired positive/negative RED tests per `R<n>.<k>.<m>`.
-- **migration** (`skills/migration-test-author`) — port existing tests without changing assertions;
-  prove parity; characterize gaps; mutation proves the inherited suite still catches regressions.
-- **refactor / brownfield** (`skills/brownfield-test-author`) — partition the blast radius:
-  characterize-and-freeze *preserve* behavior, fresh RED for *change* behavior; **diff-scoped** cosmic-ray.
+### Who writes the tests
+The **implementer** does, test-first, using `skills/tdd` (vendored from
+[mattpocock/skills](https://github.com/mattpocock/skills), MIT — see `skills/tdd/ATTRIBUTION.md`):
+one seam, one failing test, the minimal code to pass it, repeat. Never the whole suite up front.
+
+That means the author of the code also authors its judge, so two controls buy the independence back:
+1. **The Verifier reviews the tests**, not just the run — on a *green* suite as well as a red one.
+   It is the only outside judgement that suite gets, and passing it is what locks it.
+2. **The suite locks at the Verifier.** Before it, the implementer owns `tests/`; after it, nobody
+   edits them — later gates may demand *added* tests, never weakened ones.
+
+### The three test modes (set by `work_kind`, all inside `skills/tdd`)
+- **greenfield** — red → green per vertical slice, at the requirement's seam.
+- **migration** — parity-first. The **existing suite is the contract**: record its baseline, run it
+  against the migrated code, and add characterization tests only at genuine gaps on critical seams.
+- **refactor** — baseline-first, behavior unchanged. The migration procedure without a port; an
+  intentional behavior change is greenfield work with its own requirement.
+
+### Relationship to `klm-agentic-pipeline`
+This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. The
+intended differences are exactly four: this one runs on **Claude Code + opencode** rather than GitHub
+Copilot; it adds the automated **Fidelity Gate**; it keeps a **feature-level e2e** stage and
+**spec-isolation-review**; and its mutation gate has a **deterministic, diff-scoped scorer**
+(`scripts/mutation_score.py` + `cr-filter-git`). Anything else that diverges is drift.
 
 ---
 
@@ -98,11 +164,14 @@ agentic-avengers/
 ├── .claude-plugin/        plugin.json, marketplace.json
 ├── agents/                canonical subagents (Claude format)
 ├── skills/                portable SKILL.md skills (pipeline-conventions, grill-me,
-│                          spec-review-checklist, tdd/migration/brownfield test-author,
-│                          e2e-author, …)
+│                          spec-review-checklist, tdd, verifier-triage,
+│                          mutation-interpret, codemap, self-improvement, e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
-├── prompts/               fidelity-rubric.md, verifier-triage.md, mutation-interpret.md, project-setup.md
+├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
+├── docs/templates/        spec / plan / overview / task-analysis / handover / verdict templates
+├── docs/rubrics/          overview + plan rubrics
+├── docs/lessons/          committed, team-shared lessons log (see the self-improvement skill)
 ├── cosmic-ray.toml        mutation base config (the gate diff-scopes a copy per phase)
 ├── scripts/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted

@@ -28,25 +28,31 @@ proceed, or follow `route_back` and retry the failed stage. One call replaces th
 ```
 task-analyst → solution-architect → implementation-planner → spec-writer
   → (fidelity gate auto) → (spec-review auto)                      # per spec
-  → per phase, per spec: test-author → backend/frontend-architect
-  → handover  → (per-phase verifier + cosmic-ray mutation, auto)
+  → per phase, per spec: backend/frontend-architect (tests + code, test-first)
+  → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
+                       LOCKS the suite)  → handover
   → next phase … → e2e-author (once, after the final phase) → ship
 ```
 Route-backs it must honor (all already emitted by the gates):
 - fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate.
 - verifier code failure → back to `avenger-backend-architect`.
-- mutation score below `MUTATION_MIN_SCORE` / breaker counterexample → back to `avenger-test-author`.
+- verifier **test-quality** finding (tautological / off-seam / untraced requirement) → back to the
+  implementer to ADD or rewrite its own not-yet-locked tests.
+- breaker counterexample, or a surviving mutant when a project set `MUTATION_POLICY` to
+  advisory/enforce → back to the implementer, to **add** a test (the suite is locked by then —
+  additions only).
 - Stop after N retries on the same stage and surface the report (don't loop forever).
 - **A mutation route-back loop is a signal, not a grind.** The gate passes at a threshold (default
   0.85), not at zero survivors. If the same phase bounces twice, stop and surface it: either the
   requirement is pitched below the seam (→ spec-writer) or the threshold is wrong for this codebase
-  (→ ask). Do not let the Test-Author farm narrow tests to chase mutants.
+  (→ ask). Do not let the implementer farm narrow tests to chase mutants.
 
 ### Hard rules it must keep (same invariants as manual)
-- **Never edits `tests/`** except via the Test-Author (frozen contract).
+- **Never weakens a locked test.** The implementer owns `tests/` until the Verifier passes the phase;
+  after that the suite is locked and only additions demanded by a gate are allowed.
 - **Never bypasses a gate** except with an explicit `GATE_BYPASS="reason"` (logged, visible).
-- Respects `work_kind` (greenfield | migration | refactor) for the Test-Author mode; `e2e-author` is
-  not selected by `work_kind` — it runs once, at feature close.
+- Respects `work_kind` (greenfield | migration | refactor) for the implementer's test mode;
+  `e2e-author` is not selected by `work_kind` — it runs once, at feature close.
 - **Integration-level by default**; a `narrow` test needs a written justification in `test-mapping.md`.
 - Stops-and-explains on any fail-closed gate rather than pushing past it.
 
@@ -111,7 +117,9 @@ So an autonomous in-session run that somehow slipped a gate still gets caught at
 - Every gate is **cross-family + fail-closed** → stops on missing key, unreachable model, non-JSON, or
   same-family.
 - Every failure **routes back** to a specific stage rather than proceeding.
-- **Tests are frozen** — automation can't reshape a test to go green.
+- **The Verifier reviews the tests, not just the run** — the one independent judgement on a suite
+  whose author also wrote the code, on a bounded review set, persisted to `verdict.json`. After it
+  passes, the suite is **locked**: automation can't reshape a test to go green.
 - **Break-glass** is the only override and it is logged + visible + recorded in `handover.md`.
 - The **git floor** re-checks at commit/PR.
 

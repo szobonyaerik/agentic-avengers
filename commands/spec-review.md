@@ -28,7 +28,7 @@ A real second opinion, not a rubber stamp — it fails closed and routes NO-GO b
    ```
 2. Read the printed verdict token:
    - **GO** or **REVIEW** → `Edit` the spec frontmatter `review_status: approved` (that one field only).
-     State the spec may now go to the Test-Author.
+     State the spec may now go to the implementer.
    - **NO-GO** → leave `review_status: pending`, print the report (stderr) and `route_back:
      avenger-spec-writer`.
    - **non-zero exit / no token** → fail closed: do NOT approve; surface the error.
@@ -49,4 +49,4 @@ Load the `grill-me` and `spec-review-checklist` skills, then:
 Write nothing except the single `review_status` frontmatter change. Do not edit requirements, tests, or
 code — a spec that needs content changes is the Spec Writer's to fix.
 
-> A spec reaches the Test-Author only when `review_status: approved` AND `fidelity_verdict != NO-GO`.
+> A spec reaches the implementer only when `review_status: approved` AND `fidelity_verdict != NO-GO`.

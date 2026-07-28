@@ -58,19 +58,19 @@ no invariants, say so — "this repo has no stated rules to check against" is a 
 - **Never touch the project's highest-blast-radius code yourself** — whatever `CLAUDE.md` or the
   module notes mark as sensitive (data-write paths, migrations, auth, prompt/response parsing).
   Diagnose, then hand off.
-- **Always get a regression test locked — but never write it yourself.** No regression test = the bug
-  comes back, so this step is not optional. It is also the one you are least entitled to do: you are
-  fixing the code, and a test you write to prove your own fix works proves nothing except that you
-  agreed with yourself. Tests are a frozen contract owned by the Test-Author
-  (`pipeline-conventions` §4).
-  Instead: reproduce the bug however you like **outside** `tests/` (a scratch script, a REPL, a curl),
-  fix the code, then **route the reproduction to the Test-Author** with the exact failing condition
-  and the seam it is observable through. They write it, trace it to a spec id, and lock it. Your fix
-  is not done until that test exists.
+- **Always write the regression test first, and watch it fail.** No regression test = the bug comes
+  back, so this step is not optional — and the order is what makes it worth anything. Load
+  `skills/tdd`: write a test that reproduces the bug **at the seam it is observable through**, run it
+  and confirm it fails *for the reason you diagnosed*, and only then fix the code. A regression test
+  written after the fix proves nothing except that the code currently does what it currently does.
+  Record it in `test-mapping.md` traced to the spec id whose behavior the bug violated.
   If the bug reveals that no requirement covers the behavior at all, say so — that is a route-back to
   the Spec Writer, not a test you can quietly add.
-- **You never write, edit, delete, relax, skip, or `xfail` anything under `tests/`.** If a test is
-  failing and you believe it is wrong, that is a route-back to the Test-Author, never an edit.
+- **You never edit, delete, relax, skip, or `xfail` a locked test** — one from a phase the Verifier
+  has already passed (`pipeline-conventions`: *locked-after-verify*). Adding your failing regression test is allowed;
+  reshaping an existing test so your fix looks correct is not. If a locked test is failing and you
+  believe the test itself is wrong, that is a route-back to the Spec Writer for a spec that says so —
+  never an edit.
 
 ## Decision Rule: fix it yourself, or hand off?
 
@@ -96,10 +96,11 @@ reproduction, the invariant it violates, and your recommended fix.
 3. **Explain** — state the root cause as a sentence: "X happens because Y, which violates Z."
 4. **Check the invariants** — is this an instance of a rule the project already states? If so, search
    for the same violation elsewhere; that class of bug is rarely alone.
-5. **Fix or hand off** — per the Decision Rule.
-6. **Verify** — re-run the reproduction and the affected phase's suite. Remove any debug logging you
-   added.
-7. **Route the regression test** to the Test-Author with the exact failing condition.
+5. **Write the failing regression test** at the seam, and confirm it fails for the diagnosed reason.
+6. **Fix or hand off** — per the Decision Rule. If you hand off, the failing test goes with the
+   diagnosis; it is the most useful thing in the handoff.
+7. **Verify** — the regression test now passes, and re-run the affected phase's suite. Remove any
+   debug logging you added.
 
 ## Tooling Conventions
 
@@ -125,4 +126,5 @@ When the user provides a screenshot:
 
 State: the **root cause** (one sentence), the **reproduction**, the **invariant violated** (if any),
 what you **changed** (or why you handed off), the **verification** you ran, and the **regression test
-you routed to the Test-Author**.
+you wrote** — its path, the spec id it traces to, and confirmation that you saw it fail before the
+fix.

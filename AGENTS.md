@@ -7,8 +7,8 @@ that Claude Code runs — one implementation, two runtimes. The git floor (pre-c
 `scripts/gate_ci.sh`) backstops them; all of it calls `gate_runner.py` on a fresh cross-family model.
 
 Gates fire when work is **declared done** (a spec reaching `status: done`, a `handover.md`), never on
-every code edit — tests are locked RED before implementation, so red is the expected state while you
-build. Run `pytest tests/<phase>/` yourself as often as you like; it costs nothing.
+every code edit — you build with a red → green loop, so red is the expected state while you work.
+Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs nothing.
 
 ## Conventions (always apply)
 1. **Artifacts** under `docs/features/<feature>/` (feature-level: `task-analysis.md`, `overview.md`,
@@ -19,10 +19,19 @@ build. Run `pytest tests/<phase>/` yourself as often as you like; it costs nothi
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **Composed quality wall (per spec).** Automated Fidelity Gate on spec write (sets `fidelity_verdict`;
    NO-GO routes back) **and** human grill-me via `@spec-review` (sets `review_status: approved`). A spec
-   reaches the Test-Author only when `fidelity_verdict != NO-GO` and `review_status: approved`.
-4. **Tests are a frozen contract.** Only the Test-Author writes files under `tests/`; a wrong test
-   routes back. Three modes by `work_kind`: greenfield · migration · refactor/brownfield. Plus
-   **e2e-author**, run once per feature after the last phase is green (not selected by `work_kind`).
+   reaches the implementer only when `fidelity_verdict != NO-GO` and `review_status: approved`. Both
+   gates are also what pre-agrees the **seams** the tests get written at.
+4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
+   slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
+   `@avenger-verifier` passes it; from then they are **locked** and weakening one needs
+   re-verification (adding is always allowed). Because the code's author wrote its judge, the
+   **tests get read** over a bounded review set — tests mapped to the phase ∪ test files it changed,
+   plus directly referenced helpers — for tautological / implementation-coupled / missing-negative
+   patterns, and `wrong-gamed test` / `coverage gap` route back alongside `code`. `@avenger-verifier`
+   picks the set and persists `verdict.json`; the judgement runs cross-family via
+   `scripts/verifier_review.sh` (`$VERIFIER_GATE_MODEL`), because every subagent here is Anthropic. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
+   · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
+   unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
 4a. **Integration by default.** Every test drives its requirement through a **seam** (the public entry
    point a caller uses), with real collaborators; mock only trust/cost boundaries. `test-mapping.md`
    carries `level`: `integration` (default) · `e2e` · `narrow` — **`narrow` needs a written
@@ -30,7 +39,7 @@ build. Run `pytest tests/<phase>/` yourself as often as you like; it costs nothi
    (parity outranks the default).
 4b. **Feature-level e2e**: 1-3 tests (5 max) in `tests/e2e/<feature>/`, tracing to the goal in
    `overview.md` — the one exception to "no spec id → no test". Recorded in `e2e-mapping.md`. Excluded
-   from mutation and from the per-edit verifier hook.
+   from mutation and from the phase verifier hook.
 5. **Phases run in dependency/risk order**, one at a time, fully through build-and-verify.
 6. **Fresh model ≠ author** — gates run on a cross-family model (family ≠ author).
 7. **Gates fail closed** — a gate that cannot reach a verdict (incl. same-family) stops; it never passes.
@@ -38,8 +47,11 @@ build. Run `pytest tests/<phase>/` yourself as often as you like; it costs nothi
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
    The verdict is **deterministic** (`scripts/mutation_score.py`, not a model): score `>=
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
-   missing cases and the phase routes back to the Test-Author. Not 100% on purpose. Baseline-guarded:
+   missing cases and the phase routes back to the implementer. Not 100% on purpose. Baseline-guarded:
    a failing suite would otherwise score 1.0, since a mutant counts as killed whenever tests fail.
+   **Optional and OFF by default**: `MUTATION_POLICY` = `off` (default) · `advisory` (reports, never
+   blocks) · `enforce` (fails closed). An extra signal, **not** the independence mechanism — that is
+   the Verifier's test-quality review. When off, no mutation tool runs anywhere.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -50,12 +62,15 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 @avenger-spec-writer                      # writes specs/<n>.<k>-<subslug>/spec.md -> fidelity gate runs
 /spec-review <spec>               # HITL grill-me; add --auto (or SPEC_REVIEW_MODE=auto) for automated review -> flips review_status: approved
 # per phase, in dependency order, per spec:
-@avenger-test-author      <spec>          # locked RED tests (mode by work_kind)
-@avenger-backend-architect <spec>         # or @avenger-frontend-developer; commit code -> tests run
+@avenger-backend-architect <spec>         # or @avenger-frontend-developer
+                                          # writes tests + code test-first (mode by work_kind),
+                                          # then sets status: done -> phase suite smoke-checked
 # once all specs in the phase are green:
-@avenger-handover         <phase>         # per-phase verifier + cosmic-ray mutation run
+@avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
+                                          # -> writes verdict.json; on pass the phase's tests LOCK
+@avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md
 # once the FINAL phase of the feature is green:
-@avenger-test-author      --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/
+@avenger-backend-architect --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/
 ```
 
 ## Models / provider
@@ -81,8 +96,12 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 ## Environment
 | var | default | effect |
 |---|---|---|
+| `MUTATION_POLICY` | `off` | `off` (skip) \| `advisory` (report only) \| `enforce` (fail closed) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
 | `GATE_MODEL` | per-gate defaults | routes every gate to one model |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
+| `VERIFIER_GATE_MODEL` | `google/gemini-2.5-pro` | model the Verifier's test-quality review runs on; must not be the implementer's family |
+| `VERIFIER_SRC_LIMIT` | `120000` | max chars of review-set source sent to that model |
+

@@ -7,15 +7,16 @@
 Run from the repo root: `python3 scripts/sync_opencode.py`. Idempotent.
 Edit MODEL_MAP for your OpenRouter model ids before first run.
 """
+
 import glob
 import os
 import sys
 
 # Map Claude model tiers -> your opencode/OpenRouter model ids. EDIT THESE.
 MODEL_MAP = {
-    "opus":   "openrouter/anthropic/claude-opus-4",
+    "opus": "openrouter/anthropic/claude-opus-4",
     "sonnet": "openrouter/anthropic/claude-sonnet-4",
-    "haiku":  "openrouter/anthropic/claude-haiku-4",
+    "haiku": "openrouter/anthropic/claude-haiku-4",
 }
 # Agents that should drive sessions directly (primary). Others are @-invoked subagents.
 PRIMARY = set()  # e.g. {"backend-architect"}
@@ -30,7 +31,7 @@ def parse(md):
     end = md.find("\n---", 3)
     if end == -1:
         return {}, md
-    head, body = md[3:end].strip(), md[end + 4:].lstrip("\n")
+    head, body = md[3:end].strip(), md[end + 4 :].lstrip("\n")
     fm = {}
     for line in head.splitlines():
         if ": " in line:
@@ -48,16 +49,39 @@ def tools_block(claude_tools):
     """
     raw = (claude_tools or "").strip().strip("[]")
     toks = {x.strip().strip("[]").lower() for x in raw.split(",") if x.strip()}
-    write_names = {"write", "edit", "multiedit", "replace_string_in_file", "create_file"}
+    write_names = {
+        "write",
+        "edit",
+        "multiedit",
+        "replace_string_in_file",
+        "create_file",
+    }
     bash_names = {"bash", "run_in_terminal", "run_in_bash", "shell"}
     has_write = bool(toks & write_names)
     return {"write": has_write, "edit": has_write, "bash": bool(toks & bash_names)}
+
+
+def prune(out_dir: str, generated: set[str]) -> int:
+    """Delete generated agents whose canonical source no longer exists.
+
+    Without this, deleting an agent from `agents/` leaves its transpiled twin behind and opencode
+    keeps offering a stage the pipeline has removed — the adapter silently drifts from canonical.
+    """
+    removed = 0
+    for path in sorted(glob.glob(os.path.join(out_dir, "*.md"))):
+        name = os.path.splitext(os.path.basename(path))[0]
+        if name not in generated:
+            os.remove(path)
+            removed += 1
+            print(f"  pruned: {name} (no canonical agents/{name}.md)")
+    return removed
 
 
 def main():
     out_dir = os.path.join(ROOT, ".opencode", "agents")
     os.makedirs(out_dir, exist_ok=True)
     count = 0
+    generated: set[str] = set()
 
     for path in sorted(glob.glob(os.path.join(ROOT, "agents", "*.md"))):
         name = os.path.splitext(os.path.basename(path))[0]
@@ -80,7 +104,10 @@ def main():
         with open(os.path.join(out_dir, name + ".md"), "w", encoding="utf-8") as f:
             f.write(out)
         count += 1
+        generated.add(name)
         print(f"  agent: {name} -> {model} ({mode})")
+
+    pruned = prune(out_dir, generated)
 
     # skills: symlink .opencode/skills -> ../skills (identical SKILL.md, no copy)
     link = os.path.join(ROOT, ".opencode", "skills")
@@ -90,10 +117,12 @@ def main():
     elif os.path.islink(link):
         print("  skills: symlink already present")
     else:
-        print("  skills: WARNING .opencode/skills exists as a real dir, not linking",
-              file=sys.stderr)
+        print(
+            "  skills: WARNING .opencode/skills exists as a real dir, not linking",
+            file=sys.stderr,
+        )
 
-    print(f"done: {count} agents transpiled.")
+    print(f"done: {count} agents transpiled, {pruned} pruned.")
 
 
 if __name__ == "__main__":

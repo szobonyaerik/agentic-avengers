@@ -35,11 +35,12 @@ or make implementation decisions; you surface options and constraints for the So
 4. **Classify the work kind** — set `work_kind` to one of:
    - **greenfield** — net-new behavior with no inherited tests to honor.
    - **migration** — moving/porting existing behavior; record the *existing-test situation* (which
-     tests already cover it, where they live, and whether they pass) so the Test-Author can port them
-     with parity.
-   - **refactor** (brownfield) — changing behavior inside code that already works; record the
-     *preserve-vs-change* intent: which behaviors must NOT regress vs. which are deliberately changing.
-   This choice selects the Test-Author's mode downstream, so be explicit.
+     tests already cover it, where they live, and whether they pass). That suite is the contract the
+     implementer runs for parity, so name it precisely.
+   - **refactor** — restructuring code that already works, with **behavior unchanged**. Record which
+     suite provides the parity baseline. If the task actually changes behavior, that part is
+     **greenfield** work and needs its own requirement — say so rather than burying it here.
+   This choice selects the implementer's mode downstream, so be explicit.
 5. **Write the brief** to `docs/features/<feature>/task-analysis.md` using the format below. This
    file — not chat — is what the Solution Architect reads.
 6. **Announce**: End by stating the chosen `<feature>` slug, the `work_kind`, and the brief's path, so
@@ -81,7 +82,7 @@ created: YYYY-MM-DD
 - What should NOT be touched
 
 ## Work kind
-`work_kind: <greenfield | migration | refactor>` — and the detail that sets up the Test-Author:
+`work_kind: <greenfield | migration | refactor>` — and the detail that sets up the implementer:
 - **greenfield**: (none needed)
 - **migration**: existing tests that cover this behavior (paths), whether they pass today, and the
   parity bar the ported suite must hold.

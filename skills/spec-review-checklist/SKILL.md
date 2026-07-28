@@ -1,52 +1,51 @@
 ---
 name: spec-review-checklist
-description: The bar a human reviewer defends during /spec-review — every requirement single, verifiable, ID'd, with paired criteria; no contradiction with the overview or a delivered contract; migration and refactor specs carry their mode-specific obligations.
+description: The concrete criteria a human uses to review a spec before implementation begins. Use during the human spec-review gate, together with grill-me, so a reviewer (especially one new to the pipeline) has an objective bar to check against instead of vibes. Always apply this before setting a spec's review_status to approved.
 ---
 
-# spec-review-checklist
+# Spec-review checklist
 
-The standard a spec must clear in the **human grill-me review** (`/spec-review`) before its tests can
-lock. Use it with `grill-me`: each unmet item becomes a one-at-a-time question. A spec passes only when
-**every** applicable item holds; otherwise route back to the Spec Writer (do not set `review_status: approved`).
+The spec review is the **last gate before implementation begins**. A bad spec here becomes a wrong
+test contract, because the implementer writes tests straight from these requirements. Run `grill-me`
+against the reviewer using these criteria; only set `review_status: approved` when every item is a
+defensible "yes".
 
-## Universal bar (every spec)
-- [ ] **Single behaviors.** Each `R<n>.<k>.<m>` is exactly one observable behavior — no "and"-compound
-      requirements hiding two behaviors under one id.
-- [ ] **Verifiable.** Each requirement can be turned into a concrete pass/fail test. No unmeasurable
-      wording ("handles gracefully", "fast enough") survives.
-- [ ] **Observable at a seam.** Each requirement is an outcome a **caller** can observe through a
-      public entry point (HTTP handler, service method, CLI) — not an internal step. Ask: *"who calls
-      this, and what do they see?"* If the only answer involves reaching inside a module — asserting on
-      a private helper, an intermediate value, a call count — the requirement is pitched below the seam
-      and will mint a frozen test bound to implementation detail. Make them restate it as the
-      caller-visible outcome, or fold it into the requirement it is really a detail of.
-- [ ] **Stable IDs.** Every requirement carries an `R<n>.<k>.<m>` id; nothing is un-ID'd.
-- [ ] **Paired criteria.** Every requirement states at least one pass condition AND at least one
-      failure/edge condition (the Test-Author's positive/negative pair).
-- [ ] **Edge cases named.** Boundaries, duplicates, empty/oversized input, and unauthorized paths are
-      specified, not left implicit.
-- [ ] **No internal contradiction.** Requirements and acceptance criteria don't conflict with each other.
-- [ ] **Overview coherence.** Nothing contradicts `overview.md` (interfaces, decisions, boundaries).
-- [ ] **Cross-phase coherence.** Nothing redefines or breaks a contract a prior phase's `handover.md`
-      marked delivered, and the spec doesn't re-claim scope a prior phase already completed.
-- [ ] **Goal alignment.** The spec actually serves the feature goal from `task-analysis.md`.
+## Verifiability
+- [ ] Every requirement is a **single, observable behavior** (not a bundle).
+- [ ] Every requirement has a stable id `R<n>.<k>.<m>`.
+- [ ] Every requirement has **paired acceptance criteria**: at least one pass AND one fail/edge
+      condition. (No pass-only requirements — the implementer needs both to write the red→green slice.)
 
-## Migration specs (`work_kind: migration`) — additionally
-- [ ] **Names the existing tests** being ported (real paths) and where they move to.
-- [ ] **Parity is explicit.** The spec states that ported assertions are unchanged and names the parity
-      bar (the baseline the ported suite must reproduce).
-- [ ] **Gaps flagged.** Requirements with no inherited test are called out for characterization.
+## Coherence
+- [ ] The spec does not contradict `overview.md` (architecture, interfaces, decisions).
+- [ ] The spec does not contradict a contract a prior phase's `handover.md` marked delivered.
+- [ ] The spec honors "Notes for the Spec Writer" in `plan.md`.
 
-## Refactor / brownfield specs (`work_kind: refactor`) — additionally
-- [ ] **Preserve-vs-change declared.** Every requirement is tagged **preserve** (must not regress) or
-      **change** (deliberately new). No requirement is ambiguous about which it is.
-- [ ] **Blast radius stated.** The files/modules the change may touch are named (this bounds the
-      *preserve* characterization work; the mutation surface itself is scoped automatically from the
-      phase's git diff, not from this list).
-- [ ] **Pre-existing failures excluded.** The spec does not fold already-broken behavior into its scope.
+## Human summaries
+- [ ] `Phase summary` and `Spec summary` both exist and are each 1–3 sentences a non-technical
+      stakeholder can understand without reading the technical sections.
+- [ ] Each summary states the outcome, why it matters, and any important boundary; neither introduces
+      a promise that the scope, requirements, or acceptance criteria do not support.
+- [ ] Neither summary contains code, paths, signatures, requirement IDs, or unexplained acronyms;
+      unavoidable domain or technical terms are explained inline in ordinary words.
+- [ ] The phase summary accurately reflects the phase goal and scope in `plan.md` and uses the exact
+      same wording in every sibling spec.
 
-## Verdict
-- **Approved** → set `review_status: approved` on the spec only when every applicable box is checked
-  *and* `fidelity_verdict != NO-GO`.
-- **Route back** → any unchecked box that grilling could not resolve. Record the specific items and
-  return to the Spec Writer. When unsure, route back.
+## Scope
+- [ ] Scope in/out is explicit; nothing is silently assumed in scope.
+- [ ] The spec is **independently testable** without reading sibling specs.
+
+## Concreteness
+- [ ] Real file paths, signatures, and data types — no hand-waving, no invented structure.
+
+## Migration-specific (work_kind: migration)
+- [ ] The spec names the **existing tests** for the surface and the **parity** that must be preserved
+      (the existing suite is the contract — the implementer runs it, doesn't re-author it).
+- [ ] Coverage gaps (requirements with no existing test) are called out and scoped to the **critical
+      seams** where the implementer will add characterization tests — not an exhaustive re-test.
+
+## Reviewer self-test (grill-me drives these)
+- Can you explain both summaries to a non-technical stakeholder without defining additional terms?
+- Can you state, for each requirement, the exact test that would fail if it were violated?
+- Can you point to where in `overview.md` each key decision is justified?
+- If you can't answer, the spec is not ready — route it back to the Spec Writer.

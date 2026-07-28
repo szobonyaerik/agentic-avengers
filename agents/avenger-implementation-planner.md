@@ -89,6 +89,6 @@ per-phase specs remain coherent (the fidelity gate checks each spec against thes
 - Do not write the spec files — that is the Spec Writer's job (you only list each phase and its
   candidate specs `<n>.<k>`).
 - Do not write per-spec acceptance criteria or test definitions — that belongs to the Spec Writer and
-  Test-Author.
+  implementer.
 - Do not modify the codebase or any file other than `plan.md`.
 - Do not skip codebase validation — always check the plan against what actually exists.

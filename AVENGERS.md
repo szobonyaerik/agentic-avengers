@@ -1,7 +1,7 @@
 ---
 title: AVENGERS.md — transformation brief for agentic-avengers
 type: cold-session-playbook
-purpose: Refactor this repo from its current flow to the target flow below, then configure it for a project (§9). Self-contained — you need only this file and the repo. Read the repo first, then execute the deltas in order, verifying each.
+purpose: Historical transformation brief (§1-§8, executed) plus the still-current project setup guide (§9). SUPERSEDED where it disagrees with pipeline-flow.png — see §0.1. Read the repo first; skills/pipeline-conventions is the canonical rulebook, not this file.
 runtimes: Claude Code + opencode (Copilot is being removed)
 mutation: cosmic-ray (replaces mutmut)
 ---
@@ -12,6 +12,29 @@ You are a cold session working inside **agentic-avengers**, the private, high-ca
 the corporate `klm-agentic-pipeline`. Evolve this repo to the **target flow** here, in branches, in
 the §6 order, verifying each block. Do not break the invariants in §7. When you are done, §9 is the
 hands-on setup to configure it for a real project.
+
+## 0.1 SUPERSEDED — read this first
+
+§1-§8 record a transformation that has already been executed. Two later refactors changed its
+decisions: `pipeline-flow.png` (2026-07-28) and, the same day, a **convergence onto the sibling
+`klm-agentic-pipeline`**, which is now the reference for pipeline semantics. Where this file and
+`skills/pipeline-conventions/SKILL.md` disagree, **the skill wins**. What changed:
+
+| §  | This file says | Now |
+|----|----------------|-----|
+| §3, §4D, §7 | A separate **Test-Author** owns `tests/`; implementers are banned from writing tests | **Deleted.** The implementer writes tests and code test-first via `skills/tdd`, which carries all three `work_kind` modes inline |
+| §3, §7 | Tests are a **frozen contract**, locked RED *before* implementation | **Locked-after-verify**: the implementer owns them until the Verifier passes the phase; after that, weakening one needs re-verification, adding is allowed |
+| §3, §F | The Verifier is a hook that triages a failing suite | The Verifier is an **agent** (`agents/avenger-verifier.md`) that also **reads the tests** over a bounded review set and persists **`verdict.json`** with per-finding break-glass waivers |
+| §F | Gate models run in hooks and in CI | **Model gates run in chat; mechanical gates run in hooks/CI**, which only check committed artifacts. The Fidelity Gate is the one exception |
+| §I | Mutation is always blocking | **Optional and off by default**: `MUTATION_POLICY` = `off` \| `advisory` \| `enforce`. An extra signal, not the independence mechanism |
+| §3.2 | Three test-author skills (`tdd-red-author`, `migration-`, `brownfield-`) | One `skills/tdd`; the other three are deleted. Refactor means baseline-first parity, not a preserve/change partition |
+
+Deliberate differences from `klm-agentic-pipeline`, and the only ones: the Claude Code + opencode
+runtime, the automated **Fidelity Gate**, the **feature-level e2e** stage and **spec-isolation-review**,
+and the deterministic diff-scoped mutation scorer.
+
+Unchanged from this file: multi-spec phases and the `R<n>.<k>.<m>` ID scheme, cross-family fail-closed
+gates, break-glass, codemap, and the versioned install in §9.
 
 ## 0. How to use this file
 1. Read the current repo: `README.md`, `CLAUDE.md`, `AGENTS.md`, `agents/`, `skills/`, `commands/`,
@@ -74,12 +97,14 @@ QUALITY WALL (per spec, both gates)
        reviewer interrogated one question at a time; on success sets `review_status: approved`,
        else routes back. Tests do not lock until approved.
 
-BUILD & VERIFY (looped per phase)
-  test-author  → tests/... + test-mapping.md   (mode by work_kind — §3.2; LOCKED contract)
-  backend/frontend-architect → src/...          (implement to locked tests; never edit tests)
+BUILD & VERIFY (looped per phase)          [REVISED — see §0.1]
+  backend/frontend implementer → tests/... + test-mapping.md + src/...
+       red → green, one vertical slice at a time (skills/tdd); mode by work_kind (§3.2)
   [repeat for each spec in the phase]
-  verifier (per phase, cross-family) → full phase suite + coverage trace + cosmic-ray mutation
-  breaker (critical paths only) → counterexample → new locked test
+  avenger-verifier (per phase, cross-family) → suite + coverage trace + bounded TEST REVIEW
+       → verdict.json ; PASS LOCKS THE PHASE SUITE
+  mutation (cosmic-ray; MUTATION_POLICY: off (default) | advisory | enforce)
+  breaker (critical paths only) → counterexample → implementer adds the test, fixes the code
   handover → docs/features/<feat>/phases/<n>-<slug>/handover.md
 
 SHIP
@@ -266,7 +291,10 @@ mutation gate and from the per-edit verifier hook; they run at feature close and
     --check` reports cleanly on a fresh target and shows DRIFT on a hand-edited file.
 
 ## 7. Invariants — do not break
-- **Tests are a frozen contract** — only the Test-Author writes `tests/`; fixes go to code.
+- **Tests lock at the Verifier** (revised — §0.1) — the implementer owns `tests/` during its own
+  build and writes them test-first; once the Verifier passes the phase the suite is locked and later
+  gates may only demand *added* tests. The Verifier's test review is not optional: it is the only
+  independent judgement on a suite whose author also wrote the code.
 - **Gates fail closed** — missing key, unreachable model, non-JSON verdict, or no verdict → stop.
 - **Cross-family** — verifier/gate model family ≠ author family.
 - **Canonical-source driven** — edit canonical; regenerate `.opencode/`; never hand-edit adapters.
