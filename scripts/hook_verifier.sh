@@ -18,6 +18,7 @@
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (bypass_log)
+. "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 [ -n "$FILE" ] || exit 0

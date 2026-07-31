@@ -23,6 +23,7 @@
 #      GATE_PROVIDER · TEST_CMD (default: pytest -q --tb=short on the phase's tests dir)
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$SD/.." && pwd)}"
 cd "$ROOT" || exit 2
 

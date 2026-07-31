@@ -5,6 +5,7 @@
 # ($CLAUDE_PROJECT_DIR) are used only for the spec being judged and the override log.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 case "$FILE" in

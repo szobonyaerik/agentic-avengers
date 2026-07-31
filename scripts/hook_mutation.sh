@@ -20,6 +20,7 @@
 # The Verifier invokes this when the policy is on; it is not a standalone quality bar.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (gate_runner, prompts, bypass_log)
+. "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 case "$FILE" in

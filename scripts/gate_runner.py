@@ -21,6 +21,19 @@ import re
 import subprocess
 import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Pull OPENROUTER_API_KEY / GATE_MODEL / AUTHOR_FAMILY from the project's .env when the environment
+# does not already define them. Shell callers get the same values via load_env.sh; this covers being
+# invoked directly. The real environment always wins, so a CI secret is never shadowed.
+try:
+    from env_file import load_into
+
+    load_into(os.environ, root=os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+except ImportError:  # vendored without env_file.py — proceed on the real environment alone
+    pass
 
 VERDICT_OK = {"GO", "PASS"}
 

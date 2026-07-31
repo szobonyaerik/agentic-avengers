@@ -13,8 +13,16 @@ write no production code.
 
 2. **gitignore.** Ensure `.gitignore` contains `**/.pytest_cache/`, `session.sqlite` and
    `.gate-session.sqlite` (cosmic-ray sessions), `.gate-cosmic-ray.toml` (the generated diff-scoped
-   config), `.gate-tmp.txt`, and `.avenger-auto` (the `/avenger-run --auto` permission sentinel —
-   it must never be committed).
+   config), `.gate-tmp.txt`, `.avenger-auto` (the `/avenger-run --auto` permission sentinel), and
+   **`.env`** (it holds a live API key). None of these may ever be committed.
+
+2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to `.env.example`
+   in the project, then to `.env` **only if one does not already exist** — check first, never
+   overwrite a live `.env`. Tell the user what they must fill in: `OPENROUTER_API_KEY`, and
+   `GATE_PROVIDER=openrouter` (without it `gate_runner.py` defaults to the `opencode` CLI and the
+   key is ignored). Warn that `GATE_MODEL` and `VERIFIER_GATE_MODEL` must not share
+   `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. Every gate loads this file via
+   `scripts/load_env.sh`; the real environment always wins over it.
 
 3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
    present for the chosen runtime(s): `CLAUDE.md` (Claude Code) and/or `AGENTS.md` (opencode). Create
