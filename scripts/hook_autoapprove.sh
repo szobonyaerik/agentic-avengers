@@ -15,6 +15,8 @@
 #   AVENGER_AUTO_TTL_MIN   sentinel lifetime in minutes (default 240) — a crashed run expires
 set -uo pipefail
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/load_env.sh"   # AVENGER_AUTO_* may live in the project .env
+
 PROJECT="${CLAUDE_PROJECT_DIR:-}"
 [ -n "$PROJECT" ] || exit 0
 SENTINEL="$PROJECT/.avenger-auto"

@@ -17,6 +17,7 @@ set -uo pipefail
 
 [ "${PONYTAIL_OFF:-0}" = "1" ] && exit 0
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/load_env.sh"   # PONYTAIL_* may live in the project .env
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SKILL="$ROOT/skills/ponytail/SKILL.md"
 [ -f "$SKILL" ] || exit 0

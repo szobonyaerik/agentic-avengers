@@ -15,6 +15,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/load_env.sh"   # pipeline config from the project .env (real env always wins)
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 OVERRIDE_LOG="$ROOT/gate-overrides.log"
