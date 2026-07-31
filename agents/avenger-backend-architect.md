@@ -44,6 +44,12 @@ You receive **one approved spec** at
 `fidelity_verdict != NO-GO` **and** `review_status: approved`. Your job is red → green, for that spec
 only — you write both halves.
 
+**`skills/ponytail` is injected into you automatically** by the `SubagentStart` hook — the minimalism
+ladder you climb before writing any production code (does it need to exist? already here? stdlib?
+platform? installed dependency? one line?). It governs **production code only**: it never removes a
+test, a negative case or a seam, and never argues a requirement out of the spec. On any conflict,
+`skills/tdd`, `skills/pipeline-conventions` and the approved spec win.
+
 **Load `skills/tdd` before you start.** It carries the whole procedure: what a good test is, the
 seam rule, the three anti-patterns the Verifier will read your tests for, and the mode selection from
 `work_kind` in `task-analysis.md`:

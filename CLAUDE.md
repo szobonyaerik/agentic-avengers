@@ -110,6 +110,27 @@ own `pytest tests/<feature>/<n>-<slug>/` is the inner loop: free, no model call.
 `scripts/spec_gate_cache.py` hashes the spec body per gate, so `status: done` can't re-roll a fresh
 verdict over an approved spec.
 
+### 6b. Implementer minimalism (`skills/ponytail`)
+The implementers — and only they — climb a minimalism ladder before writing production code: does this
+need to exist (YAGNI) → already in this codebase → stdlib → native platform feature → installed
+dependency → one line → minimum that works. Vendored from `DietrichGebert/ponytail` (MIT), flattened
+to one intensity and re-scoped.
+
+Delivery is **`scripts/hook_ponytail.sh` on the `SubagentStart` event**, matching `agent_type` against
+`PONYTAIL_AGENTS` (default `avenger-backend-architect|avenger-frontend-developer`). SessionStart
+context never reaches subagents, so a SessionStart hook would inject it everywhere *except* where code
+is written; a passive `SKILL.md` self-activates ~never. The hook **fails closed** — bad payload,
+unknown agent, bad regex or missing skill injects nothing, so `avenger-verifier`, `avenger-breaker` and
+`avenger-bug-hunter` never receive a "write less code" persona while their job is to demand more.
+`PONYTAIL_OFF=1` kills it.
+
+**Production code only.** It never removes a test, a negative case or a seam, and rung 1 never applies
+to a requirement in an approved spec. On conflict `skills/tdd`, `pipeline-conventions` and the spec
+win. **It is not a gate**: `/ponytail-review` is advisory (no artifact, no verdict), and `/ponytail`
+loads the ladder into the main thread for inline implementation the hook cannot reach — deliberately
+off by default there, since the main thread also writes specs and runs verifier triage. opencode has no
+subagent-start event; its implementers get the ladder from the agent prompt line only.
+
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode
 adapter with `python3 scripts/sync_opencode.py`. Never hand-edit `.opencode/` — `agents/` and

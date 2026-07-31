@@ -115,6 +115,31 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
 - **Refactor** → baseline-first parity: use the migration procedure without porting tests; behavior
   remains unchanged unless a separate greenfield requirement explicitly says otherwise.
 
+## Implementer minimalism (`skills/ponytail`)
+
+The implementers — and **only** the implementers — carry a minimalism ladder they climb before writing
+production code: does this need to exist at all (YAGNI) → already in this codebase → stdlib → native
+platform feature → already-installed dependency → one line → minimum that works.
+
+- **Delivery is a hook, not self-activation.** `scripts/hook_ponytail.sh` fires on **`SubagentStart`**
+  and matches `agent_type` against `PONYTAIL_AGENTS`
+  (default `avenger-backend-architect|avenger-frontend-developer`, unanchored so plugin-scoped names
+  match). SessionStart context never reaches subagents, so a SessionStart hook would inject the
+  ruleset everywhere *except* where code is written. Passive `SKILL.md` availability is weaker still —
+  upstream measured **zero** self-activations in ten sessions.
+- **It fails closed.** An unreadable payload, an unknown `agent_type`, a bad regex or a missing skill
+  file injects nothing. The Verifier, the Breaker and the bug-hunter must never receive it: their job
+  is to demand *more* tests and more counterexamples. `PONYTAIL_OFF=1` disables it everywhere.
+- **Production code only.** The ladder never removes a test, a negative case or a seam, and never
+  applies rung 1 to an `R<n>.<k>.<m>` in an approved spec — a requirement that looks unnecessary is a
+  route-back, not a deletion. On conflict, `skills/tdd`, this file and the spec win.
+- **No gate.** `/ponytail-review` scans a diff on demand and is advisory: no artifact, no verdict,
+  nothing blocked. `/ponytail` loads the skill into the main thread for inline implementation, which
+  the `SubagentStart` hook cannot reach. Neither is on by default in the main thread, which also
+  writes specs and runs verifier triage.
+- **Runtime coverage.** Claude Code gets hook injection; opencode has no subagent-start event, so its
+  implementers get the ladder from the agent prompt line only.
+
 ## Feature-level e2e (`skills/e2e-author`)
 
 - Written by the implementer **once per feature, after the final phase is green** — never per phase.
