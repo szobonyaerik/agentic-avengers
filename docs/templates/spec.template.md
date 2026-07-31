@@ -5,6 +5,7 @@ spec: <n>.<k>-<subslug>
 depends_on: []
 status: draft
 review_status: pending   # <!-- only the human reviewer sets this to 'approved', after grill-me -->
+criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase -->
 ---
 
 # <Spec title>

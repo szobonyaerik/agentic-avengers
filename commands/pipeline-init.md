@@ -13,7 +13,8 @@ write no production code.
 
 2. **gitignore.** Ensure `.gitignore` contains `**/.pytest_cache/`, `session.sqlite` and
    `.gate-session.sqlite` (cosmic-ray sessions), `.gate-cosmic-ray.toml` (the generated diff-scoped
-   config), and `.gate-tmp.txt`.
+   config), `.gate-tmp.txt`, and `.avenger-auto` (the `/avenger-run --auto` permission sentinel —
+   it must never be committed).
 
 3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
    present for the chosen runtime(s): `CLAUDE.md` (Claude Code) and/or `AGENTS.md` (opencode). Create
