@@ -14,3 +14,4 @@ __pycache__/
 .opencode/node_modules/
 
 # note: gate-overrides.log is intentionally NOT ignored — break-glass must stay visible/auditable.
+.avenger-auto

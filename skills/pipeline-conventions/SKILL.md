@@ -115,6 +115,17 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
 - **Refactor** → baseline-first parity: use the migration procedure without porting tests; behavior
   remains unchanged unless a separate greenfield requirement explicitly says otherwise.
 
+## Driving the chain (`/avenger-run`)
+
+The chain can be walked by hand, one stage at a time, or driven by `commands/avenger-run.md`, which
+makes the **main session** the orchestrator (a subagent has no Task tool, so it cannot spawn stages —
+only the main thread can). Position comes from `scripts/pipeline_state.py`, which reads the artifacts
+on disk (`fidelity_verdict`, `review_status`, `status`, `verdict.json`) and returns the single stage
+the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
+for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
+runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified
+phase without ever pushing. Full detail in `docs/AUTOMATE.md` §2.
+
 ## Implementer minimalism (`skills/ponytail`)
 
 The implementers — and **only** the implementers — carry a minimalism ladder they climb before writing
