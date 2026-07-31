@@ -17,6 +17,12 @@ You receive implementation specs (from `docs/features/<feature>/phases/<n>-<slug
 2. **Read the phase spec**: Read the assigned spec at `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md` for acceptance criteria and requirements. It reaches you only when `fidelity_verdict != NO-GO` **and** `review_status: approved`.
 3. **Implement the spec test-first**: The user will tell you which spec to implement (e.g., "Implement docs/features/<feature>/phases/3-dashboard/specs/3.1-widget/spec.md").
 
+**`skills/ponytail` is injected into you automatically** by the `SubagentStart` hook — the minimalism
+ladder you climb before writing any production code (native platform feature over a dependency, CSS
+over JS, one line over fifty). It governs **production code only**: it never removes a test, a
+negative case or a seam, and never argues a requirement out of the spec. On any conflict,
+`skills/tdd`, `skills/pipeline-conventions` and the approved spec win.
+
 **Load `skills/tdd` before you start.** You write both the tests and the code; the skill carries the
 procedure, the seam rule, the three anti-patterns the Verifier reads your tests for, and the mode
 selection from `work_kind` in `task-analysis.md` (greenfield red→green · migration parity-first ·
