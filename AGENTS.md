@@ -41,7 +41,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `overview.md` — the one exception to "no spec id → no test". Recorded in `e2e-mapping.md`. Excluded
    from mutation and from the phase verifier hook.
 5. **Phases run in dependency/risk order**, one at a time, fully through build-and-verify.
-6. **Fresh model ≠ author** — gates run on a cross-family model (family ≠ author).
+6. **Fresh model ≠ author** — every per-phase gate runs on a cross-family model (family ≠ author).
+   The one sanctioned exception is the feature-close `no-mistakes` ship gate (`.no-mistakes.yaml`),
+   documented in `skills/pipeline-conventions/SKILL.md`.
 7. **Gates fail closed** — a gate that cannot reach a verdict (incl. same-family) stops; it never passes.
    Break-glass `GATE_BYPASS="reason"` is logged to `gate-overrides.log`, shown, and recorded in `handover.md`.
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.

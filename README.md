@@ -189,6 +189,7 @@ agentic-avengers/
 │   ├── skills/            symlink -> ../skills
 │   └── plugin/pipeline-gates.ts   in-session gates for opencode
 ├── .github/workflows/pipeline-gates.yml   CI floor
+├── .no-mistakes.yaml      feature-close ship gate config (see skills/pipeline-conventions)
 ├── AGENTS.md              opencode conventions
 ├── .pre-commit-config.yaml
 ├── CLAUDE.md

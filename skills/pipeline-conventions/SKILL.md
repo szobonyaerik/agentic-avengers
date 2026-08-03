@@ -124,7 +124,8 @@ The implementer authors **both tests and code** test-first (there is no separate
 
 ## Agent tooling
 
-Every canonical agent declares `tools: Read, Write, Edit, Glob, Grep, Bash` — **no MCP**. So MCP
+Every canonical agent declares an explicit `tools:` allowlist (`Read, Write, Glob, Grep, Bash`, plus
+`Edit` for the agents that rewrite files) and **no MCP** in any of them. So MCP
 servers available in the main thread (browser automation, issue trackers) are **unreachable inside a
 pipeline subagent**; only CLIs invoked through `Bash` are. Where a stage needs a browser — feature
 e2e against a UI, Breaker poking a real page — use `npx -y chrome-devtools-axi`, not

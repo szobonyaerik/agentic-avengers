@@ -38,7 +38,8 @@ Common flags:
   --lang python,kotlin,java,c   Languages to scan (comma-sep or repeatable).
   --output DIR                  Output root (default: codemap).
   --scan auto|walk|gradle       Source-root discovery (auto picks gradle for JVM repos).
-  --changed                     Only resolve purpose for git-staged files (pre-commit).
+  --changed                     Only resolve purpose for git-staged files (pre-commit). No effect
+                                while LLM purposes are disabled: nothing is resolved either way.
   --force                       Ignore the manifest; rebuild everything.
 
 The build runs in six phases (1-6), each independently verifiable:
