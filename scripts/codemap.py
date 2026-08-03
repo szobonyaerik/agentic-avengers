@@ -796,9 +796,12 @@ class Manifest:
 # itself down and emitted "(undocumented - model unavailable)" for every remaining
 # file while the run still exited 0. Fail fast beats degrading silently.
 #
-# Re-enabling is more than flipping this flag: the request body must first send
-# `max_completion_tokens` (and no `temperature`) for gpt-5-family models, and a provider must
-# actually call Manifest.record() again. The manifest cache is left intact while disabled — read
+# Re-enabling is more than flipping this flag. It also takes: (1) the request body sending
+# `max_completion_tokens` (and no `temperature`) for gpt-5-family models; (2) a provider that calls
+# Manifest.record() again; (3) restoring the real cache key — while disabled `Manifest._model` is
+# unconditionally the MANIFEST_MODEL_KEY sentinel, so without going back to the f"{provider}:{model}"
+# form every model writes the same label and swapping models would silently stop invalidating cached
+# purposes. The manifest cache is left intact while disabled — read
 # from, never written — so re-enabling does not force a paid re-resolution. Manifest.save() guards
 # the "never rewrite a manifest we neither loaded nor repopulated" invariant on its own, so a flip
 # alone cannot empty an existing cache.

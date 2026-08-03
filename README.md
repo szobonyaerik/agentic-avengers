@@ -255,8 +255,11 @@ Generate the map the Solution Architect and implementers read:
 python scripts/codemap.py . --lang python --output codebase     # -> codebase/MOC.md
 ```
 The structural map (tree-sitter: exports, dependencies, used-by) is the whole product right now.
-The optional LLM-backed one-line **purpose** backfill is **temporarily disabled**; a file with no
-docstring/KDoc/Javadoc renders `(undocumented …)`. Passing `--provider` / `--model` / `--base-url` /
+The optional LLM-backed one-line **purpose** backfill is **temporarily disabled**. An existing
+`.codemap-manifest.json` is still read, so a purpose an earlier model-backed run cached keeps
+rendering for as long as that file's hash matches; `(undocumented …)` is what a file with no
+docstring/KDoc/Javadoc *and* no matching cache entry renders. No new purpose is resolved and the
+manifest is never rewritten while disabled. Passing `--provider` / `--model` / `--base-url` /
 `--api-key` exits with an explanation rather than silently producing an undocumented map.
 
 ---

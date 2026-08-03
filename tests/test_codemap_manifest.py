@@ -18,8 +18,6 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import codemap  # noqa: E402
 
-pytest.importorskip("tree_sitter_python")
-
 CACHED_PURPOSE = "Cached purpose a model was paid to write"
 
 
@@ -52,7 +50,9 @@ def _run_codemap(root: Path, out: Path) -> subprocess.CompletedProcess:
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """A one-file repo whose only module has no docstring, so its purpose can only
-    come from the cache or the fallback."""
+    come from the cache or the fallback. Only the tests that generate a real map need a
+    tree-sitter grammar; the Manifest invariants below must run without one."""
+    pytest.importorskip("tree_sitter_python")
     root = tmp_path / "repo"
     root.mkdir()
     (root / "undocumented.py").write_text("VALUE = 1\n", encoding="utf-8")
