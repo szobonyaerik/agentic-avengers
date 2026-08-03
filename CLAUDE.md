@@ -86,6 +86,16 @@ reach a verdict (missing key, provider down, non-JSON, same-family) stops. **Bre
 (`GATE_BYPASS="reason"`) is logged to `gate-overrides.log`, shown visibly, and recorded in
 `handover.md` — never silent.
 
+**The feature-close ship gate (`no-mistakes`) is the one sanctioned same-family exception.** It runs
+once per feature — after the last phase is verified and the e2e suite is written — and covers what no
+avenger stage does: lint, docs, push, PR, CI. Its pipeline agent is pinned to Anthropic Opus
+(`.no-mistakes.yaml`, plus `agent_args_override` in `~/.no-mistakes/config.yaml`), a **deliberate
+divergence** from the cross-family rule: it runs in the daemon's own disposable worktree with no
+shared context with the stage that wrote the code, so it decorrelates *context* while accepting
+shared *family* blind spots. It is not a break-glass bypass, and every **per-phase** gate (fidelity,
+spec-review, verifier) stays cross-family. While a run is active it owns both findings and fixes, so
+the route-back-to-implementer rule is suspended for its duration.
+
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
 score `>= MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors go to the

@@ -48,6 +48,11 @@ the phase level unless the *feature's stated goal* is about that error path.
    - Files go in `tests/e2e/<feature>/` (e.g. `tests/e2e/clickup-sync/test_task_roundtrip.py`).
    - First docstring line traces to the **goal**, not a spec id:
      `"""e2e: <feature> | goal — a task created in ClickUp appears in the dashboard."""`
+   - **When the outermost boundary is a browser**, drive it with `npx -y chrome-devtools-axi`
+     (`open <url>` → interact by `@<uid>` ref → assert with a fresh `snapshot` or `eval`). It is a
+     CLI, so it works from an implementer subagent, which has `Bash` but no MCP access — the
+     `mcp__claude-in-chrome__*` tools are unreachable there. Keep the assertion on what the user
+     observes, never on internal state read through `eval`.
 
 4. **Confirm they pass.** Unlike phase tests, these are written *after* implementation, so they must
    be **green** on first run. A red e2e here means either the feature genuinely does not work end to

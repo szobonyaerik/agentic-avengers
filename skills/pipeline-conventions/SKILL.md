@@ -72,6 +72,21 @@ The implementer authors **both tests and code** test-first (there is no separate
   anywhere. It is **not** the independence mechanism — the Verifier's test-quality review is.
 - **Breaker** — critical/security paths only, optional.
 - **Feature-level e2e** — once, after the final phase is green (see below).
+- **Ship gate (per feature, `no-mistakes`)** — runs **once**, after the last phase is verified and the
+  e2e suite is written, on the feature branch. It covers what no avenger stage does: lint, docs,
+  push, PR and CI. It does **not** replace the Verifier — it has no `R<n>.<k>.<m>` traceability, no
+  bounded test-quality review, and no `verdict.json`.
+  - **While a `no-mistakes` run is active it owns both the findings and the fixes**, so the avenger
+    "route back to the implementer" rule is suspended for its duration. Never `abort`/`rerun` mid-run
+    to hand-fix something. This is exactly why it runs once at feature close and never per phase: by
+    then every phase is verified and locked, so there is no live fix-ownership conflict.
+  - **Deliberate same-family divergence.** Its pipeline agent is pinned to Anthropic Opus
+    (`.no-mistakes.yaml` → `agent: claude`, Opus pinned via `agent_args_override` in
+    `~/.no-mistakes/config.yaml`). This is a **conscious exception to the cross-family rule below**,
+    not an oversight and not a break-glass bypass: no-mistakes runs in the daemon's own disposable
+    worktree with no shared context with the stage that wrote the code, so it decorrelates *context*
+    while accepting shared *family* blind spots. The per-phase gates — fidelity, spec-review,
+    verifier — are unaffected and stay cross-family.
 
 ## Hard rules
 
@@ -87,8 +102,10 @@ The implementer authors **both tests and code** test-first (there is no separate
 - **Fresh model ≠ author:** the model that *forms the judgement* must not share the implementer's
   family. Every subagent here is Anthropic, so the Verifier **agent** cannot itself be cross-family —
   it orchestrates, and delegates the reading of the tests to `scripts/verifier_review.sh` →
-  `gate_runner.py` on `$VERIFIER_GATE_MODEL` (default `google/gemini-2.5-pro`). `gate_runner` refuses
+  `gate_runner.py` on `$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`). `gate_runner` refuses
   a same-family model, and CI asserts the same statically. Opus-vs-Sonnet is **not** decorrelation.
+  The **only** sanctioned exception is the feature-close `no-mistakes` ship gate above, which is
+  same-family on purpose and documented as such — every *per-phase* gate stays cross-family.
 - **Gates fail closed.**
 - **Break-glass bypass** is allowed but recorded — whole-gate via `GATE_BYPASS`, per-finding via
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
@@ -104,6 +121,14 @@ The implementer authors **both tests and code** test-first (there is no separate
 - **Model-based gates run in-chat** — the Verifier's triage and test-quality review, and the grill-me
   spec review. CI only checks their **committed artifacts**. The one exception is the automated
   **Fidelity Gate**, which is a hook and does call a model in-session; it never runs in CI.
+
+## Agent tooling
+
+Every canonical agent declares `tools: Read, Write, Edit, Glob, Grep, Bash` — **no MCP**. So MCP
+servers available in the main thread (browser automation, issue trackers) are **unreachable inside a
+pipeline subagent**; only CLIs invoked through `Bash` are. Where a stage needs a browser — feature
+e2e against a UI, Breaker poking a real page — use `npx -y chrome-devtools-axi`, not
+`mcp__claude-in-chrome__*`. Prefer plain `curl` when no browser is actually needed.
 
 ## Implementer test modes (see the `tdd` skill)
 
