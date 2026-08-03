@@ -716,6 +716,10 @@ class Manifest:
         self._force = config.force
 
     def load(self) -> None:
+        # Inert while LLM purposes are disabled — see LLM_PURPOSES_DISABLED. Nothing can
+        # populate this cache right now, so reading it would only ever feed save().
+        if not LLM_PURPOSES_ENABLED:
+            return
         if self._force or not self._path.exists():
             return
         try:
@@ -741,6 +745,14 @@ class Manifest:
         return set(self._data)
 
     def save(self, current_files: set[str]) -> None:
+        # Leave an existing manifest byte-untouched while LLM purposes are disabled. Without
+        # this, load() rejects a manifest written by a model-backed run (its `model` key does
+        # not match the disabled-mode sentinel), nothing repopulates `_data`, and this method
+        # would rewrite the file with an empty `files` map — silently destroying every cached
+        # purpose a user paid a model to generate, turning a temporary disable into permanent
+        # data loss. Re-enabling must not force a full paid re-resolution.
+        if not LLM_PURPOSES_ENABLED:
+            return
         self._data = {rel: e for rel, e in self._data.items() if rel in current_files}
         payload = {
             "version": MANIFEST_VERSION,
@@ -760,6 +772,11 @@ class Manifest:
 # rejects with HTTP 400 — and 400 was not in the retry set, so the provider marked
 # itself down and emitted "(undocumented - model unavailable)" for every remaining
 # file while the run still exited 0. Fail fast beats degrading silently.
+#
+# Flip this to True to re-enable, after fixing the request body to send
+# `max_completion_tokens` (and no `temperature`) for gpt-5-family models. The manifest cache is
+# deliberately left intact while disabled, so re-enabling does not force a paid re-resolution.
+LLM_PURPOSES_ENABLED = False
 LLM_PURPOSES_DISABLED = (
     "Error: codemap LLM purposes are temporarily disabled, so --provider/--model/"
     "--base-url/--api-key\n"
@@ -780,7 +797,7 @@ def resolve_purpose(info: FileInfo, h: str, manifest: Manifest) -> str:
     cached = manifest.cached_purpose(info.rel_path, h)
     if cached:
         return cached
-    return "(undocumented — add a docstring/KDoc or run without --no-llm)"
+    return "(undocumented — add a docstring/KDoc)"
 
 
 def infer_tags(info: FileInfo, signals: dict[str, tuple[str, ...]]) -> list[str]:
@@ -1119,6 +1136,9 @@ def build(config: Config) -> None:
         for rel, info in all_info.items():
             path = config.root / rel
             h = file_hash(path)
+            # While LLM purposes are disabled these two branches differ only in the fallback
+            # wording — `--changed` selects no extra work. The split is kept because it is the
+            # seam the LLM call goes back into when LLM_PURPOSES_ENABLED is flipped on.
             if rel in to_resolve:
                 info.purpose = resolve_purpose(info, h, manifest)
             else:
