@@ -96,8 +96,11 @@ python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/codemap.py" . --lang <langs> --output 
 - **`--lang`**: comma-separated, from `python,kotlin,java,c`. Use `$CODEMAP_LANG` if the project sets
   it; otherwise infer from what the repo actually contains and say which you chose. Getting this wrong
   produces an empty map, so check rather than assume `python`.
-- It is **incremental** (a manifest cache means only changed files are re-resolved), so this is cheap
-  per phase. Do not pass `--force` unless the map is visibly wrong.
+- It **re-parses the whole repo every run** — structure is never cached, and with the LLM purpose
+  backfill disabled nothing is re-resolved by a model. It is still cheap per phase: tree-sitter
+  parsing is local and fast, and no model is called. An existing `.codemap-manifest.json` is read so
+  purposes an earlier model-backed run cached keep rendering, but it is never refreshed or rewritten.
+  Do not pass `--force` unless the map is visibly wrong — it only discards those cached purposes.
 - Each module's *purpose* comes from its docstring / KDoc / Javadoc. A file that documents itself gets
   a real purpose line; one that does not is marked `(undocumented)`.
 

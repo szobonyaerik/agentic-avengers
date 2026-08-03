@@ -9,8 +9,10 @@ extracted *deterministically* with tree-sitter.
 
 The optional LLM-backed "purpose" backfill — the one line AST cannot give, for
 files with no docstring/KDoc/Javadoc of their own — is **temporarily disabled**
-(see LLM_PURPOSES_DISABLED below). Structure is unaffected; such files render
-the same "(undocumented)" line they always have when no model is in play.
+(see LLM_PURPOSES_DISABLED below). Structure is unaffected. An existing manifest
+is still read, so purposes a previous model-backed run cached keep rendering for
+as long as the file is unchanged; anything else renders "(undocumented)". No new
+purpose is resolved and the manifest is never rewritten while disabled.
 
 The same script runs on a Python repo or a Kotlin repo with only configuration
 changing — in the simplest case just `--lang`.
@@ -217,8 +219,9 @@ MANIFEST_FILENAME = ".codemap-manifest.json"
 MANIFEST_VERSION = 1
 # Bump this (or change the model key) to invalidate every cached LLM purpose at once.
 PROMPT_VERSION = "1"
-# Model identity part of the purpose cache key. While LLM purposes are disabled this
-# is a fixed sentinel, so caches written by a model-backed run no longer match.
+# Model identity part of the purpose cache key, used when a model can refresh entries.
+# While LLM purposes are disabled it is a fixed sentinel that gates writes only — reads
+# accept a manifest whichever model wrote it (see Manifest.load).
 MANIFEST_MODEL_KEY = "llm-purposes-disabled"
 MAX_FILE_BYTES_DEFAULT = 40_000
 
@@ -714,12 +717,10 @@ class Manifest:
         self._model = MANIFEST_MODEL_KEY
         self._data: dict[str, dict] = {}
         self._force = config.force
+        self._loaded = False
+        self._recorded = False
 
     def load(self) -> None:
-        # Inert while LLM purposes are disabled — see LLM_PURPOSES_DISABLED. Nothing can
-        # populate this cache right now, so reading it would only ever feed save().
-        if not LLM_PURPOSES_ENABLED:
-            return
         if self._force or not self._path.exists():
             return
         try:
@@ -728,9 +729,19 @@ class Manifest:
             return
         if payload.get("version") != MANIFEST_VERSION:
             return
-        # Prompt/model identity is part of the cache key for LLM purposes.
-        if payload.get("prompt_version") == PROMPT_VERSION and payload.get("model") == self._model:
-            self._data = payload.get("files", {})
+        if payload.get("prompt_version") != PROMPT_VERSION:
+            return
+        # Model identity gates reads only while a model can actually refresh them. While LLM
+        # purposes are disabled we accept a manifest whoever wrote it, so a map keeps the
+        # purpose prose a user already paid a model to generate instead of regressing every
+        # line to "(undocumented)". This is safe because entries are content-hash-keyed:
+        # cached_purpose() serves an entry only while its hash still matches the file on disk,
+        # so a file that changed since the cached run falls through to the plain fallback
+        # rather than serving a stale purpose. Do not "fix" this back to a sentinel match.
+        if LLM_PURPOSES_ENABLED and payload.get("model") != self._model:
+            return
+        self._data = payload.get("files", {})
+        self._loaded = True
 
     def cached_purpose(self, rel: str, h: str) -> Optional[str]:
         entry = self._data.get(rel)
@@ -740,18 +751,30 @@ class Manifest:
 
     def record(self, rel: str, h: str, purpose: str) -> None:
         self._data[rel] = {"hash": h, "purpose": purpose}
+        self._recorded = True
 
     def known_files(self) -> set[str]:
         return set(self._data)
 
+    def _disk_has_entries(self) -> bool:
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(payload.get("files"))
+
     def save(self, current_files: set[str]) -> None:
-        # Leave an existing manifest byte-untouched while LLM purposes are disabled. Without
-        # this, load() rejects a manifest written by a model-backed run (its `model` key does
-        # not match the disabled-mode sentinel), nothing repopulates `_data`, and this method
-        # would rewrite the file with an empty `files` map — silently destroying every cached
-        # purpose a user paid a model to generate, turning a temporary disable into permanent
-        # data loss. Re-enabling must not force a full paid re-resolution.
+        # Reads only while LLM purposes are disabled: nothing can repopulate the cache, so
+        # writing could only shrink it.
         if not LLM_PURPOSES_ENABLED:
+            return
+        # The invariant, independent of any feature flag: never rewrite a manifest we neither
+        # loaded nor repopulated. Without it, a run that rejects an existing manifest on load
+        # (version/prompt/model mismatch, parse error) and then calls no model would rewrite
+        # the file with an empty `files` map — silently destroying every cached purpose a user
+        # paid a model to generate. Keyed on the flag alone, re-enabling would reintroduce
+        # exactly that.
+        if not self._loaded and not self._recorded and self._disk_has_entries():
             return
         self._data = {rel: e for rel, e in self._data.items() if rel in current_files}
         payload = {
@@ -773,9 +796,12 @@ class Manifest:
 # itself down and emitted "(undocumented - model unavailable)" for every remaining
 # file while the run still exited 0. Fail fast beats degrading silently.
 #
-# Flip this to True to re-enable, after fixing the request body to send
-# `max_completion_tokens` (and no `temperature`) for gpt-5-family models. The manifest cache is
-# deliberately left intact while disabled, so re-enabling does not force a paid re-resolution.
+# Re-enabling is more than flipping this flag: the request body must first send
+# `max_completion_tokens` (and no `temperature`) for gpt-5-family models, and a provider must
+# actually call Manifest.record() again. The manifest cache is left intact while disabled — read
+# from, never written — so re-enabling does not force a paid re-resolution. Manifest.save() guards
+# the "never rewrite a manifest we neither loaded nor repopulated" invariant on its own, so a flip
+# alone cannot empty an existing cache.
 LLM_PURPOSES_ENABLED = False
 LLM_PURPOSES_DISABLED = (
     "Error: codemap LLM purposes are temporarily disabled, so --provider/--model/"
