@@ -128,7 +128,9 @@ Every canonical agent declares `tools: Read, Write, Edit, Glob, Grep, Bash` — 
 servers available in the main thread (browser automation, issue trackers) are **unreachable inside a
 pipeline subagent**; only CLIs invoked through `Bash` are. Where a stage needs a browser — feature
 e2e against a UI, Breaker poking a real page — use `npx -y chrome-devtools-axi`, not
-`mcp__claude-in-chrome__*`. Prefer plain `curl` when no browser is actually needed.
+`mcp__claude-in-chrome__*`, and finish with `npx -y chrome-devtools-axi stop` — it leaves a
+background browser server alive after the invoking process exits. Prefer plain `curl` when no
+browser is actually needed.
 
 ## Implementer test modes (see the `tdd` skill)
 

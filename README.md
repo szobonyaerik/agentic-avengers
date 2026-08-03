@@ -254,6 +254,10 @@ Generate the map the Solution Architect and implementers read:
 ```text
 python scripts/codemap.py . --lang python --output codebase     # -> codebase/MOC.md
 ```
+The structural map (tree-sitter: exports, dependencies, used-by) is the whole product right now.
+The optional LLM-backed one-line **purpose** backfill is **temporarily disabled**; a file with no
+docstring/KDoc/Javadoc renders `(undocumented …)`. Passing `--provider` / `--model` / `--base-url` /
+`--api-key` exits with an explanation rather than silently producing an undocumented map.
 
 ---
 

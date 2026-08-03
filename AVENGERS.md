@@ -196,8 +196,8 @@ mutation gate and from the per-edit verifier hook; they run at feature close and
 
 ### E. codemap
 - Drop the real `scripts/codemap.py` in (tree-sitter; Python rich, Java, C; C++ needs a `cpp` spec).
-  Output `codebase/MOC.md`. avengers is private, so the codemap MAY use LLM purposes via
-  OpenRouter/Ollama (not forced `--no-llm`):
+  Output `codebase/MOC.md`. LLM purposes are **temporarily disabled**, so the map is structural only
+  and the provider flags exit with an explanation:
   `python scripts/codemap.py . --lang <python|java|c> --output codebase`.
 - Replace old `@codebase-cartographer` references; update the handover staleness check to
   `codebase/MOC.md`.
@@ -368,7 +368,7 @@ reports 0% survival for an empty session, and ignores `--fail-over 0`. Tune with
 
 ### 9.5 Generate the codemap
 ```bash
-python scripts/codemap.py . --lang python --output codebase     # → codebase/MOC.md (LLM purposes OK on the private profile)
+python scripts/codemap.py . --lang python --output codebase     # → codebase/MOC.md (structural only; LLM purposes disabled)
 ```
 
 ### 9.6 Install into a target project — with update detection

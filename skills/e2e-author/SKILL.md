@@ -52,7 +52,10 @@ the phase level unless the *feature's stated goal* is about that error path.
      (`open <url>` → interact by `@<uid>` ref → assert with a fresh `snapshot` or `eval`). It is a
      CLI, so it works from an implementer subagent, which has `Bash` but no MCP access — the
      `mcp__claude-in-chrome__*` tools are unreachable there. Keep the assertion on what the user
-     observes, never on internal state read through `eval`.
+     observes, never on internal state read through `eval`. **Tear it down**: the CLI leaves a
+     background browser server alive after the invoking process exits, so the test must run
+     `npx -y chrome-devtools-axi stop` when it finishes — in a fixture teardown / `finally`, so it
+     runs on failure too, not only on the green path.
 
 4. **Confirm they pass.** Unlike phase tests, these are written *after* implementation, so they must
    be **green** on first run. A red e2e here means either the feature genuinely does not work end to

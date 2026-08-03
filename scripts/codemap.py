@@ -5,9 +5,12 @@ codemap.py — generic, language-agnostic codebase map generator
 
 Produces a pre-computed, token-cheap map of a codebase so an agent can navigate
 it without reading source. Structure (exports, dependencies, used-by) is
-extracted *deterministically* with tree-sitter; a local LLM (Ollama) is used
-only to fill the one thing AST cannot give — a one-line semantic purpose — and
-only when the source has no docstring/KDoc/Javadoc of its own.
+extracted *deterministically* with tree-sitter.
+
+The optional LLM-backed "purpose" backfill — the one line AST cannot give, for
+files with no docstring/KDoc/Javadoc of their own — is **temporarily disabled**
+(see LLM_PURPOSES_DISABLED below). Structure is unaffected; such files render
+the same "(undocumented)" line they always have when no model is in play.
 
 The same script runs on a Python repo or a Kotlin repo with only configuration
 changing — in the simplest case just `--lang`.
@@ -23,22 +26,17 @@ Quick start:
   pip install tree-sitter tree-sitter-python          # + -java -c -kotlin as needed
   pip install rich                                     # optional: progress bar + panels
 
-  # Python repo (defaults are Python-flavored, local Ollama for purposes):
+  # Python repo (defaults are Python-flavored):
   python codemap.py /path/to/py-repo
 
   # Kotlin repo — only the language (and scan model) changes:
   python codemap.py /path/to/kt-repo --lang kotlin
-
-  # Use OpenRouter (or any OpenAI-compatible endpoint) for purposes:
-  export OPENROUTER_API_KEY=sk-or-...
-  python codemap.py /path/to/repo --provider openrouter --model openai/gpt-5-mini
 
 Common flags:
   --lang python,kotlin,java,c   Languages to scan (comma-sep or repeatable).
   --output DIR                  Output root (default: codemap).
   --scan auto|walk|gradle       Source-root discovery (auto picks gradle for JVM repos).
   --changed                     Only resolve purpose for git-staged files (pre-commit).
-  --no-llm                      Skip Ollama; docstring/KDoc + structure only.
   --force                       Ignore the manifest; rebuild everything.
 
 The build runs in six phases (1-6), each independently verifiable:
@@ -57,13 +55,9 @@ import datetime
 import hashlib
 import importlib
 import json
-import os
 import re
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -221,8 +215,11 @@ DEFAULT_IGNORE_DIRS = {
 
 MANIFEST_FILENAME = ".codemap-manifest.json"
 MANIFEST_VERSION = 1
-# Bump this (or change the model) to invalidate every cached LLM purpose at once.
+# Bump this (or change the model key) to invalidate every cached LLM purpose at once.
 PROMPT_VERSION = "1"
+# Model identity part of the purpose cache key. While LLM purposes are disabled this
+# is a fixed sentinel, so caches written by a model-backed run no longer match.
+MANIFEST_MODEL_KEY = "llm-purposes-disabled"
 MAX_FILE_BYTES_DEFAULT = 40_000
 
 # Rough token-estimate heuristics for --dry-run (English/code ≈ 4 chars/token).
@@ -240,16 +237,11 @@ class Config:
     output: Path
     langs: list[str]
     scan: str                       # "auto" | "walk" | "gradle"
-    use_llm: bool
     changed_only: bool
     force: bool
     dry_run: bool
     price_in: Optional[float]       # USD per 1M input tokens (optional)
     price_out: Optional[float]      # USD per 1M output tokens (optional)
-    provider: str                   # "ollama" | "openrouter" | "openai"
-    base_url: str                   # resolved endpoint URL
-    api_key: Optional[str]          # None for ollama / local
-    model: str
     max_file_bytes: int
     ignore_dirs: set[str]
     internal_prefixes: tuple[str, ...]              # display hint only (see notes)
@@ -717,9 +709,9 @@ class Manifest:
 
     def __init__(self, config: Config) -> None:
         self._path = config.output / MANIFEST_FILENAME
-        # Provider+model is part of the cache key: switching backend or model
+        # Model identity is part of the cache key: switching backend or model
         # invalidates cached LLM purposes (file content alone is not enough).
-        self._model = f"{config.provider}:{config.model}"
+        self._model = MANIFEST_MODEL_KEY
         self._data: dict[str, dict] = {}
         self._force = config.force
 
@@ -761,139 +753,33 @@ class Manifest:
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-class PurposeProvider:
-    """Generates a one-line semantic purpose for a file. Subclasses talk to a
-    specific backend; all degrade gracefully to a fallback string on failure so
-    one bad request never aborts the build."""
-
-    def purpose(self, snippet: str, filename: str) -> str:
-        raise NotImplementedError
-
-
-_PURPOSE_INSTRUCTION = (
-    "Summarize what this source file does in ONE sentence, max 14 words. "
-    "Output only the sentence — no preamble, no trailing period."
+# ── LLM purposes: TEMPORARILY DISABLED ──────────────────────────────────────
+# Only the optional one-line semantic "purpose" backfill is off; the tree-sitter
+# structural map is untouched. It is disabled rather than repaired because the
+# purpose request body sent `max_tokens` and `temperature`, which the gpt-5 family
+# rejects with HTTP 400 — and 400 was not in the retry set, so the provider marked
+# itself down and emitted "(undocumented - model unavailable)" for every remaining
+# file while the run still exited 0. Fail fast beats degrading silently.
+LLM_PURPOSES_DISABLED = (
+    "Error: codemap LLM purposes are temporarily disabled, so --provider/--model/"
+    "--base-url/--api-key\n"
+    "  are not accepted. Re-run without them.\n"
+    "  Why: the purpose request body sent `max_tokens` and `temperature`, which the gpt-5\n"
+    "  family rejects with HTTP 400. HTTP 400 was not in the retry set, so the old behaviour\n"
+    "  was to mark the model down and write '(undocumented - model unavailable)' for every\n"
+    "  file while still exiting 0.\n"
+    "  Structure, docstrings and KDoc/Javadoc are unaffected: the map still generates in full."
 )
 
 
-def _purpose_prompt(snippet: str, filename: str) -> str:
-    return f"Source file: {filename}\n{_PURPOSE_INSTRUCTION}\n\n```\n{snippet[:2000]}\n```"
-
-
-class OllamaProvider(PurposeProvider):
-    """Local Ollama via its native /api/generate endpoint (no API key)."""
-
-    def __init__(self, url: str, model: str, timeout: int = 120) -> None:
-        self.url, self.model, self.timeout = url, model, timeout
-        self._down = False
-
-    def purpose(self, snippet: str, filename: str) -> str:
-        if self._down:
-            return "(undocumented — model unavailable)"
-        body = json.dumps({
-            "model": self.model, "prompt": _purpose_prompt(snippet, filename),
-            "stream": False, "think": False,
-            "options": {"num_predict": 60, "temperature": 0.1},
-        }).encode()
-        try:
-            req = urllib.request.Request(
-                self.url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                text = json.loads(resp.read()).get("response", "").strip().rstrip(".")
-                return text or "(undocumented)"
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ⚠ Ollama unavailable ({exc}); continuing without it", file=sys.stderr)
-            self._down = True
-            return "(undocumented — model unavailable)"
-
-
-class OpenAICompatProvider(PurposeProvider):
-    """Any OpenAI-compatible /chat/completions endpoint — OpenRouter, OpenAI,
-    Azure, GitHub Models, or a local server. Bearer auth, stdlib urllib, with a
-    small exponential backoff on 429/5xx (OpenRouter is rate-limited)."""
-
-    def __init__(
-        self, base_url: str, api_key: Optional[str], model: str,
-        timeout: int = 120, max_retries: int = 4,
-    ) -> None:
-        self.url, self.api_key, self.model = base_url, api_key, model
-        self.timeout, self.max_retries = timeout, max_retries
-        self._down = False
-
-    def purpose(self, snippet: str, filename: str) -> str:
-        if self._down:
-            return "(undocumented — model unavailable)"
-        body = json.dumps({
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": _PURPOSE_INSTRUCTION},
-                {"role": "user", "content": _purpose_prompt(snippet, filename)},
-            ],
-            "max_tokens": 60, "temperature": 0.1,
-        }).encode()
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-            # OpenRouter ignores these if absent; harmless elsewhere.
-            "HTTP-Referer": "https://localhost/codemap",
-            "X-Title": "codemap",
-        }
-        backoff = 2.0
-        for attempt in range(self.max_retries):
-            try:
-                req = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    data = json.loads(resp.read())
-                    text = data["choices"][0]["message"]["content"].strip().rstrip(".")
-                    return text or "(undocumented)"
-            except urllib.error.HTTPError as exc:
-                if exc.code in (429, 500, 502, 503, 504) and attempt < self.max_retries - 1:
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                print(f"  ⚠ {self.model} request failed (HTTP {exc.code}); continuing without LLM",
-                      file=sys.stderr)
-                self._down = True
-                return "(undocumented — model unavailable)"
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ⚠ LLM request failed ({exc}); continuing without LLM", file=sys.stderr)
-                self._down = True
-                return "(undocumented — model unavailable)"
-        return "(undocumented — model unavailable)"
-
-
-# provider -> (default endpoint, default model, API-key env var). --model / --base-url
-# / --api-key override these; the env var is the convenient default for the key.
-PROVIDER_DEFAULTS: dict[str, dict] = {
-    "ollama":     {"base_url": "http://localhost:11434/api/generate",       "model": "gemma3:1b",            "env": None},
-    "openrouter": {"base_url": "https://openrouter.ai/api/v1/chat/completions", "model": "openai/gpt-5-mini", "env": "OPENROUTER_API_KEY"},
-    "openai":     {"base_url": "https://api.openai.com/v1/chat/completions", "model": "gpt-5-mini",          "env": "OPENAI_API_KEY"},
-}
-
-
-def make_provider(config: Config) -> Optional[PurposeProvider]:
-    if not config.use_llm:
-        return None
-    if config.provider == "ollama":
-        return OllamaProvider(config.base_url, config.model)
-    return OpenAICompatProvider(config.base_url, config.api_key, config.model)
-
-
-def resolve_purpose(
-    info: FileInfo, path: Path, h: str, manifest: Manifest, provider: Optional[PurposeProvider]
-) -> str:
-    """Ladder: file doc -> cached LLM purpose -> fresh LLM -> fallback. The LLM is
-    never asked about a file that already documents itself."""
+def resolve_purpose(info: FileInfo, h: str, manifest: Manifest) -> str:
+    """Ladder: file doc -> cached LLM purpose -> fallback. A file that documents
+    itself never needs anything else."""
     if info.file_doc:
         return info.file_doc.rstrip(".")
     cached = manifest.cached_purpose(info.rel_path, h)
     if cached:
         return cached
-    if provider is not None:
-        purpose = provider.purpose(info.source_snippet, path.name)
-        manifest.record(info.rel_path, h, purpose)
-        return purpose
     return "(undocumented — add a docstring/KDoc or run without --no-llm)"
 
 
@@ -1175,7 +1061,7 @@ def build(config: Config) -> None:
         print("No eligible source files found.", file=sys.stderr)
         sys.exit(0)
 
-    provider_label = f"{config.provider}:{config.model}" if config.use_llm else "disabled (--no-llm)"
+    provider_label = "disabled (LLM purposes are temporarily off)"
     ui.banner([
         ("Repo", str(config.root)),
         ("Output", str(config.output)),
@@ -1200,10 +1086,9 @@ def build(config: Config) -> None:
     edges = sum(len(i.used_by) for i in all_info.values())
     ui.info(f"Resolved {edges} used-by edge(s)")
 
-    # Phase 4: purpose resolution (LLM only where needed, and only for changed set).
+    # Phase 4: purpose resolution (docstring/KDoc first, manifest cache second).
     manifest = Manifest(config)
     manifest.load()
-    provider = make_provider(config)
 
     to_resolve: set[str] = set(all_info)
     if config.changed_only:
@@ -1217,7 +1102,7 @@ def build(config: Config) -> None:
         total = est["in_tok"] + est["out_tok"]
         rows = [
             ("Files scanned", str(len(all_info))),
-            ("Would call LLM", str(est["calls"])),
+            ("Would need a purpose", str(est["calls"])),
             ("Free (doc/cache)", str(est["free"])),
             ("Est input tok", f"{est['in_tok']:,}"),
             ("Est output tok", f"{est['out_tok']:,}"),
@@ -1226,20 +1111,16 @@ def build(config: Config) -> None:
         if config.price_in is not None and config.price_out is not None:
             cost = est["in_tok"] / 1e6 * config.price_in + est["out_tok"] / 1e6 * config.price_out
             rows.append(("Est cost (USD)", f"${cost:.4f}"))
-        rows.append(("Note", "estimate only — no files written, no LLM called"))
+        rows.append(("Note", "estimate only — no files written; LLM purposes are disabled"))
         ui.estimate(rows)
         return
 
-    llm_calls = 0
     with ui.track("Resolving purposes", len(all_info)) as advance:
         for rel, info in all_info.items():
             path = config.root / rel
             h = file_hash(path)
             if rel in to_resolve:
-                had_doc = bool(info.file_doc) or manifest.cached_purpose(rel, h) is not None
-                info.purpose = resolve_purpose(info, path, h, manifest, provider)
-                if provider is not None and not had_doc:
-                    llm_calls += 1
+                info.purpose = resolve_purpose(info, h, manifest)
             else:
                 info.purpose = info.file_doc.rstrip(".") if info.file_doc else (
                     manifest.cached_purpose(rel, h) or "(undocumented)"
@@ -1261,7 +1142,7 @@ def build(config: Config) -> None:
         ("Files", str(len(all_info))),
         ("Documented", f"{documented}/{len(all_info)}"),
         ("Used-by edges", str(edges)),
-        ("Model calls", str(llm_calls) if config.use_llm else "—"),
+        ("Model calls", "—"),
         ("Doc files", str(docs)),
         ("Stale removed", str(stale)),
         ("Output dir", str(config.output)),
@@ -1288,7 +1169,7 @@ def _parse_tag_overrides(values: list[str]) -> dict[str, dict[str, tuple[str, ..
 
 def parse_args(argv: list[str]) -> Config:
     p = argparse.ArgumentParser(
-        description="Generic codebase map generator (tree-sitter + optional LLM purpose).",
+        description="Generic codebase map generator (tree-sitter; LLM purposes temporarily disabled).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("root", nargs="?", default=".", help="Repo root (default: .)")
@@ -1297,21 +1178,22 @@ def parse_args(argv: list[str]) -> Config:
     p.add_argument("--output", "-o", default="codemap", help="Output directory (default: codemap)")
     p.add_argument("--scan", choices=["auto", "walk", "gradle"], default="auto",
                    help="Source-root discovery (default: auto)")
-    p.add_argument("--no-llm", action="store_true", help="Skip the LLM; structure + docstrings only")
+    p.add_argument("--no-llm", action="store_true",
+                   help="No-op: LLM purposes are temporarily disabled, so this is always the behaviour")
     p.add_argument("--changed", action="store_true", help="Resolve purpose only for git-staged files")
     p.add_argument("--force", action="store_true", help="Ignore the manifest cache; rebuild all")
     p.add_argument("--dry-run", action="store_true",
-                   help="Estimate generation tokens/cost without calling the LLM or writing files")
+                   help="Estimate purpose-generation tokens/cost without writing files")
     p.add_argument("--price-in", type=float, default=None,
                    help="USD per 1M input tokens (for --dry-run cost)")
     p.add_argument("--price-out", type=float, default=None,
                    help="USD per 1M output tokens (for --dry-run cost)")
-    p.add_argument("--provider", choices=list(PROVIDER_DEFAULTS), default="ollama",
-                   help="Purpose model backend (default: ollama)")
-    p.add_argument("--base-url", default=None, help="Override the provider endpoint URL")
-    p.add_argument("--model", default=None, help="Model id (provider default if omitted)")
-    p.add_argument("--api-key", default=None,
-                   help="API key (or set OPENROUTER_API_KEY / OPENAI_API_KEY)")
+    # Kept declared, not silently dropped, so asking for a model backend gets the
+    # explicit LLM_PURPOSES_DISABLED explanation instead of "unrecognized arguments".
+    p.add_argument("--provider", default=None, help=argparse.SUPPRESS)
+    p.add_argument("--base-url", default=None, help=argparse.SUPPRESS)
+    p.add_argument("--model", default=None, help=argparse.SUPPRESS)
+    p.add_argument("--api-key", default=None, help=argparse.SUPPRESS)
     p.add_argument("--max-file-bytes", type=int, default=MAX_FILE_BYTES_DEFAULT)
     p.add_argument("--ignore-dir", action="append", default=[], help="Extra directory to ignore (repeatable)")
     p.add_argument("--internal-prefix", action="append", default=[],
@@ -1334,34 +1216,20 @@ def parse_args(argv: list[str]) -> Config:
     if not root.exists():
         sys.exit(f"Error: root does not exist: {root}")
 
-    # Resolve provider endpoint / model / key (flag > env > provider default).
-    use_llm = not args.no_llm
-    defaults = PROVIDER_DEFAULTS[args.provider]
-    base_url = args.base_url or defaults["base_url"]
-    model = args.model or defaults["model"]
-    api_key = args.api_key or (os.environ.get(defaults["env"]) if defaults["env"] else None)
-    if use_llm and not args.dry_run and args.provider != "ollama" and not api_key:
-        env = defaults["env"]
-        sys.exit(
-            f"Error: --provider {args.provider} needs an API key.\n"
-            f"  export {env}=...   (or pass --api-key), or use --no-llm."
-        )
+    # Fail fast rather than accept a model backend we no longer call.
+    if any(v is not None for v in (args.provider, args.base_url, args.model, args.api_key)):
+        sys.exit(LLM_PURPOSES_DISABLED)
 
     return Config(
         root=root,
         output=Path(args.output) if Path(args.output).is_absolute() else root / args.output,
         langs=langs,
         scan=args.scan,
-        use_llm=use_llm,
         changed_only=args.changed,
         force=args.force,
         dry_run=args.dry_run,
         price_in=args.price_in,
         price_out=args.price_out,
-        provider=args.provider,
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
         max_file_bytes=args.max_file_bytes,
         ignore_dirs=DEFAULT_IGNORE_DIRS | set(args.ignore_dir),
         internal_prefixes=tuple(args.internal_prefix),

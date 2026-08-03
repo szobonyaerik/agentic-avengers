@@ -14,4 +14,7 @@ commands:
   # `pre-commit run --all-files` is deliberately NOT used here: its only hook shells out to
   # scripts/gate_ci.sh, which re-runs the whole suite that `test` below already covers.
   lint: "ruff check ."
-  test: "bash scripts/gate_ci.sh"
+  # `--full` is required, not cosmetic: without it gate_ci.sh skips cross_family_check entirely
+  # and runs pytest with `--ignore=tests/e2e`, so this feature-close gate would never execute the
+  # e2e suite that skills/pipeline-conventions says it runs after.
+  test: "bash scripts/gate_ci.sh --full"
