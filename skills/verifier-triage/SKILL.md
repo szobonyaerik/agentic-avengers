@@ -39,7 +39,7 @@ scripts/verifier_review.sh <phase-dir> <review-set-file>...
 ```
 
 which bundles the specs, the mappings, the test run and the sources, judges them on
-`$VERIFIER_GATE_MODEL` (default `google/gemini-2.5-pro`) via `gate_runner.py`, and writes
+`$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`) via `gate_runner.py`, and writes
 `<phase-dir>/.verifier-review.json` with findings already carrying deterministic ids. `gate_runner`
 refuses a same-family model. Fold those findings into `verdict.json` verbatim — you may add findings
 it missed, never delete or downgrade one it raised. Record the scope you chose (and `reviewed_by`) in

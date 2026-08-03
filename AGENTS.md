@@ -102,6 +102,6 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
 | `GATE_MODEL` | per-gate defaults | routes every gate to one model |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
-| `VERIFIER_GATE_MODEL` | `google/gemini-2.5-pro` | model the Verifier's test-quality review runs on; must not be the implementer's family |
+| `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
 | `VERIFIER_SRC_LIMIT` | `120000` | max chars of review-set source sent to that model |
 

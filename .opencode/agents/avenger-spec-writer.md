@@ -1,7 +1,7 @@
 ---
 description: Use when breaking down implementation plans into precise, per-phase spec files
 mode: subagent
-model: openrouter/anthropic/claude-sonnet-4
+model: openrouter/anthropic/claude-sonnet-5
 tools:
   write: true
   edit: true

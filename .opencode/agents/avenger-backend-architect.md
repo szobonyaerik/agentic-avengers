@@ -1,7 +1,7 @@
 ---
 description: Use when implementing backend specs and shipping code
 mode: subagent
-model: openrouter/anthropic/claude-sonnet-4
+model: openrouter/anthropic/claude-sonnet-5
 tools:
   write: true
   edit: true

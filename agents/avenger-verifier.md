@@ -28,7 +28,7 @@ blind spots — and the blind spots are the entire thing this gate exists to not
 So the judgement is delegated. **You** compute the bounded review set, run the suite, merge and
 persist `verdict.json`. **The reading of the tests happens on another vendor's model**, via
 `scripts/verifier_review.sh` → `scripts/gate_runner.py` on `$VERIFIER_GATE_MODEL` (default
-`google/gemini-2.5-pro`). `gate_runner` asserts `family(model) != $AUTHOR_FAMILY` and exits 2 if they
+`google/gemini-3.1-pro-preview`). `gate_runner` asserts `family(model) != $AUTHOR_FAMILY` and exits 2 if they
 match, so a misconfigured model cannot quietly turn this back into same-family self-review.
 
 **You do not overrule that result.** You may add findings it missed; you may not delete or downgrade

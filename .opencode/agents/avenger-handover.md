@@ -1,7 +1,7 @@
 ---
 description: Use when ending a session to document state for the next session
 mode: subagent
-model: openrouter/anthropic/claude-haiku-4
+model: openrouter/anthropic/claude-haiku-4.5
 tools:
   write: true
   edit: true

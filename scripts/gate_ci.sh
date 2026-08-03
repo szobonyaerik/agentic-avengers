@@ -104,7 +104,7 @@ model_family () {
   esac
 }
 cross_family_check () {
-  local gate="${VERIFIER_GATE_MODEL:-google/gemini-2.5-pro}" gfam impl itok ifam
+  local gate="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}" gfam impl itok ifam
   gfam="$(model_family "$gate")" || { echo "  ✗ unknown VERIFIER_GATE_MODEL family: '$gate'" >&2; return 1; }
   for impl in "$ROOT/agents/avenger-backend-architect.md" "$ROOT/agents/avenger-frontend-developer.md"; do
     [ -f "$impl" ] || continue

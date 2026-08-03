@@ -143,7 +143,7 @@ What happens in auto mode:
 ```bash
 python3 "$AV/scripts/gate_runner.py" \
   --rubric "$AV/prompts/spec-review-rubric.md" \
-  --model google/gemini-2.5-pro --author-family anthropic --print-verdict \
+  --model google/gemini-3.1-pro-preview --author-family anthropic --print-verdict \
   --target <spec.md>
 # GO/REVIEW -> edit the spec's `review_status: pending` to `approved`; NO-GO -> fix the spec.
 ```
@@ -163,9 +163,10 @@ python3 "$AV/scripts/gate_runner.py" \
   spec-review) mix. Set `GATE_MODEL=<id>` to route **every** gate to one model, e.g.
   `export GATE_MODEL=opencode-go/deepseek-v4-pro` (OpenCode's DeepSeek V4 Pro, provider `opencode`).
   Keep `AUTHOR_FAMILY` a different family than `GATE_MODEL` or the gate fails closed.
-- **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` still points at
-  `claude-opus-4/sonnet-4/haiku-4`. Update these to current OpenRouter ids before driving opencode
-  agents (the gate models DeepSeek/Gemini are already correct).
+- **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` maps the Claude model tiers to
+  OpenRouter ids (`claude-opus-5` / `claude-sonnet-5` / `claude-haiku-4.5`). Re-check these against
+  `https://openrouter.ai/api/v1/models` when the tiers move; a stale id fails at request time, not at
+  sync time.
 - **Code not under `src/`?** Update the path glob in `hook_verifier.sh`, `gate_ci.sh`,
   `.opencode/plugin/pipeline-gates.ts`, and `module-path` in `cosmic-ray.toml`.
 - **A gate "stops" unexpectedly** — that's fail-closed. Check: `OPENROUTER_API_KEY` set? gate model a

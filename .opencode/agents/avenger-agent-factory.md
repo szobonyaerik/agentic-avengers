@@ -1,7 +1,7 @@
 ---
 description: Use when creating or customizing a canonical pipeline agent
 mode: subagent
-model: openrouter/anthropic/claude-opus-4
+model: openrouter/anthropic/claude-opus-5
 tools:
   write: true
   edit: true

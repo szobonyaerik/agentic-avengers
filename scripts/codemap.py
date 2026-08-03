@@ -31,7 +31,7 @@ Quick start:
 
   # Use OpenRouter (or any OpenAI-compatible endpoint) for purposes:
   export OPENROUTER_API_KEY=sk-or-...
-  python codemap.py /path/to/repo --provider openrouter --model openai/gpt-4o-mini
+  python codemap.py /path/to/repo --provider openrouter --model openai/gpt-5-mini
 
 Common flags:
   --lang python,kotlin,java,c   Languages to scan (comma-sep or repeatable).
@@ -257,7 +257,7 @@ class Config:
 
     @property
     def specs(self) -> list[LanguageSpec]:
-        return [LANGUAGES[l] for l in self.langs]
+        return [LANGUAGES[lang] for lang in self.langs]
 
     def spec_for(self, path: Path) -> Optional[LanguageSpec]:
         for spec in self.specs:
@@ -654,7 +654,9 @@ def _imported_symbols(imp: str, spec: LanguageSpec) -> list[str]:
 def resolve_graph(all_info: dict[str, FileInfo], config: Config) -> None:
     """Populate internal_deps / external_deps / used_by on every FileInfo."""
     spec_by_rel = {rel: config.spec_for(config.root / rel) for rel in all_info}
-    spec_of = lambda rel: spec_by_rel[rel] or config.specs[0]
+
+    def spec_of(rel: str) -> LanguageSpec:
+        return spec_by_rel[rel] or config.specs[0]
 
     symbols, packages = build_symbol_table(all_info, spec_of)
     used_by: dict[str, set[str]] = defaultdict(set)
@@ -865,8 +867,8 @@ class OpenAICompatProvider(PurposeProvider):
 # / --api-key override these; the env var is the convenient default for the key.
 PROVIDER_DEFAULTS: dict[str, dict] = {
     "ollama":     {"base_url": "http://localhost:11434/api/generate",       "model": "gemma3:1b",            "env": None},
-    "openrouter": {"base_url": "https://openrouter.ai/api/v1/chat/completions", "model": "openai/gpt-4o-mini", "env": "OPENROUTER_API_KEY"},
-    "openai":     {"base_url": "https://api.openai.com/v1/chat/completions", "model": "gpt-4o-mini",          "env": "OPENAI_API_KEY"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1/chat/completions", "model": "openai/gpt-5-mini", "env": "OPENROUTER_API_KEY"},
+    "openai":     {"base_url": "https://api.openai.com/v1/chat/completions", "model": "gpt-5-mini",          "env": "OPENAI_API_KEY"},
 }
 
 
@@ -1324,7 +1326,7 @@ def parse_args(argv: list[str]) -> Config:
             part = part.strip().lower()
             if part and part not in langs:
                 langs.append(part)
-    unknown = [l for l in langs if l not in LANGUAGES]
+    unknown = [lang for lang in langs if lang not in LANGUAGES]
     if unknown:
         sys.exit(f"Error: unknown language(s): {', '.join(unknown)}. Known: {', '.join(LANGUAGES)}")
 

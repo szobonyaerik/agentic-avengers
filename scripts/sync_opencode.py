@@ -14,9 +14,9 @@ import sys
 
 # Map Claude model tiers -> your opencode/OpenRouter model ids. EDIT THESE.
 MODEL_MAP = {
-    "opus": "openrouter/anthropic/claude-opus-4",
-    "sonnet": "openrouter/anthropic/claude-sonnet-4",
-    "haiku": "openrouter/anthropic/claude-haiku-4",
+    "opus": "openrouter/anthropic/claude-opus-5",
+    "sonnet": "openrouter/anthropic/claude-sonnet-5",
+    "haiku": "openrouter/anthropic/claude-haiku-4.5",
 }
 # Agents that should drive sessions directly (primary). Others are @-invoked subagents.
 PRIMARY = set()  # e.g. {"backend-architect"}

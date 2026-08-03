@@ -19,7 +19,7 @@
 # Writes <phase-dir>/.verifier-review.json (the parsed verdict incl. findings, each with a
 # deterministic id) for the agent to merge into verdict.json. Exit 0 = GO, 2 = NO-GO or fail-closed.
 #
-# Env: VERIFIER_GATE_MODEL (default google/gemini-2.5-pro) · AUTHOR_FAMILY (default anthropic)
+# Env: VERIFIER_GATE_MODEL (default google/gemini-3.1-pro-preview) · AUTHOR_FAMILY (default anthropic)
 #      GATE_PROVIDER · TEST_CMD (default: pytest -q --tb=short on the phase's tests dir)
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +39,7 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-MODEL="${VERIFIER_GATE_MODEL:-google/gemini-2.5-pro}"
+MODEL="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}"
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 LIMIT="${VERIFIER_SRC_LIMIT:-120000}"
 OUT="$PHASE_DIR/.verifier-review.json"
