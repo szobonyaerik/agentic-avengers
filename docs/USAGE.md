@@ -180,9 +180,9 @@ python3 "$AV/scripts/gate_runner.py" \
   reads the whole command string (`skills/pipeline-conventions`). `export` is not a substitute there:
   env vars do not survive between an agent's Bash calls. Both shapes are equivalent for *you*, typing
   it yourself. **Write the reason as prose, multi-line if it needs to be** — the log is one
-  tab-separated record per line, and every writer normalises the reason through `scripts/bypass_reason.sh`, which
-  the reason through `scripts/bypass_reason.sh` (newlines and tabs collapsed to spaces, nothing
-  dropped) rather than asking you to keep it on one line. The Verifier's per-finding waiver
+  tab-separated record per line, and every writer normalises the reason through
+  `scripts/bypass_reason.sh` (newlines and tabs collapsed to spaces, nothing dropped) rather than
+  asking you to keep it on one line. The Verifier's per-finding waiver
   (`verdict.json` `break_glass` + `waiver_reason`) is logged through that same writer, so a
   multi-paragraph waiver reason is safe too.
 - **Gate model**: gates default to a decorrelated deepseek (fidelity) / gemini (verifier, mutation,
