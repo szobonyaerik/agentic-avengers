@@ -178,6 +178,7 @@ agentic-avengers/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
+│   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
