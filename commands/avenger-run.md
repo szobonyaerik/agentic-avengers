@@ -24,10 +24,20 @@ Run these before anything else, and stop with the fix if one fails:
   itself is missing, tell the user to run `/plan-build-verify:pipeline-init <feature-id>` first and stop.
 - `OPENROUTER_API_KEY` set (or `opencode` on PATH). Gates fail closed without it — do not start a run
   that will halt at the first gate.
-- **`no-mistakes` on PATH and `.no-mistakes.yaml` at the repo root.** The §4a ship gate needs both,
-  in interactive *and* `--auto` runs. Missing → stop now and say so: §4a fires at `done`, after every
-  phase is already built, and discovering it there wastes the whole run.
-  `/plan-build-verify:pipeline-init` scaffolds the config.
+- **`no-mistakes` on PATH, and a `.no-mistakes.yaml` at the repo root that is actually filled in.**
+  The §4a ship gate needs both, in interactive *and* `--auto` runs. Check the **content**, not just
+  existence — `/plan-build-verify:pipeline-init` scaffolds the file with `REPLACE_ME` placeholders,
+  and an unedited one passes an existence check and then runs a literal placeholder as a shell
+  command at the gate:
+
+  ```bash
+  grep -n REPLACE_ME "${CLAUDE_PROJECT_DIR}/.no-mistakes.yaml"
+  ```
+
+  Any hit → stop, naming `.no-mistakes.yaml` and the exact keys still holding the token (`commands.lint`,
+  `commands.test`) so the user knows what to fill in. Missing file or missing binary → stop the same
+  way. All of this fires at `done`, after every phase is already built, and discovering it there
+  wastes the whole run.
 - **`lavish-axi` on PATH** — unless `--auto`, which skips both surfaces that use it. The plan
   approval stop (§3) and the retrospective triage (§4b) render through it and there is **no markdown
   fallback on purpose**: a stop that silently degrades to a plain read is a gate weakened invisibly,
@@ -100,8 +110,8 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `implementer` | `plan-build-verify:avenger-backend-architect`, or `avenger-frontend-developer` when the spec is UI. It writes tests **and** code, test-first |
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
-| `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature |
-| `done` | **Ship gate (§4a), retrospective triage (§4b), the feature-close commit (§5), then** report and stop |
+| `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature — **then commit its output, see §5** |
+| `done` | **Ship gate (§4a), retrospective triage (§4b), the second feature-close commit (§5), then** report and stop |
 
 `--from <stage>` overrides the first iteration only; afterwards the resolver drives.
 
@@ -160,7 +170,9 @@ finding:
   `--auto` already performs on a spec-review NO-GO. `no-mistakes` marks a finding `ask-user`
   precisely because it challenges the user's deliberate intent or changes product behaviour, so an
   unattended run must not answer it. Nothing is lost: the `no-mistakes` run stays parked on the
-  branch and the user resumes interactively to answer it.
+  branch and the user resumes interactively to answer it. On that resume the resolver still reports
+  `done`, so this section is simply re-entered — and step 2 is what stops you starting a second run
+  over the parked one.
 - **`--ship-yes`** (only valid with `--auto`) passes `--yes` to `no-mistakes`, which treats every
   actionable finding — `ask-user` included — as consent to fix, so the gate drives itself all the way
   to `checks-passed` with no halt. `--yes` is the user's **standing consent for the pipeline to
@@ -177,7 +189,14 @@ awaiting approval` while the real run sits parked and invisible. Preflight alrea
 
 1. **Preconditions.** Every phase has `verdict.json` with `verdict: pass`, `tests/e2e/<feature>/`
    exists, and the working tree is clean and committed on `feat/<feature-id>`. Any missing → stop.
-2. **Start the run**, passing the feature's goal as intent:
+2. **Look for an active run before starting one.** `no-mistakes axi` (or `axi status`) reports the
+   current branch's active run. **If one is already parked at a gate, do not start a second** —
+   inspect it with `axi status`, answer it with `axi respond --action ...`, and rejoin at step 3.
+   That is the normal state when an `--auto` run halted on an `ask-user` finding and the user has
+   come back interactively. `axi run` reattaches only while HEAD still matches the submitted head, so
+   it is **not** a general-purpose resume command.
+   Only when there is no active run for the current HEAD, start one, passing the feature's goal as
+   intent:
    ```bash
    no-mistakes axi run --intent "<goal from overview.md, plus the decisions, tradeoffs and
      deliberate divergences recorded in plan.md and each handover.md>"
@@ -215,6 +234,8 @@ awaiting approval` while the real run sits parked and invisible. Preflight alrea
    coverage gap no avengers gate reaches is `other`, an avengers gate that *did* catch it is
    `success`. It is **not** `gate-friction`: that kind means a rubric is too strict, which is the
    opposite signal, and hardcoding it would skew every triage card.
+   An `--auto` halt at step 3 never reaches this step, so on the resumed run log the finding that
+   halted it here too, alongside everything else the gate found.
 
 **Do not merge, and do not tell the user a run is finished until an `outcome:` says so.** Merging a
 branch the pipeline still owns splits it from the pipeline head and strands the fix commits.
@@ -248,26 +269,44 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - After each phase has a passing `verdict.json` **and** its `handover.md`, commit everything for that
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
-- **Commit the feature-close artifacts at `done`** — as the last action of the run: after §4b
-  resolves the triage, or, under `--auto` where §4b is skipped, straight after §4a. Never earlier.
-  `pipeline-observations.md` is appended by §4a step 6 and rewritten to `triage: done` by §4b step 5,
-  both *after* the ship gate already opened the PR, and no per-phase commit covers them — under
-  `--auto` it is left at `triage: pending` and still must be committed, or the next interactive run's
-  preflight sweep has nothing on disk to find. Sweep the tree and commit whatever the close produced
-  (the observation log, `e2e-mapping.md` if still untracked):
-  ```bash
-  git add docs/features/<feature-id>
-  git commit -m "docs(<feature-id>): feature-close pipeline observations"
-  ```
-  This is not optional bookkeeping: **§4a step 1 requires a clean tree**, so artifacts left dirty
-  here are what stops the *next* feature's ship gate.
-  **Read `branch_sync` before committing**, from `no-mistakes axi` or `axi status`, and act on its
-  `next_action.code`: `continue_active_run` means the pipeline still owns the branch — keep driving
-  it and make **no** local commit yet; `sync` means run `no-mistakes axi sync` first, then commit on
-  top; `recover_custody` means `no-mistakes axi sync --recover` first. Never reset, rebase, force or
-  replace the branch by hand.
-  Then say plainly in the report that this commit landed **after** the PR was opened, is therefore
-  not in it, and is unpushed — pushing it stays the user's call like every other push.
+- **A stage's artifacts are committed before the stage that depends on them runs, and nothing the run
+  produced is left uncommitted at the end.** Past the per-phase rule above, that means **two commits
+  at feature close**, not one:
+
+  1. **When `e2e-author` finishes — before §4a.** That stage belongs to no phase, so the per-phase
+     rule never covers it, and §4a step 1 requires `tests/e2e/<feature>/` on a tree that is *clean
+     and committed*; this commit is what makes that precondition satisfiable at all. It also puts the
+     e2e suite on the branch `no-mistakes` validates — left uncommitted, the one stage documented as
+     running the e2e suite would never see it.
+     ```bash
+     git add tests/e2e/<feature-id> docs/features/<feature-id>/e2e-mapping.md
+     git commit -m "test(<feature-id>): feature-level e2e suite"
+     ```
+  2. **After §4b resolves the triage** — or, under `--auto` where §4b is skipped, after §4a. This
+     covers `pipeline-observations.md` (appended by §4a step 6, rewritten to `triage: done` by §4b
+     step 5) and anything else produced after the gate ran. Under `--auto` the log stays
+     `triage: pending` and **still must be committed**, or the next interactive run's preflight sweep
+     has nothing on disk to find.
+     **`branch_sync` decides *how* to get there, never *whether*.** Read it from `no-mistakes axi` or
+     `axi status` and act on `next_action.code` first:
+     - `sync` — the normal path after `checks-passed`, since the gate pushed its own fix commits. Run
+       `no-mistakes axi sync`, then commit on top.
+     - `recover_custody` — the `failed`-outcome path (§4a step 5). Run `no-mistakes axi sync
+       --recover` first, then commit on top.
+     - `continue_active_run` — the pipeline still owns the branch, so you are **not at feature close
+       yet**. Go back to §4a step 3 and keep driving until an `outcome:`; the commit is due after
+       that, not skipped.
+
+     Never reset, rebase, force or replace the branch by hand.
+     ```bash
+     git add docs/features/<feature-id>
+     git commit -m "docs(<feature-id>): feature-close pipeline observations"
+     ```
+     Say plainly in the report that this second commit landed **after** the PR was opened, is
+     therefore not in it, and is unpushed — pushing it stays the user's call like every other push.
+
+  Neither is optional bookkeeping: **§4a step 1 requires a clean tree**, so anything left dirty at
+  `done` is what stops the *next* feature's ship gate.
 - **Never push, never open a PR yourself.** Those are the user's call. Say the commands at the end
   instead. The **one** exception is the §4a ship gate, in **both** interactive and `--auto` runs:
   `no-mistakes` pushes the branch and opens the PR as part of its own pipeline, and stops at
@@ -322,7 +361,7 @@ Then, depending on how the run ended:
 - **Ship gate reached `checks-passed`** — give the PR link and ask the user to review and merge.
   Say plainly what the gate *fixed that the pipeline missed* (its `fixes` table): those are the
   defects every avengers gate let through, and hiding them wastes the run's most useful signal.
-  If the §5 feature-close commit landed after the PR opened, say it is local and unpushed, and give
+  Say that §5's *second* feature-close commit landed after the PR opened, is local and unpushed, and give
   the `branch_sync` next action rather than a raw `git push`.
 - **Ship gate halted on an `ask-user` finding under `--auto`** — reproduce the finding **verbatim**
   (id, file, full description), say the `no-mistakes` run is parked on the branch, and tell the user

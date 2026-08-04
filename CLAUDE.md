@@ -110,9 +110,11 @@ orchestrator itself still never does, in either mode. It stops at `checks-passed
 **Two lavish review surfaces**, both interactive-only and both skipped under `--auto` (a foreground
 `lavish-axi poll` would hang an unattended run): the **plan-approval stop** (**`/avenger-run` §3** —
 plan.md rendered with a mermaid phase graph, annotations fed back to the planner until approved) and
-the **retrospective triage** (**`/avenger-run` §4b**). Both `lavish-axi` and `no-mistakes` are
-**preflight checks** in `/avenger-run` §1 — they fail the run at the start rather than at the plan
-stop or at feature close, and neither has a silent fallback.
+the **retrospective triage** (**`/avenger-run` §4b**). Both are **preflight checks** in
+`/avenger-run` §1 — `no-mistakes` (binary *and* a `.no-mistakes.yaml` with no `REPLACE_ME` left in
+it) in both modes, `lavish-axi` on interactive runs only, since `--auto` skips the two surfaces that
+use it. They fail the run at the start rather than at the plan stop or at feature close, and neither
+has a silent fallback.
 
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:

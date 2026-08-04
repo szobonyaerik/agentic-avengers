@@ -202,8 +202,10 @@ on disk (`fidelity_verdict`, `review_status`, `status`, `verdict.json`) and retu
 the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
 for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
 runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified
-phase plus once more at feature close. **The orchestrator itself never pushes**; the feature-close
-ship gate above does, in both modes. Full detail in `docs/AUTOMATE.md` §2.
+phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose
+precondition is a clean tree already carrying `tests/e2e/<feature>/`) and the retrospective artifacts
+*after* it. **The orchestrator itself never pushes**; the feature-close ship gate above does, in both
+modes. Full detail in `docs/AUTOMATE.md` §2.
 
 ## Implementer minimalism (`skills/ponytail`)
 

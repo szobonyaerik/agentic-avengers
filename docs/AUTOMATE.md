@@ -82,8 +82,10 @@ What it does beyond the flow above:
   on the second bounce of the same phase.
 - **Breaker only on `criticality: critical`** (a spec frontmatter field); mutation only per
   `MUTATION_POLICY`.
-- **Branches once, commits per verified phase, plus once at feature close** for the retrospective
-  artifacts written after the ship gate — §4a's next run needs a clean tree.
+- **Branches once, commits per verified phase, plus twice at feature close**: the e2e stage's output
+  *before* the ship gate, because §4a's precondition is a clean tree that already contains
+  `tests/e2e/<feature>/`; then the retrospective artifacts written *after* it, guided by
+  `branch_sync.next_action`. A stage's artifacts are committed before the stage that consumes them.
 - **The orchestrator never pushes and never opens a PR.** The one exception is the **§4a ship gate**,
   in interactive **and `--auto`** runs alike: `no-mistakes` pushes the branch and opens the PR from
   inside the daemon's own worktree, stops at `checks-passed`, and never merges. Under `--auto` an
@@ -91,6 +93,8 @@ What it does beyond the flow above:
   with `--auto`) passes `--yes` so the gate resolves those itself.
 - **Preflight-checks `no-mistakes` (both modes) and `lavish-axi` (interactive)** and stops if either
   is missing, rather than dying at the plan stop or at feature close. Neither has a silent fallback.
+  For `no-mistakes` it checks the **content** of `.no-mistakes.yaml` too: a scaffolded config still
+  holding the template's `REPLACE_ME` token fails preflight, not the ship gate.
 - **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
   triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
   run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,

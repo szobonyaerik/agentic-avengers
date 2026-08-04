@@ -27,10 +27,12 @@ write no production code.
 
 2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to
    `.no-mistakes.yaml` in the project **only if one does not already exist** — check first, never
-   overwrite. Tell the user to replace the placeholder `lint` and `test` commands with this project's
-   real ones, and that `test` must include the feature-level e2e suite, since the ship gate
-   (`/avenger-run` §4a) is the only stage that runs it. Without this file the run builds every phase
-   and then fails at feature close, so `/avenger-run` checks for it in preflight.
+   overwrite. The template ships `lint` and `test` as `REPLACE_ME` placeholders: tell the user to
+   replace both with this project's real commands, and that `test` must include the feature-level
+   e2e suite, since the ship gate (`/avenger-run` §4a) is the only stage that runs it. Leave the
+   `REPLACE_ME` token exactly as written in any value the user has not filled in — `/avenger-run` §1
+   preflight greps for that token and stops the run at the start, so a half-scaffolded config fails
+   fast instead of building every phase and then executing a placeholder as a shell command.
 
 3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
    present for the chosen runtime(s): `CLAUDE.md` (Claude Code) and/or `AGENTS.md` (opencode). Create
