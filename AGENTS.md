@@ -46,6 +46,7 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    documented in `skills/pipeline-conventions/SKILL.md`.
 7. **Gates fail closed** — a gate that cannot reach a verdict (incl. same-family) stops; it never passes.
    Break-glass `GATE_BYPASS="reason"` is logged to `gate-overrides.log`, shown, and recorded in `handover.md`.
+   The reason is prose, so under `--auto` it comes from a file — see rule 10.
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
    The verdict is **deterministic** (`scripts/mutation_score.py`, not a model): score `>=
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
@@ -63,13 +64,17 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    on the agentic-avengers repo. On Claude Code the lessons pointer is injected by
    `scripts/hook_lessons.sh` on `SubagentStart`; **opencode has no subagent-start event**, so on this
    runtime this paragraph is the delivery — load `skills/self-improvement` yourself.
-10. **Prose never goes on a command line.** Under `/avenger-run --auto`, `hook_autoapprove.sh` matches
-   its hard-deny regex against the **whole** command string, so free text that merely *names*
-   `git push` or `gh pr create` denies the command carrying it. Write the text to a file and read it
-   inline — `--intent "$(cat <file>)"`, `--note "$(cat <file>)"` — never via `cat`/`echo`/a heredoc,
-   which puts it straight back. Applies to `--intent`/`--instructions` on `no-mistakes axi` and
-   `--note` on `scripts/pipeline_observations.py append`. Fixed templates (a conventional-commit `-m`,
-   an `--evidence` path, a `--kind` keyword) stay inline. Full rule in
+10. **Prose belongs in a file and the command reads it — never on a command line.** Under
+   `/avenger-run --auto`, `hook_autoapprove.sh` matches its hard-deny regex against the **whole**
+   command string, so free text that merely *names* `git push` or `gh pr create` denies the command
+   carrying it. Write the text to a file and read it inline — `--intent "$(cat <file>)"`, `--note
+   "$(cat <file>)"` — never via `cat`/`echo`/a heredoc, which puts it straight back. **This is an
+   invariant, not a list of flags**: `--intent`/`--instructions` on `no-mistakes axi`,
+   `--note`/`--evidence` on `scripts/pipeline_observations.py append`, and a `GATE_BYPASS` reason are
+   non-exhaustive examples, and absence from that list is not a waiver. `GATE_BYPASS` is no exception
+   for being a shell assignment prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works, while
+   `export` does not survive between an agent's Bash calls. A value fully determined by a template,
+   with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
    `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it

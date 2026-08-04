@@ -45,8 +45,9 @@ a `/clear` or a closed laptop between phase 2 and phase 6 takes your recollectio
 `hook_autoapprove.sh` matches its hard-deny regex against the **whole** command string, so a note that
 merely mentions `git push` or `gh pr create` — which observations about the ship gate routinely do —
 **denies the append itself**, and the observation is lost with no other recovery path. See the
-*prose never goes on a command line* rule in `pipeline-conventions`. `--kind` is a keyword and
-`--evidence` is a path, so both stay inline safely.
+*prose belongs in a file* rule in `pipeline-conventions`. Apply its test per value: `--kind` is a
+fixed keyword and `--evidence` takes a path, so neither is prose and both stay inline — but an
+`--evidence` value carrying words rather than a path goes in a file too.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature> \

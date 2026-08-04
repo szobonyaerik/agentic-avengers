@@ -26,7 +26,9 @@ Both gate paths call the same `gate_runner.py` on a **cross-family** model (Deep
 OpenRouter), decorrelated from whatever model authored the work. Gates **fail closed** — a missing
 key, an unreachable model, a non-JSON verdict, or a same-family model all **stop**. The only override
 is **break-glass** (`GATE_BYPASS="reason"`): logged to `gate-overrides.log`, shown visibly, and
-recorded in the phase `handover.md`.
+recorded in the phase `handover.md`. That reason is prose, so an agent under `/avenger-run --auto`
+passes it from a file (`GATE_BYPASS="$(cat <file>)" git commit …`) like every other free-text
+argument — see `skills/pipeline-conventions`.
 
 ---
 

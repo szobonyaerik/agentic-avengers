@@ -385,4 +385,6 @@ Then enable the local floor: `cd /path/to/project && pre-commit install`.
 Run one greenfield feature: `@task-analyst "add a health endpoint"` → walk the chain. Confirm the
 Fidelity Gate fires, `/spec-review` grills you and flips `review_status: approved`, tests lock, the
 verifier runs once for the phase on a different family, cosmic-ray reports a survival rate, and a
-deliberate `GATE_BYPASS="testing" git commit` logs to `gate-overrides.log`.
+deliberate `GATE_BYPASS="testing" git commit` logs to `gate-overrides.log`. (Typing that yourself, the
+inline prefix is fine. An agent under `/avenger-run --auto` must pass the reason from a file instead —
+`skills/pipeline-conventions`, the prose-off-the-command-line rule.)

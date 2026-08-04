@@ -129,15 +129,22 @@ upstream and its confirmation gate is a human selecting them, which cannot happe
 `AVENGER_AUTO_DENY=<regex>` only *adds* patterns. Add `.avenger-auto` to `.gitignore`
 (`/plan-build-verify:pipeline-init` does this).
 
-**The deny regex reads the whole command string, so keep prose off it.** It matches *content*, not
-intent: a `--intent` explaining that the ship gate pushes, or a `--note` reporting that `gh pr create`
-never ran, denies the command carrying it even though that command pushes nothing. Narrowing the
-regex is the wrong fix — it would spare real pushes too. Instead every free-text argument
-(`--intent`/`--instructions` on `no-mistakes axi`, `--note` on `pipeline_observations.py append`) is
-written to a gitignored file with the `Write` tool and read inline as `"$(cat <file>)"`. Never build
-that file with `cat`/`echo`/a heredoc — a heredoc puts the prose straight back on the command line and
-is denied identically. Fixed templates (a conventional-commit `-m`, an `--evidence` path, a `--kind`
-keyword) carry no prose and stay inline. Full rule: `skills/pipeline-conventions`.
+**The deny regex reads the whole command string, so prose belongs in a file and the command reads
+it.** It matches *content*, not intent: a `--intent` explaining that the ship gate pushes, or a
+`--note` reporting that `gh pr create` never ran, denies the command carrying it even though that
+command pushes nothing. Narrowing the regex is the wrong fix — it would spare real pushes too.
+Instead any author-written free text is written to a gitignored file with the `Write` tool and read
+inline as `"$(cat <file>)"`. Never build that file with `cat`/`echo`/a heredoc — a heredoc puts the
+prose straight back on the command line and is denied identically.
+
+**This is a rule, not a list of flags.** It covers arguments added after this was written. The test is
+whether an author could have phrased the value differently: `--intent`/`--instructions` on
+`no-mistakes axi`, `--note`/`--evidence` on `pipeline_observations.py append`, and a `GATE_BYPASS`
+reason are examples, not the boundary. `GATE_BYPASS` is no exception for being a shell assignment
+prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works and is allowed, while `export` does not
+survive between an agent's Bash calls. A value fully determined by a template, with only ids, paths
+and fixed keywords substituted, is not prose and stays inline. Full rule:
+`skills/pipeline-conventions`.
 
 ### Using it
 - Manual by default — invoke stages yourself.

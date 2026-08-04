@@ -124,27 +124,43 @@ The implementer authors **both tests and code** test-first (there is no separate
   a same-family model, and CI asserts the same statically. Opus-vs-Sonnet is **not** decorrelation.
   The **only** sanctioned exception is the feature-close `no-mistakes` ship gate above, which is
   same-family on purpose and documented as such — every *per-phase* gate stays cross-family.
-- **Under `--auto`, never put author-written prose on a command line.** `hook_autoapprove.sh` matches
-  its hard-deny regex against the **whole** Bash command string, so prose that merely *names* a denied
-  command — an intent explaining that the ship gate pushes, an observation saying `gh pr create` never
-  ran — **denies the command carrying it**. The regex matches content, not intent, and that is
-  correct: narrowing it to spare prose would also spare a real `git push`. The fix is to keep prose
-  off the command line:
-  - **Write the text to a file with the `Write` tool**, then read it inline —
-    `--intent "$(cat <file>)"`, `--note "$(cat <file>)"`. Never `cat`/`echo`/a heredoc to create it:
-    a heredoc puts the prose straight back on the command line and is denied identically. Put the file
-    somewhere gitignored (`.lavish/`, `${TMPDIR}`). It also stops backticks in the text being eaten by
-    the shell as command substitution.
-  - **Applies to every free-text argument the pipeline documents**: `--intent` and `--instructions` on
-    `no-mistakes axi run`/`respond`, and `--note` on `scripts/pipeline_observations.py append`.
-  - **Fixed template arguments stay inline** and need no file: a conventional-commit `-m` with only an
-    id substituted, an `--evidence` path, a `--kind` keyword. So does a command merely *printed* for
-    the user to run — nothing executes it. The distinction is whether an agent wrote the words and a
-    shell will see them.
+- **Under `--auto`, prose belongs in a file and the command reads it — never on the command line.**
+  `hook_autoapprove.sh` matches its hard-deny regex against the **whole** Bash command string, so it
+  matches **content, not intent**: any author-written prose passed as a command-line argument can
+  **deny the command carrying it** merely by naming `git push` or `gh pr create`, even though that
+  command pushes nothing. Narrowing the regex is the wrong fix — it would spare real pushes too.
+
+  **The rule is the invariant, not the list below.** It covers any free-text argument, including ones
+  added after this was written and ones nobody has documented yet. Ask the question, do not consult an
+  enumeration: *could an author have phrased this value differently?* If yes it is prose → file. If
+  the value is fully determined by a template and the only substitutions are ids, paths and fixed
+  keywords, it is not prose → inline is fine.
+  - **How.** Write the text to a file with the `Write` tool, then read it inline: `--intent "$(cat
+    <file>)"`, `--note "$(cat <file>)"`, `GATE_BYPASS="$(cat <file>)" git commit …`. Never `cat`/
+    `echo`/a heredoc to *create* it — a heredoc puts the prose straight back on the command line and
+    is denied identically. Put the file somewhere gitignored (`.lavish/`, `${TMPDIR}`). It also stops
+    backticks in the text being eaten by the shell as command substitution.
+  - **Examples, deliberately non-exhaustive** — `--intent` and `--instructions` on `no-mistakes axi
+    run`/`respond`, `--note` and `--evidence` on `scripts/pipeline_observations.py append`, and
+    `GATE_BYPASS` on a break-glass invocation. Anything else carrying author-written words is covered
+    by the rule whether or not it appears here; a value's absence from this list is not a waiver.
+    Note that the **test decides per value, not per flag**: `--evidence` takes a path today, so it is
+    not prose and stays inline — but that is the test's answer, not an exemption granted to the flag,
+    and an `--evidence` value carrying words goes in a file like any other.
+  - **`GATE_BYPASS` takes the file shape too**, and it is *not* a declared exception. Being a shell
+    assignment prefix rather than a flag changes nothing — `GATE_BYPASS="$(cat <file>)" git commit …`
+    is valid shell, sets the variable for exactly that command, and is allowed by the hook, while the
+    inline prose prefix is denied. `export`ing it instead is **not** an agent-side substitute: env
+    vars do not survive between Bash tool calls, so an `export` in one call is gone by the `git
+    commit` in the next. Exporting is the *human's* delivery, in their own shell before the session
+    starts, where the hook never sees it at all.
+  - **Not covered:** a command merely *printed* for the user to run — nothing executes it. The test
+    throughout is whether an agent chose the words **and** a shell will see them.
 - **Gates fail closed.**
 - **Break-glass bypass** is allowed but recorded — whole-gate via `GATE_BYPASS`, per-finding via
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
-  `gate-overrides.log`, and visible on the PR.
+  `gate-overrides.log`, and visible on the PR. The reason is author-written prose, so under `--auto`
+  it comes from a file (`GATE_BYPASS="$(cat <file>)" …`) like every other free-text argument above.
 - **Artifacts on disk** with YAML frontmatter — the chain survives cold sessions.
 
 ## Where the models run

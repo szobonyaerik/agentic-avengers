@@ -248,8 +248,8 @@ awaiting approval` while the real run sits parked and invisible. Preflight asser
    general-purpose resume command, and §5's *second* feature-close commit moves HEAD past that
    point, which is exactly why naive re-entry starts a second run instead of rejoining the first.
 
-   **Build the intent in a file and pass it by reading that file**, per the *prose never goes on a
-   command line* rule in `skills/pipeline-conventions` — this is that rule's most load-bearing
+   **Build the intent in a file and pass it by reading that file**, per the *prose belongs in a file*
+   rule in `skills/pipeline-conventions` — this is that rule's most load-bearing
    instance, because a good intent for a shipping feature almost always names `git push` or
    `gh pr create` and would make `hook_autoapprove.sh` **deny the ship gate's own start command**:
    - **Write the file with the `Write` tool**, not with `cat`/`echo`/a heredoc. A heredoc puts the
@@ -344,9 +344,9 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
 - **Every `-m` below is a fixed template with only an id and a verdict substituted**, so it stays
-  inline: the *prose never goes on a command line* rule (`skills/pipeline-conventions`) is about
-  free author-written text. Do not improvise a commit subject that quotes what a gate found — that is
-  prose, and under `--auto` it would deny the commit.
+  inline: the *prose belongs in a file* rule (`skills/pipeline-conventions`) turns on whether an
+  author could have phrased the value differently. Do not improvise a commit subject that quotes what
+  a gate found — that is prose, and under `--auto` it would deny the commit.
 - **A stage's artifacts are committed before the stage that depends on them runs, and nothing the run
   produced is left uncommitted at the end.** Past the per-phase rule above, that means **two commits
   at feature close**, not one:
@@ -420,8 +420,10 @@ the moment it happens — not at the end from memory, because this run may resum
 session:
 
 **Write the note to a file with the `Write` tool** and read it inline — free prose on a command line
-is denied under `--auto` by content alone (`skills/pipeline-conventions`, hard rules). `--kind` is a
-keyword and `--evidence` is a path, so both stay inline safely.
+is denied under `--auto` by content alone (`skills/pipeline-conventions`, hard rules). Apply that
+rule's test per value: `--kind` is a fixed keyword and `--evidence` takes a path, so neither is prose
+and both stay inline — but if an `--evidence` value ever carries words rather than a path, it goes in
+a file too.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
@@ -438,7 +440,10 @@ procedure and the triage step in `skills/pipeline-retrospective`.
 - **Never weaken a locked test.** The implementer owns `tests/` until the Verifier passes the phase.
   After that the suite is locked: additions demanded by a gate are allowed, weakening is not.
 - **Never bypass a gate.** Only an explicit `GATE_BYPASS="reason"` from the user, which is logged to
-  `gate-overrides.log`, shown visibly, and recorded in `handover.md`.
+  `gate-overrides.log`, shown visibly, and recorded in `handover.md`. The reason is the user's prose,
+  so under `--auto` pass it from a file — `GATE_BYPASS="$(cat <file>)" git commit …` — like `--intent`
+  and `--note`; the inline prefix is denied when the reason names a denied command, and `export` does
+  not carry across Bash calls. See `skills/pipeline-conventions`.
 - **Never skip a stage because it looks unnecessary.** The resolver decides; you execute.
 - Respect `work_kind` (greenfield | migration | refactor) for the implementer's test mode.
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.

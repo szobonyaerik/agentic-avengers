@@ -171,9 +171,15 @@ python3 "$AV/scripts/gate_runner.py" \
 
 ## F. Break-glass + troubleshooting
 
-- **Break-glass** (only override): `GATE_BYPASS="why" git commit …`, or export it for in-session hooks.
+- **Break-glass** (only override): `GATE_BYPASS="why" git commit …`, or export it in your own shell
+  before starting the session, which covers every in-session hook.
   It overrides a *failing* gate, appends who/when/which-gate/why to `gate-overrides.log`, prints a
   visible `⚠ BYPASSED`, and you must record it in the phase `handover.md`. Never silent.
+  **Under `/avenger-run --auto` an agent must pass the reason from a file** —
+  `GATE_BYPASS="$(cat <file>)" git commit …` — because the reason is prose and the auto deny regex
+  reads the whole command string (`skills/pipeline-conventions`). `export` is not a substitute there:
+  env vars do not survive between an agent's Bash calls. Both shapes are equivalent for *you*, typing
+  it yourself.
 - **Gate model**: gates default to a decorrelated deepseek (fidelity) / gemini (verifier, mutation,
   spec-review) mix. Set `GATE_MODEL=<id>` to route **every** gate to one model, e.g.
   `export GATE_MODEL=opencode-go/deepseek-v4-pro` (OpenCode's DeepSeek V4 Pro, provider `opencode`).

@@ -118,14 +118,19 @@ left in a value), `lavish-axi` on interactive runs only, since `--auto` skips th
 use it. They fail the run at the start rather than at the plan stop or at feature close, and neither
 has a silent fallback.
 
-**Prose never goes on a command line.** Under `--auto`, `hook_autoapprove.sh` matches its hard-deny
-regex against the **whole** Bash command string, so free text that merely *names* `git push` or
-`gh pr create` denies the command carrying it — the regex matches content, not intent, and narrowing
-it would spare real pushes. Every free-text argument the pipeline documents (`--intent` and
-`--instructions` on `no-mistakes axi`, `--note` on `pipeline_observations.py append`) is written to a
-gitignored file with the `Write` tool and read inline as `"$(cat <file>)"`; never `cat`/`echo`/a
-heredoc, which put it straight back. Fixed templates — a conventional-commit `-m`, an `--evidence`
-path, a `--kind` keyword — stay inline. Canonical statement in `skills/pipeline-conventions`.
+**Prose belongs in a file and the command reads it — never on a command line.** Under `--auto`,
+`hook_autoapprove.sh` matches its hard-deny regex against the **whole** Bash command string, so free
+text that merely *names* `git push` or `gh pr create` denies the command carrying it — the regex
+matches content, not intent, and narrowing it would spare real pushes. Any author-written free text is
+written to a gitignored file with the `Write` tool and read inline as `"$(cat <file>)"`; never
+`cat`/`echo`/a heredoc, which put it straight back. **This is an invariant, not a list of flags** —
+`--intent`/`--instructions` on `no-mistakes axi`, `--note`/`--evidence` on `pipeline_observations.py
+append`, and a `GATE_BYPASS` reason are non-exhaustive examples, and an argument's absence from them
+is not a waiver. `GATE_BYPASS` is no exception for being a shell assignment prefix
+(`GATE_BYPASS="$(cat <file>)" git commit …` works; `export` does not survive between Bash calls). The
+test is whether an author could have phrased the value differently — a template with only ids, paths
+and keywords substituted is not prose and stays inline. Canonical statement in
+`skills/pipeline-conventions`.
 
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
