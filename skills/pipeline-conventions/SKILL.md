@@ -76,6 +76,14 @@ The implementer authors **both tests and code** test-first (there is no separate
   anywhere. It is **not** the independence mechanism — the Verifier's test-quality review is.
 - **Breaker** — critical/security paths only, optional.
 - **Feature-level e2e** — once, after the final phase is green (see below).
+- **Phase review gate (per phase, `no-mistakes`, review-only)** — after each handover,
+  `no-mistakes axi run --skip=push,pr,ci`. The Verifier reads **tests**; this reads the rest of the
+  phase's diff — docs, config, scripts, cross-file coherence — which otherwise goes unreviewed until
+  feature close. Nothing is pushed and no PR is opened; that stays a feature-close action.
+  Review findings **park** (`auto_fix.review: 0`) and route to the implementer rather than being
+  self-fixed, because the phase's tests are **locked** once the Verifier passed and the pipeline must
+  not rewrite them. *Unverified:* whether review is scoped to the incremental diff or re-reads the
+  whole branch — measure it, and fall back to feature-close-only if settled findings return.
 - **Ship gate (per feature, `no-mistakes`)** — runs **once**, after the last phase is verified and the
   e2e suite is written, on the feature branch. It covers what no avenger stage does: lint, docs,
   push, PR and CI. It does **not** replace the Verifier — it has no `R<n>.<k>.<m>` traceability, no

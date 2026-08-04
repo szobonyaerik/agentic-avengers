@@ -184,6 +184,39 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 2. **Mutation** — do nothing unless `MUTATION_POLICY` is `advisory` or `enforce`. It is off by default
    and is not the independence mechanism.
 3. Then `handover`.
+4. **Phase review gate (`no-mistakes`, review-only)** — see §4c. Runs after the handover commit.
+
+## 4c. Phase review gate (`no-mistakes`, review-only) — after every handover
+
+The Verifier reads **tests**. Nothing else reads the rest of a phase's diff until feature close, so
+docs, config, scripts and cross-file coherence go unreviewed for as many phases as remain. This
+closes that gap without opening a PR per phase.
+
+```bash
+no-mistakes axi run --skip=push,pr,ci --intent "$(cat <intent-file>)"
+```
+
+- **`--skip=push,pr,ci` is the whole point.** Review, test, lint and docs run; nothing is pushed and
+  no PR is opened. One PR per feature, at `done`, as before.
+- **Intent from a file, never inline** — the same rule as §4a, and for the same two reasons.
+  Scope it to *this phase*: its goal from `plan.md`, the seams it chose, and any deliberate
+  divergence in it. A feature-wide intent makes the review flag settled decisions from earlier phases.
+- **Review findings park, they do not self-fix** (`auto_fix.review: 0`). That is deliberate here:
+  the phase's tests are **locked** the moment the Verifier passed, so the pipeline must not rewrite
+  them. Route findings to the implementer the way a Verifier finding is routed — `--action skip` and
+  hand it back — rather than `--action fix`. Use `--action fix` only for findings that touch neither
+  tests nor locked code (docs, config, comments).
+- **Under `--auto`**: same rule as §4a. Drive `auto-fix`/`no-op` findings; **halt on `ask-user`**.
+  `--ship-yes` applies here too when given.
+- **Do not run this on an unverified phase.** It runs *after* the Verifier and the handover commit,
+  so what it reviews is a phase that already passed its own gate.
+
+**Known unknown — measure it on the first phase you run.** It is not yet established whether
+`no-mistakes` scopes review to the diff *since its last run on this branch* or re-reads the whole
+branch each time. If it re-reads everything, phase 5 will re-raise findings settled in phases 1-4 and
+the cost grows with each phase. Watch the first two runs; if you see settled findings return, log it
+as a pipeline observation and fall back to feature-close-only until it is scoped. Do not assume
+either behaviour.
 
 ## 4a. Ship gate (`no-mistakes`) — at `done`, once per feature
 
