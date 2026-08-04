@@ -22,6 +22,20 @@ Run these before anything else, and stop with the fix if one fails:
   itself is missing, tell the user to run `/plan-build-verify:pipeline-init <feature-id>` first and stop.
 - `OPENROUTER_API_KEY` set (or `opencode` on PATH). Gates fail closed without it — do not start a run
   that will halt at the first gate.
+- **Untriaged pipeline observations** — load `skills/pipeline-retrospective` and sweep **every**
+  feature, not just this one:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" pending --root "${CLAUDE_PROJECT_DIR}"
+  ```
+
+  Anything listed has observations no human has seen — triage them (§6) before starting new work.
+  Skip when `--auto`: there is nobody to triage with, and they keep until the next interactive run.
+  This sweep is the *only* thing that recovers what an `--auto` run learned, because `done` is a
+  terminal state and will never re-fire that feature's own close.
+- **Prior lessons** — load `skills/self-improvement`. If `docs/lessons/lessons.json` exists, read the
+  index only, filter to this feature's stack and task, and open just the few prose files that matter.
+  Missing file: skip silently.
 - With `--auto`: export `SPEC_REVIEW_MODE=auto` for the run, and **arm the permission bypass**:
 
   ```bash
@@ -73,7 +87,7 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
 | `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature |
-| `done` | Report and stop |
+| `done` | **Retrospective triage (§4a), then** report and stop |
 
 `--from <stage>` overrides the first iteration only; afterwards the resolver drives.
 
@@ -91,6 +105,27 @@ downstream, and this is the cheapest place to catch it. `--auto` skips this stop
 2. **Mutation** — do nothing unless `MUTATION_POLICY` is `advisory` or `enforce`. It is off by default
    and is not the independence mechanism.
 3. Then `handover`.
+
+## 4a. Retrospective triage — at `done`, before the report
+
+Load `skills/pipeline-retrospective` and follow its triage procedure. In short:
+
+1. **Final sweep** — re-read every phase's `verdict.json`, `gate-overrides.log` and the specs'
+   `fidelity_verdict` stamps, and append anything the run revealed that you did not log live.
+2. **Render a lavish triage artifact** (its `input` playbook) with one card per observation — kind,
+   evidence paths, and the change it implies — then `lavish-axi` it and `poll`.
+3. **The user selects.** Selecting nothing is a valid, complete triage.
+4. **File only the selected ones** as `pipeline-improvement` issues on
+   `szobonyaerik/agentic-avengers`, titled as the *change*, with the evidence paths in the body.
+5. **Always close the loop**, even when nothing was selected:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" resolve <feature-id>
+   ```
+
+**Under `--auto`: skip this section entirely.** There is no human to poll and a foreground
+`lavish-axi poll` would hang the run. Leave the log `triage: pending`; the next interactive run's
+preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoapprove.sh` denies
+`gh`/`gh-axi` issue creation outright while the auto sentinel is armed, so attempting it will fail.
 
 ## 5. Git
 
@@ -111,6 +146,20 @@ downstream, and this is the cheapest place to catch it. `--auto` skips this stop
 - Route-backs to honour: fidelity/spec-review NO-GO → spec-writer, then re-gate. Verifier code failure
   → implementer. Verifier test-quality finding → implementer, to fix or add its own tests. Breaker
   counterexample → implementer, additions only.
+
+**Record what the friction says about the pipeline.** Every retry, route-back, repeated NO-GO and
+break-glass is evidence about the *machinery*, and you are the only agent that sees all of it. Log it
+the moment it happens — not at the end from memory, because this run may resume in a different
+session:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
+  --kind <gate-friction|route-back|bypass|stage-churn|success|other> \
+  --note "<what happened, and what it suggests about the pipeline>" --evidence "<path>"
+```
+
+Log **successes** too — a gate that caught something real is the evidence for keeping it. Full
+procedure and the triage step in `skills/pipeline-retrospective`.
 
 ## 7. Hard rules — the same invariants as a manual run
 

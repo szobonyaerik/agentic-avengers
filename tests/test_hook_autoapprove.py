@@ -152,6 +152,14 @@ HARD_DENIED = [
     "gh pr create --fill",
     "gh pr merge 3",
     "gh release create v1",
+    # The pipeline-retrospective files improvement issues upstream. That is outward-facing and
+    # permanent, and its confirmation gate is a human picking them out of a lavish artifact — which
+    # by definition cannot happen on an unattended run. The skill says never auto-file; this is the
+    # mechanical enforcement of it, because a skill is an instruction a model can drift from.
+    "gh issue create --title x",
+    "gh issue close 4",
+    "gh-axi issue create --repo o/r --title x",
+    "gh-axi pr create --fill",
     "npm publish",
     "twine upload dist/*",
     "rm file.txt",
