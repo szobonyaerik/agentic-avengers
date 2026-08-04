@@ -46,6 +46,8 @@ from gate_runner import VERDICT_OK
 #: Verdict tokens that evidence a decision: whatever `gate_runner` treats as a pass, plus the
 #: rubric's NO-GO. Imported rather than restated so the two sets cannot drift apart — a token
 #: gate_runner passes on but this rejected would be deleted after the tokens were already spent.
+#: The comparison is normalised the way gate_runner normalises it (`.strip().upper()`), because a
+#: shared set still drifts if the two sides compare it differently: `{"verdict":"go"}` passes there.
 VALID_VERDICTS = tuple(sorted(VERDICT_OK)) + ("NO-GO",)
 
 #: Phrases a model uses when it knows it saw only part of the bundle. The old code asked for exactly
@@ -61,9 +63,12 @@ PARTIAL_MARKERS = (
 )
 
 #: How far back to look for a negation before a marker. Wide enough for "the bundle was not
-#: truncated", narrow enough that it cannot reach into an unrelated preceding clause.
+#: truncated" and "no truncation reaches the model", narrow enough that it cannot reach into an
+#: unrelated preceding clause — and the lookback stops at the nearest clause boundary, so "found no
+#: issues. Truncated bundle." is still read as a partial self-report rather than a denial of one.
 _NEGATION_WINDOW = 16
-_NEGATIONS = ("not ", "n't ")
+_NEGATIONS = ("not ", "n't ", "no ")
+_CLAUSE_BOUNDARIES = ".;!?\n"
 
 
 class SubstanceError(Exception):
@@ -92,6 +97,8 @@ def self_reported_partial(report: str) -> str | None:
         start = 0
         while (idx := lowered.find(marker, start)) != -1:
             before = lowered[max(0, idx - _NEGATION_WINDOW):idx]
+            for boundary in _CLAUSE_BOUNDARIES:
+                before = before.rpartition(boundary)[2]
             if not any(neg in before for neg in _NEGATIONS):
                 return marker
             start = idx + 1
@@ -105,7 +112,7 @@ def assert_substance(verdict: dict, review_set: list[str]) -> None:
             "empty review set: a review of zero files is not a clean review"
         )
 
-    value = verdict.get("verdict")
+    value = str(verdict.get("verdict") or "").strip().upper()
     if value not in VALID_VERDICTS:
         raise SubstanceError(
             f"verdict is {value!r}, not one of {', '.join(VALID_VERDICTS)} — malformed reply"

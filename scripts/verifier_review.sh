@@ -32,6 +32,23 @@ if [ -z "$PHASE_DIR" ] || [ ! -d "$PHASE_DIR" ]; then
   echo "usage: scripts/verifier_review.sh <phase-dir> <review-set-file>..." >&2
   exit 2
 fi
+
+# INVARIANT: no verdict artifact survives a run that does not produce a fresh one. The Verifier agent
+# merges .verifier-review.json into verdict.json, so a previous run's verdict left on disk (an
+# argument refusal, an over-limit set, a provider outage, a non-JSON reply) is read as THIS run's
+# pass, for code it never saw — the same fail-open this script exists to close. The invariant is held
+# structurally rather than by each branch remembering: this is the first statement after $OUT becomes
+# computable, so no exit path above it can leave an artifact behind (the two exits that do precede it
+# — a failed cd and an invalid phase dir — have no $OUT to leave). The removal is verified, not
+# assumed, because `set -uo pipefail` carries no -e and a failed rm would otherwise pass silently.
+OUT="$PHASE_DIR/.verifier-review.json"
+rm -f "$OUT"
+if [ -e "$OUT" ]; then
+  echo "verifier-review: cannot remove stale $OUT — fail closed." >&2
+  echo "  A verdict from a previous run would be merged into verdict.json as this run's pass." >&2
+  exit 2
+fi
+
 if [ "$#" -eq 0 ]; then
   echo "verifier-review: no review-set files given (fail closed)." >&2
   echo "Compute the review set first — skills/verifier-triage, 'Build the review set'. A review of" >&2
@@ -50,13 +67,6 @@ AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 # test-mapping.md and up to 60 lines of test output, all unbounded and uncounted — so a set under
 # the cap is not a guarantee that the whole prompt fits the model's context.
 LIMIT="${VERIFIER_SRC_LIMIT:-400000}"
-OUT="$PHASE_DIR/.verifier-review.json"
-# INVARIANT: no verdict artifact survives a run that does not produce a fresh one. Removed here, up
-# front, before anything can fail — so no later exit path has to remember to. The Verifier agent
-# merges .verifier-review.json into verdict.json, so a previous run's verdict left on disk (over-limit
-# refusal, provider outage, non-JSON reply) is read as THIS run's pass, for code it never saw. That is
-# the same fail-open this script exists to close. Do not move this below any branch that can exit.
-rm -f "$OUT"
 BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
 
 # --- review set: assemble, then refuse to proceed if it does not fit ---------------------------

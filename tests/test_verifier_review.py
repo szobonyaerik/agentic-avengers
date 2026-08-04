@@ -8,6 +8,7 @@ call, so an over-limit set costs a stop rather than tokens plus a false pass.
 
 import json
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -137,14 +138,18 @@ def test_the_default_limit_clears_a_real_phase_review_set() -> None:
     assert default >= 200_000, f"default {default} would refuse an ordinary phase review set"
 
 
+def stale_verdict(phase_dir: Path) -> Path:
+    """Run 1's verdict, for the OLD code, sitting where the Verifier agent will merge it."""
+    out = phase_dir / ".verifier-review.json"
+    out.write_text(json.dumps({"verdict": "GO", "report": "old run", "findings": []}))
+    return out
+
+
 def test_a_previous_runs_verdict_does_not_survive_an_over_limit_refusal(tmp_path: Path) -> None:
-    """The exact sequence: run 1 reviews the phase and writes a verdict; findings route the phase
-    back; the implementer adds tests; the now-larger set is over the cap. Run 2 must not leave run
-    1's verdict — for the OLD code — on disk, because the Verifier agent merges it as this run's
-    pass."""
+    """Run 1 writes a verdict; findings route the phase back; the implementer adds tests; the
+    now-larger set is over the cap. Run 2 must leave nothing behind to be merged as its pass."""
     phase_dir = phase(tmp_path)
-    stale = phase_dir / ".verifier-review.json"
-    stale.write_text(json.dumps({"verdict": "GO", "report": "old run", "findings": []}))
+    stale = stale_verdict(phase_dir)
     big = tmp_path / "test_big.py"
     big.write_text("# padding\n" * 5000)
 
@@ -152,6 +157,56 @@ def test_a_previous_runs_verdict_does_not_survive_an_over_limit_refusal(tmp_path
 
     assert proc.returncode == 2
     assert not stale.exists(), "a stale verdict survived a refusal and would be merged as a pass"
+
+
+def test_a_previous_runs_verdict_does_not_survive_the_no_files_refusal(tmp_path: Path) -> None:
+    """Same shape, different exit: the agent re-invokes with an empty review-set expansion."""
+    phase_dir = phase(tmp_path)
+    stale = stale_verdict(phase_dir)
+
+    proc = run(phase_dir, [])
+
+    assert proc.returncode == 2
+    assert not stale.exists(), "a stale verdict survived a refusal and would be merged as a pass"
+
+
+def test_a_previous_runs_verdict_does_not_survive_a_failed_model_call(tmp_path: Path) -> None:
+    """A provider outage writes no verdict, so absence is the only thing separating this run from
+    run 1's."""
+    phase_dir = phase(tmp_path)
+    stale = stale_verdict(phase_dir)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert True\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    broken = bindir / "opencode"
+    broken.write_text("#!/bin/sh\nexit 1\n")
+    broken.chmod(broken.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    proc = run(
+        phase_dir,
+        [src],
+        PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        GATE_PROVIDER="opencode",
+    )
+
+    assert proc.returncode == 2
+    assert not stale.exists(), "a stale verdict survived a failed model call"
+
+
+def test_no_exit_path_precedes_the_stale_verdict_removal() -> None:
+    """Enumerated mechanically rather than by reading, because reading missed it twice. The only
+    exits allowed above the removal are those on which `$OUT` is not a computable path at all."""
+    lines = SCRIPT.read_text().splitlines()
+    removal = next(i for i, ln in enumerate(lines) if ln.strip() == 'rm -f "$OUT"')
+    exits_before = [
+        i for i, ln in enumerate(lines[:removal])
+        if re.search(r"\bexit \d", ln) and not ln.lstrip().startswith("#")
+    ]
+
+    assert len(exits_before) == 2, [lines[i] for i in exits_before]
+    assert 'cd "$ROOT"' in lines[exits_before[0]]
+    assert "usage:" in lines[exits_before[1] - 1]
 
 
 def test_each_review_set_file_header_starts_on_its_own_line(tmp_path: Path) -> None:

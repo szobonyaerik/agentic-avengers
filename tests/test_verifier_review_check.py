@@ -122,6 +122,24 @@ def test_a_report_denying_truncation_is_not_a_partial_self_report() -> None:
     assert_substance(v, REVIEW_SET)
 
 
+def test_a_bare_no_negation_is_not_a_partial_self_report() -> None:
+    """Self-referential and near-term: this pipeline reviews this repo, so a phase whose review set
+    includes tests/test_verifier_review.py gets exactly this rubric-compliant per-file clause."""
+    v = verdict(
+        report="tests/test_verifier_review.py (asserts the over-limit refusal; no truncation "
+        "reaches the model), tests/feat/1-a/test_auth.py (expected values are independent)."
+    )
+    assert_substance(v, REVIEW_SET)
+
+
+def test_a_partial_self_report_after_an_unrelated_negation_is_still_refused() -> None:
+    """The negation lookback stops at the clause boundary, so a nearby 'no' in a different sentence
+    cannot launder a genuine partial self-report into a denial of one."""
+    v = verdict(report="Reviewed test_auth.py and found no issues. Truncated bundle, though.")
+    with pytest.raises(SubstanceError):
+        assert_substance(v, REVIEW_SET)
+
+
 # ── the accepted verdict tokens are gate_runner's, not a second set ──────────
 
 
@@ -133,6 +151,14 @@ def test_pass_is_accepted_because_gate_runner_treats_it_as_a_pass() -> None:
 def test_review_is_refused_because_the_rubric_never_emits_it() -> None:
     with pytest.raises(SubstanceError):
         assert_substance(verdict(verdict="REVIEW"), REVIEW_SET)
+
+
+@pytest.mark.parametrize("token", ["go", "Go", " GO ", "pass", "PaSs", "no-go", "No-Go", " NO-GO\n"])
+def test_verdict_tokens_are_normalised_the_way_gate_runner_normalises_them(token: str) -> None:
+    """gate_runner upper-cases before testing membership, so it accepts these, writes the verdict
+    and exits 0. Rejecting them here deletes a review already paid for and stalls the phase — on the
+    NO-GO variants it also discards the findings the implementer needed."""
+    assert_substance(verdict(verdict=token), REVIEW_SET)
 
 
 # ── shape errors fail closed rather than passing through ─────────────────────
