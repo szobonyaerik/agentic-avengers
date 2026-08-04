@@ -20,7 +20,7 @@ verified: YYYY-MM-DD
 - Verifier: pass | pass (bypassed) | fail   <!-- verdict.json in this phase dir -->
 - Test-quality review: clean | findings routed; scope: targeted | expanded (<reason>)
 - Mutation: n/a (off) | <score> (policy: <enforce|advisory>)
-- Bypasses (break-glass): none | <scope> / who / when / reason   <!-- mirror into gate-overrides.log -->
+- Bypasses (break-glass): none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
   - Whole-gate (`GATE_BYPASS`): none | gate / who / when / reason
   - Per-finding (verdict.json `break_glass`): none | finding-id / who / when / reason
 

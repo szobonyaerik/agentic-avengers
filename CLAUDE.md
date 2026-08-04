@@ -128,9 +128,12 @@ written to a gitignored file with the `Write` tool and read inline as `"$(cat <f
 append`, and a `GATE_BYPASS` reason are non-exhaustive examples, and an argument's absence from them
 is not a waiver. `GATE_BYPASS` is no exception for being a shell assignment prefix
 (`GATE_BYPASS="$(cat <file>)" git commit …` works; `export` does not survive between Bash calls), and
-a multi-line reason file is safe because every writer of `gate-overrides.log` normalises the reason
-through `scripts/bypass_reason.sh` — that log is one tab-separated record per line, and a record its
-own reason text could split is not an audit trail. The
+a multi-line reason file is safe because `gate-overrides.log` has exactly one writer,
+`scripts/bypass_log.sh`, which normalises the reason through `scripts/bypass_reason.sh` — that log is
+one tab-separated record per line, and a record its own reason text could split is not an audit
+trail. Nothing appends to it by hand: the hook bypass, `gate_ci.sh`'s CI bypass and the Verifier's
+per-finding waiver (`bypass_log.sh verifier <finding-id> <waived_by>`) all route through that writer,
+which is what makes the guarantee structural rather than a rule each caller has to remember. The
 test is whether an author could have phrased the value differently — a template with only ids, paths
 and keywords substituted is not prose and stays inline. Canonical statement in
 `skills/pipeline-conventions`.

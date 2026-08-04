@@ -10,6 +10,10 @@ no author and no gate: indistinguishable from a separate entry, i.e. a forgeable
 The reason's *content* is equally load-bearing — it is written to be read later, and
 `skills/phase-handover` mirrors it into `handover.md` — so collapsing must never truncate.
 
+The Verifier's per-finding waiver goes through the same writer, and is the case that most needs it:
+`waiver_reason` is a JSON string whose content `skills/verifier-triage` explicitly does *not* judge,
+so nothing stops it being two lines.
+
 These drive the real `bypass_log.sh`, not a reimplementation of its `printf`.
 """
 
@@ -24,10 +28,17 @@ BYPASS_LOG = ROOT / "scripts" / "bypass_log.sh"
 SEPARATORS = ["\n", "\r", "\t", "\r\n"]
 
 
-def run_bypass(project: Path, reason: str, gate: str = "fidelity") -> str:
-    """Run the real hook logger for one override; return the log body."""
+def run_bypass(
+    project: Path,
+    reason: str,
+    gate: str = "fidelity",
+    finding: str | None = None,
+    waived_by: str | None = None,
+) -> str:
+    """Run the real writer for one override; return the log body."""
+    argv = [gate] if finding is None else [gate, finding, waived_by or ""]
     subprocess.run(
-        ["bash", str(BYPASS_LOG), gate],
+        ["bash", str(BYPASS_LOG), *argv],
         cwd=project,
         env={
             "PATH": "/usr/bin:/bin:/usr/local/bin",
@@ -122,3 +133,80 @@ def test_ordinary_single_line_reason_is_unchanged(project: Path) -> None:
     record = run_bypass(project, "docs gate is stale here; overriding").strip()
 
     assert record.endswith("\treason: docs gate is stale here; overriding")
+
+
+def test_gate_bypass_record_has_no_finding_column(project: Path) -> None:
+    """The finding column is waiver-only, so a plain gate bypass keeps its original four fields."""
+    record = run_bypass(project, "docs gate is stale").strip()
+
+    assert "finding:" not in record
+    assert record.count("\t") == 3
+
+
+@pytest.mark.parametrize("separator", SEPARATORS)
+def test_multiline_waiver_reason_writes_one_record(project: Path, separator: str) -> None:
+    """The Verifier path: `waiver_reason` is unjudged JSON prose, so it may arrive multi-line."""
+    reason = (
+        f"the finding assumes a seam this phase does not own{separator}"
+        "tracked in issue 42 for the next phase"
+    )
+
+    body = run_bypass(
+        project, reason, gate="verifier", finding="R2.1.3", waived_by="erik@example.com"
+    )
+
+    assert len(body.strip().split("\n")) == 1
+    assert "the finding assumes a seam this phase does not own" in body
+    assert "tracked in issue 42 for the next phase" in body
+
+
+def test_waiver_record_keeps_who_when_gate_and_finding_id(project: Path) -> None:
+    """A split waiver loses the finding id — assert all four identity fields survive."""
+    record = run_bypass(
+        project,
+        "first line\nsecond line",
+        gate="verifier",
+        finding="R2.1.3",
+        waived_by="erik@example.com",
+    ).strip()
+    when, who, gate, finding, rest = record.split("\t")
+
+    assert when.endswith("Z") and when[:4].isdigit()
+    assert who == "erik@example.com"
+    assert gate == "gate:verifier"
+    assert finding == "finding:R2.1.3"
+    assert rest.startswith("reason: ")
+
+
+def test_waiver_falls_back_to_git_identity_when_waived_by_is_absent(project: Path) -> None:
+    """`waived_by` is only recommended, so its absence must not shift the columns."""
+    record = run_bypass(project, "engineer decision", gate="verifier", finding="R2.1.3").strip()
+
+    assert record.split("\t")[1] == "dev@example.com"
+    assert record.split("\t")[3] == "finding:R2.1.3"
+
+
+def test_separator_injected_through_finding_id_or_author(project: Path) -> None:
+    """Both extra fields come from verdict.json too, so neither may split the record either."""
+    record = run_bypass(
+        project,
+        "engineer decision",
+        gate="verifier",
+        finding="R2.1.3\ninjected",
+        waived_by="erik\nexample",
+    ).strip()
+
+    assert len(record.split("\n")) == 1
+    assert record.count("\t") == 4
+
+
+def test_waiver_and_gate_bypass_share_one_log(project: Path) -> None:
+    """One file, one grammar: mixed override kinds stay one parseable record each, reason last."""
+    run_bypass(project, "docs gate stale\nsecond line", gate="fidelity")
+    run_bypass(project, "seam not owned here\nsecond line", gate="verifier", finding="R2.1.3")
+
+    lines = (project / "gate-overrides.log").read_text(encoding="utf-8").strip().split("\n")
+
+    assert len(lines) == 2
+    assert all(line.split("\t")[-1].startswith("reason: ") for line in lines)
+    assert [line.count("\t") for line in lines] == [3, 4]

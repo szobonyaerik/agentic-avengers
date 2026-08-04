@@ -92,8 +92,11 @@ non-JSON, same-family), the phase **does not pass**.
    each `id`, and **carry forward** `break_glass` / `waiver_reason` / `waived_by` / `waived_at` for any
    finding whose `id` still matches — an engineer may have waived it. A waiver is honored only with a
    non-empty `waiver_reason` (any explanation counts; a missing reason still blocks). A waived finding
-   is non-blocking (`status: acknowledged`) and drops out of `routed`; record the acknowledgment in
-   `gate-overrides.log` and the phase `handover.md` (who / when / finding id / reason). A phase that
+   is non-blocking (`status: acknowledged`) and drops out of `routed`; record the acknowledgment by
+   running `scripts/bypass_log.sh verifier <finding-id> <waived_by>` with the `waiver_reason` in
+   `GATE_BYPASS` — **never by appending to `gate-overrides.log` by hand**, since that log is one
+   tab-separated record per line and a `waiver_reason` is unjudged JSON prose that may contain
+   newlines — then mirror it into the phase `handover.md` (who / when / finding id / reason). A phase that
    passes only because every remaining finding is waived is `pass` with `bypassed: true` — a visible
    bypass on the PR, never a silent green.
 
@@ -105,7 +108,8 @@ non-JSON, same-family), the phase **does not pass**.
   cross-family review is not a pass; it is an unreviewed phase.
 - **You never edit code or tests.** You verify and route.
 - **Break-glass bypass** exists for the human. You do not perform bypasses; you only record that a
-  verdict was overridden, with reason/who/when, in the phase `handover.md` and `gate-overrides.log`.
+  verdict was overridden, with reason/who/when, in the phase `handover.md` and — via
+  `scripts/bypass_log.sh`, the single writer that owns that file's record format — `gate-overrides.log`.
 
 ## On a clean phase
 

@@ -111,8 +111,21 @@ On every run, if a prior `verdict.json` exists for the phase:
 ### Honoring a waiver
 A finding with `break_glass: true` **and a non-empty `waiver_reason`** is treated as **non-blocking**
 and set to `status: acknowledged`; it drops out of the derived `routed` array. Record the
-acknowledgment in the shared audit trail (append to `gate-overrides.log` and the phase `handover.md`:
-who / when / which finding id / reason).
+acknowledgment in the shared audit trail — **through `scripts/bypass_log.sh`, never by appending to
+`gate-overrides.log` yourself**:
+
+```bash
+GATE_BYPASS="$(jq -r '.findings[] | select(.id=="<finding-id>") | .waiver_reason' <verdict.json>)" \
+  bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/bypass_log.sh" verifier <finding-id> <waived_by>
+```
+
+It stamps who / when / finding id / reason in the one record grammar every writer of that log shares,
+and normalises the reason through `scripts/bypass_reason.sh` first. That matters here specifically:
+`waiver_reason` is a JSON string, so it carries newlines freely, and the rule below says its content
+is *not judged* — so nothing rejects a two-line reason. Hand-appending one would split a single waiver
+into two records, the second with no timestamp, no author and no finding id, in the accountability
+record for the only sanctioned way to override a gate. Then mirror the same record into the phase
+`handover.md`.
 
 The `waiver_reason` is **mandatory but its content is not judged** — any explanation the engineer
 gives (e.g. `waiver_reason: "Engineer decision"`) is accepted and honored. If the reason looks thin or

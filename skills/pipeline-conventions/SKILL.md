@@ -165,10 +165,21 @@ The implementer authors **both tests and code** test-first (there is no separate
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
   `gate-overrides.log`, and visible on the PR. The reason is author-written prose, so under `--auto`
   it comes from a file (`GATE_BYPASS="$(cat <file>)" …`) like every other free-text argument above.
-  `gate-overrides.log` is **one tab-separated record per line**, and a reason is prose that may carry
-  newlines, so every writer of that log normalises it through `scripts/bypass_reason.sh` first — a
-  record its own reason text could split is not an audit trail. Collapse, never truncate: the reason
-  is written to be read later and `skills/phase-handover` mirrors it into `handover.md`.
+  `gate-overrides.log` is **one tab-separated record per line**, with the reason last because it is
+  the only free-text field. A reason is prose that may carry newlines — and a record its own reason
+  text could split is not an audit trail — so the log has exactly **one writer**,
+  `scripts/bypass_log.sh`, which normalises through `scripts/bypass_reason.sh` before it appends.
+  Collapse, never truncate: the reason is written to be read later, and `skills/phase-handover`
+  mirrors it into `handover.md`.
+  - **Nothing appends to that log by hand.** A hook bypass, a CI bypass (`scripts/gate_ci.sh`, same
+    grammar with a `gates:<list>` scope) and the Verifier's per-finding waiver
+    (`bypass_log.sh verifier <finding-id> <waived_by>`) all go through the one writer. The waiver is
+    the case that proves why: `waiver_reason` is a JSON string whose content this pipeline explicitly
+    does **not** judge, so nothing stops it being two lines. `handover.md` and the retrospective sweep
+    *read* the log; only `bypass_log.sh` writes it.
+  - This is deliberately **structural, not a rule to remember**. A sentence claiming every writer
+    behaves cannot enforce that they do — a single writer path can, and each new caller inherits the
+    format instead of re-implementing it.
 - **Artifacts on disk** with YAML frontmatter — the chain survives cold sessions.
 
 ## Where the models run
