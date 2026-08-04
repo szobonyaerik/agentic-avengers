@@ -41,9 +41,38 @@ fi
 
 MODEL="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}"
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
-LIMIT="${VERIFIER_SRC_LIMIT:-120000}"
+# Chars of review-set source the gate model is given. 120000 (~30k tokens) was far below what any
+# current gate model can read, and it was the value that made truncation the normal case rather than
+# the exception — one real phase's bounded review set measured 158k. 400000 (~100k tokens) clears
+# that with headroom. Raise it for a large-context model; it is a fail-closed cap, not a budget, so
+# too LOW only costs a loud stop, while too high risks the model quietly degrading on the tail.
+LIMIT="${VERIFIER_SRC_LIMIT:-400000}"
 OUT="$PHASE_DIR/.verifier-review.json"
 BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
+
+# --- review set: assemble, then refuse to proceed if it does not fit ---------------------------
+# This runs BEFORE the model call on purpose. The old code truncated the bundle here and appended a
+# note ASKING the model to report the review as partial — an instruction, not an assertion — then
+# returned the model's verdict as the exit code, so a truncated review could pass a phase silently.
+# Review sets only grow, so each later phase was likelier to hit it than the last. A partial review
+# is an unreviewed phase; failing here costs nothing and spends no tokens.
+SRC=""
+for f in "$@"; do
+  if [ -f "$f" ]; then
+    SRC="${SRC}$(printf -- '--- %s ---\n' "$f"; cat "$f"; printf '\n')"
+  else
+    SRC="${SRC}$(printf -- '--- %s --- (MISSING — report as a finding)\n' "$f")"
+  fi
+done
+if [ "${#SRC}" -gt "$LIMIT" ]; then
+  echo "verifier-review: review set is ${#SRC} chars, over VERIFIER_SRC_LIMIT ($LIMIT) — fail closed." >&2
+  echo "  A truncated review is an unreviewed phase. Do ONE of:" >&2
+  echo "    • raise the cap:  VERIFIER_SRC_LIMIT=$(( ${#SRC} + 20000 )) scripts/verifier_review.sh ..." >&2
+  echo "      (only up to what \$VERIFIER_GATE_MODEL can actually read — check its context window)" >&2
+  echo "    • or split the review set and run this once per chunk, merging the findings." >&2
+  echo "  Do not drop files to get under the cap: the bounded set is the review." >&2
+  exit 2
+fi
 
 # --- assemble the bundle -----------------------------------------------------------------------
 {
@@ -75,20 +104,7 @@ BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
   fi
 
   printf '\n=== REVIEW SET (bounded — see skills/verifier-triage) ===\n'
-  SRC=""
-  for f in "$@"; do
-    if [ -f "$f" ]; then
-      SRC="${SRC}$(printf -- '--- %s ---\n' "$f"; cat "$f"; printf '\n')"
-    else
-      SRC="${SRC}$(printf -- '--- %s --- (MISSING — report as a finding)\n' "$f")"
-    fi
-  done
-  if [ "${#SRC}" -gt "$LIMIT" ]; then
-    printf '%s\n' "${SRC:0:$LIMIT}"
-    printf '\n[TRUNCATED at %s chars — you have NOT seen the whole review set. Judge only what is above and say the review was partial.]\n' "$LIMIT"
-  else
-    printf '%s\n' "$SRC"
-  fi
+  printf '%s\n' "$SRC"
 } >"$BUNDLE"
 
 # --- judge, cross-family -------------------------------------------------------------------------
@@ -105,6 +121,14 @@ rc=$?
 
 if [ ! -f "$OUT" ]; then
   echo "verifier-review: no verdict written (model unreachable, non-JSON reply, or same-family) — fail closed." >&2
+  exit 2
+fi
+
+# --- substance: did the review actually happen? --------------------------------------------------
+# A verdict that names none of the files it was handed, or that reports itself as partial, is not a
+# review. Deterministic and unit-tested (tests/test_verifier_review_check.py); never the model's call.
+if ! python3 "$SD/verifier_review_check.py" "$OUT" "$@"; then
+  rm -f "$OUT"   # never leave a hollow verdict on disk for the agent to merge
   exit 2
 fi
 

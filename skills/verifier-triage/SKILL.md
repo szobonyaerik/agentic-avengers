@@ -41,7 +41,11 @@ scripts/verifier_review.sh <phase-dir> <review-set-file>...
 which bundles the specs, the mappings, the test run and the sources, judges them on
 `$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`) via `gate_runner.py`, and writes
 `<phase-dir>/.verifier-review.json` with findings already carrying deterministic ids. `gate_runner`
-refuses a same-family model. Fold those findings into `verdict.json` verbatim — you may add findings
+refuses a same-family model. It also refuses **before** the model call when the review set exceeds
+`VERIFIER_SRC_LIMIT` (default 400000 chars), and **after** it when the verdict names none of
+the files it was handed or reports itself as partial — a truncated or hollow review is an
+unreviewed phase, not a pass. Raise the cap to what the gate model can actually read, or split
+the set and merge findings; never drop files to fit. Fold those findings into `verdict.json` verbatim — you may add findings
 it missed, never delete or downgrade one it raised. Record the scope you chose (and `reviewed_by`) in
 `test_quality`; a `pass` that records no completed review is rejected by both the hook and CI.
 

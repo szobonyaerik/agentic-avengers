@@ -139,7 +139,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `GATE_MODEL` | per-gate defaults | routes every gate to one model |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
 | `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
-| `VERIFIER_SRC_LIMIT` | `120000` | max chars of review-set source sent to that model |
+| `VERIFIER_SRC_LIMIT` | `400000` | max chars of review-set source sent to that model. A set **over** the cap is refused (exit 2) *before* the model is called — a truncated review is an unreviewed phase. Raise it only to what the gate model can actually read, or split the set |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
 

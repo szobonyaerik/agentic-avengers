@@ -106,6 +106,12 @@ non-JSON, same-family), the phase **does not pass**.
   result is ambiguous, or `verifier_review.sh` did not produce a verdict (missing key, provider down,
   non-JSON, same-family model) — the phase does NOT pass. A green suite with no completed
   cross-family review is not a pass; it is an unreviewed phase.
+- **A partial review is an unreviewed phase.** `verifier_review.sh` refuses (exit 2) when the review
+  set exceeds `VERIFIER_SRC_LIMIT`, *before* the model is called, and again afterwards if the verdict
+  names none of the files it was handed or reports itself as partial. Both refusals are yours to act
+  on, not to work around: raise the cap to what `$VERIFIER_GATE_MODEL` can genuinely read, or split
+  the set and merge the findings. **Never drop files to get under the cap** — the bounded set *is*
+  the review, so shrinking it to pass is the same false pass by hand.
 - **You never edit code or tests.** You verify and route.
 - **Break-glass bypass** exists for the human. You do not perform bypasses; you only record that a
   verdict was overridden, with reason/who/when, in the phase `handover.md` and — via
