@@ -18,9 +18,13 @@
 #
 # Writes <phase-dir>/.verifier-review.json (the parsed verdict incl. findings, each with a
 # deterministic id) for the agent to merge into verdict.json. Exit 0 = GO, 2 = NO-GO or fail-closed.
+# On any path that does not produce a fresh trustworthy verdict the file is removed, so the caller
+# never merges an earlier run's pass (INVARIANT below).
 #
 # Env: VERIFIER_GATE_MODEL (default google/gemini-3.1-pro-preview) · AUTHOR_FAMILY (default anthropic)
 #      GATE_PROVIDER · TEST_CMD (default: pytest -q --tb=short on the phase's tests dir)
+#      VERIFIER_SRC_LIMIT (default 400000) — chars of review-set source; an over-limit set is refused
+#      before the model is called, never truncated (see the comment on LIMIT below)
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
