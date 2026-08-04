@@ -54,6 +54,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    **Optional and OFF by default**: `MUTATION_POLICY` = `off` (default) · `advisory` (reports, never
    blocks) · `enforce` (fails closed). An extra signal, **not** the independence mechanism — that is
    the Verifier's test-quality review. When off, no mutation tool runs anywhere.
+9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
+   and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
+   learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
+   files that matter. `docs/features/<feature>/pipeline-observations.md`
+   (`skills/pipeline-retrospective`) is about the **machinery** — a gate that misfires, a stage that
+   churns — written by the orchestrator as things happen, triaged at feature close, and filed upstream
+   on the agentic-avengers repo. On Claude Code the lessons pointer is injected by
+   `scripts/hook_lessons.sh` on `SubagentStart`; **opencode has no subagent-start event**, so on this
+   runtime this paragraph is the delivery — load `skills/self-improvement` yourself.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -106,4 +115,6 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
 | `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
 | `VERIFIER_SRC_LIMIT` | `120000` | max chars of review-set source sent to that model |
+| `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
+| `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
 
