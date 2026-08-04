@@ -46,8 +46,17 @@ AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 # the exception — one real phase's bounded review set measured 158k. 400000 (~100k tokens) clears
 # that with headroom. Raise it for a large-context model; it is a fail-closed cap, not a budget, so
 # too LOW only costs a loud stop, while too high risks the model quietly degrading on the tail.
+# Scope: it bounds the REVIEW-SET SOURCE only. The bundle also carries every spec.md, every
+# test-mapping.md and up to 60 lines of test output, all unbounded and uncounted — so a set under
+# the cap is not a guarantee that the whole prompt fits the model's context.
 LIMIT="${VERIFIER_SRC_LIMIT:-400000}"
 OUT="$PHASE_DIR/.verifier-review.json"
+# INVARIANT: no verdict artifact survives a run that does not produce a fresh one. Removed here, up
+# front, before anything can fail — so no later exit path has to remember to. The Verifier agent
+# merges .verifier-review.json into verdict.json, so a previous run's verdict left on disk (over-limit
+# refusal, provider outage, non-JSON reply) is read as THIS run's pass, for code it never saw. That is
+# the same fail-open this script exists to close. Do not move this below any branch that can exit.
+rm -f "$OUT"
 BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
 
 # --- review set: assemble, then refuse to proceed if it does not fit ---------------------------
@@ -56,12 +65,16 @@ BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
 # returned the model's verdict as the exit code, so a truncated review could pass a phase silently.
 # Review sets only grow, so each later phase was likelier to hit it than the last. A partial review
 # is an unreviewed phase; failing here costs nothing and spends no tokens.
+# The separating newline is appended OUTSIDE the command substitution on purpose: `$(...)` strips
+# every trailing newline, which glued each file's `--- <path> ---` header onto the previous file's
+# last line. The model attributes its findings against those headers, and the substance check below
+# refuses a verdict that names none of those paths — a glued header corrupts exactly that.
 SRC=""
 for f in "$@"; do
   if [ -f "$f" ]; then
-    SRC="${SRC}$(printf -- '--- %s ---\n' "$f"; cat "$f"; printf '\n')"
+    SRC="${SRC}$(printf -- '--- %s ---\n' "$f"; cat "$f")"$'\n'
   else
-    SRC="${SRC}$(printf -- '--- %s --- (MISSING — report as a finding)\n' "$f")"
+    SRC="${SRC}$(printf -- '--- %s --- (MISSING — report as a finding)' "$f")"$'\n'
   fi
 done
 if [ "${#SRC}" -gt "$LIMIT" ]; then
@@ -128,7 +141,7 @@ fi
 # A verdict that names none of the files it was handed, or that reports itself as partial, is not a
 # review. Deterministic and unit-tested (tests/test_verifier_review_check.py); never the model's call.
 if ! python3 "$SD/verifier_review_check.py" "$OUT" "$@"; then
-  rm -f "$OUT"   # never leave a hollow verdict on disk for the agent to merge
+  rm -f "$OUT"   # the invariant above, restated for the one artifact this run did write
   exit 2
 fi
 

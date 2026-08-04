@@ -12,8 +12,9 @@ Under "=== ARTIFACT TO JUDGE ===" you will receive a bundle containing:
 - the result of the phase's test run.
 
 Judge **only what is in the bundle.** It is deliberately bounded — do not ask for the rest of the
-suite, and do not speculate about files you were not shown. If the bundle says it was TRUNCATED, say
-so in your report and treat the review as partial.
+suite, and do not speculate about files you were not shown. The bundle is never truncated: the
+caller refuses an over-limit review set before you are ever called, so what you are handed is the
+whole review set.
 
 ## What you are looking for
 
@@ -50,7 +51,7 @@ Reply with NOTHING but a single JSON object — no markdown, no code fences, no 
 
 ```
 {"verdict":"GO|NO-GO",
- "report":"<2-5 sentences: what you reviewed and the headline judgement>",
+ "report":"<name EVERY file of the review set, exactly as it appears in its '--- <path> ---' header, each with one clause saying what you checked in it; then the headline judgement>",
  "route_back":"Implementer|",
  "findings":[
    {"kind":"gamed-test|coverage-gap|code",
@@ -64,9 +65,13 @@ Reply with NOTHING but a single JSON object — no markdown, no code fences, no 
 - `"verdict":"GO"` — nothing in the bundle exhibits any of the five patterns. `findings` is `[]` and
   `route_back` is `""`.
 - `"verdict":"NO-GO"` — at least one finding. `route_back` is `"Implementer"`.
+- `report` must **name every file of the review set** and say what you checked in each — one clause
+  per file — before the headline judgement. This holds on GO too, where `findings` is empty and the
+  report is the only evidence the review happened. The caller refuses a verdict whose report names
+  none of the files it was handed, and the phase stalls.
 - Every finding must name a **specific** test or requirement in `instruction`. "Improve test quality"
   is not a finding. Do not emit a finding you cannot point at a line of the bundle for.
 - Do not invent an `id` field — the caller computes finding ids deterministically.
 
 Example:
-{"verdict":"NO-GO","report":"Reviewed 6 tests across specs 1.1 and 1.2 plus conftest.py. The suite is green, but two tests cannot fail. Coverage of R1.2.4 is missing entirely.","route_back":"Implementer","findings":[{"kind":"gamed-test","spec_id":"R1.1.1","target":"tests/intake/1-webhook/1.1-verify/test_totals.py","severity":"blocker","instruction":"test_calculate_total builds `expected` with the same reduce the implementation uses, so it passes for any implementation. Assert the literal 15 taken from the acceptance criteria's worked example."},{"kind":"gamed-test","spec_id":"R1.1.3","target":"tests/intake/1-webhook/1.1-verify/test_persist.py","severity":"major","instruction":"test_persists_task queries the DB directly after calling the handler. Assert through get_task() so a storage refactor cannot silently break the guarantee."},{"kind":"coverage-gap","spec_id":"R1.2.4","target":"R1.2.4","severity":"blocker","instruction":"No test exercises 'a replayed delivery is a 200 no-op'. Add a negative case posting the same signed payload twice and asserting the row count stays 1."}]}
+{"verdict":"NO-GO","report":"Reviewed tests/intake/1-webhook/1.1-verify/test_totals.py (expected values, independence from the implementation), tests/intake/1-webhook/1.1-verify/test_persist.py (whether it asserts through the public seam), and tests/intake/1-webhook/1.1-verify/conftest.py (fixtures only, no assertions of its own), against the acceptance criteria of specs 1.1 and 1.2. The suite is green, but two of those tests cannot fail, and R1.2.4 has no test at all.","route_back":"Implementer","findings":[{"kind":"gamed-test","spec_id":"R1.1.1","target":"tests/intake/1-webhook/1.1-verify/test_totals.py","severity":"blocker","instruction":"test_calculate_total builds `expected` with the same reduce the implementation uses, so it passes for any implementation. Assert the literal 15 taken from the acceptance criteria's worked example."},{"kind":"gamed-test","spec_id":"R1.1.3","target":"tests/intake/1-webhook/1.1-verify/test_persist.py","severity":"major","instruction":"test_persists_task queries the DB directly after calling the handler. Assert through get_task() so a storage refactor cannot silently break the guarantee."},{"kind":"coverage-gap","spec_id":"R1.2.4","target":"R1.2.4","severity":"blocker","instruction":"No test exercises 'a replayed delivery is a 200 no-op'. Add a negative case posting the same signed payload twice and asserting the row count stays 1."}]}

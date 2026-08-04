@@ -10,15 +10,26 @@ only grow, so every later phase was likelier to hit it than the last.
 
 This asserts the verdict shows evidence of the review having happened:
 
-  1. the verdict value is one the rubric allows,
+  1. the verdict value is one gate_runner and the rubric agree on,
   2. the report is non-empty,
   3. the report or a finding names at least one file from the review set,
-  4. the review does not itself say it was partial.
+  4. the report does not itself say the review was partial.
 
 (3) is the load-bearing one: a verdict that names nothing it was given is one that could have been
-written without opening the bundle. A terse-but-genuine review that names no file will be refused —
-that is the intended trade. This gate's failure modes are not symmetric: a false refusal costs a
-re-run, a false pass ships an unverified phase and every later phase builds on it.
+written without opening the bundle. `prompts/verifier-review.md` requires the report to name every
+file it reviewed and what was checked in each, so this asserts a contract the model was actually
+given rather than one invented here. A terse review that names no file is still refused — that is
+the intended trade. This gate's failure modes are not symmetric: a false refusal costs a re-run, a
+false pass ships an unverified phase and every later phase builds on it.
+
+What this does NOT bound: fabrication. The `--- <path> ---` headers are part of the prompt, so a
+reply that echoes a filename plus a generic sentence passes all four checks. The check bounds
+*hollow* verdicts (empty report, wrong token, self-reported partial), not *fabricated* ones; the
+only real guard against fabrication remains the cross-family model itself and the rubric's "do not
+emit a finding you cannot point at a line of the bundle for". Do not later trust this as proof that
+the bundle was read — a gate trusted for more than it does is how the original fail-open survived.
+
+Note also that `VERIFIER_SRC_LIMIT` bounds the review-set source only, not the whole bundle.
 
     python3 scripts/verifier_review_check.py <verdict.json> <review-set-file>...
 """
@@ -30,8 +41,12 @@ import re
 import sys
 from pathlib import Path
 
-#: Verdict tokens the review rubric allows. Anything else is a malformed reply, not a decision.
-VALID_VERDICTS = ("GO", "REVIEW", "NO-GO")
+from gate_runner import VERDICT_OK
+
+#: Verdict tokens that evidence a decision: whatever `gate_runner` treats as a pass, plus the
+#: rubric's NO-GO. Imported rather than restated so the two sets cannot drift apart — a token
+#: gate_runner passes on but this rejected would be deleted after the tokens were already spent.
+VALID_VERDICTS = tuple(sorted(VERDICT_OK)) + ("NO-GO",)
 
 #: Phrases a model uses when it knows it saw only part of the bundle. The old code asked for exactly
 #: these and then ignored them; honouring them is the point.
@@ -45,6 +60,11 @@ PARTIAL_MARKERS = (
     "incomplete review",
 )
 
+#: How far back to look for a negation before a marker. Wide enough for "the bundle was not
+#: truncated", narrow enough that it cannot reach into an unrelated preceding clause.
+_NEGATION_WINDOW = 16
+_NEGATIONS = ("not ", "n't ")
+
 
 class SubstanceError(Exception):
     """The verdict does not evidence a completed review. Always fail closed on this."""
@@ -57,6 +77,25 @@ def _text_of(verdict: dict) -> str:
         if isinstance(finding, dict):
             parts.extend(str(finding.get(k) or "") for k in ("target", "detail", "instruction"))
     return "\n".join(parts).lower()
+
+
+def self_reported_partial(report: str) -> str | None:
+    """The marker by which the report claims it saw only part of the bundle, or None.
+
+    Deliberately scoped to `report` — the model's self-report about the bundle. A finding's
+    target/detail/instruction is prose *about the code under review*, where these substrings are
+    ordinary vocabulary ("test_parse covers only part of R1.2.4's criteria") rather than a
+    completeness claim, so matching there deleted legitimate NO-GOs and their findings.
+    """
+    lowered = report.lower()
+    for marker in PARTIAL_MARKERS:
+        start = 0
+        while (idx := lowered.find(marker, start)) != -1:
+            before = lowered[max(0, idx - _NEGATION_WINDOW):idx]
+            if not any(neg in before for neg in _NEGATIONS):
+                return marker
+            start = idx + 1
+    return None
 
 
 def assert_substance(verdict: dict, review_set: list[str]) -> None:
@@ -76,21 +115,22 @@ def assert_substance(verdict: dict, review_set: list[str]) -> None:
     if not report.strip():
         raise SubstanceError("empty report: a verdict with no reasoning is not a review")
 
-    blob = _text_of(verdict)
-
-    for marker in PARTIAL_MARKERS:
-        if marker in blob:
-            raise SubstanceError(
-                f"the review reports itself as partial ({marker!r}). A partial review is an "
-                "unreviewed phase — raise VERIFIER_SRC_LIMIT or split the review set and re-run"
-            )
+    marker = self_reported_partial(report)
+    if marker is not None:
+        raise SubstanceError(
+            f"the report says the review was partial ({marker!r}). A partial review is an "
+            "unreviewed phase — re-run it; if the model keeps reporting a partial read, split the "
+            "review set and merge the findings rather than accepting the verdict"
+        )
 
     # A review that names nothing it was handed could have been written without the bundle.
+    blob = _text_of(verdict)
     basenames = {Path(f).name for f in review_set if f}
     if not any(re.search(rf"\b{re.escape(name)}", blob) for name in basenames):
         raise SubstanceError(
             f"the report names none of the {len(basenames)} review-set file(s) — no evidence the "
-            "bundle was read. The rubric requires naming what was reviewed"
+            "bundle was read. prompts/verifier-review.md requires the report to name every file it "
+            "reviewed and what was checked in each"
         )
 
 
