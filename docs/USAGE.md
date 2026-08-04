@@ -23,15 +23,20 @@ export OPENROUTER_API_KEY=sk-or-...               # add to your shell rc, and as
 export AUTHOR_FAMILY=anthropic                    # the family your build agents run on (Claude)
 
 # Feature-close tooling — /avenger-run preflight STOPS without these, there is no fallback:
-no-mistakes --version                             # ship gate (§4a), both interactive and --auto runs
+no-mistakes doctor                                # ship gate (§4a): binary + a runnable pipeline agent
+no-mistakes axi                                   #   ...and the repo initialised (exits 1 with
+                                                  #   `error: repo not initialized` -> run `no-mistakes init`)
 lavish-axi --version                              # plan-approval stop (§3) + retrospective triage (§4b),
                                                   #   interactive runs only; --auto skips both
 ```
 
-> **Fill in `.no-mistakes.yaml` before your first run.** `/pipeline-init` (step B) scaffolds it with
-> `REPLACE_ME` placeholders for `commands.lint` and `commands.test`. Preflight checks the file's
-> **content**, not just its existence, so an unedited scaffold stops the run — deliberately, since
-> the alternative is executing a literal placeholder as a shell command at the ship gate.
+> **Initialise the gate repo, and fill in `.no-mistakes.yaml`, before your first run.** These are two
+> separate preconditions and neither implies the other. `no-mistakes init` is what creates the bare
+> gate repo, the post-receive hook, the `no-mistakes` remote and the DB record; copying the config
+> creates none of them. And `/pipeline-init` (step B) scaffolds that config with `REPLACE_ME`
+> placeholders for `commands.lint` and `commands.test`. Preflight checks the file's **content**, not
+> just its existence, so an unedited scaffold stops the run — deliberately, since the alternative is
+> executing a literal placeholder as a shell command at the ship gate.
 
 > **Cross-family invariant:** gates must run on a different vendor family than the author. Build agents
 > = anthropic; fidelity gate = DeepSeek; verifier/mutation/spec-review = Gemini. If a gate model shares

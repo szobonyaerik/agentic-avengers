@@ -30,22 +30,43 @@ Run these before anything else, and stop with the fix if one fails:
   itself is missing, tell the user to run `/plan-build-verify:pipeline-init <feature-id>` first and stop.
 - `OPENROUTER_API_KEY` set (or `opencode` on PATH). Gates fail closed without it — do not start a run
   that will halt at the first gate.
-- **`no-mistakes` on PATH, and a `.no-mistakes.yaml` at the repo root that is actually filled in.**
-  The §4a ship gate needs both, in interactive *and* `--auto` runs. Check the **content**, not just
-  existence — `/plan-build-verify:pipeline-init` scaffolds the file with `REPLACE_ME` placeholders,
-  and an unedited one passes an existence check and then runs a literal placeholder as a shell
-  command at the gate:
+- **The §4a ship gate's three preconditions — the binary, an initialised repo, and a filled-in
+  config.** All three are needed in interactive *and* `--auto` runs, and each is checked by
+  *interrogating state*, never by printing advice and hoping:
 
-  ```bash
-  grep -nE '^[[:space:]]*(lint|test):.*REPLACE_ME' "${CLAUDE_PROJECT_DIR}/.no-mistakes.yaml"
-  ```
+  1. **`no-mistakes` on PATH**, and `no-mistakes doctor` reporting a runnable pipeline agent. A run
+     with no configured agent fails before its first step, and `doctor` is the only thing that says
+     so.
+  2. **The repository initialised** — `no-mistakes init` creates the bare gate repo, the
+     post-receive hook, the `no-mistakes` git remote and the DB record, and **none of that is implied
+     by `.no-mistakes.yaml` existing** (`/plan-build-verify:pipeline-init` copies the config without
+     initialising anything). Ask the tool, do not infer:
 
-  Match the marker **only where it is a value**. A bare `grep REPLACE_ME` over a commented config
-  also matches the template's own prose, so a correctly filled-in file would fail this check forever.
-  Any hit → stop, naming `.no-mistakes.yaml` and the exact keys still holding the marker
-  (`commands.lint`, `commands.test`) so the user knows what to fill in. Missing file or missing binary
-  → stop the same way. The ship gate itself fires at `done`, after every phase is already built, which
-  is exactly why this is checked here instead: discovering it there wastes the whole run.
+     ```bash
+     no-mistakes axi          # home view; exits 1 with `error: repo not initialized` when it is not
+     ```
+
+     `no-mistakes status` prints the same sentence but **exits 0**, so branch on `axi`'s exit code or
+     on the `error:` line — not on `status`'s exit code. Not initialised → stop and tell the user to
+     run `no-mistakes init`. This is also the command §4a step 2 re-reads to find an existing run, so
+     preflight and the gate ask the same question of the same source.
+  3. **`.no-mistakes.yaml` at the repo root that is actually filled in.** Check the **content**, not
+     just existence — `/plan-build-verify:pipeline-init` scaffolds the file with `REPLACE_ME`
+     placeholders, and an unedited one passes an existence check and then runs a literal placeholder
+     as a shell command at the gate:
+
+     ```bash
+     grep -nE '^[[:space:]]*(lint|test):.*REPLACE_ME' "${CLAUDE_PROJECT_DIR}/.no-mistakes.yaml"
+     ```
+
+     Match the marker **only where it is a value**. A bare `grep REPLACE_ME` over a commented config
+     also matches the template's own prose, so a correctly filled-in file would fail this check
+     forever. Any hit → stop, naming `.no-mistakes.yaml` and the exact keys still holding the marker
+     (`commands.lint`, `commands.test`) so the user knows what to fill in.
+
+  Any of the three failing → stop, naming the exact command that fixes it. The ship gate itself fires
+  at `done`, after every phase is already built, which is exactly why all three are checked here:
+  discovering any of them there wastes the whole run.
 - **`lavish-axi` on PATH** — unless `--auto`, which skips both surfaces that use it. The plan
   approval stop (§3) and the retrospective triage (§4b) render through it and there is **no markdown
   fallback on purpose**: a stop that silently degrades to a plain read is a gate weakened invisibly,
@@ -169,6 +190,20 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 The last phase is verified and the e2e suite is written. Everything the avengers gate covers is
 green — and none of it covered lint, docs, push, PR or CI. That is this stage.
 
+**Load the `no-mistakes` skill and drive the gate by its procedure**, the way §3 loads `lavish` and
+§4b loads `skills/pipeline-retrospective`. That skill is versioned with the binary and owns the
+driving loop — preconditions, `--intent`, the gate/respond loop, the outcomes, `branch_sync`. This
+section adds only what is *pipeline-specific* and does not restate it, so the two cannot drift.
+Two things from it are load-bearing enough to name here:
+
+- **Every `axi run` and `axi respond` blocks, and review/test/docs/CI take several minutes each.**
+  Allow a long timeout, and **do not cancel or re-issue a call because it looks slow** — Claude
+  Code's `Bash` tool defaults to 120s and caps at 600s, so **background the call** (`run_in_background`)
+  rather than letting it time out. A cancelled call loses the run; a re-issued one starts a second
+  (step 2). Check progress with a separate `no-mistakes axi status`.
+- **The run never advances past a gate on its own.** A long call is working, not stalled — read every
+  return, respond to every `gate:`, and never idle-wait.
+
 **It runs in `--auto` runs too.** The only thing `--auto` changes is what happens on an `ask-user`
 finding:
 
@@ -213,8 +248,10 @@ awaiting approval` while the real run sits parked and invisible. Preflight asser
    general-purpose resume command, and §5's *second* feature-close commit moves HEAD past that
    point, which is exactly why naive re-entry starts a second run instead of rejoining the first.
 
-   **Build the intent in a file and pass it by reading that file — the prose must never appear in a
-   shell command at all:**
+   **Build the intent in a file and pass it by reading that file**, per the *prose never goes on a
+   command line* rule in `skills/pipeline-conventions` — this is that rule's most load-bearing
+   instance, because a good intent for a shipping feature almost always names `git push` or
+   `gh pr create` and would make `hook_autoapprove.sh` **deny the ship gate's own start command**:
    - **Write the file with the `Write` tool**, not with `cat`/`echo`/a heredoc. A heredoc puts the
      prose back on the command line and hits the same deny (verified: a heredoc carrying `git push`
      is denied).
@@ -223,21 +260,17 @@ awaiting approval` while the real run sits parked and invisible. Preflight asser
      no-mistakes axi run --intent "$(cat .lavish/<feature-id>-intent.md)"
      ```
 
-   Do not "simplify" that back to an inline string. It defends two real failures at once: under
-   `--auto`, `hook_autoapprove.sh` matches its deny regex against the **whole** command string, so an
-   intent mentioning `git push` or `gh pr create` — near-certain for a feature that touches shipping —
-   makes the hook **deny the ship gate's own start command**; and backticks in an inline intent are
-   eaten by the shell as command substitution. The fix is not to narrow the deny list, which is
-   correct as written — it is to keep prose off the command line. Put the file under `.lavish/`
-   (already gitignored per §3) or `${TMPDIR}` so it is never committed.
+   Do not "simplify" that back to an inline string; it also stops backticks in the intent being eaten
+   by the shell as command substitution. Put the file under `.lavish/` (already gitignored per §3) or
+   `${TMPDIR}` so it is never committed. **`--instructions` on `axi respond` takes the same shape** —
+   it is free prose relaying a user's guidance, and it is denied by exactly the same regex.
 
    Add `--yes` **only** when the run was invoked with `--auto --ship-yes`.
    **A thin intent is actively harmful** — the review uses it to tell a deliberate decision from a
    mistake, so anything the pipeline chose on purpose (a same-family gate, a disabled feature, a
    waived finding) must be stated or it gets flagged as a defect.
-3. **Drive it.** Read every return. On a `gate:`, respond; loop until an `outcome:`. Steps take
-   minutes — a long call is working, not stalled. Never idle-wait; the run does not advance on its
-   own.
+3. **Drive it** by the skill's gate/respond loop, with the timeout and backgrounding rule above.
+   Where this pipeline differs from the skill's defaults:
    - `auto-fix` / `no-op` findings: decide yourself.
    - **`ask-user` findings: relay verbatim** — id, file, full description — and let the user decide.
      Never approve, fix or skip one on your own judgement. Under `--auto` there is nobody to relay
@@ -262,11 +295,14 @@ awaiting approval` while the real run sits parked and invisible. Preflight asser
       §5's second commit via the `recover_custody` path, then report through §8's `failed` branch.
 6. **Log what the gate found** as pipeline observations before moving on — one entry per finding, not
    one per run. A defect the ship gate caught that every avengers gate missed is a finding *about the
-   pipeline*, and it is the single most valuable input the retrospective gets:
+   pipeline*, and it is the single most valuable input the retrospective gets. **Write the note to a
+   file with the `Write` tool and read it inline** — same rule as the intent above, and it bites
+   hardest here: §4a covers "lint, docs, push, PR or CI", so a note describing what the gate found is
+   very likely to name a denied command:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
      --root "${CLAUDE_PROJECT_DIR}" --kind other \
-     --note "ship gate found <what>; no avengers gate covers it because <why>"
+     --note "$(cat .lavish/<feature-id>-observation.md)"
    ```
    **Pick the `--kind` per observation** from the taxonomy in `skills/pipeline-retrospective` — a
    coverage gap no avengers gate reaches is `other`, an avengers gate that *did* catch it is
@@ -307,6 +343,10 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - After each phase has a passing `verdict.json` **and** its `handover.md`, commit everything for that
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
+- **Every `-m` below is a fixed template with only an id and a verdict substituted**, so it stays
+  inline: the *prose never goes on a command line* rule (`skills/pipeline-conventions`) is about
+  free author-written text. Do not improvise a commit subject that quotes what a gate found — that is
+  prose, and under `--auto` it would deny the commit.
 - **A stage's artifacts are committed before the stage that depends on them runs, and nothing the run
   produced is left uncommitted at the end.** Past the per-phase rule above, that means **two commits
   at feature close**, not one:
@@ -379,11 +419,15 @@ break-glass is evidence about the *machinery*, and you are the only agent that s
 the moment it happens — not at the end from memory, because this run may resume in a different
 session:
 
+**Write the note to a file with the `Write` tool** and read it inline — free prose on a command line
+is denied under `--auto` by content alone (`skills/pipeline-conventions`, hard rules). `--kind` is a
+keyword and `--evidence` is a path, so both stay inline safely.
+
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
   --root "${CLAUDE_PROJECT_DIR}" \
   --kind <gate-friction|route-back|bypass|stage-churn|success|other> \
-  --note "<what happened, and what it suggests about the pipeline>" --evidence "<path>"
+  --note "$(cat .lavish/<feature-id>-observation.md)" --evidence "<path>"
 ```
 
 Log **successes** too — a gate that caught something real is the evidence for keeping it. Full

@@ -63,6 +63,14 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    on the agentic-avengers repo. On Claude Code the lessons pointer is injected by
    `scripts/hook_lessons.sh` on `SubagentStart`; **opencode has no subagent-start event**, so on this
    runtime this paragraph is the delivery — load `skills/self-improvement` yourself.
+10. **Prose never goes on a command line.** Under `/avenger-run --auto`, `hook_autoapprove.sh` matches
+   its hard-deny regex against the **whole** command string, so free text that merely *names*
+   `git push` or `gh pr create` denies the command carrying it. Write the text to a file and read it
+   inline — `--intent "$(cat <file>)"`, `--note "$(cat <file>)"` — never via `cat`/`echo`/a heredoc,
+   which puts it straight back. Applies to `--intent`/`--instructions` on `no-mistakes axi` and
+   `--note` on `scripts/pipeline_observations.py append`. Fixed templates (a conventional-commit `-m`,
+   an `--evidence` path, a `--kind` keyword) stay inline. Full rule in
+   `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:

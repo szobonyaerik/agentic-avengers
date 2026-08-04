@@ -111,10 +111,21 @@ orchestrator itself still never does, in either mode. It stops at `checks-passed
 `lavish-axi poll` would hang an unattended run): the **plan-approval stop** (**`/avenger-run` §3** —
 plan.md rendered with a mermaid phase graph, annotations fed back to the planner until approved) and
 the **retrospective triage** (**`/avenger-run` §4b**). Both are **preflight checks** in
-`/avenger-run` §1 — `no-mistakes` (binary *and* a `.no-mistakes.yaml` with no `REPLACE_ME` left in
-it) in both modes, `lavish-axi` on interactive runs only, since `--auto` skips the two surfaces that
+`/avenger-run` §1 — `no-mistakes` in both modes as **three** independent states (binary + a runnable
+pipeline agent via `no-mistakes doctor`; the repo **initialised**, which `no-mistakes axi` reports and
+which a config file existing implies nothing about; and a `.no-mistakes.yaml` with no `REPLACE_ME`
+left in a value), `lavish-axi` on interactive runs only, since `--auto` skips the two surfaces that
 use it. They fail the run at the start rather than at the plan stop or at feature close, and neither
 has a silent fallback.
+
+**Prose never goes on a command line.** Under `--auto`, `hook_autoapprove.sh` matches its hard-deny
+regex against the **whole** Bash command string, so free text that merely *names* `git push` or
+`gh pr create` denies the command carrying it — the regex matches content, not intent, and narrowing
+it would spare real pushes. Every free-text argument the pipeline documents (`--intent` and
+`--instructions` on `no-mistakes axi`, `--note` on `pipeline_observations.py append`) is written to a
+gitignored file with the `Write` tool and read inline as `"$(cat <file>)"`; never `cat`/`echo`/a
+heredoc, which put it straight back. Fixed templates — a conventional-commit `-m`, an `--evidence`
+path, a `--kind` keyword — stay inline. Canonical statement in `skills/pipeline-conventions`.
 
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:

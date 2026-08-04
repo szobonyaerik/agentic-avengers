@@ -41,11 +41,18 @@ becomes a separate issue with its own evidence, and a merged note cannot be tria
 Never wait until the end to write these up from memory: `/avenger-run` resumes across sessions, and
 a `/clear` or a closed laptop between phase 2 and phase 6 takes your recollection with it.
 
+**Write the note to a file with the `Write` tool and read it inline.** Under `/avenger-run --auto`,
+`hook_autoapprove.sh` matches its hard-deny regex against the **whole** command string, so a note that
+merely mentions `git push` or `gh pr create` — which observations about the ship gate routinely do —
+**denies the append itself**, and the observation is lost with no other recovery path. See the
+*prose never goes on a command line* rule in `pipeline-conventions`. `--kind` is a keyword and
+`--evidence` is a path, so both stay inline safely.
+
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature> \
   --root "${CLAUDE_PROJECT_DIR}" \
   --kind <gate-friction|route-back|bypass|stage-churn|success|other> \
-  --note "<what happened, and what it suggests about the pipeline>" \
+  --note "$(cat .lavish/<feature>-observation.md)" \
   --evidence "<path>" [--evidence "<path>" ...]
 ```
 
@@ -89,6 +96,9 @@ sweep, everything an `--auto` run learned is stranded on disk forever.
    Title the issue as the **change** ("loosen the fidelity rubric on terse acceptance criteria"),
    not the symptom ("fidelity gate is annoying"). Carry the evidence paths into the body so it is
    actionable without re-deriving them.
+   `--title`/`--body` carry prose inline here on purpose: this step is **interactive-only** — under
+   `--auto` triage is skipped entirely and `gh-axi issue create` is hard-denied whatever its
+   arguments say, so there is no `--auto` command string for the deny regex to read.
 5. **Close the loop** — always, even if nothing was selected:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" resolve <feature> \

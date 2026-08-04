@@ -216,10 +216,15 @@ agentic-avengers/
 - A cross-family provider: **`OPENROUTER_API_KEY`** exported (gates use OpenRouter), and/or opencode
   configured. Set **`AUTHOR_FAMILY`** (default `anthropic`) so the cross-family assertion knows the
   build family.
-- **`no-mistakes`** on PATH **and a filled-in `.no-mistakes.yaml`** at the repo root — the
-  feature-close ship gate (`/avenger-run` §4a), in interactive *and* `--auto` runs. `/pipeline-init`
-  scaffolds the file with `REPLACE_ME` placeholders; **fill in `commands.lint` and `commands.test`
-  before the first run**, because preflight checks the content, not just the file's existence.
+- **`no-mistakes`**, in **three** separate states — the feature-close ship gate (`/avenger-run` §4a)
+  needs all of them, in interactive *and* `--auto` runs, and preflight checks each one:
+  1. **on PATH with a runnable pipeline agent** — `no-mistakes doctor`.
+  2. **the repo initialised** — `no-mistakes init` creates the bare gate repo, the post-receive hook,
+     the `no-mistakes` remote and the DB record. A `.no-mistakes.yaml` existing implies **none** of
+     that. `no-mistakes axi` exits 1 with `error: repo not initialized` when it is missing.
+  3. **a filled-in `.no-mistakes.yaml`** at the repo root. `/pipeline-init` scaffolds it with
+     `REPLACE_ME` placeholders; **fill in `commands.lint` and `commands.test` before the first run**,
+     because preflight checks the content, not just the file's existence.
 - **`lavish-axi`** on PATH — the plan-approval stop (§3) and the retrospective triage (§4b).
   Interactive runs only; `--auto` skips both surfaces.
 

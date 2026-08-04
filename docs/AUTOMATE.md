@@ -93,8 +93,11 @@ What it does beyond the flow above:
   with `--auto`) passes `--yes` so the gate resolves those itself.
 - **Preflight-checks `no-mistakes` (both modes) and `lavish-axi` (interactive)** and stops if either
   is missing, rather than dying at the plan stop or at feature close. Neither has a silent fallback.
-  For `no-mistakes` it checks the **content** of `.no-mistakes.yaml` too: a scaffolded config still
-  holding the template's `REPLACE_ME` token fails preflight, not the ship gate.
+  For `no-mistakes` it checks **three** states, because none implies the next: the binary plus a
+  runnable pipeline agent (`no-mistakes doctor`), the repo **initialised** (`no-mistakes axi`, which
+  exits 1 with `error: repo not initialized` — a `.no-mistakes.yaml` existing says nothing about the
+  gate repo, the post-receive hook, the remote or the DB record), and the **content** of that config:
+  a scaffolded one still holding the template's `REPLACE_ME` token fails preflight, not the ship gate.
 - **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
   triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
   run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,
@@ -125,6 +128,16 @@ Issue creation is in the list because the retrospective files improvement issues
 upstream and its confirmation gate is a human selecting them, which cannot happen unattended.
 `AVENGER_AUTO_DENY=<regex>` only *adds* patterns. Add `.avenger-auto` to `.gitignore`
 (`/plan-build-verify:pipeline-init` does this).
+
+**The deny regex reads the whole command string, so keep prose off it.** It matches *content*, not
+intent: a `--intent` explaining that the ship gate pushes, or a `--note` reporting that `gh pr create`
+never ran, denies the command carrying it even though that command pushes nothing. Narrowing the
+regex is the wrong fix — it would spare real pushes too. Instead every free-text argument
+(`--intent`/`--instructions` on `no-mistakes axi`, `--note` on `pipeline_observations.py append`) is
+written to a gitignored file with the `Write` tool and read inline as `"$(cat <file>)"`. Never build
+that file with `cat`/`echo`/a heredoc — a heredoc puts the prose straight back on the command line and
+is denied identically. Fixed templates (a conventional-commit `-m`, an `--evidence` path, a `--kind`
+keyword) carry no prose and stay inline. Full rule: `skills/pipeline-conventions`.
 
 ### Using it
 - Manual by default — invoke stages yourself.

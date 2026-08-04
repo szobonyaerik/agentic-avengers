@@ -124,6 +124,23 @@ The implementer authors **both tests and code** test-first (there is no separate
   a same-family model, and CI asserts the same statically. Opus-vs-Sonnet is **not** decorrelation.
   The **only** sanctioned exception is the feature-close `no-mistakes` ship gate above, which is
   same-family on purpose and documented as such — every *per-phase* gate stays cross-family.
+- **Under `--auto`, never put author-written prose on a command line.** `hook_autoapprove.sh` matches
+  its hard-deny regex against the **whole** Bash command string, so prose that merely *names* a denied
+  command — an intent explaining that the ship gate pushes, an observation saying `gh pr create` never
+  ran — **denies the command carrying it**. The regex matches content, not intent, and that is
+  correct: narrowing it to spare prose would also spare a real `git push`. The fix is to keep prose
+  off the command line:
+  - **Write the text to a file with the `Write` tool**, then read it inline —
+    `--intent "$(cat <file>)"`, `--note "$(cat <file>)"`. Never `cat`/`echo`/a heredoc to create it:
+    a heredoc puts the prose straight back on the command line and is denied identically. Put the file
+    somewhere gitignored (`.lavish/`, `${TMPDIR}`). It also stops backticks in the text being eaten by
+    the shell as command substitution.
+  - **Applies to every free-text argument the pipeline documents**: `--intent` and `--instructions` on
+    `no-mistakes axi run`/`respond`, and `--note` on `scripts/pipeline_observations.py append`.
+  - **Fixed template arguments stay inline** and need no file: a conventional-commit `-m` with only an
+    id substituted, an `--evidence` path, a `--kind` keyword. So does a command merely *printed* for
+    the user to run — nothing executes it. The distinction is whether an agent wrote the words and a
+    shell will see them.
 - **Gates fail closed.**
 - **Break-glass bypass** is allowed but recorded — whole-gate via `GATE_BYPASS`, per-finding via
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
