@@ -443,7 +443,9 @@ procedure and the triage step in `skills/pipeline-retrospective`.
   `gate-overrides.log`, shown visibly, and recorded in `handover.md`. The reason is the user's prose,
   so under `--auto` pass it from a file — `GATE_BYPASS="$(cat <file>)" git commit …` — like `--intent`
   and `--note`; the inline prefix is denied when the reason names a denied command, and `export` does
-  not carry across Bash calls. See `skills/pipeline-conventions`.
+  not carry across Bash calls. A multi-line reason file is safe — the writers normalise it through
+  `scripts/bypass_reason.sh` so `gate-overrides.log` keeps one parseable record per bypass. See
+  `skills/pipeline-conventions`.
 - **Never skip a stage because it looks unnecessary.** The resolver decides; you execute.
 - Respect `work_kind` (greenfield | migration | refactor) for the implementer's test mode.
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.

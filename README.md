@@ -28,7 +28,9 @@ key, an unreachable model, a non-JSON verdict, or a same-family model all **stop
 is **break-glass** (`GATE_BYPASS="reason"`): logged to `gate-overrides.log`, shown visibly, and
 recorded in the phase `handover.md`. That reason is prose, so an agent under `/avenger-run --auto`
 passes it from a file (`GATE_BYPASS="$(cat <file>)" git commit …`) like every other free-text
-argument — see `skills/pipeline-conventions`.
+argument — a multi-line reason file is fine, since every writer of that log normalises the reason
+through `scripts/bypass_reason.sh` so it stays one parseable record. See
+`skills/pipeline-conventions`.
 
 ---
 

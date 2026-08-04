@@ -73,7 +73,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `--note`/`--evidence` on `scripts/pipeline_observations.py append`, and a `GATE_BYPASS` reason are
    non-exhaustive examples, and absence from that list is not a waiver. `GATE_BYPASS` is no exception
    for being a shell assignment prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works, while
-   `export` does not survive between an agent's Bash calls. A value fully determined by a template,
+   `export` does not survive between an agent's Bash calls; a multi-line reason file is safe because
+   every writer of `gate-overrides.log` normalises the reason through `scripts/bypass_reason.sh`, so
+   the log keeps one parseable record per bypass. A value fully determined by a template,
    with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
    `skills/pipeline-conventions/SKILL.md`.
 

@@ -142,7 +142,10 @@ whether an author could have phrased the value differently: `--intent`/`--instru
 `no-mistakes axi`, `--note`/`--evidence` on `pipeline_observations.py append`, and a `GATE_BYPASS`
 reason are examples, not the boundary. `GATE_BYPASS` is no exception for being a shell assignment
 prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works and is allowed, while `export` does not
-survive between an agent's Bash calls. A value fully determined by a template, with only ids, paths
+survive between an agent's Bash calls. A multi-line reason file is safe: `gate-overrides.log` is one
+tab-separated record per line, and every writer of it normalises the reason through
+`scripts/bypass_reason.sh` so one bypass stays one parseable record with the whole reason intact.
+A value fully determined by a template, with only ids, paths
 and fixed keywords substituted, is not prose and stays inline. Full rule:
 `skills/pipeline-conventions`.
 

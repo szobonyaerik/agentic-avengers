@@ -4,12 +4,14 @@
 #   usage: bypass_log.sh <gate-name>
 # Requires $GATE_BYPASS (the reason) and $CLAUDE_PROJECT_DIR.
 set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bypass_reason.sh"
 GATE="${1:-unknown}"
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 LOG="$ROOT/gate-overrides.log"
 who="$(git -C "$ROOT" config user.email 2>/dev/null || whoami)"
 when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '%s\t%s\tgate:%s\treason: %s\n' "$when" "$who" "$GATE" "${GATE_BYPASS:-}" >> "$LOG"
+reason="$(bypass_reason_oneline "${GATE_BYPASS:-}")"
+printf '%s\t%s\tgate:%s\treason: %s\n' "$when" "$who" "$GATE" "$reason" >> "$LOG"
 echo "⚠ BYPASSED gate '$GATE' — reason: ${GATE_BYPASS:-}" >&2
 echo "  logged to $LOG. Record this in the phase handover.md." >&2
 exit 0

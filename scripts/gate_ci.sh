@@ -16,6 +16,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/load_env.sh"   # pipeline config from the project .env (real env always wins)
+. "$SCRIPT_DIR/bypass_reason.sh"   # one owner of the break-glass reason's on-disk shape
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 OVERRIDE_LOG="$ROOT/gate-overrides.log"
@@ -225,7 +226,8 @@ fi
 if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
   who="$(git config user.email 2>/dev/null || whoami)"
   when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '%s\t%s\tgates:%s\treason: %s\n' "$when" "$who" "${failed_gates# }" "$GATE_BYPASS" >> "$OVERRIDE_LOG"
+  reason="$(bypass_reason_oneline "$GATE_BYPASS")"
+  printf '%s\t%s\tgates:%s\treason: %s\n' "$when" "$who" "${failed_gates# }" "$reason" >> "$OVERRIDE_LOG"
   echo "⚠ BYPASSED failing gate(s):${failed_gates} — reason: $GATE_BYPASS" >&2
   echo "  logged to $OVERRIDE_LOG. Record this in the phase handover.md." >&2
   exit 0

@@ -153,7 +153,11 @@ The implementer authors **both tests and code** test-first (there is no separate
     inline prose prefix is denied. `export`ing it instead is **not** an agent-side substitute: env
     vars do not survive between Bash tool calls, so an `export` in one call is gone by the `git
     commit` in the next. Exporting is the *human's* delivery, in their own shell before the session
-    starts, where the hook never sees it at all.
+    starts, where the hook never sees it at all. **A multi-line reason file is safe**: `$(cat …)`
+    strips only trailing newlines, so interior ones reach the gate — and `scripts/bypass_reason.sh`
+    collapses newlines and tabs at the writer, so `gate-overrides.log` keeps exactly one parseable
+    record per bypass with every word of the reason intact. Write the reason as prose; the log owns
+    its own format.
   - **Not covered:** a command merely *printed* for the user to run — nothing executes it. The test
     throughout is whether an agent chose the words **and** a shell will see them.
 - **Gates fail closed.**
@@ -161,6 +165,10 @@ The implementer authors **both tests and code** test-first (there is no separate
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
   `gate-overrides.log`, and visible on the PR. The reason is author-written prose, so under `--auto`
   it comes from a file (`GATE_BYPASS="$(cat <file>)" …`) like every other free-text argument above.
+  `gate-overrides.log` is **one tab-separated record per line**, and a reason is prose that may carry
+  newlines, so every writer of that log normalises it through `scripts/bypass_reason.sh` first — a
+  record its own reason text could split is not an audit trail. Collapse, never truncate: the reason
+  is written to be read later and `skills/phase-handover` mirrors it into `handover.md`.
 - **Artifacts on disk** with YAML frontmatter — the chain survives cold sessions.
 
 ## Where the models run
