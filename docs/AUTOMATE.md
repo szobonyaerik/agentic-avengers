@@ -32,7 +32,7 @@ task-analyst → solution-architect → implementation-planner → spec-writer
   → per phase, per spec: backend/frontend-architect (tests + code, test-first)
   → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
                        LOCKS the suite)  → handover
-  → next phase … → e2e-author (once, after the final phase) → ship
+  → next phase … → e2e-author (once, after the final phase) → retrospective triage → ship
 ```
 Route-backs it must honor (all already emitted by the gates):
 - fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate.
@@ -80,6 +80,10 @@ What it does beyond the flow above:
 - **Breaker only on `criticality: critical`** (a spec frontmatter field); mutation only per
   `MUTATION_POLICY`.
 - **Branches once, commits per verified phase, never pushes.**
+- **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
+  triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
+  run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,
+  because `done` is terminal. Procedure: `skills/pipeline-retrospective`.
 
 ### `--auto` and permission prompts
 
@@ -96,11 +100,14 @@ run ends or halts, the `Stop` hook removes it when the turn ends, and it expires
 failure path in the hook — no sentinel, expired, unreadable, unparseable payload — prints nothing and
 lets the normal permission flow decide. Silence is the safe default.
 
-**Hard denials, not configurable:** `git push`, `gh pr/release create|merge`, `npm|yarn|pnpm publish`,
-`twine upload`, `rm`, `sudo`, `dd if=`, `mkfs`, and `curl … | sh` are **denied** while an auto run is
-armed. No environment variable re-enables them — the orchestrator branches and commits but never
-pushes, and nothing in the pipeline needs to delete files. `AVENGER_AUTO_DENY=<regex>` only *adds*
-patterns. Add `.avenger-auto` to `.gitignore` (`/plan-build-verify:pipeline-init` does this).
+**Hard denials, not configurable:** `git push`, `gh`/`gh-axi` `pr|release|repo|issue|gist` with
+`create|merge|edit|delete|close`, `npm|yarn|pnpm publish`, `twine upload`, `rm`, `sudo`, `dd if=`,
+`mkfs`, and `curl … | sh` are **denied** while an auto run is armed. No environment variable re-enables
+them — the orchestrator branches and commits but never pushes, and nothing in the pipeline needs to
+delete files. Issue creation is in the list because the retrospective files improvement issues
+upstream and its confirmation gate is a human selecting them, which cannot happen unattended.
+`AVENGER_AUTO_DENY=<regex>` only *adds* patterns. Add `.avenger-auto` to `.gitignore`
+(`/plan-build-verify:pipeline-init` does this).
 
 ### Using it
 - Manual by default — invoke stages yourself.
