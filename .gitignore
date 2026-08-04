@@ -19,3 +19,6 @@ __pycache__/
 # note: gate-overrides.log is intentionally NOT ignored — break-glass must stay visible/auditable.
 .avenger-auto
 .env
+
+# lavish scratch: HTML review surfaces for the plan stop and the retrospective triage
+.lavish/

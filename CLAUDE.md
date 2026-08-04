@@ -96,6 +96,19 @@ shared *family* blind spots. It is not a break-glass bypass, and every **per-pha
 spec-review, verifier) stays cross-family. While a run is active it owns both findings and fixes, so
 the route-back-to-implementer rule is suspended for its duration.
 
+It is wired as **`/avenger-run` §4a**, before the retrospective triage so that what it catches feeds
+the retrospective — a defect the ship gate finds that no avenger stage covers is the most useful
+observation the pipeline gets about itself. **Interactive runs only:** it pushes and opens a PR, and
+`--auto` must never do either. The hard-deny list cannot enforce that here, because `no-mistakes`
+pushes from inside the daemon's worktree where `hook_autoapprove.sh` never sees the command — under
+`--auto` the *rule* is the guard, so §4a is skipped and the gate reported as pending. It stops at
+`checks-passed` and never merges.
+
+**Two lavish review surfaces**, both interactive-only and both skipped under `--auto` (a foreground
+`lavish-axi poll` would hang an unattended run): the **plan-approval stop** (`§3` — plan.md rendered
+with a mermaid phase graph, annotations fed back to the planner until approved) and the
+**retrospective triage** (`§4b`).
+
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
 score `>= MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors go to the

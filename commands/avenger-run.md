@@ -29,7 +29,7 @@ Run these before anything else, and stop with the fix if one fails:
   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" pending --root "${CLAUDE_PROJECT_DIR}"
   ```
 
-  Anything listed has observations no human has seen — triage them (§4a) before starting new work.
+  Anything listed has observations no human has seen — triage them (§4b) before starting new work.
   Skip when `--auto`: there is nobody to triage with, and they keep until the next interactive run.
   This sweep is the *only* thing that recovers what an `--auto` run learned, because `done` is a
   terminal state and will never re-fire that feature's own close.
@@ -88,7 +88,7 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
 | `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature |
-| `done` | **Retrospective triage (§4a), then** report and stop |
+| `done` | **Ship gate (§4a), retrospective triage (§4b), then** report and stop |
 
 `--from <stage>` overrides the first iteration only; afterwards the resolver drives.
 
@@ -96,7 +96,33 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 
 After `plan.md` is written, **stop and show the user the phase breakdown** — goals, order, and what
 each phase delivers. Wait for approval before any spec is written. A bad plan burns every phase
-downstream, and this is the cheapest place to catch it. `--auto` skips this stop.
+downstream, and this is the cheapest place to catch it.
+
+**Show it as a review surface, not a wall of markdown.** Load the `lavish` skill and open its
+`plan`, `diagram` and `input` playbooks before writing any HTML.
+
+1. Render `docs/features/<feature>/plan.md` into `.lavish/<feature>-plan.html`: the phase list with
+   each phase's goal, delivery and spec count; a **mermaid** dependency graph showing build order;
+   and the risks and open questions. Follow the `input` playbook so the user can mark each phase
+   approved or send it back, rather than having to describe changes in prose.
+2. Serve it, then poll in the foreground:
+   ```bash
+   lavish-axi .lavish/<feature>-plan.html
+   lavish-axi poll .lavish/<feature>-plan.html
+   ```
+   The poll blocks until the user sends. That is expected — **never kill it**. If it dies anyway,
+   re-run it; queued feedback is not lost.
+3. **Feed the returned annotations back to `avenger-implementation-planner` as revisions**, then
+   re-render and poll again. Loop until the user approves. Do not start `spec-writer` on a plan
+   carrying unresolved annotations.
+4. Design source: this pipeline is language-agnostic and ships no design system, so use the
+   Tailwind + DaisyUI CDN path from `lavish-axi design` unless the *target project* has its own —
+   check the project the plan is about, not this repo. Say which source you used.
+
+**Under `--auto`, skip the whole stop** — plan approval and the lavish surface alike. There is no
+human to poll and a foreground `poll` would hang the run indefinitely.
+
+`.lavish/` is scratch: add it to the target repo's `.gitignore` rather than committing artifacts.
 
 ## 4. After the Verifier passes a phase
 
@@ -107,9 +133,62 @@ downstream, and this is the cheapest place to catch it. `--auto` skips this stop
    and is not the independence mechanism.
 3. Then `handover`.
 
-## 4a. Retrospective triage — at `done`, before the report
+## 4a. Ship gate (`no-mistakes`) — at `done`, once per feature
 
-Load `skills/pipeline-retrospective` and follow its triage procedure. In short:
+The last phase is verified and the e2e suite is written. Everything the avengers gate covers is
+green — and none of it covered lint, docs, push, PR or CI. That is this stage.
+
+**Interactive runs only.** Under `--auto`, skip this entire section: it pushes and opens a PR, and
+§5 says those are the user's call. Note the hard-deny list cannot save you here — `no-mistakes`
+pushes from inside the daemon's own worktree, so `hook_autoapprove.sh` never sees a `git push` to
+deny. The rule is the guard. Report the gate as pending and print the command for the user instead.
+
+**You must be on the feature branch.** `no-mistakes axi respond` resolves to the *current branch's*
+active run and takes no `--run` flag, so from the wrong branch it returns `error: no step is
+awaiting approval` while the real run sits parked and invisible. Preflight already branched you to
+`feat/<feature-id>`; do not switch away mid-gate.
+
+1. **Preconditions.** Every phase has `verdict.json` with `verdict: pass`, `tests/e2e/<feature>/`
+   exists, and the working tree is clean and committed on `feat/<feature-id>`. Any missing → stop.
+2. **Start the run**, passing the feature's goal as intent:
+   ```bash
+   no-mistakes axi run --intent "<goal from overview.md, plus the decisions, tradeoffs and
+     deliberate divergences recorded in plan.md and each handover.md>"
+   ```
+   **A thin intent is actively harmful** — the review uses it to tell a deliberate decision from a
+   mistake, so anything the pipeline chose on purpose (a same-family gate, a disabled feature, a
+   waived finding) must be stated or it gets flagged as a defect. Write the intent to a file and
+   pass `"$(cat file)"`: backticks in an inline string are eaten as shell command substitution.
+3. **Drive it.** Read every return. On a `gate:`, respond; loop until an `outcome:`. Steps take
+   minutes — a long call is working, not stalled. Never idle-wait; the run does not advance on its
+   own.
+   - `auto-fix` / `no-op` findings: decide yourself.
+   - **`ask-user` findings: relay verbatim** — id, file, full description — and let the user decide.
+     Never approve, fix or skip one on your own judgement.
+   - **Never hand-fix while a run is active.** The pipeline owns both findings and fixes; the
+     route-back-to-implementer rule is suspended for the duration. Do not `abort`/`rerun` to go fix
+     something yourself — that discards in-flight work.
+4. **Stop at `outcome: checks-passed`.** The PR is ready; tell the user to review and merge. Do not
+   wait for the merge — the CI monitor handles rebase-on-conflict by itself.
+5. **If it ends `failed`** (an agent crash mid-fix will do this), the pipeline's commits are
+   preserved but unpushed. Read `branch_sync.next_action` and follow it — `axi sync --recover` when
+   it says `recover_custody`. Never improvise a reset, rebase or branch replacement to recover.
+6. **Log what the gate found** as pipeline observations before moving on. A defect the ship gate
+   caught that every avengers gate missed is a finding *about the pipeline*, and it is the single
+   most valuable input the retrospective gets:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
+     --root "${CLAUDE_PROJECT_DIR}" --kind gate-friction \
+     --note "ship gate found <what>; no avengers gate covers it because <why>"
+   ```
+
+**Do not merge, and do not tell the user a run is finished until an `outcome:` says so.** Merging a
+branch the pipeline still owns splits it from the pipeline head and strands the fix commits.
+
+## 4b. Retrospective triage — at `done`, after the ship gate
+
+Runs **after** §4a so it can include what the ship gate found. Load `skills/pipeline-retrospective`
+and follow its triage procedure. In short:
 
 1. **Final sweep** — re-read every phase's `verdict.json`, `gate-overrides.log` and the specs'
    `fidelity_verdict` stamps, and append anything the run revealed that you did not log live.
@@ -135,7 +214,11 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - After each phase has a passing `verdict.json` **and** its `handover.md`, commit everything for that
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
-- **Never push, never open a PR.** Those are the user's call. Say the commands at the end instead.
+- **Never push, never open a PR yourself.** Those are the user's call. Say the commands at the end
+  instead. The **one** exception is the §4a ship gate on an interactive run: `no-mistakes` pushes the
+  branch and opens the PR as part of its own pipeline, and stops at `checks-passed` for the user to
+  review and merge. It never merges. Under `--auto` §4a is skipped, so this exception does not apply
+  and the rule is absolute.
 
 ## 6. Retries and halting
 
@@ -179,4 +262,13 @@ procedure and the triage step in `skills/pipeline-retrospective`.
 ## 8. Report
 
 At the end (done or halted) print: phases completed, the verdict for each, tests added, what stage it
-stopped at and why, the commits made, and the push/PR commands the user can run next.
+stopped at and why, and the commits made.
+
+Then, depending on how the run ended:
+- **Ship gate reached `checks-passed`** — give the PR link and ask the user to review and merge.
+  Say plainly what the gate *fixed that the pipeline missed* (its `fixes` table): those are the
+  defects every avengers gate let through, and hiding them wastes the run's most useful signal.
+- **Ship gate skipped (`--auto`, or preconditions unmet)** — say so explicitly and print the command
+  the user should run, rather than implying the feature is shipped.
+- **Anything still `triage: pending`** — say which features, so the user knows observations are
+  queued and will surface on the next interactive run.

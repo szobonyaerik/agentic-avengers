@@ -19,8 +19,10 @@ for these rules; `/pipeline-init` can also copy them into a target repo's own CL
 
 `task-analyst → solution-architect → implementation-planner → spec-writer → [fidelity gate] →
 [human spec review] → backend/frontend implementer → verifier → (breaker, optional) → handover`,
-looped per phase until the feature is done, then a single feature-level **e2e** stage, and finally
-the **retrospective triage** (`pipeline-retrospective`) before ship.
+looped per phase until the feature is done, then a single feature-level **e2e** stage, then the
+**ship gate** (`no-mistakes`: lint, docs, push, PR, CI), and finally the **retrospective triage**
+(`pipeline-retrospective`). The retrospective runs last on purpose — a defect the ship gate caught
+that no avengers gate covers is exactly what it exists to record.
 
 The implementer authors **both tests and code** test-first (there is no separate test-author); the
 **Verifier is the independent check**.
