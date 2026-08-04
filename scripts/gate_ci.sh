@@ -16,6 +16,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/load_env.sh"   # pipeline config from the project .env (real env always wins)
+. "$SCRIPT_DIR/bypass_reason.sh"   # one owner of the break-glass reason's on-disk shape
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 OVERRIDE_LOG="$ROOT/gate-overrides.log"
@@ -104,7 +105,7 @@ model_family () {
   esac
 }
 cross_family_check () {
-  local gate="${VERIFIER_GATE_MODEL:-google/gemini-2.5-pro}" gfam impl itok ifam
+  local gate="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}" gfam impl itok ifam
   gfam="$(model_family "$gate")" || { echo "  ✗ unknown VERIFIER_GATE_MODEL family: '$gate'" >&2; return 1; }
   for impl in "$ROOT/agents/avenger-backend-architect.md" "$ROOT/agents/avenger-frontend-developer.md"; do
     [ -f "$impl" ] || continue
@@ -165,19 +166,16 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
   echo "• mutation: cosmic-ray (min score ${MUTATION_MIN_SCORE:-0.85}, gate ${MUTATION_POLICY})"
   # Module under test, read from cosmic-ray.toml. If it doesn't exist, there's nothing to mutate
   # (e.g. a docs/config-only repo) — skip like "no tests collected", don't fail closed.
-  # Only a SCALAR module-path is skippable this way. `module-path` also accepts a TOML list, which
-  # this scalar parser cannot read — and treating an unparsed value as "missing" would silently skip
-  # the whole gate (fail OPEN). Anything that isn't a plain existing-or-missing scalar runs the gate
-  # and lets cosmic-ray decide; it fails closed on a bad path.
-  MODPATH=""
-  [ -f "$COSMIC_CFG" ] && MODPATH="$(grep -m1 '^[[:space:]]*module-path' "$COSMIC_CFG" | sed 's/.*=[[:space:]]*//; s/^["'\'']//; s/["'\'']$//')"
-  case "$MODPATH" in
-    \[*) MODPATH="" ;;   # list form -> not skippable, fall through to the gate
-  esac
+  # Only a cleanly parsed SCALAR module-path is skippable. `module-path` also accepts a TOML list,
+  # and a value can carry a trailing inline comment or a `#` inside a quoted path — treating any
+  # value we didn't really parse as "missing" would silently skip the whole gate (fail OPEN). That
+  # is why the decision lives in scripts/mutation_target.py (real TOML parse, never a regex) and
+  # why everything ambiguous runs the gate and lets cosmic-ray decide; it fails closed on a bad path.
+  # Exit 0 = skippable (prints the absent path), anything else = run the gate.
   if [ ! -f "$COSMIC_CFG" ]; then
     echo "  ✗ cosmic-ray.toml missing at repo root — mutation gate cannot run (fail closed)" >&2
     mutation_fail "mutation:no-config"
-  elif [ -n "$MODPATH" ] && [ ! -e "$ROOT/$MODPATH" ]; then
+  elif MODPATH="$(python3 "$SCRIPT_DIR/mutation_target.py" --root "$ROOT" "$COSMIC_CFG")"; then
     echo "  (module-path '$MODPATH' not present — no code to mutate, skipping)"
   else
     WORK=$(mktemp -d); SESSION="$WORK/session.sqlite"; TMP="$WORK/report.txt"; SCOPED="$WORK/cosmic-ray.toml"
@@ -228,7 +226,8 @@ fi
 if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
   who="$(git config user.email 2>/dev/null || whoami)"
   when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '%s\t%s\tgates:%s\treason: %s\n' "$when" "$who" "${failed_gates# }" "$GATE_BYPASS" >> "$OVERRIDE_LOG"
+  reason="$(bypass_reason_oneline "$GATE_BYPASS")"
+  printf '%s\t%s\tgates:%s\treason: %s\n' "$when" "$who" "${failed_gates# }" "$reason" >> "$OVERRIDE_LOG"
   echo "⚠ BYPASSED failing gate(s):${failed_gates} — reason: $GATE_BYPASS" >&2
   echo "  logged to $OVERRIDE_LOG. Record this in the phase handover.md." >&2
   exit 0

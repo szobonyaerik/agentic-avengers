@@ -19,7 +19,10 @@ for these rules; `/pipeline-init` can also copy them into a target repo's own CL
 
 `task-analyst → solution-architect → implementation-planner → spec-writer → [fidelity gate] →
 [human spec review] → backend/frontend implementer → verifier → (breaker, optional) → handover`,
-looped per phase until the feature is done, then a single feature-level **e2e** stage before ship.
+looped per phase until the feature is done, then a single feature-level **e2e** stage, then the
+**ship gate** (`no-mistakes`: lint, docs, push, PR, CI), and finally the **retrospective triage**
+(`pipeline-retrospective`). The retrospective runs last on purpose — a defect the ship gate caught
+that no avengers gate covers is exactly what it exists to record.
 
 The implementer authors **both tests and code** test-first (there is no separate test-author); the
 **Verifier is the independent check**.
@@ -36,6 +39,7 @@ The implementer authors **both tests and code** test-first (there is no separate
     plan.md
     scoped/review-<slice>.md      # spec-isolation-review, when used
     e2e-mapping.md                # written once, at feature close
+    pipeline-observations.md      # what the run revealed about the PIPELINE; triaged at close
     phases/<n>-<slug>/
       specs/<n>.<k>-<subslug>/
         spec.md
@@ -72,6 +76,35 @@ The implementer authors **both tests and code** test-first (there is no separate
   anywhere. It is **not** the independence mechanism — the Verifier's test-quality review is.
 - **Breaker** — critical/security paths only, optional.
 - **Feature-level e2e** — once, after the final phase is green (see below).
+- **Ship gate (per feature, `no-mistakes`)** — runs **once**, after the last phase is verified and the
+  e2e suite is written, on the feature branch. It covers what no avenger stage does: lint, docs,
+  push, PR and CI. It does **not** replace the Verifier — it has no `R<n>.<k>.<m>` traceability, no
+  bounded test-quality review, and no `verdict.json`.
+  - **When it runs, and what stops it.** Wired as `/avenger-run` §4a, immediately **before** the
+    retrospective triage so its findings feed that triage. It runs in interactive **and `--auto`**
+    runs alike — it is not interactive-only. Under `--auto` the orchestrator drives the gate's
+    `auto-fix` and `no-op` findings itself, but an **`ask-user` finding halts the run**, recorded
+    verbatim, exactly as `--auto` halts on a spec-review NO-GO: `no-mistakes` marks a finding
+    `ask-user` because it challenges the user's deliberate intent or changes product behaviour, so an
+    unattended run must not answer it. `/avenger-run --auto --ship-yes` passes `--yes` to
+    `no-mistakes`, which resolves `ask-user` findings too — the user's standing consent for the
+    pipeline to answer questions it flagged as theirs, per-run and deliberately not the default.
+  - **It is the one thing in the pipeline that pushes.** It pushes the branch and opens the PR in
+    both modes, stops at `outcome: checks-passed`, and never merges. The orchestrator itself still
+    never pushes and never opens a PR. The `--auto` hard-deny list neither permits nor blocks this:
+    `no-mistakes` pushes from inside the daemon's own worktree, in its own process, so no `git push`
+    ever reaches `hook_autoapprove.sh`.
+  - **While a `no-mistakes` run is active it owns both the findings and the fixes**, so the avenger
+    "route back to the implementer" rule is suspended for its duration. Never `abort`/`rerun` mid-run
+    to hand-fix something. This is exactly why it runs once at feature close and never per phase: by
+    then every phase is verified and locked, so there is no live fix-ownership conflict.
+  - **Deliberate same-family divergence.** Its pipeline agent is pinned to Anthropic Opus
+    (`.no-mistakes.yaml` → `agent: claude`, Opus pinned via `agent_args_override` in
+    `~/.no-mistakes/config.yaml`). This is a **conscious exception to the cross-family rule below**,
+    not an oversight and not a break-glass bypass: no-mistakes runs in the daemon's own disposable
+    worktree with no shared context with the stage that wrote the code, so it decorrelates *context*
+    while accepting shared *family* blind spots. The per-phase gates — fidelity, spec-review,
+    verifier — are unaffected and stay cross-family.
 
 ## Hard rules
 
@@ -87,12 +120,67 @@ The implementer authors **both tests and code** test-first (there is no separate
 - **Fresh model ≠ author:** the model that *forms the judgement* must not share the implementer's
   family. Every subagent here is Anthropic, so the Verifier **agent** cannot itself be cross-family —
   it orchestrates, and delegates the reading of the tests to `scripts/verifier_review.sh` →
-  `gate_runner.py` on `$VERIFIER_GATE_MODEL` (default `google/gemini-2.5-pro`). `gate_runner` refuses
+  `gate_runner.py` on `$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`). `gate_runner` refuses
   a same-family model, and CI asserts the same statically. Opus-vs-Sonnet is **not** decorrelation.
+  The **only** sanctioned exception is the feature-close `no-mistakes` ship gate above, which is
+  same-family on purpose and documented as such — every *per-phase* gate stays cross-family.
+- **Under `--auto`, prose belongs in a file and the command reads it — never on the command line.**
+  `hook_autoapprove.sh` matches its hard-deny regex against the **whole** Bash command string, so it
+  matches **content, not intent**: any author-written prose passed as a command-line argument can
+  **deny the command carrying it** merely by naming `git push` or `gh pr create`, even though that
+  command pushes nothing. Narrowing the regex is the wrong fix — it would spare real pushes too.
+
+  **The rule is the invariant, not the list below.** It covers any free-text argument, including ones
+  added after this was written and ones nobody has documented yet. Ask the question, do not consult an
+  enumeration: *could an author have phrased this value differently?* If yes it is prose → file. If
+  the value is fully determined by a template and the only substitutions are ids, paths and fixed
+  keywords, it is not prose → inline is fine.
+  - **How.** Write the text to a file with the `Write` tool, then read it inline: `--intent "$(cat
+    <file>)"`, `--note "$(cat <file>)"`, `GATE_BYPASS="$(cat <file>)" git commit …`. Never `cat`/
+    `echo`/a heredoc to *create* it — a heredoc puts the prose straight back on the command line and
+    is denied identically. Put the file somewhere gitignored (`.lavish/`, `${TMPDIR}`). It also stops
+    backticks in the text being eaten by the shell as command substitution.
+  - **Examples, deliberately non-exhaustive** — `--intent` and `--instructions` on `no-mistakes axi
+    run`/`respond`, `--note` and `--evidence` on `scripts/pipeline_observations.py append`, and
+    `GATE_BYPASS` on a break-glass invocation. Anything else carrying author-written words is covered
+    by the rule whether or not it appears here; a value's absence from this list is not a waiver.
+    Note that the **test decides per value, not per flag**: `--evidence` takes a path today, so it is
+    not prose and stays inline — but that is the test's answer, not an exemption granted to the flag,
+    and an `--evidence` value carrying words goes in a file like any other.
+  - **`GATE_BYPASS` takes the file shape too**, and it is *not* a declared exception. Being a shell
+    assignment prefix rather than a flag changes nothing — `GATE_BYPASS="$(cat <file>)" git commit …`
+    is valid shell, sets the variable for exactly that command, and is allowed by the hook, while the
+    inline prose prefix is denied. `export`ing it instead is **not** an agent-side substitute: env
+    vars do not survive between Bash tool calls, so an `export` in one call is gone by the `git
+    commit` in the next. Exporting is the *human's* delivery, in their own shell before the session
+    starts, where the hook never sees it at all. **A multi-line reason file is safe**: `$(cat …)`
+    strips only trailing newlines, so interior ones reach the gate — and `scripts/bypass_reason.sh`
+    collapses newlines and tabs at the writer, so `gate-overrides.log` keeps exactly one parseable
+    record per bypass with every word of the reason intact. Write the reason as prose; the log owns
+    its own format.
+  - **Not covered:** a command merely *printed* for the user to run — nothing executes it. The test
+    throughout is whether an agent chose the words **and** a shell will see them.
 - **Gates fail closed.**
 - **Break-glass bypass** is allowed but recorded — whole-gate via `GATE_BYPASS`, per-finding via
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
-  `gate-overrides.log`, and visible on the PR.
+  `gate-overrides.log`, and visible on the PR. The reason is author-written prose, so under `--auto`
+  it comes from a file (`GATE_BYPASS="$(cat <file>)" …`) like every other free-text argument above.
+  `gate-overrides.log` is **one tab-separated record per line**, with the reason last because it is
+  the only free-text field. A reason is prose that may carry newlines — and a record its own reason
+  text could split is not an audit trail — so **every writer normalises the reason through
+  `scripts/bypass_reason.sh`** before it appends. Collapse, never truncate: the reason is written to
+  be read later, and `skills/phase-handover` mirrors it into `handover.md`.
+  - **Nothing appends to that log by hand.** A hook bypass, a CI bypass (`scripts/gate_ci.sh`, same
+    grammar with a `gates:<list>` scope) and the Verifier's per-finding waiver
+    (`bypass_log.sh verifier <finding-id> <waived_by>`) all normalise the same way. `bypass_log.sh`
+    is the writer for the hook and waiver paths; `gate_ci.sh` still formats its own record with the
+    same grammar, which is a known duplication — see the `pipeline-improvement` issue. The waiver is
+    the case that proves why: `waiver_reason` is a JSON string whose content this pipeline explicitly
+    does **not** judge, so nothing stops it being two lines. `handover.md` and the retrospective sweep
+    *read* the log; only `bypass_log.sh` writes it.
+  - This is deliberately **structural, not a rule to remember**. A sentence claiming every writer
+    behaves cannot enforce that they do — a single writer path can, and each new caller inherits the
+    format instead of re-implementing it.
 - **Artifacts on disk** with YAML frontmatter — the chain survives cold sessions.
 
 ## Where the models run
@@ -104,6 +192,49 @@ The implementer authors **both tests and code** test-first (there is no separate
 - **Model-based gates run in-chat** — the Verifier's triage and test-quality review, and the grill-me
   spec review. CI only checks their **committed artifacts**. The one exception is the automated
   **Fidelity Gate**, which is a hook and does call a model in-session; it never runs in CI.
+
+## Two learning logs — keep them apart
+
+The pipeline records what it learns in **two** places, with different subjects, scopes and
+destinations. Putting a note in the wrong one buries it.
+
+| | `docs/lessons/` (`self-improvement`) | `pipeline-observations.md` (`pipeline-retrospective`) |
+|---|---|---|
+| Subject | the **work** — a pytest trap, a migration gotcha | the **machinery** — a gate that misfires, a stage that churns |
+| Scope | **per project**, committed, team-shared | per feature, triaged, then filed upstream |
+| Written by | **any agent**, whenever something is learning-worthy | the **orchestrator**, during `/avenger-run` |
+| Ends up | in this repo, read at session start | as an issue on the **agentic-avengers** repo |
+
+**Delivery is a hook, not a directive in this file.** A line here reaches only the agents that
+actually load this skill, which is how the lessons log stayed dormant in the first place — so
+`scripts/hook_lessons.sh` fires on **`SubagentStart`**, matches `agent_type` against `LESSONS_AGENTS`
+(default `avenger-`, unanchored so plugin-scoped names match), and injects a short **pointer**: how
+many entries `docs/lessons/lessons.json` holds and the read procedure below. It never inlines the log
+or a prose file — it runs on every spawn. Unlike `ponytail` it reaches **every** avenger agent,
+including the Verifier, Breaker and bug-hunter: a "write less code" persona conflicts with their job,
+prior lessons do not. It **fails closed** — bad payload, unmatched agent, bad regex, and a missing,
+unparseable or empty index all inject nothing, so a project that never wrote a lesson sees no change.
+`LESSONS_OFF=1` disables it. opencode has no subagent-start event, so its agents do not get this
+injection; they pick the procedure up from `skills/self-improvement` only.
+
+The procedure the pointer refers to: read the *index only*, filter to your role and task, and open
+just the handful of prose files that matter. Write a lesson the moment something is learning-worthy
+— a user correction, a self-caught mistake, or a confirmed-good approach — appending or refining,
+never overriding. If the file is missing, skip silently.
+
+Test: "would this help someone building a *different* project with this pipeline?" → it is a
+pipeline observation. "Would it help someone building *this* project again?" → it is a lesson.
+
+## Agent tooling
+
+Every canonical agent declares an explicit `tools:` allowlist (`Read, Write, Glob, Grep, Bash`, plus
+`Edit` for the agents that rewrite files) and **no MCP** in any of them. So MCP
+servers available in the main thread (browser automation, issue trackers) are **unreachable inside a
+pipeline subagent**; only CLIs invoked through `Bash` are. Where a stage needs a browser — feature
+e2e against a UI, Breaker poking a real page — use `npx -y chrome-devtools-axi`, not
+`mcp__claude-in-chrome__*`, and finish with `npx -y chrome-devtools-axi stop` — it leaves a
+background browser server alive after the invoking process exits. Prefer plain `curl` when no
+browser is actually needed.
 
 ## Implementer test modes (see the `tdd` skill)
 
@@ -124,7 +255,10 @@ on disk (`fidelity_verdict`, `review_status`, `status`, `verdict.json`) and retu
 the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
 for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
 runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified
-phase without ever pushing. Full detail in `docs/AUTOMATE.md` §2.
+phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose
+precondition is a clean tree already carrying `tests/e2e/<feature>/`) and the retrospective artifacts
+*after* it. **The orchestrator itself never pushes**; the feature-close ship gate above does, in both
+modes. Full detail in `docs/AUTOMATE.md` §2.
 
 ## Implementer minimalism (`skills/ponytail`)
 

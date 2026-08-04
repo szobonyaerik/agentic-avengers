@@ -1,7 +1,7 @@
 ---
 description: Use when diagnosing and fixing bugs in the codebase
 mode: subagent
-model: openrouter/anthropic/claude-sonnet-4
+model: openrouter/anthropic/claude-sonnet-5
 tools:
   write: true
   edit: true

@@ -1,7 +1,7 @@
 ---
 description: Use when converting planning prompts into detailed step-by-step implementation plans
 mode: subagent
-model: openrouter/anthropic/claude-opus-4
+model: openrouter/anthropic/claude-opus-5
 tools:
   write: true
   edit: true

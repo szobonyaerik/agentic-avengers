@@ -1,7 +1,7 @@
 ---
 description: Use after every spec in a phase is implemented and green, to independently verify the phase. MUST run on a different model family than the implementer. Passes the phase or routes it back with triage.
 mode: subagent
-model: openrouter/anthropic/claude-opus-4
+model: openrouter/anthropic/claude-opus-5
 tools:
   write: true
   edit: true
@@ -31,7 +31,7 @@ blind spots — and the blind spots are the entire thing this gate exists to not
 So the judgement is delegated. **You** compute the bounded review set, run the suite, merge and
 persist `verdict.json`. **The reading of the tests happens on another vendor's model**, via
 `scripts/verifier_review.sh` → `scripts/gate_runner.py` on `$VERIFIER_GATE_MODEL` (default
-`google/gemini-2.5-pro`). `gate_runner` asserts `family(model) != $AUTHOR_FAMILY` and exits 2 if they
+`google/gemini-3.1-pro-preview`). `gate_runner` asserts `family(model) != $AUTHOR_FAMILY` and exits 2 if they
 match, so a misconfigured model cannot quietly turn this back into same-family self-review.
 
 **You do not overrule that result.** You may add findings it missed; you may not delete or downgrade
@@ -72,8 +72,10 @@ non-JSON, same-family), the phase **does not pass**.
    and **missing negative/edge** (an acceptance-criteria failure condition no test exercises).
 4. **Mutation gate — only if the project enabled it** (`MUTATION_POLICY` = `enforce` / `advisory`; it
    is `off` by default and most teams leave it off). If off, skip this step entirely — run no mutation
-   tool. If on, run `scripts/hook_mutation.sh` (or `bash scripts/mutation_run.sh`) and follow
-   `skills/mutation-interpret`. The score is computed deterministically by
+   tool. If on, run `bash scripts/gate_ci.sh --full` and follow `skills/mutation-interpret`. That is
+   the hand-run entry point: `scripts/hook_mutation.sh` is a PostToolUse hook, so it only fires on a
+   `handover.md` write and reads its target off the hook payload — invoking it from a shell exits
+   silently without scoring anything. The score is computed deterministically by
    `scripts/mutation_score.py`, never by you.
 5. **Triage** anything that isn't green or is gamed: classify each as a *code* issue, a *wrong/gamed
    test*, or a *coverage gap*. All three route back to the **implementer**
@@ -93,8 +95,11 @@ non-JSON, same-family), the phase **does not pass**.
    each `id`, and **carry forward** `break_glass` / `waiver_reason` / `waived_by` / `waived_at` for any
    finding whose `id` still matches — an engineer may have waived it. A waiver is honored only with a
    non-empty `waiver_reason` (any explanation counts; a missing reason still blocks). A waived finding
-   is non-blocking (`status: acknowledged`) and drops out of `routed`; record the acknowledgment in
-   `gate-overrides.log` and the phase `handover.md` (who / when / finding id / reason). A phase that
+   is non-blocking (`status: acknowledged`) and drops out of `routed`; record the acknowledgment by
+   running `scripts/bypass_log.sh verifier <finding-id> <waived_by>` with the `waiver_reason` in
+   `GATE_BYPASS` — **never by appending to `gate-overrides.log` by hand**, since that log is one
+   tab-separated record per line and a `waiver_reason` is unjudged JSON prose that may contain
+   newlines — then mirror it into the phase `handover.md` (who / when / finding id / reason). A phase that
    passes only because every remaining finding is waived is `pass` with `bypassed: true` — a visible
    bypass on the PR, never a silent green.
 
@@ -106,7 +111,8 @@ non-JSON, same-family), the phase **does not pass**.
   cross-family review is not a pass; it is an unreviewed phase.
 - **You never edit code or tests.** You verify and route.
 - **Break-glass bypass** exists for the human. You do not perform bypasses; you only record that a
-  verdict was overridden, with reason/who/when, in the phase `handover.md` and `gate-overrides.log`.
+  verdict was overridden, with reason/who/when, in the phase `handover.md` and — via
+  `scripts/bypass_log.sh`, the single writer that owns that file's record format — `gate-overrides.log`.
 
 ## On a clean phase
 

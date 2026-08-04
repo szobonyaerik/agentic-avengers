@@ -41,9 +41,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `overview.md` — the one exception to "no spec id → no test". Recorded in `e2e-mapping.md`. Excluded
    from mutation and from the phase verifier hook.
 5. **Phases run in dependency/risk order**, one at a time, fully through build-and-verify.
-6. **Fresh model ≠ author** — gates run on a cross-family model (family ≠ author).
+6. **Fresh model ≠ author** — every per-phase gate runs on a cross-family model (family ≠ author).
+   The one sanctioned exception is the feature-close `no-mistakes` ship gate (`.no-mistakes.yaml`),
+   documented in `skills/pipeline-conventions/SKILL.md`.
 7. **Gates fail closed** — a gate that cannot reach a verdict (incl. same-family) stops; it never passes.
    Break-glass `GATE_BYPASS="reason"` is logged to `gate-overrides.log`, shown, and recorded in `handover.md`.
+   The reason is prose, so under `--auto` it comes from a file — see rule 10.
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
    The verdict is **deterministic** (`scripts/mutation_score.py`, not a model): score `>=
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
@@ -52,6 +55,31 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    **Optional and OFF by default**: `MUTATION_POLICY` = `off` (default) · `advisory` (reports, never
    blocks) · `enforce` (fails closed). An extra signal, **not** the independence mechanism — that is
    the Verifier's test-quality review. When off, no mutation tool runs anywhere.
+9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
+   and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
+   learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
+   files that matter. `docs/features/<feature>/pipeline-observations.md`
+   (`skills/pipeline-retrospective`) is about the **machinery** — a gate that misfires, a stage that
+   churns — written by the orchestrator as things happen, triaged at feature close, and filed upstream
+   on the agentic-avengers repo. On Claude Code the lessons pointer is injected by
+   `scripts/hook_lessons.sh` on `SubagentStart`; **opencode has no subagent-start event**, so on this
+   runtime this paragraph is the delivery — load `skills/self-improvement` yourself.
+10. **Prose belongs in a file and the command reads it — never on a command line.** Under
+   `/avenger-run --auto`, `hook_autoapprove.sh` matches its hard-deny regex against the **whole**
+   command string, so free text that merely *names* `git push` or `gh pr create` denies the command
+   carrying it. Write the text to a file and read it inline — `--intent "$(cat <file>)"`, `--note
+   "$(cat <file>)"` — never via `cat`/`echo`/a heredoc, which puts it straight back. **This is an
+   invariant, not a list of flags**: `--intent`/`--instructions` on `no-mistakes axi`,
+   `--note`/`--evidence` on `scripts/pipeline_observations.py append`, and a `GATE_BYPASS` reason are
+   non-exhaustive examples, and absence from that list is not a waiver. `GATE_BYPASS` is no exception
+   for being a shell assignment prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works, while
+   `export` does not survive between an agent's Bash calls; a multi-line reason file is safe because
+   every writer of `gate-overrides.log` normalises the reason through `scripts/bypass_reason.sh`
+   through `scripts/bypass_reason.sh`, so the log keeps one parseable record per override. Nothing
+   appends to it by hand — the Verifier's per-finding waiver runs
+   `bypass_log.sh verifier <finding-id> <waived_by>` too. A value fully determined by a template,
+   with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
+   `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -71,6 +99,14 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md
 # once the FINAL phase of the feature is green:
 @avenger-backend-architect --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/
+# then feature close, in this order:
+git add -A && git commit                  # commit 1: the e2e output — the ship gate needs a clean tree
+no-mistakes axi run --intent "$(cat <intent-file>)"   # SHIP GATE: lint, docs, push, PR, CI.
+                                          # Runs in both modes. Stops at checks-passed, never merges.
+                                          # Intent comes from a FILE, never inline: the --auto deny
+                                          # regex matches the whole command string.
+# retrospective triage (interactive only): lavish-axi over the observation log, then
+git add -A && git commit                  # commit 2: the observation log, after triage
 ```
 
 ## Models / provider
@@ -102,6 +138,8 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
 | `GATE_MODEL` | per-gate defaults | routes every gate to one model |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
-| `VERIFIER_GATE_MODEL` | `google/gemini-2.5-pro` | model the Verifier's test-quality review runs on; must not be the implementer's family |
+| `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
 | `VERIFIER_SRC_LIMIT` | `120000` | max chars of review-set source sent to that model |
+| `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
+| `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
 

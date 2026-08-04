@@ -1,7 +1,7 @@
 ---
 description: Use when implementing frontend specs and building responsive UI
 mode: subagent
-model: openrouter/anthropic/claude-sonnet-4
+model: openrouter/anthropic/claude-sonnet-5
 tools:
   write: true
   edit: true

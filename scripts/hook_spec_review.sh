@@ -24,7 +24,7 @@ python3 "$SD/spec_gate_cache.py" check "$FILE" review; cached=$?
 
 VERDICT=$(python3 "$SD/gate_runner.py" \
   --rubric "$SD/../prompts/spec-review-rubric.md" \
-  --model "${GATE_MODEL:-google/gemini-2.5-pro}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
+  --model "${GATE_MODEL:-google/gemini-3.1-pro-preview}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
   ${GATE_PROVIDER:+--provider "$GATE_PROVIDER"} \
   --print-verdict --target "$FILE" 2> >(cat >&2))
 rc=$?

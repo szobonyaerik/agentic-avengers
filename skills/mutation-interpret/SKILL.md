@@ -15,8 +15,14 @@ tool anywhere.
 says a test would *notice* if that line were wrong.
 
 ## Gate policy — `MUTATION_POLICY`
-The gate has one control, `MUTATION_POLICY`, set per project (in `pipeline-gates.yml` env or via
-`install.sh --mutation-policy`), default **off**:
+The gate has one control, the `MUTATION_POLICY` **environment variable**, default **off**. Both
+readers (`scripts/hook_mutation.sh` and `scripts/gate_ci.sh`) source `scripts/load_env.sh`, so a
+project sets it in its `.env` at the repo root; a real exported variable or a CI value always wins
+over the file. For CI, add it to the `env:` block of `.github/workflows/pipeline-gates.yml`. There is
+no install-time flag — `scripts/install.sh` takes only `--check` and `--prune`. See the environment
+table in `AGENTS.md` for the full set of gate variables.
+
+The three values:
 - **enforce** — fail-closed: a low score fails the phase.
 - **advisory** — compute + report the score in the verdict; do NOT block.
 - **off** — skip the gate entirely (raise it to advisory/enforce when the team is ready).
@@ -30,7 +36,8 @@ The gate has one control, `MUTATION_POLICY`, set per project (in `pipeline-gates
 
 These are *recommendations for teams that opt in*; the default is `off`. The C++ tooling is heavy and
 slow; advisory keeps the loop moving for the weakest-tooled stack without pretending the gate is as
-strong there. Thresholds are project-set in `scripts/mutation/` config.
+strong there. The threshold is the `MUTATION_MIN_SCORE` environment variable (default `0.85`), set the
+same way as the policy; the Python tool config lives in `cosmic-ray.toml` at the repo root.
 
 ## Surviving mutants
 Each survivor is a behavior no test catches. For each:

@@ -12,7 +12,7 @@ The model must reply with strict JSON:
     {"verdict":"GO|REVIEW|NO-GO","report":"...","route_back":"<agent or stage>"}
 
 Model ids use the chosen provider's namespace (e.g. deepseek/deepseek-chat,
-google/gemini-2.5-pro). Stdlib only.
+google/gemini-3.1-pro-preview). Stdlib only.
 """
 import argparse
 import json
@@ -42,9 +42,9 @@ def model_family(model):
     """Vendor family of a model id, ignoring an OpenRouter prefix.
 
     deepseek/deepseek-chat            -> deepseek
-    google/gemini-2.5-pro             -> google
+    google/gemini-3.1-pro-preview     -> google
     openrouter/anthropic/claude-opus  -> anthropic
-    anthropic/claude-sonnet-4         -> anthropic
+    anthropic/claude-sonnet-5         -> anthropic
     """
     parts = [p for p in str(model).split("/") if p]
     if parts and parts[0] == "openrouter":
@@ -122,7 +122,7 @@ def opencode_model(model):
     """Adapt a canonical OpenRouter model id to opencode's `provider/model` form.
 
     The pipeline names gate models as OpenRouter ids (e.g. `deepseek/deepseek-chat`,
-    `google/gemini-2.5-pro`) — the shape the openrouter HTTP provider wants. opencode routes the
+    `google/gemini-3.1-pro-preview`) — the shape the openrouter HTTP provider wants. opencode routes the
     same models through its OpenRouter credential, so it needs an explicit `openrouter/` provider
     prefix. Ids that already carry a provider prefix are left untouched.
     """

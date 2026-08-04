@@ -35,9 +35,12 @@ TMP="$(mktemp)"; SRCLIST="$(mktemp)"; trap 'rm -f "$TMP" "$SRCLIST"' EXIT
 # scripts/hook_*.sh are the single implementation of the gates: Claude Code runs them via
 # hooks/hooks.json, and .opencode/plugin/pipeline-gates.ts shells out to the SAME files rather than
 # reimplementing them. They must be vendored or the opencode runtime has no gates at all.
-# mutation_score.py (the mutation verdict) and spec_gate_cache.py (skip re-gating an unchanged spec)
-# are called by those hooks and by gate_ci.sh.
-SRC_SETS=".opencode skills hooks prompts scripts/gate_runner.py scripts/gate_ci.sh scripts/env_file.py scripts/load_env.sh scripts/mutation_score.py scripts/spec_gate_cache.py scripts/pipeline_state.py scripts/bypass_log.sh scripts/codemap.py scripts/hook_fidelity.sh scripts/hook_spec_review.sh scripts/hook_verifier.sh scripts/hook_mutation.sh scripts/hook_artifact_check.sh scripts/hook_ponytail.sh scripts/hook_autoapprove.sh scripts/hook_auto_cleanup.sh scripts/verifier_review.sh cosmic-ray.toml .pre-commit-config.yaml .github/workflows/pipeline-gates.yml AGENTS.md"
+# mutation_score.py (the mutation verdict), mutation_target.py (is there anything to mutate) and
+# spec_gate_cache.py (skip re-gating an unchanged spec) are called by those hooks and by gate_ci.sh.
+# pipeline_state.py and pipeline_observations.py are peers: plain deterministic helpers that vendored
+# skills shell out to via ${CLAUDE_PLUGIN_ROOT:-.}/scripts/…, so both must travel with skills/ or the
+# skill that calls them fails on a missing file.
+SRC_SETS=".opencode skills hooks prompts scripts/gate_runner.py scripts/gate_ci.sh scripts/env_file.py scripts/load_env.sh scripts/mutation_score.py scripts/mutation_target.py scripts/spec_gate_cache.py scripts/pipeline_state.py scripts/pipeline_observations.py scripts/bypass_log.sh scripts/bypass_reason.sh scripts/codemap.py scripts/hook_fidelity.sh scripts/hook_spec_review.sh scripts/hook_verifier.sh scripts/hook_mutation.sh scripts/hook_artifact_check.sh scripts/hook_ponytail.sh scripts/hook_lessons.sh scripts/hook_autoapprove.sh scripts/hook_auto_cleanup.sh scripts/verifier_review.sh cosmic-ray.toml .pre-commit-config.yaml .github/workflows/pipeline-gates.yml AGENTS.md"
 : > "$SRCLIST"
 for s in $SRC_SETS; do
   if [ -d "$SRC/$s" ]; then find "$SRC/$s" -type f ! -type l \

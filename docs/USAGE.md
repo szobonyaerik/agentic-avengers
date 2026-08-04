@@ -21,7 +21,22 @@ export OPENROUTER_API_KEY=sk-or-...               # add to your shell rc, and as
 #   or: opencode auth login   (opencode routes gate models via its OpenRouter credential)
 
 export AUTHOR_FAMILY=anthropic                    # the family your build agents run on (Claude)
+
+# Feature-close tooling — /avenger-run preflight STOPS without these, there is no fallback:
+no-mistakes doctor                                # ship gate (§4a): binary + a runnable pipeline agent
+no-mistakes axi                                   #   ...and the repo initialised (exits 1 with
+                                                  #   `error: repo not initialized` -> run `no-mistakes init`)
+lavish-axi --version                              # plan-approval stop (§3) + retrospective triage (§4b),
+                                                  #   interactive runs only; --auto skips both
 ```
+
+> **Initialise the gate repo, and fill in `.no-mistakes.yaml`, before your first run.** These are two
+> separate preconditions and neither implies the other. `no-mistakes init` is what creates the bare
+> gate repo, the post-receive hook, the `no-mistakes` remote and the DB record; copying the config
+> creates none of them. And `/pipeline-init` (step B) scaffolds that config with `REPLACE_ME`
+> placeholders for `commands.lint` and `commands.test`. Preflight checks the file's **content**, not
+> just its existence, so an unedited scaffold stops the run — deliberately, since the alternative is
+> executing a literal placeholder as a shell command at the ship gate.
 
 > **Cross-family invariant:** gates must run on a different vendor family than the author. Build agents
 > = anthropic; fidelity gate = DeepSeek; verifier/mutation/spec-review = Gemini. If a gate model shares
@@ -143,7 +158,7 @@ What happens in auto mode:
 ```bash
 python3 "$AV/scripts/gate_runner.py" \
   --rubric "$AV/prompts/spec-review-rubric.md" \
-  --model google/gemini-2.5-pro --author-family anthropic --print-verdict \
+  --model google/gemini-3.1-pro-preview --author-family anthropic --print-verdict \
   --target <spec.md>
 # GO/REVIEW -> edit the spec's `review_status: pending` to `approved`; NO-GO -> fix the spec.
 ```
@@ -156,16 +171,28 @@ python3 "$AV/scripts/gate_runner.py" \
 
 ## F. Break-glass + troubleshooting
 
-- **Break-glass** (only override): `GATE_BYPASS="why" git commit …`, or export it for in-session hooks.
+- **Break-glass** (only override): `GATE_BYPASS="why" git commit …`, or export it in your own shell
+  before starting the session, which covers every in-session hook.
   It overrides a *failing* gate, appends who/when/which-gate/why to `gate-overrides.log`, prints a
   visible `⚠ BYPASSED`, and you must record it in the phase `handover.md`. Never silent.
+  **Under `/avenger-run --auto` an agent must pass the reason from a file** —
+  `GATE_BYPASS="$(cat <file>)" git commit …` — because the reason is prose and the auto deny regex
+  reads the whole command string (`skills/pipeline-conventions`). `export` is not a substitute there:
+  env vars do not survive between an agent's Bash calls. Both shapes are equivalent for *you*, typing
+  it yourself. **Write the reason as prose, multi-line if it needs to be** — the log is one
+  tab-separated record per line, and every writer normalises the reason through `scripts/bypass_reason.sh`, which
+  the reason through `scripts/bypass_reason.sh` (newlines and tabs collapsed to spaces, nothing
+  dropped) rather than asking you to keep it on one line. The Verifier's per-finding waiver
+  (`verdict.json` `break_glass` + `waiver_reason`) is logged through that same writer, so a
+  multi-paragraph waiver reason is safe too.
 - **Gate model**: gates default to a decorrelated deepseek (fidelity) / gemini (verifier, mutation,
   spec-review) mix. Set `GATE_MODEL=<id>` to route **every** gate to one model, e.g.
   `export GATE_MODEL=opencode-go/deepseek-v4-pro` (OpenCode's DeepSeek V4 Pro, provider `opencode`).
   Keep `AUTHOR_FAMILY` a different family than `GATE_MODEL` or the gate fails closed.
-- **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` still points at
-  `claude-opus-4/sonnet-4/haiku-4`. Update these to current OpenRouter ids before driving opencode
-  agents (the gate models DeepSeek/Gemini are already correct).
+- **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` maps the Claude model tiers to
+  OpenRouter ids (`claude-opus-5` / `claude-sonnet-5` / `claude-haiku-4.5`). Re-check these against
+  `https://openrouter.ai/api/v1/models` when the tiers move; a stale id fails at request time, not at
+  sync time.
 - **Code not under `src/`?** Update the path glob in `hook_verifier.sh`, `gate_ci.sh`,
   `.opencode/plugin/pipeline-gates.ts`, and `module-path` in `cosmic-ray.toml`.
 - **A gate "stops" unexpectedly** — that's fail-closed. Check: `OPENROUTER_API_KEY` set? gate model a

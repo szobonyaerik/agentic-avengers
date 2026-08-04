@@ -32,8 +32,11 @@ task-analyst → solution-architect → implementation-planner → spec-writer
   → per phase, per spec: backend/frontend-architect (tests + code, test-first)
   → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
                        LOCKS the suite)  → handover
-  → next phase … → e2e-author (once, after the final phase) → ship
+  → next phase … → e2e-author (once, after the final phase)
+  → ship gate (no-mistakes: lint, docs, push, PR, CI) → retrospective triage
 ```
+The ship gate runs **before** the triage on purpose: a defect it catches that no avengers gate
+covers is the most valuable thing the retrospective can record about the pipeline.
 Route-backs it must honor (all already emitted by the gates):
 - fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate.
 - verifier code failure → back to `avenger-backend-architect`.
@@ -79,7 +82,26 @@ What it does beyond the flow above:
   on the second bounce of the same phase.
 - **Breaker only on `criticality: critical`** (a spec frontmatter field); mutation only per
   `MUTATION_POLICY`.
-- **Branches once, commits per verified phase, never pushes.**
+- **Branches once, commits per verified phase, plus twice at feature close**: the e2e stage's output
+  *before* the ship gate, because §4a's precondition is a clean tree that already contains
+  `tests/e2e/<feature>/`; then the retrospective artifacts written *after* it, guided by
+  `branch_sync.next_action`. A stage's artifacts are committed before the stage that consumes them.
+- **The orchestrator never pushes and never opens a PR.** The one exception is the **§4a ship gate**,
+  in interactive **and `--auto`** runs alike: `no-mistakes` pushes the branch and opens the PR from
+  inside the daemon's own worktree, stops at `checks-passed`, and never merges. Under `--auto` an
+  `ask-user` finding **halts** the run with the finding recorded verbatim; `--ship-yes` (only valid
+  with `--auto`) passes `--yes` so the gate resolves those itself.
+- **Preflight-checks `no-mistakes` (both modes) and `lavish-axi` (interactive)** and stops if either
+  is missing, rather than dying at the plan stop or at feature close. Neither has a silent fallback.
+  For `no-mistakes` it checks **three** states, because none implies the next: the binary plus a
+  runnable pipeline agent (`no-mistakes doctor`), the repo **initialised** (`no-mistakes axi`, which
+  exits 1 with `error: repo not initialized` — a `.no-mistakes.yaml` existing says nothing about the
+  gate repo, the post-receive hook, the remote or the DB record), and the **content** of that config:
+  a scaffolded one still holding the template's `REPLACE_ME` token fails preflight, not the ship gate.
+- **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
+  triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
+  run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,
+  because `done` is terminal. Procedure: `skills/pipeline-retrospective`.
 
 ### `--auto` and permission prompts
 
@@ -96,16 +118,43 @@ run ends or halts, the `Stop` hook removes it when the turn ends, and it expires
 failure path in the hook — no sentinel, expired, unreadable, unparseable payload — prints nothing and
 lets the normal permission flow decide. Silence is the safe default.
 
-**Hard denials, not configurable:** `git push`, `gh pr/release create|merge`, `npm|yarn|pnpm publish`,
-`twine upload`, `rm`, `sudo`, `dd if=`, `mkfs`, and `curl … | sh` are **denied** while an auto run is
-armed. No environment variable re-enables them — the orchestrator branches and commits but never
-pushes, and nothing in the pipeline needs to delete files. `AVENGER_AUTO_DENY=<regex>` only *adds*
-patterns. Add `.avenger-auto` to `.gitignore` (`/plan-build-verify:pipeline-init` does this).
+**Hard denials, not configurable:** `git push`, `gh`/`gh-axi` `pr|release|repo|issue|gist` with
+`create|merge|edit|delete|close`, `npm|yarn|pnpm publish`, `twine upload`, `rm`, `sudo`, `dd if=`,
+`mkfs`, and `curl … | sh` are **denied** while an auto run is armed. No environment variable re-enables
+them — the orchestrator branches and commits but never pushes *itself*, and nothing in the pipeline
+needs to delete files. The §4a ship gate is unaffected either way: it pushes from inside the
+`no-mistakes` daemon's own worktree, in its own process, so no `git push` ever reaches this hook.
+Issue creation is in the list because the retrospective files improvement issues
+upstream and its confirmation gate is a human selecting them, which cannot happen unattended.
+`AVENGER_AUTO_DENY=<regex>` only *adds* patterns. Add `.avenger-auto` to `.gitignore`
+(`/plan-build-verify:pipeline-init` does this).
+
+**The deny regex reads the whole command string, so prose belongs in a file and the command reads
+it.** It matches *content*, not intent: a `--intent` explaining that the ship gate pushes, or a
+`--note` reporting that `gh pr create` never ran, denies the command carrying it even though that
+command pushes nothing. Narrowing the regex is the wrong fix — it would spare real pushes too.
+Instead any author-written free text is written to a gitignored file with the `Write` tool and read
+inline as `"$(cat <file>)"`. Never build that file with `cat`/`echo`/a heredoc — a heredoc puts the
+prose straight back on the command line and is denied identically.
+
+**This is a rule, not a list of flags.** It covers arguments added after this was written. The test is
+whether an author could have phrased the value differently: `--intent`/`--instructions` on
+`no-mistakes axi`, `--note`/`--evidence` on `pipeline_observations.py append`, and a `GATE_BYPASS`
+reason are examples, not the boundary. `GATE_BYPASS` is no exception for being a shell assignment
+prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works and is allowed, while `export` does not
+survive between an agent's Bash calls. A multi-line reason file is safe: `gate-overrides.log` is one
+tab-separated record per line, and every writer normalises the reason through `scripts/bypass_reason.sh` — the hook bypass,
+`gate_ci.sh`'s CI bypass and the Verifier's per-finding waiver all route through it — which
+normalises the reason through `scripts/bypass_reason.sh` so one override stays one parseable record
+with the whole reason intact. A value fully determined by a template, with only ids, paths
+and fixed keywords substituted, is not prose and stays inline. Full rule:
+`skills/pipeline-conventions`.
 
 ### Using it
 - Manual by default — invoke stages yourself.
 - Hands-off — `/plan-build-verify:avenger-run <feature-id> "<brief>"`, then re-invoke with just the
-  feature id to resume. Add `--auto` for unattended.
+  feature id to resume. Add `--auto` for unattended, and `--auto --ship-yes` when you also want the
+  ship gate to resolve its own `ask-user` findings instead of halting for you.
 
 > **opencode gap:** `sync_opencode.py` transpiles agents and links skills but does not emit
 > `.opencode/command/`, so `/avenger-run` is Claude Code only. Under opencode, drive the stages

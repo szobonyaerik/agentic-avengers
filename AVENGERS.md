@@ -196,8 +196,8 @@ mutation gate and from the per-edit verifier hook; they run at feature close and
 
 ### E. codemap
 - Drop the real `scripts/codemap.py` in (tree-sitter; Python rich, Java, C; C++ needs a `cpp` spec).
-  Output `codebase/MOC.md`. avengers is private, so the codemap MAY use LLM purposes via
-  OpenRouter/Ollama (not forced `--no-llm`):
+  Output `codebase/MOC.md`. LLM purposes are **temporarily disabled**, so the map is structural only
+  and the provider flags exit with an explanation:
   `python scripts/codemap.py . --lang <python|java|c> --output codebase`.
 - Replace old `@codebase-cartographer` references; update the handover staleness check to
   `codebase/MOC.md`.
@@ -368,7 +368,7 @@ reports 0% survival for an empty session, and ignores `--fail-over 0`. Tune with
 
 ### 9.5 Generate the codemap
 ```bash
-python scripts/codemap.py . --lang python --output codebase     # → codebase/MOC.md (LLM purposes OK on the private profile)
+python scripts/codemap.py . --lang python --output codebase     # → codebase/MOC.md (structural only; LLM purposes disabled)
 ```
 
 ### 9.6 Install into a target project — with update detection
@@ -385,4 +385,6 @@ Then enable the local floor: `cd /path/to/project && pre-commit install`.
 Run one greenfield feature: `@task-analyst "add a health endpoint"` → walk the chain. Confirm the
 Fidelity Gate fires, `/spec-review` grills you and flips `review_status: approved`, tests lock, the
 verifier runs once for the phase on a different family, cosmic-ray reports a survival rate, and a
-deliberate `GATE_BYPASS="testing" git commit` logs to `gate-overrides.log`.
+deliberate `GATE_BYPASS="testing" git commit` logs to `gate-overrides.log`. (Typing that yourself, the
+inline prefix is fine. An agent under `/avenger-run --auto` must pass the reason from a file instead —
+`skills/pipeline-conventions`, the prose-off-the-command-line rule.)

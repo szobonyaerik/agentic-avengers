@@ -1,7 +1,7 @@
 ---
 description: Use when evaluating system architecture and making structural recommendations
 mode: subagent
-model: openrouter/anthropic/claude-opus-4
+model: openrouter/anthropic/claude-opus-5
 tools:
   write: true
   edit: true

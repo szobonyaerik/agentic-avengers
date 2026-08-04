@@ -13,7 +13,8 @@ write no production code.
 
 2. **gitignore.** Ensure `.gitignore` contains `**/.pytest_cache/`, `session.sqlite` and
    `.gate-session.sqlite` (cosmic-ray sessions), `.gate-cosmic-ray.toml` (the generated diff-scoped
-   config), `.gate-tmp.txt`, `.avenger-auto` (the `/avenger-run --auto` permission sentinel), and
+   config), `.gate-tmp.txt`, `.avenger-auto` (the `/avenger-run --auto` permission sentinel),
+   `.lavish/` (scratch HTML review surfaces for the plan stop and the retrospective triage), and
    **`.env`** (it holds a live API key). None of these may ever be committed.
 
 2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to `.env.example`
@@ -23,6 +24,28 @@ write no production code.
    key is ignored). Warn that `GATE_MODEL` and `VERIFIER_GATE_MODEL` must not share
    `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. Every gate loads this file via
    `scripts/load_env.sh`; the real environment always wins over it.
+
+2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to
+   `.no-mistakes.yaml` in the project **only if one does not already exist** — check first, never
+   overwrite. The template ships `lint` and `test` as `REPLACE_ME` placeholders: tell the user to
+   replace both with this project's real commands, and that `test` must include the feature-level
+   e2e suite, since the ship gate (`/avenger-run` §4a) is the only stage that runs it. Leave the
+   `REPLACE_ME` token exactly as written in any value the user has not filled in — `/avenger-run` §1
+   preflight greps for that token and stops the run at the start, so a half-scaffolded config fails
+   fast instead of building every phase and then executing a placeholder as a shell command.
+
+   **Then initialise the gate repo**, because copying the config initialises nothing — the bare gate
+   repo, the post-receive hook, the `no-mistakes` git remote and the DB record all come from `init`,
+   and without them §4a's `axi run` returns `error: repo not initialized` after every phase is
+   already built. Check first, then initialise only if needed:
+
+   ```bash
+   no-mistakes axi     # exits 1 with `error: repo not initialized` when it is not
+   no-mistakes init    # only if the above says so — it is safe but not a no-op
+   ```
+
+   `no-mistakes status` prints the same sentence but **exits 0**, so branch on `axi`. If `init` needs
+   input you cannot answer, leave it and report the exact command in step 6 instead of guessing.
 
 3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
    present for the chosen runtime(s): `CLAUDE.md` (Claude Code) and/or `AGENTS.md` (opencode). Create
@@ -40,9 +63,24 @@ write no production code.
    → `codebase/MOC.md` (the Solution Architect and implementers read it).
 
 6. **Prereq check.** Report the status of `python3`, `pytest`, `cosmic-ray` (incl. `cr-filter-git` on
-   PATH — the mutation gate diff-scopes with it), `jq`, `tree-sitter` (for codemap), and a
-   cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH). List anything missing with
-   its fix (`pip install cosmic-ray tree-sitter tree-sitter-python`, `brew install jq`).
+   PATH — the mutation gate diff-scopes with it), `jq`, `tree-sitter` (for codemap), a
+   cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH), and
+   **`lavish-axi`** (the plan-approval stop `/avenger-run` §3 and the retrospective triage §4b;
+   interactive runs only). List anything missing with its fix (`pip install cosmic-ray tree-sitter
+   tree-sitter-python`, `brew install jq`).
+
+   **Report the ship gate as three separate states, not one**, because `/avenger-run` §1 preflight
+   checks all three and a binary on PATH implies neither of the other two — needed by interactive and
+   `--auto` runs alike:
+   - **binary + runnable pipeline agent** — `no-mistakes doctor` (a run with no configured agent
+     fails before its first step, and only `doctor` says so). Fix: install it, or configure an agent.
+   - **repo initialised** — `no-mistakes axi`, which exits 1 with `error: repo not initialized`.
+     Fix: `no-mistakes init` (step 2b).
+   - **config filled in** — `grep -nE '^[[:space:]]*(lint|test):.*REPLACE_ME' .no-mistakes.yaml`
+     must find nothing. Fix: replace both values (step 2b).
+
+   `no-mistakes` and `lavish-axi` have **no fallback** — `/avenger-run` stops in preflight when they
+   are absent rather than degrading a stop into a plain markdown read.
 
 7. **Code-path note.** If source is not under `src/`, remind the user to update the path glob in
    `hook_verifier.sh`, `gate_ci.sh`, `.opencode/plugin/pipeline-gates.ts`, and `module-path` in

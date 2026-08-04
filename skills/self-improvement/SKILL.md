@@ -9,6 +9,11 @@ How every agent captures and recalls durable lessons so the pipeline improves ov
 on disk under `docs/lessons/`, are **committed to git**, and are **shared across the whole team** —
 they are deliberately different from the ephemeral, per-machine `/memories/` tool.
 
+> **This log is about the *work*, not the *machinery*.** A gate that misfires or a stage that churns
+> is a `pipeline-retrospective` observation, filed upstream against the pipeline itself - see
+> `skills/pipeline-retrospective` and the "two learning logs" table in `skills/pipeline-conventions`.
+> Test: would this help someone building *this* project again? → lesson.
+
 ## The shape on disk
 ```
 docs/lessons/
@@ -39,8 +44,10 @@ For a known project, if `docs/lessons/lessons.json` exists:
 3. Open only the handful of prose files that matter. Do not read the whole folder.
 4. Apply the lessons as you work.
 
-If the file is missing, skip silently — the first lesson written creates it (but installed projects
-ship it seeded to `[]`).
+If the file is missing, skip silently — the first lesson written creates it. Neither `/pipeline-init`
+nor `scripts/install.sh` seeds it, and `scripts/hook_lessons.sh` (the Claude Code delivery) injects
+nothing for a missing, unparseable or empty index, so a project that has never written a lesson sees
+no change.
 
 ## When to write
 Write a lesson the moment something learning-worthy happens — **not only when corrected**:

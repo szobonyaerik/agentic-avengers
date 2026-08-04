@@ -26,7 +26,12 @@ Both gate paths call the same `gate_runner.py` on a **cross-family** model (Deep
 OpenRouter), decorrelated from whatever model authored the work. Gates **fail closed** — a missing
 key, an unreachable model, a non-JSON verdict, or a same-family model all **stop**. The only override
 is **break-glass** (`GATE_BYPASS="reason"`): logged to `gate-overrides.log`, shown visibly, and
-recorded in the phase `handover.md`.
+recorded in the phase `handover.md`. That reason is prose, so an agent under `/avenger-run --auto`
+passes it from a file (`GATE_BYPASS="$(cat <file>)" git commit …`) like every other free-text
+argument — a multi-line reason file is fine, since every writer of that log normalises it,
+`scripts/bypass_log.sh` (the Verifier's per-finding waiver routes through it too), which normalises
+the reason through `scripts/bypass_reason.sh` so it stays one parseable record. See
+`skills/pipeline-conventions`.
 
 ---
 
@@ -108,9 +113,17 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
 FEATURE CLOSE (once, after the final phase is green)
   implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
                  1-3 tests (5 max) proving overview.md's goal through the assembled system
+  commit 1: the e2e stage output, so the ship gate starts from a clean committed tree
+  SHIP GATE: no-mistakes (/avenger-run 4a) -> lint, docs, push, PR, CI
+                 the one sanctioned same-family gate; runs in BOTH modes; stops at
+                 checks-passed and never merges. Its findings are logged as observations.
+  RETROSPECTIVE TRIAGE (/avenger-run 4b, interactive only) -> lavish triage of those
+                 observations; only what the human selects is filed as an issue.
+  commit 2: the observation log, after triage (branch_sync decides how, never whether)
 
 SHIP
-  commit (pre-commit floor) -> PR (CI floor). Break-glass overrides logged + visible.
+  The ship gate opened the PR. The user reviews and merges — the orchestrator never does.
+  Break-glass overrides logged + visible.
 ```
 
 ### Who writes the tests
@@ -165,7 +178,8 @@ agentic-avengers/
 ├── agents/                canonical subagents (Claude format)
 ├── skills/                portable SKILL.md skills (pipeline-conventions, grill-me,
 │                          spec-review-checklist, tdd, verifier-triage,
-│                          mutation-interpret, codemap, self-improvement, e2e-author, …)
+│                          mutation-interpret, codemap, self-improvement,
+│                          pipeline-retrospective, e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
@@ -177,6 +191,7 @@ agentic-avengers/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
+│   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
@@ -189,6 +204,7 @@ agentic-avengers/
 │   ├── skills/            symlink -> ../skills
 │   └── plugin/pipeline-gates.ts   in-session gates for opencode
 ├── .github/workflows/pipeline-gates.yml   CI floor
+├── .no-mistakes.yaml      feature-close ship gate config (see skills/pipeline-conventions)
 ├── AGENTS.md              opencode conventions
 ├── .pre-commit-config.yaml
 ├── CLAUDE.md
@@ -205,6 +221,20 @@ agentic-avengers/
 - A cross-family provider: **`OPENROUTER_API_KEY`** exported (gates use OpenRouter), and/or opencode
   configured. Set **`AUTHOR_FAMILY`** (default `anthropic`) so the cross-family assertion knows the
   build family.
+- **`no-mistakes`**, in **three** separate states — the feature-close ship gate (`/avenger-run` §4a)
+  needs all of them, in interactive *and* `--auto` runs, and preflight checks each one:
+  1. **on PATH with a runnable pipeline agent** — `no-mistakes doctor`.
+  2. **the repo initialised** — `no-mistakes init` creates the bare gate repo, the post-receive hook,
+     the `no-mistakes` remote and the DB record. A `.no-mistakes.yaml` existing implies **none** of
+     that. `no-mistakes axi` exits 1 with `error: repo not initialized` when it is missing.
+  3. **a filled-in `.no-mistakes.yaml`** at the repo root. `/pipeline-init` scaffolds it with
+     `REPLACE_ME` placeholders; **fill in `commands.lint` and `commands.test` before the first run**,
+     because preflight checks the content, not just the file's existence.
+- **`lavish-axi`** on PATH — the plan-approval stop (§3) and the retrospective triage (§4b).
+  Interactive runs only; `--auto` skips both surfaces.
+
+Neither of those two has a fallback, on purpose: **preflight stops the run** when one is missing or
+unfilled, rather than silently degrading a gate.
 
 ---
 
@@ -254,6 +284,13 @@ Generate the map the Solution Architect and implementers read:
 ```text
 python scripts/codemap.py . --lang python --output codebase     # -> codebase/MOC.md
 ```
+The structural map (tree-sitter: exports, dependencies, used-by) is the whole product right now.
+The optional LLM-backed one-line **purpose** backfill is **temporarily disabled**. An existing
+`.codemap-manifest.json` is still read, so a purpose an earlier model-backed run cached keeps
+rendering for as long as that file's hash matches; `(undocumented …)` is what a file with no
+docstring/KDoc/Javadoc *and* no matching cache entry renders. No new purpose is resolved and the
+manifest is never rewritten while disabled. Passing `--provider` / `--model` / `--base-url` /
+`--api-key` exits with an explanation rather than silently producing an undocumented map.
 
 ---
 

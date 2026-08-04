@@ -1,7 +1,7 @@
 ---
 description: Use when ending a session to document state for the next session
 mode: subagent
-model: openrouter/anthropic/claude-haiku-4
+model: openrouter/anthropic/claude-haiku-4.5
 tools:
   write: true
   edit: true
@@ -99,15 +99,17 @@ python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/codemap.py" . --lang <langs> --output 
 - **`--lang`**: comma-separated, from `python,kotlin,java,c`. Use `$CODEMAP_LANG` if the project sets
   it; otherwise infer from what the repo actually contains and say which you chose. Getting this wrong
   produces an empty map, so check rather than assume `python`.
-- It is **incremental** (a manifest cache means only changed files are re-resolved), so this is cheap
-  per phase. Do not pass `--force` unless the map is visibly wrong.
-- It uses an LLM to resolve each module's *purpose* (`--provider ollama|openrouter|openai`). That
-  prose is the valuable half of the map.
+- It **re-parses the whole repo every run** — structure is never cached, and with the LLM purpose
+  backfill disabled nothing is re-resolved by a model. It is still cheap per phase: tree-sitter
+  parsing is local and fast, and no model is called. An existing `.codemap-manifest.json` is read so
+  purposes an earlier model-backed run cached keep rendering, but it is never refreshed or rewritten.
+  Do not pass `--force` unless the map is visibly wrong — it only discards those cached purposes.
+- Each module's *purpose* comes from its docstring / KDoc / Javadoc. A file that documents itself gets
+  a real purpose line; one that does not is marked `(undocumented)`.
 
-**If the LLM provider is unreachable**, do not fail the handover and do not silently skip: re-run with
-`--no-llm` (structure + docstrings only, works offline) and say so plainly in your final output —
-"structure regenerated, purposes NOT refreshed, provider unreachable". A partial map that is labelled
-partial is useful; one that is silently partial is a trap.
+**Do not pass `--provider`, `--model`, `--base-url` or `--api-key`.** The optional LLM purpose backfill
+is currently **disabled** and those flags now exit non-zero — which, by the rule below, would turn this
+mandatory step into a failed handover. `--no-llm` is still accepted but is a no-op; you do not need it.
 
 **If codemap fails entirely**, report it loudly and do **not** print "Handover complete". State that
 the next phase will be starting from a stale map, and what to run.

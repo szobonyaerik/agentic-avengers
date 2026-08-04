@@ -4,7 +4,10 @@ session.sqlite
 .gate-tmp.txt
 
 # codemap output cache (regenerate with scripts/codemap.py)
-codemap/
+# The leading slash is load-bearing: scripts/codemap.py defaults --output to `codemap`, so a
+# root-anchored pattern still ignores the generated output, but unanchored, `codemap/` matched a
+# directory of that name at ANY depth and silently swallowed the skills/codemap/ source skill.
+/codemap/
 
 # python
 __pycache__/
@@ -16,3 +19,6 @@ __pycache__/
 # note: gate-overrides.log is intentionally NOT ignored — break-glass must stay visible/auditable.
 .avenger-auto
 .env
+
+# lavish scratch: HTML review surfaces for the plan stop and the retrospective triage
+.lavish/

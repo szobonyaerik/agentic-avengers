@@ -1,7 +1,7 @@
 ---
 description: Use when you need to transform raw task descriptions into structured planning prompts
 mode: subagent
-model: openrouter/anthropic/claude-sonnet-4
+model: openrouter/anthropic/claude-sonnet-5
 tools:
   write: true
   edit: true

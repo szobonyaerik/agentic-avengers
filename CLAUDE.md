@@ -7,7 +7,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
-- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`)
+- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
 - Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `handover.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
@@ -86,6 +86,58 @@ reach a verdict (missing key, provider down, non-JSON, same-family) stops. **Bre
 (`GATE_BYPASS="reason"`) is logged to `gate-overrides.log`, shown visibly, and recorded in
 `handover.md` — never silent.
 
+**The feature-close ship gate (`no-mistakes`) is the one sanctioned same-family exception.** It runs
+once per feature — after the last phase is verified and the e2e suite is written — and covers what no
+avenger stage does: lint, docs, push, PR, CI. Its pipeline agent is pinned to Anthropic Opus
+(`.no-mistakes.yaml`, plus `agent_args_override` in `~/.no-mistakes/config.yaml`), a **deliberate
+divergence** from the cross-family rule: it runs in the daemon's own disposable worktree with no
+shared context with the stage that wrote the code, so it decorrelates *context* while accepting
+shared *family* blind spots. It is not a break-glass bypass, and every **per-phase** gate (fidelity,
+spec-review, verifier) stays cross-family. While a run is active it owns both findings and fixes, so
+the route-back-to-implementer rule is suspended for its duration.
+
+It is wired as **`/avenger-run` §4a**, before the retrospective triage so that what it catches feeds
+the retrospective — a defect the ship gate finds that no avenger stage covers is the most useful
+observation the pipeline gets about itself. **It runs under `--auto` too**, and the only thing
+`--auto` changes is `ask-user`: the gate drives its own `auto-fix`/`no-op` findings, but an
+`ask-user` finding **halts the run** with the finding recorded verbatim, the same way `--auto`
+already halts on a spec-review NO-GO — no-mistakes marks a finding `ask-user` because it challenges
+the user's deliberate intent or changes product behaviour, so an unattended run must not answer it.
+`--ship-yes` (valid only with `--auto`) passes `--yes` to no-mistakes and resolves those too: standing,
+per-run consent, deliberately not the default. So an `--auto` run **can** push and open a PR — the
+orchestrator itself still never does, in either mode. It stops at `checks-passed` and never merges.
+
+**Two lavish review surfaces**, both interactive-only and both skipped under `--auto` (a foreground
+`lavish-axi poll` would hang an unattended run): the **plan-approval stop** (**`/avenger-run` §3** —
+plan.md rendered with a mermaid phase graph, annotations fed back to the planner until approved) and
+the **retrospective triage** (**`/avenger-run` §4b**). Both are **preflight checks** in
+`/avenger-run` §1 — `no-mistakes` in both modes as **three** independent states (binary + a runnable
+pipeline agent via `no-mistakes doctor`; the repo **initialised**, which `no-mistakes axi` reports and
+which a config file existing implies nothing about; and a `.no-mistakes.yaml` with no `REPLACE_ME`
+left in a value), `lavish-axi` on interactive runs only, since `--auto` skips the two surfaces that
+use it. They fail the run at the start rather than at the plan stop or at feature close, and neither
+has a silent fallback.
+
+**Prose belongs in a file and the command reads it — never on a command line.** Under `--auto`,
+`hook_autoapprove.sh` matches its hard-deny regex against the **whole** Bash command string, so free
+text that merely *names* `git push` or `gh pr create` denies the command carrying it — the regex
+matches content, not intent, and narrowing it would spare real pushes. Any author-written free text is
+written to a gitignored file with the `Write` tool and read inline as `"$(cat <file>)"`; never
+`cat`/`echo`/a heredoc, which put it straight back. **This is an invariant, not a list of flags** —
+`--intent`/`--instructions` on `no-mistakes axi`, `--note`/`--evidence` on `pipeline_observations.py
+append`, and a `GATE_BYPASS` reason are non-exhaustive examples, and an argument's absence from them
+is not a waiver. `GATE_BYPASS` is no exception for being a shell assignment prefix
+(`GATE_BYPASS="$(cat <file>)" git commit …` works; `export` does not survive between Bash calls), and
+a multi-line reason file is safe because every writer of `gate-overrides.log` normalises it,
+`scripts/bypass_log.sh`, which normalises the reason through `scripts/bypass_reason.sh` — that log is
+one tab-separated record per line, and a record its own reason text could split is not an audit
+trail. Nothing appends to it by hand: the hook bypass, `gate_ci.sh`'s CI bypass and the Verifier's
+per-finding waiver (`bypass_log.sh verifier <finding-id> <waived_by>`) all route through that writer,
+which is what makes the guarantee structural rather than a rule each caller has to remember. The
+test is whether an author could have phrased the value differently — a template with only ids, paths
+and keywords substituted is not prose and stays inline. Canonical statement in
+`skills/pipeline-conventions`.
+
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
 score `>= MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors go to the
@@ -130,6 +182,35 @@ win. **It is not a gate**: `/ponytail-review` is advisory (no artifact, no verdi
 loads the ladder into the main thread for inline implementation the hook cannot reach — deliberately
 off by default there, since the main thread also writes specs and runs verifier triage. opencode has no
 subagent-start event; its implementers get the ladder from the agent prompt line only.
+
+**The second `SubagentStart` hook is `scripts/hook_lessons.sh`**, and it exists for the same reason:
+`docs/lessons/` shipped with a complete written procedure and zero invocations, because a directive in
+a skill reaches only the agents that load that skill. It matches `agent_type` against `LESSONS_AGENTS`
+(default `avenger-`, unanchored) and injects a short **pointer** — the entry count in
+`docs/lessons/lessons.json` plus "read the index, filter by role, open only what matters". It never
+inlines the log or a prose file; it fires on every spawn. The two hooks differ in **reach on purpose**:
+ponytail excludes the Verifier, Breaker and bug-hunter because "write less code" fights their job,
+while lessons reach **all** of them because prior lessons never do. Same fail-closed discipline — bad
+payload, unmatched agent, bad regex, missing/unparseable/empty index inject nothing, so a project with
+no lessons sees no change. `LESSONS_OFF=1` kills it, and opencode's agents get no injection.
+
+### 6c. The pipeline learns from itself — two logs, kept apart
+`docs/lessons/` (`skills/self-improvement`) is **per-project** and about the **work** — a pytest trap,
+a migration gotcha. Any agent reads the index at start and appends when something is learning-worthy.
+It was dormant until now; `pipeline-conventions` is where every agent picks it up, so it needs no
+per-agent wiring.
+
+`docs/features/<feature>/pipeline-observations.md` (`skills/pipeline-retrospective`) is about the
+**machinery** — a gate that misfires, a stage that churns — and its destination is **this repo**. The
+orchestrator appends observations *as they happen* (a run resumes across sessions, so end-of-run
+recall is not reliable), including **successes**: a gate that caught something real is the evidence
+for keeping it. At `done` they are rendered as a lavish triage; whatever the human selects becomes a
+`pipeline-improvement` issue. Nothing is filed without an explicit selection.
+
+`--auto` **records but never triages** — no human to poll. The log stays `triage: pending` and the
+next interactive run's **preflight sweep** finds it; that sweep is the only recovery path, because
+`done` is terminal and will never re-fire. `hook_autoapprove.sh` denies `gh`/`gh-axi` issue creation
+outright while auto is armed, so the no-auto-filing rule is enforced mechanically, not just written.
 
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode

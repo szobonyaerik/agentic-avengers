@@ -1,7 +1,7 @@
 ---
 description: Use on critical/security paths after tests are green to find counterexamples beyond the test set.
 mode: subagent
-model: openrouter/anthropic/claude-opus-4
+model: openrouter/anthropic/claude-opus-5
 tools:
   write: true
   edit: true
