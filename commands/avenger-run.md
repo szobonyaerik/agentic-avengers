@@ -31,13 +31,15 @@ Run these before anything else, and stop with the fix if one fails:
   command at the gate:
 
   ```bash
-  grep -n REPLACE_ME "${CLAUDE_PROJECT_DIR}/.no-mistakes.yaml"
+  grep -nE '^[[:space:]]*(lint|test):.*REPLACE_ME' "${CLAUDE_PROJECT_DIR}/.no-mistakes.yaml"
   ```
 
-  Any hit → stop, naming `.no-mistakes.yaml` and the exact keys still holding the token (`commands.lint`,
-  `commands.test`) so the user knows what to fill in. Missing file or missing binary → stop the same
-  way. All of this fires at `done`, after every phase is already built, and discovering it there
-  wastes the whole run.
+  Match the marker **only where it is a value**. A bare `grep REPLACE_ME` over a commented config
+  also matches the template's own prose, so a correctly filled-in file would fail this check forever.
+  Any hit → stop, naming `.no-mistakes.yaml` and the exact keys still holding the marker
+  (`commands.lint`, `commands.test`) so the user knows what to fill in. Missing file or missing binary
+  → stop the same way. The ship gate itself fires at `done`, after every phase is already built, which
+  is exactly why this is checked here instead: discovering it there wastes the whole run.
 - **`lavish-axi` on PATH** — unless `--auto`, which skips both surfaces that use it. The plan
   approval stop (§3) and the retrospective triage (§4b) render through it and there is **no markdown
   fallback on purpose**: a stop that silently degrades to a plain read is a gate weakened invisibly,
@@ -278,15 +280,21 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
      and committed*; this commit is what makes that precondition satisfiable at all. It also puts the
      e2e suite on the branch `no-mistakes` validates — left uncommitted, the one stage documented as
      running the e2e suite would never see it.
+     **Sweep everything the run has produced and not yet committed**, not a fixed list of paths — the
+     e2e suite and `e2e-mapping.md`, and also `pipeline-observations.md`, which §6 requires you to
+     append *the moment* something happens and which the per-phase rule stops covering once the last
+     phase's commit has landed. `git status` is the authority on what is outstanding; anything left
+     behind here is what makes §4a step 1 stop.
      ```bash
-     git add tests/e2e/<feature-id> docs/features/<feature-id>/e2e-mapping.md
+     git add tests/e2e/<feature-id> docs/features/<feature-id>
      git commit -m "test(<feature-id>): feature-level e2e suite"
      ```
   2. **After §4b resolves the triage** — or, under `--auto` where §4b is skipped, after §4a. This
      covers `pipeline-observations.md` (appended by §4a step 6, rewritten to `triage: done` by §4b
      step 5) and anything else produced after the gate ran. Under `--auto` the log stays
      `triage: pending` and **still must be committed**, or the next interactive run's preflight sweep
-     has nothing on disk to find.
+     has nothing on disk to find. A feature where nothing was ever logged has no log and nothing to
+     stage, so this second commit does not exist — do not claim it in the report.
      **`branch_sync` decides *how* to get there, never *whether*.** Read it from `no-mistakes axi` or
      `axi status` and act on `next_action.code` first:
      - `sync` — the normal path after `checks-passed`, since the gate pushed its own fix commits. Run
@@ -361,8 +369,9 @@ Then, depending on how the run ended:
 - **Ship gate reached `checks-passed`** — give the PR link and ask the user to review and merge.
   Say plainly what the gate *fixed that the pipeline missed* (its `fixes` table): those are the
   defects every avengers gate let through, and hiding them wastes the run's most useful signal.
-  Say that §5's *second* feature-close commit landed after the PR opened, is local and unpushed, and give
-  the `branch_sync` next action rather than a raw `git push`.
+  If §5's *second* feature-close commit was made — a feature that logged no observations has nothing
+  to stage and so has no second commit — say it landed after the PR opened, is local and unpushed,
+  and give the `branch_sync` next action rather than a raw `git push`.
 - **Ship gate halted on an `ask-user` finding under `--auto`** — reproduce the finding **verbatim**
   (id, file, full description), say the `no-mistakes` run is parked on the branch, and tell the user
   to resume interactively to answer it. Do not summarise it away or guess the answer.

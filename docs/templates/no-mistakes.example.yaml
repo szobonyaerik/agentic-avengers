@@ -13,12 +13,13 @@
 agent: claude
 
 commands:
-  # Replace both with this project's real commands. They are the deterministic local baseline;
-  # keep them targeted - remote CI owns broad regression.
+  # Replace both placeholder values below with this project's real commands. They are the
+  # deterministic local baseline; keep them targeted - remote CI owns broad regression.
   #
-  # REPLACE_ME is the token `/avenger-run` section 1 preflight greps for: while either value still
-  # contains it, the run stops at the start with this file and these keys named, instead of building
-  # every phase and then executing a literal placeholder as a shell command at the ship gate.
+  # `/avenger-run` section 1 preflight matches the placeholder marker in these two VALUES: while
+  # either still carries it, the run stops at the start with this file and these keys named, instead
+  # of building every phase and then executing a literal placeholder as a shell command at the ship
+  # gate. The check ignores comment lines, so prose here is never what fails a run.
   lint: "REPLACE_ME - this project's lint command"
   # Must run the feature-level e2e suite too: this gate is the only stage that does, and a test
   # command that quietly excludes tests/e2e makes the gate weaker than it reads.
