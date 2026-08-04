@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# The ONE writer of gate-overrides.log. Records a visible, logged override — a whole-gate break-glass
+# The writer of gate-overrides.log for the hook and Verifier-waiver paths. Records a visible, logged
+# override — a whole-gate break-glass
+#
+# NOTE: scripts/gate_ci.sh still formats its own record for the CI bypass, with the same grammar and
+# the same bypass_reason.sh normalisation. That duplication is known and tracked as a
+# pipeline-improvement issue; collapsing it here is the fix. Until then, a change to the record
+# grammar must be made in BOTH places.
 # from a hook, or a per-finding waiver acknowledged by the Verifier — then exits 0 so the session
 # continues. Never silent.
 #

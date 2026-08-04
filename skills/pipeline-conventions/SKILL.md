@@ -167,13 +167,14 @@ The implementer authors **both tests and code** test-first (there is no separate
   it comes from a file (`GATE_BYPASS="$(cat <file>)" …`) like every other free-text argument above.
   `gate-overrides.log` is **one tab-separated record per line**, with the reason last because it is
   the only free-text field. A reason is prose that may carry newlines — and a record its own reason
-  text could split is not an audit trail — so the log has exactly **one writer**,
-  `scripts/bypass_log.sh`, which normalises through `scripts/bypass_reason.sh` before it appends.
-  Collapse, never truncate: the reason is written to be read later, and `skills/phase-handover`
-  mirrors it into `handover.md`.
+  text could split is not an audit trail — so **every writer normalises the reason through
+  `scripts/bypass_reason.sh`** before it appends. Collapse, never truncate: the reason is written to
+  be read later, and `skills/phase-handover` mirrors it into `handover.md`.
   - **Nothing appends to that log by hand.** A hook bypass, a CI bypass (`scripts/gate_ci.sh`, same
     grammar with a `gates:<list>` scope) and the Verifier's per-finding waiver
-    (`bypass_log.sh verifier <finding-id> <waived_by>`) all go through the one writer. The waiver is
+    (`bypass_log.sh verifier <finding-id> <waived_by>`) all normalise the same way. `bypass_log.sh`
+    is the writer for the hook and waiver paths; `gate_ci.sh` still formats its own record with the
+    same grammar, which is a known duplication — see the `pipeline-improvement` issue. The waiver is
     the case that proves why: `waiver_reason` is a JSON string whose content this pipeline explicitly
     does **not** judge, so nothing stops it being two lines. `handover.md` and the retrospective sweep
     *read* the log; only `bypass_log.sh` writes it.

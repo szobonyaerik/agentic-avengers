@@ -143,7 +143,7 @@ whether an author could have phrased the value differently: `--intent`/`--instru
 reason are examples, not the boundary. `GATE_BYPASS` is no exception for being a shell assignment
 prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works and is allowed, while `export` does not
 survive between an agent's Bash calls. A multi-line reason file is safe: `gate-overrides.log` is one
-tab-separated record per line and has exactly one writer, `scripts/bypass_log.sh` — the hook bypass,
+tab-separated record per line, and every writer normalises the reason through `scripts/bypass_reason.sh` — the hook bypass,
 `gate_ci.sh`'s CI bypass and the Verifier's per-finding waiver all route through it — which
 normalises the reason through `scripts/bypass_reason.sh` so one override stays one parseable record
 with the whole reason intact. A value fully determined by a template, with only ids, paths
