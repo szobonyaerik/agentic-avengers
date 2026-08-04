@@ -165,7 +165,8 @@ agentic-avengers/
 ├── agents/                canonical subagents (Claude format)
 ├── skills/                portable SKILL.md skills (pipeline-conventions, grill-me,
 │                          spec-review-checklist, tdd, verifier-triage,
-│                          mutation-interpret, codemap, self-improvement, e2e-author, …)
+│                          mutation-interpret, codemap, self-improvement,
+│                          pipeline-retrospective, e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
