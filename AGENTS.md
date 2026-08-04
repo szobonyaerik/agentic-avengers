@@ -82,6 +82,14 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md
 # once the FINAL phase of the feature is green:
 @avenger-backend-architect --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/
+# then feature close, in this order:
+git add -A && git commit                  # commit 1: the e2e output — the ship gate needs a clean tree
+no-mistakes axi run --intent "$(cat <intent-file>)"   # SHIP GATE: lint, docs, push, PR, CI.
+                                          # Runs in both modes. Stops at checks-passed, never merges.
+                                          # Intent comes from a FILE, never inline: the --auto deny
+                                          # regex matches the whole command string.
+# retrospective triage (interactive only): lavish-axi over the observation log, then
+git add -A && git commit                  # commit 2: the observation log, after triage
 ```
 
 ## Models / provider

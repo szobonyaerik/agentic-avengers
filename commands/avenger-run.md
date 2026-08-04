@@ -18,8 +18,14 @@ resolved one.
 
 Run these before anything else, and stop with the fix if one fails:
 
-- `git rev-parse --abbrev-ref HEAD` — if on `main`/`master`, create `feat/<feature-id>`. Never work on
-  the default branch.
+- `git rev-parse --abbrev-ref HEAD` — **the run must be on `feat/<feature-id>` and stay there.**
+  - On `main`/`master`: create `feat/<feature-id>`. Never work on the default branch.
+  - Already on `feat/<feature-id>`: continue — that is the normal resume path.
+  - On any **other** branch: stop, naming the branch you are on, and tell the user to switch
+    (`git switch -c feat/<feature-id>`) or re-invoke with the feature id matching the branch. Do not
+    build on it silently: §4a requires this branch, and `no-mistakes axi respond` resolves to the
+    *current* branch's active run, so a mismatch surfaces only at `done` — after every phase is
+    built. Same wasted-run failure the `.no-mistakes.yaml` content check below exists to prevent.
 - `docs/features/<feature-id>/` exists? If not and a brief was given, create it. If `docs/features/`
   itself is missing, tell the user to run `/plan-build-verify:pipeline-init <feature-id>` first and stop.
 - `OPENROUTER_API_KEY` set (or `opencode` on PATH). Gates fail closed without it — do not start a run
@@ -186,28 +192,49 @@ the one exception to "the orchestrator never pushes" in **both** modes.
 
 **You must be on the feature branch.** `no-mistakes axi respond` resolves to the *current branch's*
 active run and takes no `--run` flag, so from the wrong branch it returns `error: no step is
-awaiting approval` while the real run sits parked and invisible. Preflight already branched you to
-`feat/<feature-id>`; do not switch away mid-gate.
+awaiting approval` while the real run sits parked and invisible. Preflight asserted you are on
+`feat/<feature-id>` and stopped the run if you were not; do not switch away mid-gate.
 
 1. **Preconditions.** Every phase has `verdict.json` with `verdict: pass`, `tests/e2e/<feature>/`
    exists, and the working tree is clean and committed on `feat/<feature-id>`. Any missing → stop.
-2. **Look for an active run before starting one.** `no-mistakes axi` (or `axi status`) reports the
-   current branch's active run. **If one is already parked at a gate, do not start a second** —
-   inspect it with `axi status`, answer it with `axi respond --action ...`, and rejoin at step 3.
-   That is the normal state when an `--auto` run halted on an `ask-user` finding and the user has
-   come back interactively. `axi run` reattaches only while HEAD still matches the submitted head, so
-   it is **not** a general-purpose resume command.
-   Only when there is no active run for the current HEAD, start one, passing the feature's goal as
-   intent:
-   ```bash
-   no-mistakes axi run --intent "<goal from overview.md, plus the decisions, tradeoffs and
-     deliberate divergences recorded in plan.md and each handover.md>"
-   ```
+2. **Look for an existing run before starting one.** `no-mistakes axi` is the home view: it lists
+   this branch's runs with their status and PR. Read it first and branch on what it shows — **only a
+   branch with neither an active nor a shipped run gets a new `axi run`**:
+   - **A run parked at a gate** → do not start a second. Inspect it with `axi status`, answer it
+     with `axi respond --action ...`, and rejoin at step 3. That is the normal state when an
+     `--auto` run halted on an `ask-user` finding and the user came back interactively.
+   - **A run that already reached `checks-passed` with its PR open** → the feature is already
+     shipped. **Report that PR and stop.** Do not start a fresh validate-and-push cycle over an open
+     PR. This is the re-entry case, not a rare one: `done` is resolved purely from `e2e-mapping.md`,
+     so any later `/avenger-run <feature-id>` on a shipped feature lands right back here.
+   - **Neither** → start one, passing the feature's goal as intent.
+
+   `axi run` reattaches only while HEAD still matches the submitted head — it is **not** a
+   general-purpose resume command, and §5's *second* feature-close commit moves HEAD past that
+   point, which is exactly why naive re-entry starts a second run instead of rejoining the first.
+
+   **Build the intent in a file and pass it by reading that file — the prose must never appear in a
+   shell command at all:**
+   - **Write the file with the `Write` tool**, not with `cat`/`echo`/a heredoc. A heredoc puts the
+     prose back on the command line and hits the same deny (verified: a heredoc carrying `git push`
+     is denied).
+   - Then start the run with the file read inline, so the command string stays prose-free:
+     ```bash
+     no-mistakes axi run --intent "$(cat .lavish/<feature-id>-intent.md)"
+     ```
+
+   Do not "simplify" that back to an inline string. It defends two real failures at once: under
+   `--auto`, `hook_autoapprove.sh` matches its deny regex against the **whole** command string, so an
+   intent mentioning `git push` or `gh pr create` — near-certain for a feature that touches shipping —
+   makes the hook **deny the ship gate's own start command**; and backticks in an inline intent are
+   eaten by the shell as command substitution. The fix is not to narrow the deny list, which is
+   correct as written — it is to keep prose off the command line. Put the file under `.lavish/`
+   (already gitignored per §3) or `${TMPDIR}` so it is never committed.
+
    Add `--yes` **only** when the run was invoked with `--auto --ship-yes`.
    **A thin intent is actively harmful** — the review uses it to tell a deliberate decision from a
    mistake, so anything the pipeline chose on purpose (a same-family gate, a disabled feature, a
-   waived finding) must be stated or it gets flagged as a defect. Write the intent to a file and
-   pass `"$(cat file)"`: backticks in an inline string are eaten as shell command substitution.
+   waived finding) must be stated or it gets flagged as a defect.
 3. **Drive it.** Read every return. On a `gate:`, respond; loop until an `outcome:`. Steps take
    minutes — a long call is working, not stalled. Never idle-wait; the run does not advance on its
    own.
@@ -221,9 +248,18 @@ awaiting approval` while the real run sits parked and invisible. Preflight alrea
      something yourself — that discards in-flight work.
 4. **Stop at `outcome: checks-passed`.** The PR is ready; tell the user to review and merge. Do not
    wait for the merge — the CI monitor handles rebase-on-conflict by itself.
-5. **If it ends `failed`** (an agent crash mid-fix will do this), the pipeline's commits are
-   preserved but unpushed. Read `branch_sync.next_action` and follow it — `axi sync --recover` when
-   it says `recover_custody`. Never improvise a reset, rebase or branch replacement to recover.
+5. **If it ends `failed`** (an agent crash mid-fix will do this), **the feature is not shipped** —
+   no PR, nothing pushed — and the run does **not** continue as if it closed normally.
+   1. **Recover custody first.** The pipeline's commits are preserved but unpushed. Read
+      `branch_sync.next_action` and follow it — `axi sync --recover` when it says `recover_custody`.
+      Never improvise a reset, rebase or branch replacement to recover.
+   2. **Re-drive it exactly once** with `no-mistakes rerun` (a *between-runs* action, valid only
+      after a terminal outcome like this). If that reaches an `outcome:`, continue from step 4 with
+      it. Never leave the user parked at `failed` without either retrying or saying what blocks it.
+   3. **If the re-drive also ends `failed`, halt.** Recover custody again, then stop and hand it to
+      the user with the gate's output — do not retry a third time and do not report the feature as
+      shipped. Still do step 6 (a ship gate that failed twice is prime retrospective evidence) and
+      §5's second commit via the `recover_custody` path, then report through §8's `failed` branch.
 6. **Log what the gate found** as pipeline observations before moving on — one entry per finding, not
    one per run. A defect the ship gate caught that every avengers gate missed is a finding *about the
    pipeline*, and it is the single most valuable input the retrospective gets:
@@ -284,9 +320,13 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
      e2e suite and `e2e-mapping.md`, and also `pipeline-observations.md`, which §6 requires you to
      append *the moment* something happens and which the per-phase rule stops covering once the last
      phase's commit has landed. `git status` is the authority on what is outstanding; anything left
-     behind here is what makes §4a step 1 stop.
+     behind here is what makes §4a step 1 stop. `docs/lessons/` is the case that proves why a fixed
+     path list fails: **any** agent may append a lesson mid-run (`skills/self-improvement`), it sits
+     outside both `tests/e2e/` and `docs/features/`, and a run whose implementer logged one would
+     stop the ship gate on its own clean-tree precondition.
      ```bash
-     git add tests/e2e/<feature-id> docs/features/<feature-id>
+     git status --short          # the authority — read it, then stage what it lists
+     git add -A
      git commit -m "test(<feature-id>): feature-level e2e suite"
      ```
   2. **After §4b resolves the triage** — or, under `--auto` where §4b is skipped, after §4a. This
@@ -307,7 +347,8 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 
      Never reset, rebase, force or replace the branch by hand.
      ```bash
-     git add docs/features/<feature-id>
+     git status --short          # same rule as commit 1: sweep, do not enumerate
+     git add -A
      git commit -m "docs(<feature-id>): feature-close pipeline observations"
      ```
      Say plainly in the report that this second commit landed **after** the PR was opened, is
@@ -375,6 +416,12 @@ Then, depending on how the run ended:
 - **Ship gate halted on an `ask-user` finding under `--auto`** — reproduce the finding **verbatim**
   (id, file, full description), say the `no-mistakes` run is parked on the branch, and tell the user
   to resume interactively to answer it. Do not summarise it away or guess the answer.
+- **Ship gate ended `failed`** (including after the single re-drive in §4a step 5) — say plainly
+  that **the feature is not shipped**: no PR, nothing pushed. Give the gate's failing step and its
+  output, say custody was recovered and by which `branch_sync.next_action`, and hand the user the
+  command to re-drive (`no-mistakes rerun`). Never end a `failed` run reporting only the commits.
+- **Ship gate already shipped this feature** (§4a step 2 found a `checks-passed` run with an open
+  PR) — give that PR link and say no new run was started, rather than implying fresh validation ran.
 - **Ship gate skipped (preconditions unmet)** — say so explicitly and print the command the user
   should run, rather than implying the feature is shipped.
 - **Anything still `triage: pending`** — say which features, so the user knows observations are

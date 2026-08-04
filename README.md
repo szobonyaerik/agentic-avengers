@@ -108,9 +108,17 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
 FEATURE CLOSE (once, after the final phase is green)
   implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
                  1-3 tests (5 max) proving overview.md's goal through the assembled system
+  commit 1: the e2e stage output, so the ship gate starts from a clean committed tree
+  SHIP GATE: no-mistakes (/avenger-run 4a) -> lint, docs, push, PR, CI
+                 the one sanctioned same-family gate; runs in BOTH modes; stops at
+                 checks-passed and never merges. Its findings are logged as observations.
+  RETROSPECTIVE TRIAGE (/avenger-run 4b, interactive only) -> lavish triage of those
+                 observations; only what the human selects is filed as an issue.
+  commit 2: the observation log, after triage (branch_sync decides how, never whether)
 
 SHIP
-  commit (pre-commit floor) -> PR (CI floor). Break-glass overrides logged + visible.
+  The ship gate opened the PR. The user reviews and merges — the orchestrator never does.
+  Break-glass overrides logged + visible.
 ```
 
 ### Who writes the tests
@@ -208,6 +216,15 @@ agentic-avengers/
 - A cross-family provider: **`OPENROUTER_API_KEY`** exported (gates use OpenRouter), and/or opencode
   configured. Set **`AUTHOR_FAMILY`** (default `anthropic`) so the cross-family assertion knows the
   build family.
+- **`no-mistakes`** on PATH **and a filled-in `.no-mistakes.yaml`** at the repo root — the
+  feature-close ship gate (`/avenger-run` §4a), in interactive *and* `--auto` runs. `/pipeline-init`
+  scaffolds the file with `REPLACE_ME` placeholders; **fill in `commands.lint` and `commands.test`
+  before the first run**, because preflight checks the content, not just the file's existence.
+- **`lavish-axi`** on PATH — the plan-approval stop (§3) and the retrospective triage (§4b).
+  Interactive runs only; `--auto` skips both surfaces.
+
+Neither of those two has a fallback, on purpose: **preflight stops the run** when one is missing or
+unfilled, rather than silently degrading a gate.
 
 ---
 
