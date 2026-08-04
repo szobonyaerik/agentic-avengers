@@ -7,7 +7,7 @@
 # the normal permission flow applies untouched. Silence is the safe default and every failure path
 # takes it.
 #
-# HARD DENIALS are not configurable. `git push`, publishing commands, GitHub PR/issue/release
+# HARD DENIALS are not configurable. `git push`, publishing commands, GitHub PR/issue/release/gist
 # creation and `rm` are denied outright for the duration of an auto run: the orchestrator branches
 # and commits but never pushes, and nothing in the pipeline needs to delete files. Issue creation is
 # included because the pipeline-retrospective files improvement issues upstream, and its
@@ -38,7 +38,7 @@ sentinel, raw, extra_deny, ttl_min = sys.argv[1], sys.argv[2], sys.argv[3], sys.
 # Outward-facing or unrecoverable. Deliberately not overridable — see the header.
 HARD_DENY = r"""
     git\s+push
-  | gh(-axi)?\s+(pr|release|repo|issue)\s+(create|merge|edit|delete|close)
+  | gh(-axi)?\s+(pr|release|repo|issue|gist)\s+(create|merge|edit|delete|close)
   | (npm|yarn|pnpm)\s+publish
   | twine\s+upload
   | (^|[;&|]\s*)\s*rm\b
@@ -94,7 +94,8 @@ if command:
     if re.search(HARD_DENY, command, re.IGNORECASE | re.VERBOSE):
         decide(
             "deny",
-            "avenger-run --auto never auto-approves push, publish, rm or sudo. "
+            "avenger-run --auto never auto-approves push, publish, GitHub "
+            "PR/issue/release/gist creation, rm or sudo. "
             "Run it yourself outside the auto run if you meant it.",
         )
     if extra_deny.strip():

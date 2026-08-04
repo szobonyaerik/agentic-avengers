@@ -160,6 +160,10 @@ HARD_DENIED = [
     "gh issue close 4",
     "gh-axi issue create --repo o/r --title x",
     "gh-axi pr create --fill",
+    # `gh gist create` publishes publicly by default, and `gist` is part of the gh-axi surface the
+    # orchestrator can reach — outward-facing in exactly the same way as issue creation.
+    "gh gist create notes.md",
+    "gh-axi gist create notes.md",
     "npm publish",
     "twine upload dist/*",
     "rm file.txt",

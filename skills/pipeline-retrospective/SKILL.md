@@ -43,6 +43,7 @@ a `/clear` or a closed laptop between phase 2 and phase 6 takes your recollectio
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature> \
+  --root "${CLAUDE_PROJECT_DIR}" \
   --kind <gate-friction|route-back|bypass|stage-churn|success|other> \
   --note "<what happened, and what it suggests about the pipeline>" \
   --evidence "<path>" [--evidence "<path>" ...]
@@ -90,7 +91,8 @@ sweep, everything an `--auto` run learned is stranded on disk forever.
    actionable without re-deriving them.
 5. **Close the loop** — always, even if nothing was selected:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" resolve <feature>
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" resolve <feature> \
+     --root "${CLAUDE_PROJECT_DIR}"
    ```
    Dismissing *is* a decision. Without this the same set is re-presented on every future run and the
    triage becomes noise people learn to skip.

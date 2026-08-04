@@ -141,7 +141,7 @@ loads the ladder into the main thread for inline implementation the hook cannot 
 off by default there, since the main thread also writes specs and runs verifier triage. opencode has no
 subagent-start event; its implementers get the ladder from the agent prompt line only.
 
-### 6b. The pipeline learns from itself — two logs, kept apart
+### 6c. The pipeline learns from itself — two logs, kept apart
 `docs/lessons/` (`skills/self-improvement`) is **per-project** and about the **work** — a pytest trap,
 a migration gotcha. Any agent reads the index at start and appends when something is learning-worthy.
 It was dormant until now; `pipeline-conventions` is where every agent picks it up, so it needs no
