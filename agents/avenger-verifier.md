@@ -69,8 +69,10 @@ non-JSON, same-family), the phase **does not pass**.
    and **missing negative/edge** (an acceptance-criteria failure condition no test exercises).
 4. **Mutation gate — only if the project enabled it** (`MUTATION_POLICY` = `enforce` / `advisory`; it
    is `off` by default and most teams leave it off). If off, skip this step entirely — run no mutation
-   tool. If on, run `scripts/hook_mutation.sh` (or `bash scripts/mutation_run.sh`) and follow
-   `skills/mutation-interpret`. The score is computed deterministically by
+   tool. If on, run `bash scripts/gate_ci.sh --full` and follow `skills/mutation-interpret`. That is
+   the hand-run entry point: `scripts/hook_mutation.sh` is a PostToolUse hook, so it only fires on a
+   `handover.md` write and reads its target off the hook payload — invoking it from a shell exits
+   silently without scoring anything. The score is computed deterministically by
    `scripts/mutation_score.py`, never by you.
 5. **Triage** anything that isn't green or is gamed: classify each as a *code* issue, a *wrong/gamed
    test*, or a *coverage gap*. All three route back to the **implementer**

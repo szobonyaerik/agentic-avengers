@@ -29,7 +29,7 @@ Run these before anything else, and stop with the fix if one fails:
   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" pending --root "${CLAUDE_PROJECT_DIR}"
   ```
 
-  Anything listed has observations no human has seen — triage them (§6) before starting new work.
+  Anything listed has observations no human has seen — triage them (§4a) before starting new work.
   Skip when `--auto`: there is nobody to triage with, and they keep until the next interactive run.
   This sweep is the *only* thing that recovers what an `--auto` run learned, because `done` is a
   terminal state and will never re-fire that feature's own close.
@@ -52,7 +52,8 @@ Run these before anything else, and stop with the fix if one fails:
   rm -f "${CLAUDE_PROJECT_DIR}/.avenger-auto"
   ```
 
-  `git push`, `gh pr create`, publish commands, `rm` and `sudo` are **denied outright** while it is
+  `git push`, `gh`/`gh-axi` PR, issue, release and gist creation, publish commands, `rm` and `sudo`
+  are **denied outright** while it is
   armed and no setting re-enables them. If the run genuinely needs one, halt and tell the user to run
   it themselves.
 
@@ -119,7 +120,8 @@ Load `skills/pipeline-retrospective` and follow its triage procedure. In short:
    `szobonyaerik/agentic-avengers`, titled as the *change*, with the evidence paths in the body.
 5. **Always close the loop**, even when nothing was selected:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" resolve <feature-id>
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" resolve <feature-id> \
+     --root "${CLAUDE_PROJECT_DIR}"
    ```
 
 **Under `--auto`: skip this section entirely.** There is no human to poll and a foreground
@@ -154,6 +156,7 @@ session:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
+  --root "${CLAUDE_PROJECT_DIR}" \
   --kind <gate-friction|route-back|bypass|stage-churn|success|other> \
   --note "<what happened, and what it suggests about the pipeline>" --evidence "<path>"
 ```

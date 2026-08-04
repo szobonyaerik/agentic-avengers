@@ -165,7 +165,8 @@ agentic-avengers/
 ├── agents/                canonical subagents (Claude format)
 ├── skills/                portable SKILL.md skills (pipeline-conventions, grill-me,
 │                          spec-review-checklist, tdd, verifier-triage,
-│                          mutation-interpret, codemap, self-improvement, e2e-author, …)
+│                          mutation-interpret, codemap, self-improvement,
+│                          pipeline-retrospective, e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
@@ -177,6 +178,7 @@ agentic-avengers/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
+│   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md

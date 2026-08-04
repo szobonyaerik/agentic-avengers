@@ -141,7 +141,18 @@ loads the ladder into the main thread for inline implementation the hook cannot 
 off by default there, since the main thread also writes specs and runs verifier triage. opencode has no
 subagent-start event; its implementers get the ladder from the agent prompt line only.
 
-### 6b. The pipeline learns from itself — two logs, kept apart
+**The second `SubagentStart` hook is `scripts/hook_lessons.sh`**, and it exists for the same reason:
+`docs/lessons/` shipped with a complete written procedure and zero invocations, because a directive in
+a skill reaches only the agents that load that skill. It matches `agent_type` against `LESSONS_AGENTS`
+(default `avenger-`, unanchored) and injects a short **pointer** — the entry count in
+`docs/lessons/lessons.json` plus "read the index, filter by role, open only what matters". It never
+inlines the log or a prose file; it fires on every spawn. The two hooks differ in **reach on purpose**:
+ponytail excludes the Verifier, Breaker and bug-hunter because "write less code" fights their job,
+while lessons reach **all** of them because prior lessons never do. Same fail-closed discipline — bad
+payload, unmatched agent, bad regex, missing/unparseable/empty index inject nothing, so a project with
+no lessons sees no change. `LESSONS_OFF=1` kills it, and opencode's agents get no injection.
+
+### 6c. The pipeline learns from itself — two logs, kept apart
 `docs/lessons/` (`skills/self-improvement`) is **per-project** and about the **work** — a pytest trap,
 a migration gotcha. Any agent reads the index at start and appends when something is learning-worthy.
 It was dormant until now; `pipeline-conventions` is where every agent picks it up, so it needs no

@@ -10,12 +10,15 @@ The opposite failure matters too: a set the human already dismissed must never b
 the triage becomes noise people learn to skip.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "pipeline_observations.py"
+
+sys.path.insert(0, str(SCRIPT.parent))
 
 from pipeline_observations import (  # noqa: E402
     OBSERVATIONS_FILENAME,
@@ -30,6 +33,17 @@ def feature_dir(root: Path, name: str) -> Path:
     d = root / "docs" / "features" / name
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Invoke the script the way the docs do — as a subprocess, from an unrelated cwd."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 # ── append: creates a well-formed file, then appends without clobbering ──────
@@ -173,3 +187,70 @@ def test_resolve_on_a_feature_with_no_observations_raises(tmp_path: Path) -> Non
     feature_dir(tmp_path, "demo")
     with pytest.raises(FileNotFoundError):
         resolve_triage(tmp_path, "demo")
+
+
+# ── the CLI itself ──────────────────────────────────────────────────────────
+#
+# The library functions above take `root` as an argument, so they cannot catch a broken argument
+# parser — and a broken parser is total: every documented call site writes `--root` *after* the
+# subcommand, and the preflight sweep is the only thing that ever recovers an `--auto` run's
+# observations. These drive the documented command lines end to end, from a cwd that is deliberately
+# not the root, and assert the effect on disk rather than merely the absence of a traceback.
+
+
+@pytest.fixture
+def elsewhere(tmp_path: Path) -> Path:
+    """A cwd that is not the repo root — where the log must *not* be written."""
+    d = tmp_path / "elsewhere"
+    d.mkdir()
+    return d
+
+
+def test_cli_append_accepts_root_after_the_subcommand(tmp_path: Path, elsewhere: Path) -> None:
+    root = tmp_path / "repo"
+    feature_dir(root, "demo")
+
+    result = cli(
+        "append", "demo", "--root", str(root), "--kind", "success", "--note", "verifier caught one",
+        cwd=elsewhere,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = (root / "docs" / "features" / "demo" / OBSERVATIONS_FILENAME).read_text()
+    assert "verifier caught one" in body
+    assert "triage: pending" in body
+    assert not (elsewhere / "docs").exists(), "the log must land under --root, not the cwd"
+
+
+def test_cli_pending_accepts_root_after_the_subcommand(tmp_path: Path, elsewhere: Path) -> None:
+    root = tmp_path / "repo"
+    feature_dir(root, "demo")
+    append_observation(root, "demo", kind="gate-friction", note="x")
+    feature_dir(root, "quiet")
+
+    result = cli("pending", "--root", str(root), cwd=elsewhere)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["demo"]
+
+
+def test_cli_resolve_accepts_root_after_the_subcommand(tmp_path: Path, elsewhere: Path) -> None:
+    root = tmp_path / "repo"
+    feature_dir(root, "demo")
+    append_observation(root, "demo", kind="gate-friction", note="x")
+
+    result = cli("resolve", "demo", "--root", str(root), cwd=elsewhere)
+
+    assert result.returncode == 0, result.stderr
+    assert read_triage(root, "demo") == "done"
+    assert cli("pending", "--root", str(root), cwd=elsewhere).stdout.strip() == ""
+
+
+def test_cli_resolve_reports_a_missing_log_without_crashing(tmp_path: Path, elsewhere: Path) -> None:
+    root = tmp_path / "repo"
+    feature_dir(root, "demo")
+
+    result = cli("resolve", "demo", "--root", str(root), cwd=elsewhere)
+
+    assert result.returncode == 1
+    assert OBSERVATIONS_FILENAME in result.stderr

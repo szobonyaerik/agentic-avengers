@@ -136,8 +136,19 @@ destinations. Putting a note in the wrong one buries it.
 | Written by | **any agent**, whenever something is learning-worthy | the **orchestrator**, during `/avenger-run` |
 | Ends up | in this repo, read at session start | as an issue on the **agentic-avengers** repo |
 
-**Every agent: load `skills/self-improvement` at the start of your work.** If
-`docs/lessons/lessons.json` exists, read the *index only*, filter to your role and task, and open
+**Delivery is a hook, not a directive in this file.** A line here reaches only the agents that
+actually load this skill, which is how the lessons log stayed dormant in the first place — so
+`scripts/hook_lessons.sh` fires on **`SubagentStart`**, matches `agent_type` against `LESSONS_AGENTS`
+(default `avenger-`, unanchored so plugin-scoped names match), and injects a short **pointer**: how
+many entries `docs/lessons/lessons.json` holds and the read procedure below. It never inlines the log
+or a prose file — it runs on every spawn. Unlike `ponytail` it reaches **every** avenger agent,
+including the Verifier, Breaker and bug-hunter: a "write less code" persona conflicts with their job,
+prior lessons do not. It **fails closed** — bad payload, unmatched agent, bad regex, and a missing,
+unparseable or empty index all inject nothing, so a project that never wrote a lesson sees no change.
+`LESSONS_OFF=1` disables it. opencode has no subagent-start event, so its agents do not get this
+injection; they pick the procedure up from `skills/self-improvement` only.
+
+The procedure the pointer refers to: read the *index only*, filter to your role and task, and open
 just the handful of prose files that matter. Write a lesson the moment something is learning-worthy
 — a user correction, a self-caught mistake, or a confirmed-good approach — appending or refining,
 never overriding. If the file is missing, skip silently.

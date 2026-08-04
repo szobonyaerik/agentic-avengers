@@ -17,7 +17,7 @@ reported pending rather than skipped, because a human noticing a malformed file 
 dropping what the pipeline learned.
 
     python3 scripts/pipeline_observations.py pending [--root .]
-    python3 scripts/pipeline_observations.py append <feature> --kind <kind> --note <text>
+    python3 scripts/pipeline_observations.py append <feature> [--root .] --kind <kind> --note <text>
     python3 scripts/pipeline_observations.py resolve <feature> [--root .]
 """
 
@@ -162,19 +162,27 @@ def pending_features(root: Path) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # --root belongs to every subcommand, not to the top-level parser: every documented call site
+    # writes it *after* the subcommand, which a top-level-only option rejects with exit 2.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--root", default=".", help="repo root (default: .)")
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default=".", help="repo root (default: .)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("pending", help="list features with untriaged observations")
+    sub.add_parser(
+        "pending", parents=[common], help="list features with untriaged observations"
+    )
 
-    ap = sub.add_parser("append", help="append one observation")
+    ap = sub.add_parser("append", parents=[common], help="append one observation")
     ap.add_argument("feature")
     ap.add_argument("--kind", default="other", help=f"one of: {', '.join(KINDS)}")
     ap.add_argument("--note", required=True)
     ap.add_argument("--evidence", action="append", default=[])
 
-    rp = sub.add_parser("resolve", help="mark a feature's observations as triaged")
+    rp = sub.add_parser(
+        "resolve", parents=[common], help="mark a feature's observations as triaged"
+    )
     rp.add_argument("feature")
 
     args = parser.parse_args(argv)
