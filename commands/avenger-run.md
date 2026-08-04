@@ -1,6 +1,6 @@
 ---
 description: Drive the plan-build-verify pipeline end to end for one feature — resumable from the artifacts on disk, stops for plan approval and spec-review, commits per verified phase.
-argument-hint: "<feature-id> [\"<brief or path to brief>\"] [--auto] [--from <stage>]"
+argument-hint: "<feature-id> [\"<brief or path to brief>\"] [--auto] [--ship-yes] [--from <stage>]"
 disable-model-invocation: true
 ---
 
@@ -9,8 +9,10 @@ yourself — you invoke the stage agents, read what they produced, and decide th
 exception is git (below).
 
 Parse `$ARGUMENTS`: the first token is the **feature id**; a quoted string or a path is the **brief**
-(required only on the first run); `--auto` runs unattended; `--from <stage>` forces a starting stage
-instead of the resolved one.
+(required only on the first run); `--auto` runs unattended; `--ship-yes` lets the §4a ship gate
+resolve its own `ask-user` findings and is **valid only together with `--auto`** — reject it on an
+interactive run, where you can simply ask; `--from <stage>` forces a starting stage instead of the
+resolved one.
 
 ## 1. Preflight
 
@@ -22,6 +24,15 @@ Run these before anything else, and stop with the fix if one fails:
   itself is missing, tell the user to run `/plan-build-verify:pipeline-init <feature-id>` first and stop.
 - `OPENROUTER_API_KEY` set (or `opencode` on PATH). Gates fail closed without it — do not start a run
   that will halt at the first gate.
+- **`no-mistakes` on PATH and `.no-mistakes.yaml` at the repo root.** The §4a ship gate needs both,
+  in interactive *and* `--auto` runs. Missing → stop now and say so: §4a fires at `done`, after every
+  phase is already built, and discovering it there wastes the whole run.
+  `/plan-build-verify:pipeline-init` scaffolds the config.
+- **`lavish-axi` on PATH** — unless `--auto`, which skips both surfaces that use it. The plan
+  approval stop (§3) and the retrospective triage (§4b) render through it and there is **no markdown
+  fallback on purpose**: a stop that silently degrades to a plain read is a gate weakened invisibly,
+  which is the failure mode this pipeline exists to prevent. Missing → stop and tell the user to
+  install it.
 - **Untriaged pipeline observations** — load `skills/pipeline-retrospective` and sweep **every**
   feature, not just this one:
 
@@ -55,7 +66,9 @@ Run these before anything else, and stop with the fix if one fails:
   `git push`, `gh`/`gh-axi` PR, issue, release and gist creation, publish commands, `rm` and `sudo`
   are **denied outright** while it is
   armed and no setting re-enables them. If the run genuinely needs one, halt and tell the user to run
-  it themselves.
+  it themselves. The §4a ship gate is the deliberate exception and needs no allowance: it pushes and
+  opens the PR from inside the daemon's **own** worktree, in its own process, so no `git push` ever
+  reaches this hook to be denied.
 
   Without `--auto`: do not write the sentinel. Spec-review is the HITL grill and will block, which is
   the point.
@@ -88,7 +101,7 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
 | `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature |
-| `done` | **Ship gate (§4a), retrospective triage (§4b), then** report and stop |
+| `done` | **Ship gate (§4a), retrospective triage (§4b), the feature-close commit (§5), then** report and stop |
 
 `--from <stage>` overrides the first iteration only; afterwards the resolver drives.
 
@@ -138,10 +151,24 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 The last phase is verified and the e2e suite is written. Everything the avengers gate covers is
 green — and none of it covered lint, docs, push, PR or CI. That is this stage.
 
-**Interactive runs only.** Under `--auto`, skip this entire section: it pushes and opens a PR, and
-§5 says those are the user's call. Note the hard-deny list cannot save you here — `no-mistakes`
-pushes from inside the daemon's own worktree, so `hook_autoapprove.sh` never sees a `git push` to
-deny. The rule is the guard. Report the gate as pending and print the command for the user instead.
+**It runs in `--auto` runs too.** The only thing `--auto` changes is what happens on an `ask-user`
+finding:
+
+- **Default under `--auto`** — drive the `auto-fix` and `no-op` findings on your own judgement
+  exactly as you would interactively, but on an **`ask-user` finding, halt the run**, with the
+  finding recorded **verbatim** in the report (id, file, full description). This is the same halt
+  `--auto` already performs on a spec-review NO-GO. `no-mistakes` marks a finding `ask-user`
+  precisely because it challenges the user's deliberate intent or changes product behaviour, so an
+  unattended run must not answer it. Nothing is lost: the `no-mistakes` run stays parked on the
+  branch and the user resumes interactively to answer it.
+- **`--ship-yes`** (only valid with `--auto`) passes `--yes` to `no-mistakes`, which treats every
+  actionable finding — `ask-user` included — as consent to fix, so the gate drives itself all the way
+  to `checks-passed` with no halt. `--yes` is the user's **standing consent for the pipeline to
+  resolve questions it flagged as theirs**. It is per-run, opt-in, and deliberately not the default.
+
+So an `--auto` run **can** push and open a PR. That is intended, not a leak: the push happens inside
+the daemon's own worktree where `hook_autoapprove.sh` never sees it, and §5 records the ship gate as
+the one exception to "the orchestrator never pushes" in **both** modes.
 
 **You must be on the feature branch.** `no-mistakes axi respond` resolves to the *current branch's*
 active run and takes no `--run` flag, so from the wrong branch it returns `error: no step is
@@ -155,6 +182,7 @@ awaiting approval` while the real run sits parked and invisible. Preflight alrea
    no-mistakes axi run --intent "<goal from overview.md, plus the decisions, tradeoffs and
      deliberate divergences recorded in plan.md and each handover.md>"
    ```
+   Add `--yes` **only** when the run was invoked with `--auto --ship-yes`.
    **A thin intent is actively harmful** — the review uses it to tell a deliberate decision from a
    mistake, so anything the pipeline chose on purpose (a same-family gate, a disabled feature, a
    waived finding) must be stated or it gets flagged as a defect. Write the intent to a file and
@@ -164,7 +192,9 @@ awaiting approval` while the real run sits parked and invisible. Preflight alrea
    own.
    - `auto-fix` / `no-op` findings: decide yourself.
    - **`ask-user` findings: relay verbatim** — id, file, full description — and let the user decide.
-     Never approve, fix or skip one on your own judgement.
+     Never approve, fix or skip one on your own judgement. Under `--auto` there is nobody to relay
+     to, so **halt** and put it verbatim in the report instead; under `--auto --ship-yes` the `--yes`
+     you already passed resolves it and you keep driving.
    - **Never hand-fix while a run is active.** The pipeline owns both findings and fixes; the
      route-back-to-implementer rule is suspended for the duration. Do not `abort`/`rerun` to go fix
      something yourself — that discards in-flight work.
@@ -173,14 +203,18 @@ awaiting approval` while the real run sits parked and invisible. Preflight alrea
 5. **If it ends `failed`** (an agent crash mid-fix will do this), the pipeline's commits are
    preserved but unpushed. Read `branch_sync.next_action` and follow it — `axi sync --recover` when
    it says `recover_custody`. Never improvise a reset, rebase or branch replacement to recover.
-6. **Log what the gate found** as pipeline observations before moving on. A defect the ship gate
-   caught that every avengers gate missed is a finding *about the pipeline*, and it is the single
-   most valuable input the retrospective gets:
+6. **Log what the gate found** as pipeline observations before moving on — one entry per finding, not
+   one per run. A defect the ship gate caught that every avengers gate missed is a finding *about the
+   pipeline*, and it is the single most valuable input the retrospective gets:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feature-id> \
-     --root "${CLAUDE_PROJECT_DIR}" --kind gate-friction \
+     --root "${CLAUDE_PROJECT_DIR}" --kind other \
      --note "ship gate found <what>; no avengers gate covers it because <why>"
    ```
+   **Pick the `--kind` per observation** from the taxonomy in `skills/pipeline-retrospective` — a
+   coverage gap no avengers gate reaches is `other`, an avengers gate that *did* catch it is
+   `success`. It is **not** `gate-friction`: that kind means a rubric is too strict, which is the
+   opposite signal, and hardcoding it would skew every triage card.
 
 **Do not merge, and do not tell the user a run is finished until an `outcome:` says so.** Merging a
 branch the pipeline still owns splits it from the pipeline head and strands the fix commits.
@@ -214,11 +248,31 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - After each phase has a passing `verdict.json` **and** its `handover.md`, commit everything for that
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
+- **Commit the feature-close artifacts at `done`** — as the last action of the run: after §4b
+  resolves the triage, or, under `--auto` where §4b is skipped, straight after §4a. Never earlier.
+  `pipeline-observations.md` is appended by §4a step 6 and rewritten to `triage: done` by §4b step 5,
+  both *after* the ship gate already opened the PR, and no per-phase commit covers them — under
+  `--auto` it is left at `triage: pending` and still must be committed, or the next interactive run's
+  preflight sweep has nothing on disk to find. Sweep the tree and commit whatever the close produced
+  (the observation log, `e2e-mapping.md` if still untracked):
+  ```bash
+  git add docs/features/<feature-id>
+  git commit -m "docs(<feature-id>): feature-close pipeline observations"
+  ```
+  This is not optional bookkeeping: **§4a step 1 requires a clean tree**, so artifacts left dirty
+  here are what stops the *next* feature's ship gate.
+  **Read `branch_sync` before committing**, from `no-mistakes axi` or `axi status`, and act on its
+  `next_action.code`: `continue_active_run` means the pipeline still owns the branch — keep driving
+  it and make **no** local commit yet; `sync` means run `no-mistakes axi sync` first, then commit on
+  top; `recover_custody` means `no-mistakes axi sync --recover` first. Never reset, rebase, force or
+  replace the branch by hand.
+  Then say plainly in the report that this commit landed **after** the PR was opened, is therefore
+  not in it, and is unpushed — pushing it stays the user's call like every other push.
 - **Never push, never open a PR yourself.** Those are the user's call. Say the commands at the end
-  instead. The **one** exception is the §4a ship gate on an interactive run: `no-mistakes` pushes the
-  branch and opens the PR as part of its own pipeline, and stops at `checks-passed` for the user to
-  review and merge. It never merges. Under `--auto` §4a is skipped, so this exception does not apply
-  and the rule is absolute.
+  instead. The **one** exception is the §4a ship gate, in **both** interactive and `--auto` runs:
+  `no-mistakes` pushes the branch and opens the PR as part of its own pipeline, and stops at
+  `checks-passed` for the user to review and merge. It never merges. The rule is about *you*: the
+  orchestrator never pushes, in either mode.
 
 ## 6. Retries and halting
 
@@ -268,7 +322,12 @@ Then, depending on how the run ended:
 - **Ship gate reached `checks-passed`** — give the PR link and ask the user to review and merge.
   Say plainly what the gate *fixed that the pipeline missed* (its `fixes` table): those are the
   defects every avengers gate let through, and hiding them wastes the run's most useful signal.
-- **Ship gate skipped (`--auto`, or preconditions unmet)** — say so explicitly and print the command
-  the user should run, rather than implying the feature is shipped.
+  If the §5 feature-close commit landed after the PR opened, say it is local and unpushed, and give
+  the `branch_sync` next action rather than a raw `git push`.
+- **Ship gate halted on an `ask-user` finding under `--auto`** — reproduce the finding **verbatim**
+  (id, file, full description), say the `no-mistakes` run is parked on the branch, and tell the user
+  to resume interactively to answer it. Do not summarise it away or guess the answer.
+- **Ship gate skipped (preconditions unmet)** — say so explicitly and print the command the user
+  should run, rather than implying the feature is shipped.
 - **Anything still `triage: pending`** — say which features, so the user knows observations are
   queued and will surface on the next interactive run.

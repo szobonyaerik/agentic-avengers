@@ -98,16 +98,21 @@ the route-back-to-implementer rule is suspended for its duration.
 
 It is wired as **`/avenger-run` §4a**, before the retrospective triage so that what it catches feeds
 the retrospective — a defect the ship gate finds that no avenger stage covers is the most useful
-observation the pipeline gets about itself. **Interactive runs only:** it pushes and opens a PR, and
-`--auto` must never do either. The hard-deny list cannot enforce that here, because `no-mistakes`
-pushes from inside the daemon's worktree where `hook_autoapprove.sh` never sees the command — under
-`--auto` the *rule* is the guard, so §4a is skipped and the gate reported as pending. It stops at
-`checks-passed` and never merges.
+observation the pipeline gets about itself. **It runs under `--auto` too**, and the only thing
+`--auto` changes is `ask-user`: the gate drives its own `auto-fix`/`no-op` findings, but an
+`ask-user` finding **halts the run** with the finding recorded verbatim, the same way `--auto`
+already halts on a spec-review NO-GO — no-mistakes marks a finding `ask-user` because it challenges
+the user's deliberate intent or changes product behaviour, so an unattended run must not answer it.
+`--ship-yes` (valid only with `--auto`) passes `--yes` to no-mistakes and resolves those too: standing,
+per-run consent, deliberately not the default. So an `--auto` run **can** push and open a PR — the
+orchestrator itself still never does, in either mode. It stops at `checks-passed` and never merges.
 
 **Two lavish review surfaces**, both interactive-only and both skipped under `--auto` (a foreground
-`lavish-axi poll` would hang an unattended run): the **plan-approval stop** (`§3` — plan.md rendered
-with a mermaid phase graph, annotations fed back to the planner until approved) and the
-**retrospective triage** (`§4b`).
+`lavish-axi poll` would hang an unattended run): the **plan-approval stop** (**`/avenger-run` §3** —
+plan.md rendered with a mermaid phase graph, annotations fed back to the planner until approved) and
+the **retrospective triage** (**`/avenger-run` §4b**). Both `lavish-axi` and `no-mistakes` are
+**preflight checks** in `/avenger-run` §1 — they fail the run at the start rather than at the plan
+stop or at feature close, and neither has a silent fallback.
 
 **Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
 phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:

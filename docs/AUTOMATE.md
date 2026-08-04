@@ -32,8 +32,11 @@ task-analyst → solution-architect → implementation-planner → spec-writer
   → per phase, per spec: backend/frontend-architect (tests + code, test-first)
   → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
                        LOCKS the suite)  → handover
-  → next phase … → e2e-author (once, after the final phase) → retrospective triage → ship
+  → next phase … → e2e-author (once, after the final phase)
+  → ship gate (no-mistakes: lint, docs, push, PR, CI) → retrospective triage
 ```
+The ship gate runs **before** the triage on purpose: a defect it catches that no avengers gate
+covers is the most valuable thing the retrospective can record about the pipeline.
 Route-backs it must honor (all already emitted by the gates):
 - fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate.
 - verifier code failure → back to `avenger-backend-architect`.
@@ -79,7 +82,15 @@ What it does beyond the flow above:
   on the second bounce of the same phase.
 - **Breaker only on `criticality: critical`** (a spec frontmatter field); mutation only per
   `MUTATION_POLICY`.
-- **Branches once, commits per verified phase, never pushes.**
+- **Branches once, commits per verified phase, plus once at feature close** for the retrospective
+  artifacts written after the ship gate — §4a's next run needs a clean tree.
+- **The orchestrator never pushes and never opens a PR.** The one exception is the **§4a ship gate**,
+  in interactive **and `--auto`** runs alike: `no-mistakes` pushes the branch and opens the PR from
+  inside the daemon's own worktree, stops at `checks-passed`, and never merges. Under `--auto` an
+  `ask-user` finding **halts** the run with the finding recorded verbatim; `--ship-yes` (only valid
+  with `--auto`) passes `--yes` so the gate resolves those itself.
+- **Preflight-checks `no-mistakes` (both modes) and `lavish-axi` (interactive)** and stops if either
+  is missing, rather than dying at the plan stop or at feature close. Neither has a silent fallback.
 - **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
   triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
   run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,
@@ -103,8 +114,10 @@ lets the normal permission flow decide. Silence is the safe default.
 **Hard denials, not configurable:** `git push`, `gh`/`gh-axi` `pr|release|repo|issue|gist` with
 `create|merge|edit|delete|close`, `npm|yarn|pnpm publish`, `twine upload`, `rm`, `sudo`, `dd if=`,
 `mkfs`, and `curl … | sh` are **denied** while an auto run is armed. No environment variable re-enables
-them — the orchestrator branches and commits but never pushes, and nothing in the pipeline needs to
-delete files. Issue creation is in the list because the retrospective files improvement issues
+them — the orchestrator branches and commits but never pushes *itself*, and nothing in the pipeline
+needs to delete files. The §4a ship gate is unaffected either way: it pushes from inside the
+`no-mistakes` daemon's own worktree, in its own process, so no `git push` ever reaches this hook.
+Issue creation is in the list because the retrospective files improvement issues
 upstream and its confirmation gate is a human selecting them, which cannot happen unattended.
 `AVENGER_AUTO_DENY=<regex>` only *adds* patterns. Add `.avenger-auto` to `.gitignore`
 (`/plan-build-verify:pipeline-init` does this).
@@ -112,7 +125,8 @@ upstream and its confirmation gate is a human selecting them, which cannot happe
 ### Using it
 - Manual by default — invoke stages yourself.
 - Hands-off — `/plan-build-verify:avenger-run <feature-id> "<brief>"`, then re-invoke with just the
-  feature id to resume. Add `--auto` for unattended.
+  feature id to resume. Add `--auto` for unattended, and `--auto --ship-yes` when you also want the
+  ship gate to resolve its own `ask-user` findings instead of halting for you.
 
 > **opencode gap:** `sync_opencode.py` transpiles agents and links skills but does not emit
 > `.opencode/command/`, so `/avenger-run` is Claude Code only. Under opencode, drive the stages

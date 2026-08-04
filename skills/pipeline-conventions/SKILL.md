@@ -80,6 +80,20 @@ The implementer authors **both tests and code** test-first (there is no separate
   e2e suite is written, on the feature branch. It covers what no avenger stage does: lint, docs,
   push, PR and CI. It does **not** replace the Verifier — it has no `R<n>.<k>.<m>` traceability, no
   bounded test-quality review, and no `verdict.json`.
+  - **When it runs, and what stops it.** Wired as `/avenger-run` §4a, immediately **before** the
+    retrospective triage so its findings feed that triage. It runs in interactive **and `--auto`**
+    runs alike — it is not interactive-only. Under `--auto` the orchestrator drives the gate's
+    `auto-fix` and `no-op` findings itself, but an **`ask-user` finding halts the run**, recorded
+    verbatim, exactly as `--auto` halts on a spec-review NO-GO: `no-mistakes` marks a finding
+    `ask-user` because it challenges the user's deliberate intent or changes product behaviour, so an
+    unattended run must not answer it. `/avenger-run --auto --ship-yes` passes `--yes` to
+    `no-mistakes`, which resolves `ask-user` findings too — the user's standing consent for the
+    pipeline to answer questions it flagged as theirs, per-run and deliberately not the default.
+  - **It is the one thing in the pipeline that pushes.** It pushes the branch and opens the PR in
+    both modes, stops at `outcome: checks-passed`, and never merges. The orchestrator itself still
+    never pushes and never opens a PR. The `--auto` hard-deny list neither permits nor blocks this:
+    `no-mistakes` pushes from inside the daemon's own worktree, in its own process, so no `git push`
+    ever reaches `hook_autoapprove.sh`.
   - **While a `no-mistakes` run is active it owns both the findings and the fixes**, so the avenger
     "route back to the implementer" rule is suspended for its duration. Never `abort`/`rerun` mid-run
     to hand-fix something. This is exactly why it runs once at feature close and never per phase: by
@@ -188,7 +202,8 @@ on disk (`fidelity_verdict`, `review_status`, `status`, `verdict.json`) and retu
 the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
 for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
 runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified
-phase without ever pushing. Full detail in `docs/AUTOMATE.md` §2.
+phase plus once more at feature close. **The orchestrator itself never pushes**; the feature-close
+ship gate above does, in both modes. Full detail in `docs/AUTOMATE.md` §2.
 
 ## Implementer minimalism (`skills/ponytail`)
 

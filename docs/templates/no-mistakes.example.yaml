@@ -1,0 +1,21 @@
+# no-mistakes repo configuration - the feature-close ship gate (`/avenger-run` section 4a).
+#
+# It runs ONCE per feature, after the last phase is verified and the e2e suite is written, and covers
+# what no avenger stage covers: lint, docs, push, PR, CI. It does NOT replace the per-phase Verifier.
+#
+# Deliberate divergence, scoped to this gate only: the pipeline agent is Anthropic, the same family
+# as the avenger implementers. no-mistakes is a *separate* gate that runs in the daemon's own
+# disposable worktree with no shared context with the stage that wrote the code, so it decorrelates
+# context even though it does not decorrelate model family. The per-phase gates - fidelity,
+# spec-review, verifier - keep their cross-family invariant untouched (see
+# skills/pipeline-conventions/SKILL.md, "Gates"). Pinned explicitly rather than left on `auto` so
+# the choice is a decision on the record, not whatever happens to be on PATH.
+agent: claude
+
+commands:
+  # Replace both with this project's real commands. They are the deterministic local baseline;
+  # keep them targeted - remote CI owns broad regression.
+  lint: "<this project's lint command>"
+  # Must run the feature-level e2e suite too: this gate is the only stage that does, and a test
+  # command that quietly excludes tests/e2e makes the gate weaker than it reads.
+  test: "<this project's test command, including tests/e2e>"

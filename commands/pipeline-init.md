@@ -25,6 +25,13 @@ write no production code.
    `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. Every gate loads this file via
    `scripts/load_env.sh`; the real environment always wins over it.
 
+2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to
+   `.no-mistakes.yaml` in the project **only if one does not already exist** — check first, never
+   overwrite. Tell the user to replace the placeholder `lint` and `test` commands with this project's
+   real ones, and that `test` must include the feature-level e2e suite, since the ship gate
+   (`/avenger-run` §4a) is the only stage that runs it. Without this file the run builds every phase
+   and then fails at feature close, so `/avenger-run` checks for it in preflight.
+
 3. **Conventions in context.** Read the `pipeline-conventions` skill and make sure the rules are
    present for the chosen runtime(s): `CLAUDE.md` (Claude Code) and/or `AGENTS.md` (opencode). Create
    or append the section if missing.
@@ -41,9 +48,14 @@ write no production code.
    → `codebase/MOC.md` (the Solution Architect and implementers read it).
 
 6. **Prereq check.** Report the status of `python3`, `pytest`, `cosmic-ray` (incl. `cr-filter-git` on
-   PATH — the mutation gate diff-scopes with it), `jq`, `tree-sitter` (for codemap), and a
-   cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH). List anything missing with
-   its fix (`pip install cosmic-ray tree-sitter tree-sitter-python`, `brew install jq`).
+   PATH — the mutation gate diff-scopes with it), `jq`, `tree-sitter` (for codemap), a
+   cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH), **`no-mistakes`** (the
+   feature-close ship gate, `/avenger-run` §4a — needed by interactive and `--auto` runs alike) and
+   **`lavish-axi`** (the plan-approval stop `/avenger-run` §3 and the retrospective triage §4b;
+   interactive runs only). List anything missing with its fix (`pip install cosmic-ray tree-sitter
+   tree-sitter-python`, `brew install jq`). `no-mistakes` and `lavish-axi` have **no fallback** —
+   `/avenger-run` stops in preflight when they are absent rather than degrading a stop into a plain
+   markdown read.
 
 7. **Code-path note.** If source is not under `src/`, remind the user to update the path glob in
    `hook_verifier.sh`, `gate_ci.sh`, `.opencode/plugin/pipeline-gates.ts`, and `module-path` in
