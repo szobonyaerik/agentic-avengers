@@ -7,9 +7,12 @@
 # the normal permission flow applies untouched. Silence is the safe default and every failure path
 # takes it.
 #
-# HARD DENIALS are not configurable. `git push`, publishing commands and `rm` are denied outright for
-# the duration of an auto run: the orchestrator branches and commits but never pushes, and nothing in
-# the pipeline needs to delete files. No environment variable re-enables them.
+# HARD DENIALS are not configurable. `git push`, publishing commands, GitHub PR/issue/release
+# creation and `rm` are denied outright for the duration of an auto run: the orchestrator branches
+# and commits but never pushes, and nothing in the pipeline needs to delete files. Issue creation is
+# included because the pipeline-retrospective files improvement issues upstream, and its
+# confirmation gate is a human selecting them in a lavish artifact — which cannot happen on an
+# unattended run. No environment variable re-enables any of them.
 #
 #   AVENGER_AUTO_DENY      extra regex of commands to deny (added to, never replacing, the hard list)
 #   AVENGER_AUTO_TTL_MIN   sentinel lifetime in minutes (default 240) — a crashed run expires
@@ -35,7 +38,7 @@ sentinel, raw, extra_deny, ttl_min = sys.argv[1], sys.argv[2], sys.argv[3], sys.
 # Outward-facing or unrecoverable. Deliberately not overridable — see the header.
 HARD_DENY = r"""
     git\s+push
-  | gh\s+(pr|release|repo)\s+(create|merge|edit|delete)
+  | gh(-axi)?\s+(pr|release|repo|issue)\s+(create|merge|edit|delete|close)
   | (npm|yarn|pnpm)\s+publish
   | twine\s+upload
   | (^|[;&|]\s*)\s*rm\b

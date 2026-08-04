@@ -19,7 +19,8 @@ for these rules; `/pipeline-init` can also copy them into a target repo's own CL
 
 `task-analyst → solution-architect → implementation-planner → spec-writer → [fidelity gate] →
 [human spec review] → backend/frontend implementer → verifier → (breaker, optional) → handover`,
-looped per phase until the feature is done, then a single feature-level **e2e** stage before ship.
+looped per phase until the feature is done, then a single feature-level **e2e** stage, and finally
+the **retrospective triage** (`pipeline-retrospective`) before ship.
 
 The implementer authors **both tests and code** test-first (there is no separate test-author); the
 **Verifier is the independent check**.
@@ -36,6 +37,7 @@ The implementer authors **both tests and code** test-first (there is no separate
     plan.md
     scoped/review-<slice>.md      # spec-isolation-review, when used
     e2e-mapping.md                # written once, at feature close
+    pipeline-observations.md      # what the run revealed about the PIPELINE; triaged at close
     phases/<n>-<slug>/
       specs/<n>.<k>-<subslug>/
         spec.md
@@ -121,6 +123,27 @@ The implementer authors **both tests and code** test-first (there is no separate
 - **Model-based gates run in-chat** — the Verifier's triage and test-quality review, and the grill-me
   spec review. CI only checks their **committed artifacts**. The one exception is the automated
   **Fidelity Gate**, which is a hook and does call a model in-session; it never runs in CI.
+
+## Two learning logs — keep them apart
+
+The pipeline records what it learns in **two** places, with different subjects, scopes and
+destinations. Putting a note in the wrong one buries it.
+
+| | `docs/lessons/` (`self-improvement`) | `pipeline-observations.md` (`pipeline-retrospective`) |
+|---|---|---|
+| Subject | the **work** — a pytest trap, a migration gotcha | the **machinery** — a gate that misfires, a stage that churns |
+| Scope | **per project**, committed, team-shared | per feature, triaged, then filed upstream |
+| Written by | **any agent**, whenever something is learning-worthy | the **orchestrator**, during `/avenger-run` |
+| Ends up | in this repo, read at session start | as an issue on the **agentic-avengers** repo |
+
+**Every agent: load `skills/self-improvement` at the start of your work.** If
+`docs/lessons/lessons.json` exists, read the *index only*, filter to your role and task, and open
+just the handful of prose files that matter. Write a lesson the moment something is learning-worthy
+— a user correction, a self-caught mistake, or a confirmed-good approach — appending or refining,
+never overriding. If the file is missing, skip silently.
+
+Test: "would this help someone building a *different* project with this pipeline?" → it is a
+pipeline observation. "Would it help someone building *this* project again?" → it is a lesson.
 
 ## Agent tooling
 

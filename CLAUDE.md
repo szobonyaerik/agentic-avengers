@@ -7,7 +7,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
-- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`)
+- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
 - Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `handover.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
@@ -140,6 +140,24 @@ win. **It is not a gate**: `/ponytail-review` is advisory (no artifact, no verdi
 loads the ladder into the main thread for inline implementation the hook cannot reach — deliberately
 off by default there, since the main thread also writes specs and runs verifier triage. opencode has no
 subagent-start event; its implementers get the ladder from the agent prompt line only.
+
+### 6b. The pipeline learns from itself — two logs, kept apart
+`docs/lessons/` (`skills/self-improvement`) is **per-project** and about the **work** — a pytest trap,
+a migration gotcha. Any agent reads the index at start and appends when something is learning-worthy.
+It was dormant until now; `pipeline-conventions` is where every agent picks it up, so it needs no
+per-agent wiring.
+
+`docs/features/<feature>/pipeline-observations.md` (`skills/pipeline-retrospective`) is about the
+**machinery** — a gate that misfires, a stage that churns — and its destination is **this repo**. The
+orchestrator appends observations *as they happen* (a run resumes across sessions, so end-of-run
+recall is not reliable), including **successes**: a gate that caught something real is the evidence
+for keeping it. At `done` they are rendered as a lavish triage; whatever the human selects becomes a
+`pipeline-improvement` issue. Nothing is filed without an explicit selection.
+
+`--auto` **records but never triages** — no human to poll. The log stays `triage: pending` and the
+next interactive run's **preflight sweep** finds it; that sweep is the only recovery path, because
+`done` is terminal and will never re-fire. `hook_autoapprove.sh` denies `gh`/`gh-axi` issue creation
+outright while auto is armed, so the no-auto-filing rule is enforced mechanically, not just written.
 
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode
