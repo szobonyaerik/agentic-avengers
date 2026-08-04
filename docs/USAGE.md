@@ -180,9 +180,9 @@ python3 "$AV/scripts/gate_runner.py" \
   reads the whole command string (`skills/pipeline-conventions`). `export` is not a substitute there:
   env vars do not survive between an agent's Bash calls. Both shapes are equivalent for *you*, typing
   it yourself. **Write the reason as prose, multi-line if it needs to be** — the log is one
-  tab-separated record per line, and every writer normalises the reason through `scripts/bypass_reason.sh`, which
-  the reason through `scripts/bypass_reason.sh` (newlines and tabs collapsed to spaces, nothing
-  dropped) rather than asking you to keep it on one line. The Verifier's per-finding waiver
+  tab-separated record per line, and every writer normalises the reason through
+  `scripts/bypass_reason.sh` (newlines and tabs collapsed to spaces, nothing dropped) rather than
+  asking you to keep it on one line. The Verifier's per-finding waiver
   (`verdict.json` `break_glass` + `waiver_reason`) is logged through that same writer, so a
   multi-paragraph waiver reason is safe too.
 - **Gate model**: gates default to a decorrelated deepseek (fidelity) / gemini (verifier, mutation,
@@ -196,6 +196,9 @@ python3 "$AV/scripts/gate_runner.py" \
 - **Code not under `src/`?** Update the path glob in `hook_verifier.sh`, `gate_ci.sh`,
   `.opencode/plugin/pipeline-gates.ts`, and `module-path` in `cosmic-ray.toml`.
 - **A gate "stops" unexpectedly** — that's fail-closed. Check: `OPENROUTER_API_KEY` set? gate model a
-  different family than `AUTHOR_FAMILY`? provider reachable? The stderr says which.
+  different family than `AUTHOR_FAMILY`? provider reachable? The stderr says which. The Verifier's
+  review adds two of its own: a review set over `VERIFIER_SRC_LIMIT` (refused before the model is
+  called) and a verdict that shows no sign of having read the set. Neither is worked around by
+  dropping files — see `skills/verifier-triage`.
 - **Regenerate after editing canonical sources**: `python3 scripts/sync_opencode.py` (agents/skills).
   The opencode plugin and `AGENTS.md` are hand-maintained.

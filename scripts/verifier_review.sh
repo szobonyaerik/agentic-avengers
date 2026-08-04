@@ -18,9 +18,13 @@
 #
 # Writes <phase-dir>/.verifier-review.json (the parsed verdict incl. findings, each with a
 # deterministic id) for the agent to merge into verdict.json. Exit 0 = GO, 2 = NO-GO or fail-closed.
+# On any path that does not produce a fresh trustworthy verdict the file is removed, so the caller
+# never merges an earlier run's pass (INVARIANT below).
 #
 # Env: VERIFIER_GATE_MODEL (default google/gemini-3.1-pro-preview) · AUTHOR_FAMILY (default anthropic)
 #      GATE_PROVIDER · TEST_CMD (default: pytest -q --tb=short on the phase's tests dir)
+#      VERIFIER_SRC_LIMIT (default 400000) — chars of review-set source; an over-limit set is refused
+#      before the model is called, never truncated (see the comment on LIMIT below)
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
@@ -32,6 +36,23 @@ if [ -z "$PHASE_DIR" ] || [ ! -d "$PHASE_DIR" ]; then
   echo "usage: scripts/verifier_review.sh <phase-dir> <review-set-file>..." >&2
   exit 2
 fi
+
+# INVARIANT: no verdict artifact survives a run that does not produce a fresh one. The Verifier agent
+# merges .verifier-review.json into verdict.json, so a previous run's verdict left on disk (an
+# argument refusal, an over-limit set, a provider outage, a non-JSON reply) is read as THIS run's
+# pass, for code it never saw — the same fail-open this script exists to close. The invariant is held
+# structurally rather than by each branch remembering: this is the first statement after $OUT becomes
+# computable, so no exit path above it can leave an artifact behind (the two exits that do precede it
+# — a failed cd and an invalid phase dir — have no $OUT to leave). The removal is verified, not
+# assumed, because `set -uo pipefail` carries no -e and a failed rm would otherwise pass silently.
+OUT="$PHASE_DIR/.verifier-review.json"
+rm -f "$OUT"
+if [ -e "$OUT" ]; then
+  echo "verifier-review: cannot remove stale $OUT — fail closed." >&2
+  echo "  A verdict from a previous run would be merged into verdict.json as this run's pass." >&2
+  exit 2
+fi
+
 if [ "$#" -eq 0 ]; then
   echo "verifier-review: no review-set files given (fail closed)." >&2
   echo "Compute the review set first — skills/verifier-triage, 'Build the review set'. A review of" >&2
@@ -41,9 +62,44 @@ fi
 
 MODEL="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}"
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
-LIMIT="${VERIFIER_SRC_LIMIT:-120000}"
-OUT="$PHASE_DIR/.verifier-review.json"
+# Chars of review-set source the gate model is given. 120000 (~30k tokens) was far below what any
+# current gate model can read, and it was the value that made truncation the normal case rather than
+# the exception — one real phase's bounded review set measured 158k. 400000 (~100k tokens) clears
+# that with headroom. Raise it for a large-context model; it is a fail-closed cap, not a budget, so
+# too LOW only costs a loud stop, while too high risks the model quietly degrading on the tail.
+# Scope: it bounds the REVIEW-SET SOURCE only. The bundle also carries every spec.md, every
+# test-mapping.md and up to 60 lines of test output, all unbounded and uncounted — so a set under
+# the cap is not a guarantee that the whole prompt fits the model's context.
+LIMIT="${VERIFIER_SRC_LIMIT:-400000}"
 BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
+
+# --- review set: assemble, then refuse to proceed if it does not fit ---------------------------
+# This runs BEFORE the model call on purpose. The old code truncated the bundle here and appended a
+# note ASKING the model to report the review as partial — an instruction, not an assertion — then
+# returned the model's verdict as the exit code, so a truncated review could pass a phase silently.
+# Review sets only grow, so each later phase was likelier to hit it than the last. A partial review
+# is an unreviewed phase; failing here costs nothing and spends no tokens.
+# The separating newline is appended OUTSIDE the command substitution on purpose: `$(...)` strips
+# every trailing newline, which glued each file's `--- <path> ---` header onto the previous file's
+# last line. The model attributes its findings against those headers, and the substance check below
+# refuses a verdict that names none of those paths — a glued header corrupts exactly that.
+SRC=""
+for f in "$@"; do
+  if [ -f "$f" ]; then
+    SRC="${SRC}$(printf -- '--- %s ---\n' "$f"; cat "$f")"$'\n'
+  else
+    SRC="${SRC}$(printf -- '--- %s --- (MISSING — report as a finding)' "$f")"$'\n'
+  fi
+done
+if [ "${#SRC}" -gt "$LIMIT" ]; then
+  echo "verifier-review: review set is ${#SRC} chars, over VERIFIER_SRC_LIMIT ($LIMIT) — fail closed." >&2
+  echo "  A truncated review is an unreviewed phase. Do ONE of:" >&2
+  echo "    • raise the cap:  VERIFIER_SRC_LIMIT=$(( ${#SRC} + 20000 )) scripts/verifier_review.sh ..." >&2
+  echo "      (only up to what \$VERIFIER_GATE_MODEL can actually read — check its context window)" >&2
+  echo "    • or split the review set and run this once per chunk, merging the findings." >&2
+  echo "  Do not drop files to get under the cap: the bounded set is the review." >&2
+  exit 2
+fi
 
 # --- assemble the bundle -----------------------------------------------------------------------
 {
@@ -75,20 +131,7 @@ BUNDLE="$(mktemp)"; trap 'rm -f "$BUNDLE"' EXIT
   fi
 
   printf '\n=== REVIEW SET (bounded — see skills/verifier-triage) ===\n'
-  SRC=""
-  for f in "$@"; do
-    if [ -f "$f" ]; then
-      SRC="${SRC}$(printf -- '--- %s ---\n' "$f"; cat "$f"; printf '\n')"
-    else
-      SRC="${SRC}$(printf -- '--- %s --- (MISSING — report as a finding)\n' "$f")"
-    fi
-  done
-  if [ "${#SRC}" -gt "$LIMIT" ]; then
-    printf '%s\n' "${SRC:0:$LIMIT}"
-    printf '\n[TRUNCATED at %s chars — you have NOT seen the whole review set. Judge only what is above and say the review was partial.]\n' "$LIMIT"
-  else
-    printf '%s\n' "$SRC"
-  fi
+  printf '%s\n' "$SRC"
 } >"$BUNDLE"
 
 # --- judge, cross-family -------------------------------------------------------------------------
@@ -105,6 +148,14 @@ rc=$?
 
 if [ ! -f "$OUT" ]; then
   echo "verifier-review: no verdict written (model unreachable, non-JSON reply, or same-family) — fail closed." >&2
+  exit 2
+fi
+
+# --- substance: did the review actually happen? --------------------------------------------------
+# A verdict that names none of the files it was handed, or that reports itself as partial, is not a
+# review. Deterministic and unit-tested (tests/test_verifier_review_check.py); never the model's call.
+if ! python3 "$SD/verifier_review_check.py" "$OUT" "$@"; then
+  rm -f "$OUT"   # the invariant above, restated for the one artifact this run did write
   exit 2
 fi
 
