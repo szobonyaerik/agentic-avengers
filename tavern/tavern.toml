@@ -1,0 +1,10 @@
+# Tavern monitor config. Paths in `roots` resolve relative to THIS file's directory, so the
+# committed default watches the repo that carries it. Point `roots` at every project whose
+# pipeline/activity you want on the board, and set fm_home/fm_bin once firstmate is installed.
+#
+#   fm_home = "~/fm"                       # firstmate state/ + data/ home (FM_HOME)
+#   fm_bin  = "~/src/firstmate/bin"        # enables fm-fleet-snapshot.sh --json
+port = 8377
+bind = "127.0.0.1"
+cache_secs = 2.0
+roots = [".."]

@@ -206,3 +206,46 @@ def test_shell_loader_is_silent_without_an_env_file(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert result.stdout.strip() == "done"
     assert result.stderr.strip() == ""
+
+
+def _init_repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """A primary checkout with one commit and a detached linked worktree — the crewmate layout."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q", "-b", "main"], cwd=primary, check=True)
+    (primary / "README").write_text("x\n")
+    subprocess.run([*git, "add", "."], cwd=primary, check=True)
+    subprocess.run([*git, "commit", "-qm", "init"], cwd=primary, check=True)
+    worktree = tmp_path / "wt"
+    subprocess.run(
+        [*git, "worktree", "add", "--detach", "-q", str(worktree)], cwd=primary, check=True
+    )
+    return primary, worktree
+
+
+def _load_in(worktree: Path, var: str) -> str:
+    result = subprocess.run(
+        ["bash", "-c", f'. "{ROOT}/scripts/load_env.sh"; printf %s "${{{var}}}"'],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(worktree)},
+        check=False,
+    )
+    assert result.returncode == 0
+    return result.stdout.strip()
+
+
+def test_shell_loader_falls_back_to_primary_checkout_env(tmp_path: Path) -> None:
+    # The crewmate case: gitignored .env stays in the primary checkout, gates run in a worktree.
+    primary, worktree = _init_repo_with_worktree(tmp_path)
+    (primary / ".env").write_text("GATE_KEY=from-primary\n")
+    assert _load_in(worktree, "GATE_KEY") == "from-primary"
+
+
+def test_shell_loader_prefers_worktree_local_env_over_primary(tmp_path: Path) -> None:
+    primary, worktree = _init_repo_with_worktree(tmp_path)
+    (primary / ".env").write_text("GATE_KEY=from-primary\n")
+    (worktree / ".env").write_text("GATE_KEY=from-worktree\n")
+    assert _load_in(worktree, "GATE_KEY") == "from-worktree"

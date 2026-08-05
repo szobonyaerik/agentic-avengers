@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Grinning Gate — agent tavern</title>
+<style>
+  :root {
+    --ink: #e8dcc0; --dim: #a89878; --panel: #1a1310; --edge: #3a2a1a;
+    --good: #7ec850; --bad: #e05548; --warn: #e0a030;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: #0d0906; color: var(--ink);
+    font-family: "Courier New", monospace; height: 100vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 8px 16px; border-bottom: 2px solid var(--edge);
+  }
+  header h1 { font-size: 18px; letter-spacing: 2px; }
+  #mode { font-size: 11px; padding: 2px 8px; border: 1px solid var(--dim); border-radius: 3px; }
+  #mode.demo { color: var(--warn); border-color: var(--warn); }
+  #mode.live { color: var(--good); border-color: var(--good); }
+  #clock { margin-left: auto; color: var(--dim); font-size: 11px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage-wrap { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; background: #0d0906; }
+  #stage { image-rendering: pixelated; image-rendering: crisp-edges; cursor: pointer; }
+  #bubbles { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .bubble {
+    position: absolute; transform: translate(-50%, -100%);
+    background: #f5ecd8; color: #241a10; border: 2px solid #241a10; border-radius: 6px;
+    padding: 3px 7px; font-size: 11px; max-width: 210px; line-height: 1.25;
+    box-shadow: 2px 2px 0 rgba(0,0,0,.55);
+  }
+  .bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: #241a10; border-bottom: 0;
+  }
+  .tag {
+    position: absolute; transform: translate(-50%, 0);
+    color: var(--ink); font-size: 10px; text-shadow: 1px 1px 0 #000; white-space: nowrap;
+  }
+  .tag small { color: var(--dim); }
+  #panel {
+    width: 340px; border-left: 2px solid var(--edge); background: var(--panel);
+    padding: 14px; overflow-y: auto; display: none; flex-direction: column; gap: 10px;
+  }
+  #panel.open { display: flex; }
+  #panel h2 { font-size: 14px; color: var(--warn); }
+  #panel .meta { font-size: 11px; color: var(--dim); line-height: 1.6; }
+  #panel .doing { font-size: 11px; border-left: 3px solid var(--edge); padding: 2px 8px; margin: 2px 0; }
+  #panel .doing b { color: var(--warn); }
+  #panel pre { white-space: pre-wrap; font-size: 11px; background: #0d0906; padding: 8px; border-radius: 4px; max-height: 200px; overflow-y: auto; }
+  #panel button {
+    background: var(--edge); color: var(--ink); border: 1px solid var(--dim);
+    font-family: inherit; padding: 6px 12px; cursor: pointer; border-radius: 3px;
+  }
+  #panel button:hover { background: #55402a; }
+  #panel .close { position: absolute; top: 10px; right: 12px; background: none; border: none; font-size: 16px; }
+  footer { padding: 4px 16px; border-top: 2px solid var(--edge); color: var(--dim); font-size: 10px; display: flex; gap: 16px; }
+  #toast {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    background: #f5ecd8; color: #241a10; border: 2px solid #241a10; padding: 6px 14px;
+    border-radius: 4px; font-size: 12px; display: none;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🍺 THE GRINNING GATE</h1>
+  <span id="mode">…</span>
+  <span id="clock"></span>
+</header>
+<main>
+  <div id="stage-wrap">
+    <canvas id="stage"></canvas>
+    <div id="bubbles"></div>
+  </div>
+  <aside id="panel"></aside>
+</main>
+<footer><span id="sources"></span><span id="moments-log"></span></footer>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------ pixel art
+ * Sprites are char maps; PALETTE maps char -> color. Drawn on a low-res canvas
+ * (W x H) scaled up with image-rendering: pixelated. '.' is transparent.
+ * Archetypes = base body + palette swap + a hat/prop overlay, so each of the 11
+ * avenger roles reads distinctly at 16px tall without 11 hand-drawn bodies.
+ */
+const W = 440, H = 240;
+const PALETTE = {
+  k: "#1b1209", K: "#14100a", s: "#f0c096", S: "#cf9464", // skin + shade
+  h: "#6a4520", w: "#f5ecd8", W: "#cfc4a8", r: "#c23a34", R: "#7a1f1f",
+  b: "#4a66b0", B: "#2c3d6e", g: "#4a8a3c", G: "#2a5222",
+  p: "#8a48b0", P: "#4e2364", y: "#f0c040", Y: "#a8811c",
+  o: "#d08034", O: "#8a4a14", t: "#8a5e36", T: "#553517",
+  e: "#a8aeb8", E: "#5a6068", m: "#c05a80", n: "#2a8a8a",
+};
+/* Chibi base body, 16x22: big outlined head (the reference look), shaded chin, arms with hands,
+ * short legs. C = coat, c = trim; per-archetype layers stack beard -> hat -> prop on top. */
+const BODY = [
+  "....KKKKKKKK....",
+  "...KssssssssK...",
+  "..KssssssssssK..",
+  "..KssssssssssK..",
+  "..KssKssssKssK..",
+  "..KssKssssKssK..",
+  "..KssssssssssK..",
+  "..KsSssssssSsK..",
+  "..KssssssssSsK..",
+  "...KssSSSSssK...",
+  "..KKCCCCCCCCKK..",
+  ".KCCcCCCCCCcCCK.",
+  ".KCsCCCCCCCCsCK.",
+  ".KCsCCccccCCsCK.",
+  ".KCCCCCCCCCCCCK.",
+  "..KCCCCCCCCCCK..",
+  "..KCCCCCCCCCCK..",
+  "...KCCCCCCCCK...",
+  "...KTTK..KTTK...",
+  "...KTTK..KTTK...",
+  "...KkkK..KkkK...",
+  "....KK....KK....",
+];
+/* Beards overlay the lower face (same origin as BODY). */
+const BEARDS = {
+  white: [
+    "................", "................", "................", "................",
+    "................", "................", "..KwWwwwwwwWwK..", "..KwwwwwwwwwwK..",
+    "..KwwwWwwWwwwK..", "...KwwwwwwwwK...", "....KwwwwwwK....", ".....KwWwwK.....",
+    "......KwwK......", ".......KK.......",
+  ],
+  brown: [
+    "................", "................", "................", "................",
+    "................", "................", "..KhhhhhhhhhhK..", "..KhhhhhhhhhhK..",
+    "...KhhhhhhhhK...", "....KhhhhhhK....", ".....KKKKKK.....", "................",
+    "................", "................",
+  ],
+};
+/* Hats, 16x12 drawn at y-8: rows 8..11 overlap the top of the head. */
+const HATS = {
+  wizard: [
+    "..........KK....", ".........KbbK...", "........KbbbK...", ".......KbbbbK...",
+    "......KbBbbbK...", ".....KbbbbbbbK..", "....KbbbbbbbbK..", "..KKbbbbybbbbKK.",
+    ".KbbbbbBbbbbbbK.", ".KKKKKKKKKKKKKK.", "................", "................",
+  ],
+  fortune: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KppppppppK...", "..KpPpppppppPK..", "..KyK......KyK..", "................",
+  ],
+  cartographer: [
+    "................", "................", "................", "................",
+    "................", "....KKKKKKKK....", "...KttttttttK...", "...KtTttttTtK...",
+    ".KKKttttttttKKK.", "KttttttttttttttK", ".KKKKKKKKKKKKKK.", "................",
+  ],
+  scribe: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KwwwwwwwwK...", "..KwWw....wWwK..", "................", "................",
+  ],
+  smith: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "................",
+    "...KEEEEEEEEK...", "..KEe......eEK..", "................", "................",
+  ],
+  bard: [
+    "................", "................", "................", "..........Ky....",
+    ".........KyyK...", "....KKKKKyyK....", "...KrrrrrryK....", "..KrrRrrrrrrK...",
+    "..KKKKKKKKKKK...", "................", "................", "................",
+  ],
+  judge: [
+    "................", "................", "................", "................",
+    "................", "................", "....KKKKKKKK....", "...KwwwwwwwwK...",
+    "..KwwKwwwwKwwK..", "..KwwK....KwwK..", "..KwWK....KWwK..", "..KKK......KKK..",
+  ],
+  barbarian: [
+    "................", "................", "................", "................",
+    "................", ".KyK........KyK.", ".KyyK......KyyK.", "..KyyKKKKKKyyK..",
+    "...KhhhhhhhhK...", "..KhhThhhhhhhK..", "................", "................",
+  ],
+  ranger: [
+    "................", "................", "................", "................",
+    "................", "................", "....KKKKKKKK....", "...KggggggggK...",
+    "..KgGggggggGgK..", "..KgK......KgK..", "..KgK......KgK..", "................",
+  ],
+  courier: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KooooooooK...", "..KwwKoOooooK...", "..KKK.......K...", "................",
+  ],
+  artificer: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "................",
+    "..KEEEEEEEEEEK..", ".KEKyyKEEKyyKEK.", "..KKKKKKKKKKKK..", "................",
+  ],
+  barkeep: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KhhhhhhK....",
+    "...KhhhhhhhhK...", "..KhhK....KhhK..", "................", "................",
+  ],
+  patron: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KCCCCCCCCK...", "..KCCK.....CK...", "................", "................",
+  ],
+};
+/* Held props, 8 wide, drawn beside the right hand (behind the body). */
+const PROPS = {
+  staff: [
+    "..KKK...", ".KrRrK..", ".KrrrK..", "..KKK...", "...KT...", "...KT...", "...KT...",
+    "...KT...", "...KT...", "...KT...", "...KT...", "...KT...", "...KT...", "...KT...",
+  ],
+  orb: [
+    "........", "........", "........", "........", "........", "..KKK...", ".KpPyK..",
+    ".KpppK..", ".KPppK..", "..KKK...", ".KtttK..", "........", "........", "........",
+  ],
+  map: [
+    "........", "........", "........", "........", "........", ".KKKKK..", "KwwwwwK.",
+    "KwWwwwK.", "KwwwwWK.", ".KKKKK..", "........", "........", "........", "........",
+  ],
+  quill: [
+    "........", "........", "....Kw..", "...KwwK.", "...KwK..", "..KwwK..", "..KwK...",
+    ".KyK....", ".KK.....", "........", "........", "........", "........", "........",
+  ],
+  hammer: [
+    "........", "..KKKK..", ".KEeEEK.", ".KEEEEK.", "..KKKK..", "...KT...", "...KT...",
+    "...KT...", "...KT...", "...KT...", "........", "........", "........", "........",
+  ],
+  lute: [
+    "........", "...Kt...", "...Kt...", "...Kt...", "..KttK..", ".KoOooK.", ".KooyoK.",
+    ".KoooOK.", "..KooK..", "...KK...", "........", "........", "........", "........",
+  ],
+  scales: [
+    "..KKKKK.", ".KyKTKyK", ".KyKTKyK", "..K.T.K.", "....T...", "....T...", "...KTK..",
+    "..KKKKK.", "........", "........", "........", "........", "........", "........",
+  ],
+  axe: [
+    "..KKK...", ".KyyyK..", "KyyYyK..", "KyyK....", ".KK.....", "..KT....", "..KT....",
+    "..KT....", "..KT....", "..KT....", "..KT....", "........", "........", "........",
+  ],
+  bow: [
+    "..KK....", ".KtTK...", ".KtKw...", ".KtKw...", ".KtKw...", ".KtKw...", ".KtKw...",
+    ".KtTK...", "..KK....", "........", "........", "........", "........", "........",
+  ],
+  satchel: [
+    "........", "........", "........", "........", "..KKKK..", ".KooooK.", ".KoOooK.",
+    ".KooooK.", ".KKyKK..", "........", "........", "........", "........", "........",
+  ],
+  wrench: [
+    "........", ".KK.KK..", ".KeKeK..", "..KeK...", "..KeK...", "..KeK...", "..KeK...",
+    "..KKK...", "........", "........", "........", "........", "........", "........",
+  ],
+  mug: [
+    "........", "........", "........", "........", ".Kww....", ".KKKKK..", ".KyyyKK.",
+    ".KyYyKK.", ".KyyyK..", ".KKKKK..", "........", "........", "........", "........",
+  ],
+};
+const ARCHETYPES = { // agent name -> {hat, coat, trim, epithet, beard?, prop?}
+  "avenger-task-analyst":           { hat: "fortune",      coat: "p", trim: "y", epithet: "the Fortune Teller", prop: "orb" },
+  "avenger-solution-architect":     { hat: "wizard",       coat: "b", trim: "y", epithet: "the Wizard", beard: "white", prop: "staff" },
+  "avenger-implementation-planner": { hat: "cartographer", coat: "t", trim: "w", epithet: "the Cartographer", prop: "map" },
+  "avenger-spec-writer":            { hat: "scribe",       coat: "w", trim: "t", epithet: "the Scribe", prop: "quill" },
+  "avenger-backend-architect":      { hat: "smith",        coat: "E", trim: "o", epithet: "the Blacksmith", beard: "brown", prop: "hammer" },
+  "avenger-frontend-developer":     { hat: "bard",         coat: "m", trim: "y", epithet: "the Bard", prop: "lute" },
+  "avenger-verifier":               { hat: "judge",        coat: "e", trim: "K", epithet: "the Judge", prop: "scales" },
+  "avenger-breaker":                { hat: "barbarian",    coat: "r", trim: "K", epithet: "the Barbarian", beard: "brown", prop: "axe" },
+  "avenger-bug-hunter":             { hat: "ranger",       coat: "g", trim: "t", epithet: "the Ranger", prop: "bow" },
+  "avenger-handover":               { hat: "courier",      coat: "o", trim: "w", epithet: "the Courier", prop: "satchel" },
+  "avenger-agent-factory":          { hat: "artificer",    coat: "n", trim: "y", epithet: "the Artificer", prop: "wrench" },
+};
+const PATRON_COATS = ["g", "b", "r", "n", "m", "o"]; // crewmates get stable coat colors by name hash
+
+const canvas = document.getElementById("stage");
+const ctx = canvas.getContext("2d");
+canvas.width = W; canvas.height = H;
+let SCALE = 3;
+function fit() {
+  const wrap = document.getElementById("stage-wrap");
+  SCALE = Math.max(2, Math.floor(Math.min(wrap.clientWidth / W, wrap.clientHeight / H)));
+  canvas.style.width = (W * SCALE) + "px";
+  canvas.style.height = (H * SCALE) + "px";
+}
+window.addEventListener("resize", fit);
+
+function drawMap(rows, x, y) {
+  rows.forEach((row, j) => {
+    for (let i = 0; i < row.length; i++) {
+      const c = row[i];
+      if (c === "." || !PALETTE[c]) continue;
+      ctx.fillStyle = PALETTE[c];
+      ctx.fillRect(x + i, y + j, 1, 1);
+    }
+  });
+}
+function drawCharacter(x, y, arch, bob) {
+  const coat = arch.coat || "t", trim = arch.trim || "w";
+  const dy = bob ? -1 : 0;
+  if (arch.prop) drawMap(PROPS[arch.prop], x + 13, y + 2 + dy);      // behind the right hand
+  drawMap(BODY.map(r => r.replace(/C/g, coat).replace(/c/g, trim)), x, y + dy);
+  if (arch.beard) drawMap(BEARDS[arch.beard], x, y + dy);
+  const hat = (HATS[arch.hat] || HATS.patron).map(r => r.replace(/C/g, coat));
+  drawMap(hat, x, y - 8 + dy);
+}
+function rect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }
+
+function drawRoom(frame) {
+  rect(0, 0, W, H, "#241a10");                       // back wall
+  for (let x = 0; x < W; x += 24) rect(x, 0, 2, 132, "#1b1209");   // wall beams
+  rect(0, 130, W, 2, "#120c06");
+  for (let y = 132; y < H; y += 12) { rect(0, y, W, 12, y % 24 ? "#3a2a18" : "#412e1b"); rect(0, y, W, 1, "#2a1d0f"); } // floor
+  // bar counter, back center-left
+  rect(20, 96, 150, 6, "#553517"); rect(20, 102, 150, 26, "#412a12"); rect(20, 96, 150, 2, "#6a4520");
+  // shelves + bottles
+  rect(28, 40, 162, 3, "#553517"); rect(28, 62, 162, 3, "#553517");
+  for (let i = 0; i < 11; i++) {
+    const bx = 34 + i * 14;
+    rect(bx, 30 + (i % 3), 4, 10 - (i % 3), ["#3f7a34", "#b03030", "#3a5a9a"][i % 3]);
+    rect(bx + 1, 28 + (i % 3), 2, 2, "#241a10");
+    rect(bx + 2, 52 + ((i + 1) % 3), 4, 10 - ((i + 1) % 3), ["#7a3a9a", "#e0a030", "#2a7a7a"][i % 3]);
+  }
+  // fireplace, left
+  rect(2, 84, 3, 44, "#5a6068"); rect(17, 84, 3, 44, "#5a6068"); rect(2, 80, 18, 5, "#5a6068");
+  const f = frame % 2;
+  rect(6, 112 - f, 10, 14 + f, "#e05548"); rect(8, 116 - f * 2, 6, 10, "#e0a030"); rect(9, 120, 4, 6, "#f5ecd8");
+  // hanging lanterns, warm glow
+  for (const lx of [230, 310]) {
+    rect(lx + 3, 0, 1, 26, "#14100a");
+    rect(lx, 26, 7, 10, "#14100a"); rect(lx + 1, 27, 5, 8, "#f0c040");
+    rect(lx + 2, 29 + (frame % 2), 3, 4, "#f5ecd8");
+  }
+  // the GATE (door), right — gates are literal here
+  rect(W - 40, 68, 30, 62, "#553517"); rect(W - 38, 70, 26, 58, "#412a12");
+  rect(W - 38, 96, 26, 2, "#553517"); rect(W - 27, 70, 2, 58, "#553517");
+  rect(W - 16, 98, 3, 3, "#e0b840");
+  // sign over the gate
+  rect(W - 46, 52, 42, 12, "#241a10"); rect(W - 45, 53, 40, 10, "#e8dcc0");
+  ctx.fillStyle = "#241a10"; ctx.font = "7px monospace"; ctx.fillText("GATE", W - 37, 61);
+  // candles on tables get drawn with tables
+}
+function drawTable(x, y) {
+  rect(x - 14, y + 6, 28, 4, "#553517");
+  rect(x - 12, y + 10, 24, 8, "#412a12");
+  rect(x - 11, y + 18, 3, 6, "#2a1d0f"); rect(x + 8, y + 18, 3, 6, "#2a1d0f");
+  rect(x - 2, y + 2, 3, 4, "#e8dcc0"); rect(x - 1, y, 1, 2, "#e0a030"); // candle
+}
+function drawTankard(x, y, spilled) {
+  if (spilled) { rect(x, y + 4, 8, 2, "#e0a030"); rect(x - 2, y + 5, 3, 1, "#e0a030"); }
+  else { rect(x, y, 5, 6, "#9aa0a8"); rect(x + 5, y + 1, 2, 3, "#9aa0a8"); rect(x + 1, y - 1, 3, 1, "#f5ecd8"); }
+}
+
+/* ------------------------------------------------------------------ layout + state */
+const TABLES = [ [66, 162], [200, 178], [334, 160], [120, 210], [260, 212], [386, 206] ];
+const COUNTER_SEATS = [ [46, 104], [84, 104], [122, 104] ];
+const BARKEEP = [92, 72];
+
+let state = null;
+let clickables = [];   // {x, y, w, h, id, label}
+let entering = {};     // agent_id -> frames remaining of walk-in
+let seenLive = new Set();
+let momentFlash = null; // {kind, until}
+let shakeUntil = 0;
+
+function hashCoat(name) {
+  let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return PATRON_COATS[Math.abs(h) % PATRON_COATS.length];
+}
+
+function layout() {
+  // Seats: one table per crewmate; features without a matching crewmate get their own table;
+  // live agents matched to a seat sit beside its patron, the rest take the bar counter.
+  const seats = [];
+  const crew = state.crew || [];
+  crew.forEach((member, i) => seats.push({ table: TABLES[i % TABLES.length], kind: "crew", crew: member }));
+  // Each feature belongs to at most ONE seat — prefer a ship crewmate over a scout that merely
+  // shares the project; a feature nobody owns gets its own table.
+  const matches = (f, m) => f.root === m.project || (m.worktree && f.root.includes(m.worktree));
+  (state.features || []).forEach(feature => {
+    const candidates = seats.filter(s => s.kind === "crew" && !s.feature && matches(feature, s.crew));
+    const target = candidates.find(s => s.crew.kind === "ship") || candidates[0];
+    if (target) target.feature = feature;
+    else if (seats.length < TABLES.length) seats.push({ table: TABLES[seats.length], kind: "feature", feature });
+  });
+  // live agents: demo carries crew_id; live mode matches root -> seat, else counter
+  const counter = [];
+  (state.live_agents || []).forEach(agent => {
+    let seat = seats.find(s =>
+      (agent.crew_id && s.kind === "crew" && s.crew.id === agent.crew_id) ||
+      (s.kind === "crew" && agent.root && (agent.root === s.crew.project || (s.crew.worktree && agent.root.includes(s.crew.worktree)))) ||
+      (s.kind === "feature" && s.feature && agent.root === s.feature.root));
+    if (seat) (seat.agents = seat.agents || []).push(agent);
+    else counter.push(agent);
+  });
+  return { seats, counter };
+}
+
+let frame = 0;
+function renderGallery(bob) {
+  // #gallery: every archetype on one screen — the reference sheet for re-skinning sprites
+  rect(0, 0, W, H, "#241a10");
+  const names = Object.keys(ARCHETYPES);
+  const overlays = [];
+  names.forEach((name, i) => {
+    const x = 28 + (i % 6) * 68, y = 26 + Math.floor(i / 6) * 76;
+    drawCharacter(x, y, ARCHETYPES[name], bob && i % 2 === 0);
+    overlays.push({ x: x + 8, y: y + 30, kind: "tag",
+                    html: `${name.replace("avenger-", "")}<br><small>${ARCHETYPES[name].epithet}</small>` });
+  });
+  drawCharacter(28, 26 + 2 * 76, { hat: "barkeep", coat: "w", trim: "t", prop: "mug" }, bob);
+  overlays.push({ x: 36, y: 26 + 2 * 76 + 30, kind: "tag", html: "firstmate<br><small>the Barkeep</small>" });
+  drawCharacter(96, 26 + 2 * 76, { hat: "patron", coat: "g", trim: "y" }, !bob);
+  overlays.push({ x: 104, y: 26 + 2 * 76 + 30, kind: "tag", html: "crewmate<br><small>a patron</small>" });
+  renderOverlays(overlays);
+}
+function render() {
+  frame++;
+  const bob = Math.floor(frame / 30) % 2 === 1;
+  if (location.hash === "#gallery") {
+    renderGallery(bob);
+    requestAnimationFrame(render);
+    return;
+  }
+  const shake = Date.now() < shakeUntil ? ((frame % 2) * 2 - 1) : 0;
+  ctx.save(); ctx.translate(shake, 0);
+  drawRoom(Math.floor(frame / 15));
+  clickables = [];
+  const overlays = [];
+  if (state) {
+    const { seats, counter } = layout();
+    // barkeep = the first mate (or the house, if no firstmate); counter front redrawn over
+    // the lower body so they stand BEHIND the bar
+    drawCharacter(BARKEEP[0], BARKEEP[1], { hat: "barkeep", coat: "w", trim: "t", prop: "mug" }, bob);
+    rect(20, 96, 150, 6, "#553517"); rect(20, 102, 150, 26, "#412a12"); rect(20, 96, 150, 2, "#6a4520");
+    overlays.push({ x: BARKEEP[0] + 8, y: BARKEEP[1] + 28, kind: "tag",
+                    html: state.crew && state.crew.length ? "firstmate <small>the Barkeep</small>" : "<small>the house</small>" });
+    seats.forEach(seat => {
+      const [tx, ty] = seat.table;
+      drawTable(tx, ty);
+      if (seat.kind === "crew") {
+        const m = seat.crew;
+        drawCharacter(tx - 30, ty - 12, { hat: "patron", coat: hashCoat(m.id), trim: "y" }, bob);
+        drawTankard(tx + 4, ty + 1, momentFlash && momentFlash.kind !== "gate_pass" && Date.now() < momentFlash.until);
+        clickables.push({ x: tx - 32, y: ty - 22, w: 20, h: 34, id: "crew:" + m.id });
+        const stageNote = seat.feature && seat.feature.stage ? ` · ⚑ ${esc(seat.feature.stage)}` : "";
+        overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
+                        html: `${m.id} <small>${m.kind || ""} · ${esc(m.project || "")}${stageNote}</small>` });
+        // the patron speaks only when no avenger at the table is already saying the same work
+        const agentSpeaks = (seat.agents || []).some(a => a.sentence);
+        if (m.sentence && !agentSpeaks)
+          overlays.push({ x: tx - 22, y: ty - 26, kind: "bubble", text: m.sentence });
+      } else if (seat.feature) {
+        overlays.push({ x: tx, y: ty + 26, kind: "tag",
+                        html: `<small>feature</small> ${esc(seat.feature.feature)} <small>@ ${esc(seat.feature.stage || "?")}</small>` });
+      }
+      (seat.agents || []).forEach((agent, k) => {
+        const arch = ARCHETYPES[agent.agent_type] || { hat: "patron", coat: "e", trim: "w", epithet: "" };
+        const ax = tx + 16 + k * 24, ay = ty - 12;
+        const key = agent.agent_id || agent.agent_type;
+        const slide = entering[key] > 0 ? entering[key]-- * 3 : 0;
+        drawCharacter(ax + slide, ay, arch, !bob);
+        clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
+        overlays.push({ x: ax + 8, y: ay + 38, kind: "tag",
+                        html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
+        if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
+      });
+    });
+    counter.forEach((agent, k) => {
+      if (k >= COUNTER_SEATS.length) return;
+      const [ax, ay] = COUNTER_SEATS[k];
+      const arch = ARCHETYPES[agent.agent_type] || { hat: "patron", coat: "e", trim: "w", epithet: "" };
+      const key = agent.agent_id || agent.agent_type;
+      drawCharacter(ax, ay, arch, bob);
+      clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
+      overlays.push({ x: ax + 8, y: ay + 34, kind: "tag", html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
+      if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
+    });
+    // gate flash on moments
+    if (momentFlash && Date.now() < momentFlash.until) {
+      const good = momentFlash.kind === "gate_pass";
+      ctx.globalAlpha = 0.35;
+      rect(W - 40, 68, 30, 62, good ? "#7ec850" : "#e05548");
+      ctx.globalAlpha = 1;
+    }
+    if (!(state.crew || []).length && !(state.live_agents || []).length && !(state.features || []).length) {
+      overlays.push({ x: W / 2, y: H / 2, kind: "tag", html: "<small>the tavern is empty — no fleet, no runs, no live agents</small>" });
+    }
+  }
+  ctx.restore();
+  window._clickables = clickables; // stable handle for tests/automation
+  renderOverlays(overlays);
+  requestAnimationFrame(render);
+}
+
+const bubblesEl = document.getElementById("bubbles");
+function renderOverlays(items) {
+  const rectC = canvas.getBoundingClientRect();
+  const wrapC = document.getElementById("stage-wrap").getBoundingClientRect();
+  const ox = rectC.left - wrapC.left, oy = rectC.top - wrapC.top;
+  bubblesEl.innerHTML = "";
+  items.forEach(item => {
+    const el = document.createElement("div");
+    el.className = item.kind;
+    if (item.kind === "bubble") el.textContent = item.text;
+    else el.innerHTML = item.html;
+    el.style.left = (ox + item.x * SCALE) + "px";
+    el.style.top = (oy + item.y * SCALE) + "px";
+    bubblesEl.appendChild(el);
+  });
+}
+function esc(s) { const d = document.createElement("i"); d.textContent = String(s); return d.innerHTML; }
+
+/* ------------------------------------------------------------------ interaction */
+canvas.addEventListener("click", ev => {
+  const rc = canvas.getBoundingClientRect();
+  const x = (ev.clientX - rc.left) / SCALE, y = (ev.clientY - rc.top) / SCALE;
+  const hit = clickables.find(c => x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h);
+  if (hit) openPanel(hit.id);
+});
+
+const panel = document.getElementById("panel");
+async function openPanel(id) {
+  panel.classList.add("open");
+  panel.innerHTML = "<h2>…fetching…</h2>";
+  let detail;
+  try { detail = await (await fetch("/api/agent/" + encodeURIComponent(id))).json(); }
+  catch (e) { detail = { error: String(e) }; }
+  const rows = [];
+  rows.push(`<button class="close" onclick="panel.classList.remove('open')">✕</button>`);
+  if (detail.error) {
+    rows.push(`<h2>gone</h2><div class="meta">${esc(detail.error)}</div>`);
+  } else if (detail.kind === "crew") {
+    rows.push(`<h2>${esc(detail.id)}</h2>`);
+    rows.push(`<div class="meta">${esc(detail.crew_kind || "")} ${esc(detail.mode || "")} · ${esc(detail.project || "")}<br>` +
+      `worktree: ${esc(detail.worktree || "—")}<br>harness: ${esc(detail.harness || "—")} · window: ${esc(detail.window || "—")}</div>`);
+    rows.push(`<button onclick="focusAgent('crew:${esc(detail.id)}')">⚔ Focus terminal (tmux)</button>`);
+    if (detail.status_tail && detail.status_tail.length)
+      rows.push(`<h2>last heard (wake events, not truth)</h2><pre>${esc(detail.status_tail.join("\n"))}</pre>`);
+    if (detail.brief) rows.push(`<h2>brief</h2><pre>${esc(detail.brief.slice(0, 3000))}</pre>`);
+    if (detail.report) rows.push(`<h2>report</h2><pre>${esc(detail.report.slice(0, 3000))}</pre>`);
+  } else {
+    const arch = ARCHETYPES[detail.agent_type] || { epithet: "" };
+    rows.push(`<h2>${esc(detail.agent_type || "agent")} <small>${arch.epithet}</small></h2>`);
+    rows.push(`<div class="meta">in the tavern since ${esc(detail.since || "?")}<br>root: ${esc(detail.root || "—")}</div>`);
+    rows.push(`<div class="meta">an in-session subagent has no terminal of its own — it lives inside its parent session. Its doings:</div>`);
+    (detail.doings || []).forEach(d => {
+      rows.push(`<div class="doing">${d.kind === "tool" ? "<b>" + esc(d.name) + "</b> " : ""}${esc(d.summary)}</div>`);
+    });
+    if (!(detail.doings || []).length) rows.push(`<div class="meta">no transcript recorded for this one.</div>`);
+  }
+  panel.innerHTML = rows.join("");
+}
+async function focusAgent(id) {
+  let res;
+  try { res = await (await fetch("/api/focus", { method: "POST", body: JSON.stringify({ id }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  toast(res.ok ? "⚔ jumped to " + res.window : "✗ " + (res.error || "failed") + (res.attach_cmd ? " — try: " + res.attach_cmd : ""));
+}
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.style.display = "block";
+  clearTimeout(el._t); el._t = setTimeout(() => el.style.display = "none", 4000);
+}
+
+/* ------------------------------------------------------------------ polling */
+async function poll() {
+  try {
+    const next = await (await fetch("/api/state")).json();
+    // walk-in animation for newly seen live agents; door flash + log for moments
+    (next.live_agents || []).forEach(agent => {
+      const key = agent.agent_id || agent.agent_type;
+      if (!seenLive.has(key)) { entering[key] = 12; seenLive.add(key); }
+    });
+    (next.moments || []).slice(-3).forEach(m => {
+      if (m.kind === "gate_pass" || m.kind === "gate_fail" || m.kind === "route_back")
+        momentFlash = { kind: m.kind, until: Date.now() + 2500 };
+      if (m.kind === "break_glass") shakeUntil = Date.now() + 900;
+    });
+    state = next;
+    const modeEl = document.getElementById("mode");
+    modeEl.textContent = state.mode.toUpperCase();
+    modeEl.className = state.mode;
+    document.getElementById("sources").textContent =
+      "sources: " + Object.entries(state.sources || {}).map(([k, v]) => `${k}=${v}`).join("  ");
+    document.getElementById("moments-log").textContent =
+      (state.moments || []).slice(-2).map(m => "★ " + m.text).join("   ");
+    document.getElementById("clock").textContent = state.generated_at || "";
+  } catch (e) {
+    document.getElementById("sources").textContent = "⚠ lost the server: " + e;
+  }
+  setTimeout(poll, 2000);
+}
+fit(); poll(); render();
+</script>
+</body>
+</html>
