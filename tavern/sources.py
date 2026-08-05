@@ -333,24 +333,46 @@ def _live_cwds() -> set[str] | None:
     return cwds
 
 
+# Claude Code 2.x keeps a daemon plus pty-host/spare helper processes running AFTER their
+# sessions close, and they inherit real project cwds — counting them as liveness resurrects
+# every closed session (observed in the field: `claude daemon run --spawned-by {...}`,
+# `claude bg-pty-host ...`, `claude bg-spare ...`). Sessions are interactive processes; helpers
+# are plumbing.
+_HELPER_MARKERS = ("bg-pty-host", "bg-spare", "daemon run")
+
+
+def _parse_harness_rows(ps_output: str) -> list[tuple[str, str]]:
+    """(pid, args) rows that are interactive claude/opencode processes, helpers excluded."""
+    procs: list[tuple[str, str]] = []
+    for line in ps_output.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, args = parts
+        tokens = args.split()
+        harness = {"claude", "opencode"}
+        # argv0 may be the binary itself, or an interpreter with the binary's PATH as argv1
+        # ("node /usr/local/bin/claude"); a bare word in argv1 ("grep claude") is not a harness.
+        is_harness = tokens and tokens[0].rsplit("/", 1)[-1] in harness
+        if not is_harness and len(tokens) > 1 and "/" in tokens[1]:
+            is_harness = tokens[1].rsplit("/", 1)[-1] in harness
+        if not is_harness:
+            continue
+        if any(marker in args for marker in _HELPER_MARKERS):
+            continue
+        procs.append((pid, args))
+    return procs
+
+
 def _harness_processes() -> list[tuple[str, str]] | None:
-    """(pid, args) of running claude/opencode processes; None when ps is unusable."""
+    """(pid, args) of running interactive claude/opencode processes; None when ps is unusable."""
     try:
         ps = subprocess.run(["ps", "-axo", "pid=,args="], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
     if ps.returncode != 0:
         return None
-    procs: list[tuple[str, str]] = []
-    for line in ps.stdout.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) != 2:
-            continue
-        pid, args = parts
-        names = {token.rsplit("/", 1)[-1] for token in args.split()[:2]}
-        if names & {"claude", "opencode"}:
-            procs.append((pid, args))
-    return procs
+    return _parse_harness_rows(ps.stdout)
 
 
 def session_debug() -> dict:
