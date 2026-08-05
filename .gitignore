@@ -22,3 +22,6 @@ __pycache__/
 
 # lavish scratch: HTML review surfaces for the plan stop and the retrospective triage
 .lavish/
+
+# tavern monitor: per-project subagent lifecycle log (scripts/hook_activity.sh)
+.agent-activity.jsonl
