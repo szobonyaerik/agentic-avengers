@@ -412,10 +412,15 @@ function layout() {
   crew.forEach((member, i) => seats.push({ table: TABLES[i % TABLES.length], kind: "crew", crew: member }));
   // Each feature belongs to at most ONE seat — prefer a ship crewmate over a scout that merely
   // shares the project; a feature nobody owns gets its own table.
+  // auto-discovered sessions nobody in the fleet owns get their own table
+  (state.sessions || []).filter(s => !s.crew_id).forEach(session => {
+    if (seats.length < TABLES.length) seats.push({ table: TABLES[seats.length], kind: "session", session });
+  });
   const matches = (f, m) => f.root === m.project || (m.worktree && f.root.includes(m.worktree));
   (state.features || []).forEach(feature => {
     const candidates = seats.filter(s => s.kind === "crew" && !s.feature && matches(feature, s.crew));
-    const target = candidates.find(s => s.crew.kind === "ship") || candidates[0];
+    const target = candidates.find(s => s.crew.kind === "ship") || candidates[0]
+      || seats.find(s => s.kind === "session" && !s.feature && feature.root === s.session.cwd);
     if (target) target.feature = feature;
     else if (seats.length < TABLES.length) seats.push({ table: TABLES[seats.length], kind: "feature", feature });
   });
@@ -425,6 +430,7 @@ function layout() {
     let seat = seats.find(s =>
       (agent.crew_id && s.kind === "crew" && s.crew.id === agent.crew_id) ||
       (s.kind === "crew" && agent.root && (agent.root === s.crew.project || (s.crew.worktree && agent.root.includes(s.crew.worktree)))) ||
+      (s.kind === "session" && agent.root === s.session.cwd) ||
       (s.kind === "feature" && s.feature && agent.root === s.feature.root));
     if (seat) (seat.agents = seat.agents || []).push(agent);
     else counter.push(agent);
@@ -491,6 +497,15 @@ function render() {
         const agentSpeaks = (seat.agents || []).some(a => a.sentence);
         if (m.sentence && !agentSpeaks)
           overlays.push({ x: tx - 22, y: ty - 26, kind: "bubble", text: m.sentence });
+      } else if (seat.kind === "session") {
+        const s = seat.session;
+        drawCharacter(tx - 30, ty - 12, patronLook(s.session_id), bob);
+        drawTankard(tx + 4, ty + 1, false);
+        clickables.push({ x: tx - 32, y: ty - 22, w: 20, h: 34, id: "session:" + s.session_id });
+        const dirName = String(s.cwd || "").split("/").filter(Boolean).pop() || "?";
+        const stageNote = seat.feature && seat.feature.stage ? ` · ⚑ ${esc(seat.feature.stage)}` : "";
+        overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
+                        html: `${esc(dirName)} <small>session · ${patronLook(s.session_id).epithet}${stageNote}</small>` });
       } else if (seat.feature) {
         overlays.push({ x: tx, y: ty + 26, kind: "tag",
                         html: `<small>feature</small> ${esc(seat.feature.feature)} <small>@ ${esc(seat.feature.stage || "?")}</small>` });
@@ -580,6 +595,14 @@ async function openPanel(id) {
       rows.push(`<h2>last heard (wake events, not truth)</h2><pre>${esc(detail.status_tail.join("\n"))}</pre>`);
     if (detail.brief) rows.push(`<h2>brief</h2><pre>${esc(detail.brief.slice(0, 3000))}</pre>`);
     if (detail.report) rows.push(`<h2>report</h2><pre>${esc(detail.report.slice(0, 3000))}</pre>`);
+  } else if (detail.kind === "session") {
+    const dirName = String(detail.cwd || "").split("/").filter(Boolean).pop() || "session";
+    rows.push(`<h2>${esc(dirName)} <small>${patronLook(detail.session_id).epithet}</small></h2>`);
+    rows.push(`<div class="meta">auto-discovered session · last active ${detail.age_secs ?? "?"}s ago<br>cwd: ${esc(detail.cwd || "—")}</div>`);
+    rows.push(`<div class="meta">${esc(detail.note || "")}</div>`);
+    (detail.doings || []).forEach(d => {
+      rows.push(`<div class="doing">${d.kind === "tool" ? "<b>" + esc(d.name) + "</b> " : ""}${esc(d.summary)}</div>`);
+    });
   } else if (detail.kind === "fm") {
     rows.push(`<h2>firstmate <small>the Barkeep</small></h2>`);
     rows.push(`<div class="meta">${esc(detail.note || "")}</div>`);

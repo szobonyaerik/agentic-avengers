@@ -244,6 +244,73 @@ def _fm_env(fm_home: Path) -> dict[str, str]:
     return env
 
 
+# ---------------------------------------------------------------- session discovery
+
+
+def _transcript_cwd(path: Path) -> str | None:
+    """The session's working directory, from the tail of its transcript JSONL."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 65536))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in reversed(tail.splitlines()):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        cwd = rec.get("cwd") if isinstance(rec, dict) else None
+        if isinstance(cwd, str) and cwd.strip():
+            return cwd.strip()
+    return None
+
+
+def discover_sessions(max_age_secs: int = 900, limit: int = 12) -> list[dict]:
+    """Every recently-active Claude Code session on this machine, no configuration needed.
+
+    The harness writes one transcript per session under ~/.claude/projects/<munged-cwd>/, and each
+    record carries the session's cwd. Recency comes from the transcript's mtime — an agent that is
+    thinking or running tools keeps appending. This is how the tavern seats sessions the operator
+    never told it about.
+    """
+    import os
+    import time
+
+    base = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects"
+    if not base.is_dir():
+        return []
+    now = time.time()
+    sessions = []
+    for transcript in base.glob("*/*.jsonl"):
+        try:
+            age = now - transcript.stat().st_mtime
+        except OSError:
+            continue
+        if age > max_age_secs:
+            continue
+        cwd = _transcript_cwd(transcript)
+        if not cwd:
+            continue
+        sessions.append({
+            "session_id": transcript.stem,
+            "cwd": cwd,
+            "transcript_path": str(transcript),
+            "age_secs": int(age),
+        })
+    sessions.sort(key=lambda s: s["age_secs"])
+    # one seat per cwd: the newest session in a directory represents it
+    seen: set[str] = set()
+    unique = []
+    for session in sessions:
+        if session["cwd"] in seen:
+            continue
+        seen.add(session["cwd"])
+        unique.append(session)
+    return unique[:limit]
+
+
 def match_crew(crew: list[dict], root: str) -> dict | None:
     """Which crewmate owns this watched root? Worktree containment first, then exact project."""
     import os

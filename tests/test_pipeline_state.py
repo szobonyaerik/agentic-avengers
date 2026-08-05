@@ -253,3 +253,62 @@ def test_as_json_round_trips(tmp_path: Path) -> None:
     payload = json.loads(next_stage(tmp_path, "demo").as_json())
     assert payload["stage"] == "solution-architect"
     assert payload["feature"] == "demo"
+
+
+PLAN_WITH_PHASES = """---
+feature: demo
+---
+
+# Implementation Plan: demo
+
+## Phase plan (dependency / risk order)
+
+### Phase 1 — core
+- **Goal**: base.
+
+### Phase 2 — telegram runtime and ping
+- **Goal**: runtime.
+
+### Phase 3 — audit layer
+- **Goal**: audit.
+"""
+
+
+def test_green_disk_phases_do_not_finish_a_longer_plan(tmp_path: Path) -> None:
+    """The clickup-agents field defect: 3 of 13 phases green -> resolver said e2e/done.
+
+    The plan, not the folder listing, says how many phases a feature has; a green prefix of them
+    must route back to the spec-writer for the first phase nobody specced yet.
+    """
+    feature = finished_phase(tmp_path)
+    (feature / "plan.md").write_text(PLAN_WITH_PHASES)
+    state = next_stage(tmp_path, "demo")
+    assert state.stage == "spec-writer"
+    assert state.phase == "2-telegram-runtime-and-ping"
+    assert "3 phases" in state.reason and "1 exist" in state.reason
+
+
+def test_gap_in_planned_phases_is_reported_not_skipped(tmp_path: Path) -> None:
+    feature = finished_phase(tmp_path)
+    (feature / "plan.md").write_text(PLAN_WITH_PHASES)
+    write_spec(feature, "3-audit-layer", "3.1-a", review_status="approved", status="done")
+    write_verdict(feature, "3-audit-layer", "pass")
+    (feature / "phases" / "3-audit-layer" / "handover.md").write_text("done\n")
+    state = next_stage(tmp_path, "demo")
+    assert state.stage == "spec-writer"
+    assert state.phase == "2-telegram-runtime-and-ping"
+
+
+def test_all_planned_phases_built_proceeds_to_e2e(tmp_path: Path) -> None:
+    feature = finished_phase(tmp_path)
+    plan = PLAN_WITH_PHASES.replace("### Phase 2 — telegram runtime and ping\n- **Goal**: runtime.\n\n", "")
+    plan = plan.replace("### Phase 3 — audit layer\n- **Goal**: audit.\n", "")
+    (feature / "plan.md").write_text(plan)
+    assert next_stage(tmp_path, "demo").stage == "e2e-author"
+
+
+def test_plan_without_recognisable_headings_keeps_folder_walk_behaviour(tmp_path: Path) -> None:
+    # a malformed plan must not wedge a green feature — only an explicit phase list may extend it
+    feature = finished_phase(tmp_path)
+    (feature / "plan.md").write_text("---\nfeature: demo\n---\n\nfreeform prose, no headings\n")
+    assert next_stage(tmp_path, "demo").stage == "e2e-author"

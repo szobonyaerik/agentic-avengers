@@ -83,6 +83,7 @@ def tavern(project, fm_home):
     cfg.fm_bin = None
     cfg.port = 0  # ephemeral: tests must not fight over a fixed port
     cfg.cache_secs = 0.0
+    cfg.scan = False  # auto-discovery would pull in this machine's real sessions
     server = serve(cfg)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -155,6 +156,7 @@ def test_state_degrades_when_sources_absent(tmp_path):
     cfg = Config()
     cfg.roots = [tmp_path / "nothing-here"]
     cfg.cache_secs = 0.0
+    cfg.scan = False
     state = StateBuilder(cfg).state()
     assert state["mode"] == "live"
     assert state["crew"] == [] and state["features"] == [] and state["live_agents"] == []
@@ -199,9 +201,40 @@ def test_live_agent_detail_links_its_crewmate(tmp_path):
     cfg.roots = [root]
     cfg.fm_home = home
     cfg.cache_secs = 0.0
+    cfg.scan = False
     builder = StateBuilder(cfg)
     (live,) = builder.state()["live_agents"]
     assert live["crew_id"] == "r1"
     detail = builder.agent_detail("live:a9")
     assert detail["crew_id"] == "r1"
     assert detail["crew_window"] == "firstmate:fm-r1"
+
+
+def test_sessions_are_discovered_and_watched_without_configuration(tmp_path, monkeypatch):
+    """The '+1' ask: agents appear without the operator naming their paths.
+
+    A transcript under CLAUDE_CONFIG_DIR/projects names its session's cwd; that cwd becomes a
+    watched root, so its activity log feeds live agents with zero --root flags.
+    """
+    workdir = tmp_path / "someproject"
+    workdir.mkdir()
+    (workdir / ".agent-activity.jsonl").write_text(json.dumps({
+        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
+        "agent_type": "general-purpose", "agent_id": "g1",
+    }) + "\n")
+    config_dir = tmp_path / "claude-home"
+    proj = config_dir / "projects" / "-someproject"
+    proj.mkdir(parents=True)
+    (proj / "sess-1234.jsonl").write_text(json.dumps({"cwd": str(workdir)}) + "\n")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+    cfg = Config()
+    cfg.cache_secs = 0.0  # scan stays on: that is the feature under test
+    state = StateBuilder(cfg).state()
+
+    (session,) = state["sessions"]
+    assert session["session_id"] == "sess-1234"
+    assert session["cwd"] == str(workdir)
+    (live,) = state["live_agents"]
+    assert live["agent_id"] == "g1"
+    assert live["root"] == str(workdir)
