@@ -1,7 +1,7 @@
 ---
 description: Drive the plan-build-verify pipeline end to end for one feature — resumable from the artifacts on disk, stops for plan approval and spec-review, commits per verified phase.
 argument-hint: "<feature-id> [\"<brief or path to brief>\"] [--auto] [--ship-yes] [--from <stage>]"
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 You are the **orchestrator** for `$ARGUMENTS`. You do not write production code, tests, or specs
