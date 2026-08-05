@@ -91,7 +91,7 @@ def _is_stale(entry: dict, stale_secs: int) -> bool:
         return False  # transcript not on disk (yet): too early to call it dead
 
 
-def read_activity(root: Path, stale_secs: int = 300) -> dict:
+def read_activity(root: Path, stale_secs: int = 900) -> dict:
     """Live subagents per root: start events not yet closed by a stop, minus the gone-quiet.
 
     Pairing is by agent_id when the harness provides one; otherwise starts and stops of the same
@@ -553,50 +553,64 @@ def _raise_terminal_by_tty(terminal_app: str, tty: str) -> bool:
     return _activate_app(terminal_app)
 
 
-def focus_window(window: str, terminal_app: str = "") -> dict:
-    """Put the target tmux session in front of the user, one terminal window per session.
+def _tmux(*args: str, timeout: int = 5) -> subprocess.CompletedProcess:
+    return subprocess.run(["tmux", *args], capture_output=True, text=True, timeout=timeout)
 
-    The model the operator asked for: every tmux session owns its own terminal window. If a
-    client is already attached to THIS session, raise that window (by tty for Terminal.app,
-    app-level otherwise). If not, open a fresh Terminal window attached to this session — other
-    sessions' windows are never hijacked.
+
+def viewer_name(window: str) -> str:
+    """The dedicated grouped-session name for one tavern character's terminal window."""
+    import re
+
+    return "gate-" + re.sub(r"[^A-Za-z0-9_-]", "-", window)
+
+
+def focus_window(window: str, terminal_app: str = "") -> dict:
+    """Give every character its OWN terminal window — even when they share one tmux session.
+
+    Firstmate spawns crewmates as windows of a single tmux session, and a session has one current
+    window per client: steering the shared client is how clicking the crewmate overwrote the
+    firstmate's terminal. The fix is a tmux GROUPED session per character (`new-session -t`):
+    same windows, independent current-window. Each character's viewer session gets its own
+    attached Terminal window, raised by tty on later clicks and never shared with the others.
     """
     if not window:
         return {"ok": False, "error": "no window recorded in meta"}
-    session = window.split(":", 1)[0]
-    attach_cmd = f"tmux attach -t {session} \\; select-window -t {window}"
+    viewer = viewer_name(window)
+    attach_cmd = f"tmux attach -t {viewer}"
     try:
-        proc = subprocess.run(
-            ["tmux", "select-window", "-t", window],
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode != 0:
-            return {"ok": False, "error": (proc.stderr or "tmux failed").strip()[:200],
+        session, _, win_part = window.partition(":")
+        if _tmux("has-session", "-t", "=" + viewer).returncode != 0:
+            made = _tmux("new-session", "-d", "-s", viewer, "-t", session)
+            if made.returncode != 0:
+                return {"ok": False, "error": (made.stderr or "tmux new-session failed").strip()[:200],
+                        "attach_cmd": f"tmux attach -t {session} \\; select-window -t {window}"}
+        target = f"{viewer}:{win_part}" if win_part else viewer
+        sel = _tmux("select-window", "-t", target)
+        if sel.returncode != 0:
+            return {"ok": False, "error": (sel.stderr or "tmux select-window failed").strip()[:200],
                     "attach_cmd": attach_cmd}
-        tty = _client_tty_for_session(session)
+        tty = _client_tty_for_session(viewer)
         if tty:
             if _raise_terminal_by_tty(terminal_app, tty):
-                return {"ok": True, "method": f"raised this session's terminal ({tty})",
+                return {"ok": True, "method": f"raised this character's own terminal ({tty})",
                         "window": window}
-            return {"ok": True, "method": "tmux select-window", "window": window,
-                    "hint": "session has a terminal attached but it could not be raised — set "
+            return {"ok": True, "method": "switched this character's viewer session",
+                    "window": window,
+                    "hint": "its terminal window exists but could not be raised — set "
                             "terminal_app in tavern.toml, or bring it forward yourself"}
         if sys.platform == "darwin":
-            script = (
-                f'tell application "Terminal" to do script '
-                f'"tmux select-window -t {window}; tmux attach -t {session}"'
-            )
+            script = f'tell application "Terminal" to do script "tmux attach -t {viewer}"'
             osa = subprocess.run(
                 ["osascript", "-e", script, "-e", 'tell application "Terminal" to activate'],
                 capture_output=True, text=True, timeout=10,
             )
             if osa.returncode == 0:
-                return {"ok": True, "method": "opened a new Terminal window for this session",
+                return {"ok": True, "method": "opened this character's own Terminal window",
                         "window": window}
         return {"ok": False,
-                "error": "no terminal is attached to this tmux session — attach one",
+                "error": "viewer session is ready but no terminal could be opened for it",
                 "attach_cmd": attach_cmd}
-    except OSError as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {"ok": False, "error": str(exc), "attach_cmd": attach_cmd}
 
 

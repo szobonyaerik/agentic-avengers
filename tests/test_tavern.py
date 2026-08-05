@@ -380,3 +380,34 @@ def test_harness_helpers_are_not_liveness(tmp_path):
     rows = sources._parse_harness_rows(ps)
     pids = [pid for pid, _ in rows]
     assert pids == ["9606", "38370", "1259"]
+
+
+def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
+    # firstmate crews share ONE tmux session; two clicks must yield two independent viewers
+    import shutil
+    import subprocess as sp
+    import sources
+    if not shutil.which("tmux"):
+        pytest.skip("no tmux on this machine")
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))  # private tmux server for this test
+    def tmux(*a):
+        return sp.run(["tmux", *a], capture_output=True, text=True, timeout=10)
+    try:
+        assert tmux("new-session", "-d", "-s", "fleet", "-n", "mate").returncode == 0
+        assert tmux("new-window", "-t", "fleet", "-n", "crew").returncode == 0
+
+        r1 = sources.focus_window("fleet:mate")
+        r2 = sources.focus_window("fleet:crew")
+        # no terminal can open headless, but the viewer sessions must exist and point apart
+        sessions = tmux("list-sessions", "-F", "#{session_name}").stdout.split()
+        assert "gate-fleet-mate" in sessions and "gate-fleet-crew" in sessions
+        w1 = tmux("display-message", "-p", "-t", "gate-fleet-mate", "#{window_name}").stdout.strip()
+        w2 = tmux("display-message", "-p", "-t", "gate-fleet-crew", "#{window_name}").stdout.strip()
+        assert (w1, w2) == ("mate", "crew")
+        # clicking again reuses the same viewer instead of minting a third
+        sources.focus_window("fleet:mate")
+        assert tmux("list-sessions", "-F", "#{session_name}").stdout.split().count("gate-fleet-mate") == 1
+        for r in (r1, r2):
+            assert r["attach_cmd"].startswith("tmux attach -t gate-fleet-")
+    finally:
+        tmux("kill-server")
