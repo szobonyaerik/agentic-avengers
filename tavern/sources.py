@@ -64,8 +64,35 @@ def parse_frontmatter(text: str) -> dict[str, str]:
 # ---------------------------------------------------------------- activity
 
 
-def read_activity(root: Path) -> dict:
-    """Live subagents per root: start events not yet closed by a stop.
+def _subagent_transcript(entry: dict) -> Path | None:
+    """Where this subagent's own transcript lives, derived from the parent's path."""
+    parent, agent_id = entry.get("transcript_path"), entry.get("agent_id")
+    if not parent or not agent_id or not str(parent).endswith(".jsonl"):
+        return None
+    return Path(str(parent)[: -len(".jsonl")]) / "subagents" / f"agent-{agent_id}.jsonl"
+
+
+def _is_stale(entry: dict, stale_secs: int) -> bool:
+    """A 'live' agent with no evidence of life is gone, SubagentStop event or not.
+
+    Stops go missing in the real world — background subagents, killed sessions — and a ghost
+    sitting at the table forever misreads as work happening. Evidence of life is the subagent's
+    own transcript still being written; when that file exists and has gone quiet, the agent is
+    treated as finished.
+    """
+    import time
+
+    transcript = _subagent_transcript(entry)
+    if transcript is None:
+        return False  # nothing to judge by: keep showing it, the pairing logic owns this case
+    try:
+        return time.time() - transcript.stat().st_mtime > stale_secs
+    except OSError:
+        return False  # transcript not on disk (yet): too early to call it dead
+
+
+def read_activity(root: Path, stale_secs: int = 300) -> dict:
+    """Live subagents per root: start events not yet closed by a stop, minus the gone-quiet.
 
     Pairing is by agent_id when the harness provides one; otherwise starts and stops of the same
     agent_type pair LIFO — good enough for presence, and honest about it in the record ("paired").
@@ -107,6 +134,7 @@ def read_activity(root: Path) -> dict:
                 live_by_type[agent_type].pop()
 
     live = list(live_by_id.values()) + [e for stack in live_by_type.values() for e in stack]
+    live = [e for e in live if not _is_stale(e, stale_secs)]
     return {"status": "ok", "live": live, "recent": events[-40:]}
 
 
@@ -322,6 +350,29 @@ def match_crew(crew: list[dict], root: str) -> dict | None:
     for member in crew:
         if member.get("project") and member["project"] == root:
             return member
+    return None
+
+
+def find_pane_by_path(target: Path) -> str | None:
+    """The tmux window whose pane is working in `target`, if any — how the tavern focuses things
+    that never wrote a `window=` meta line (the first mate, discovered sessions)."""
+    try:
+        proc = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{pane_current_path}\t#{session_name}:#{window_index}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        wanted = str(target.expanduser().resolve())
+    except OSError:
+        wanted = str(target)
+    for line in proc.stdout.splitlines():
+        path, _, window = line.partition("\t")
+        if path and window and path == wanted:
+            return window
     return None
 
 
