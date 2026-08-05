@@ -295,7 +295,7 @@ def _transcript_cwd(path: Path) -> str | None:
     return None
 
 
-def discover_sessions(max_age_secs: int = 900, limit: int = 12) -> list[dict]:
+def discover_sessions(max_age_secs: int = 3600, limit: int = 12) -> list[dict]:
     """Every recently-active Claude Code session on this machine, no configuration needed.
 
     The harness writes one transcript per session under ~/.claude/projects/<munged-cwd>/, and each
@@ -379,13 +379,27 @@ def find_pane_by_path(target: Path) -> str | None:
 # ---------------------------------------------------------------- focus / detail helpers
 
 
-def focus_window(window: str) -> dict:
+def _activate_app(app: str) -> bool:
+    """Bring a named macOS app to the front. Best effort; False when it could not."""
+    if sys.platform != "darwin" or not app:
+        return False
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", f'tell application "{app}" to activate'],
+            capture_output=True, text=True, timeout=10,
+        )
+        return proc.returncode == 0
+    except OSError:
+        return False
+
+
+def focus_window(window: str, terminal_app: str = "") -> dict:
     """Put the crewmate's tmux window in front of the user. Never raises; reports what it did.
 
-    Two distinct situations hide behind "focus": a tmux client is already attached (select-window
-    is enough — the user's terminal visibly switches), or nothing is attached (select-window
-    "succeeds" invisibly — the classic 'the button did nothing'). In the second case, on macOS,
-    open Terminal.app attached to the session; elsewhere hand back the attach command.
+    Three situations hide behind "focus": a tmux client is attached and its host app is known
+    (select-window + raise the app — the full magic), attached but host unknown (select-window
+    works, but the browser can't raise an app it can't name — say so instead of looking broken),
+    or nothing attached (on macOS, open Terminal.app onto the session).
     """
     if not window:
         return {"ok": False, "error": "no window recorded in meta"}
@@ -404,7 +418,13 @@ def focus_window(window: str) -> dict:
             return {"ok": False, "error": (proc.stderr or "tmux failed").strip()[:200],
                     "attach_cmd": attach_cmd}
         if attached:
-            return {"ok": True, "method": "tmux select-window", "window": window}
+            if _activate_app(terminal_app):
+                return {"ok": True, "method": f"tmux select-window + raised {terminal_app}",
+                        "window": window}
+            return {"ok": True, "method": "tmux select-window", "window": window,
+                    "hint": "bring your tmux terminal to the front — set terminal_app in "
+                            "tavern.toml (e.g. \"Terminal\", \"iTerm\", \"Visual Studio Code\") "
+                            "to auto-raise it"}
         if sys.platform == "darwin":
             script = (
                 f'tell application "Terminal" to do script '

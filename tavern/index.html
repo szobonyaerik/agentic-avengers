@@ -32,6 +32,7 @@
     position: absolute; transform: translate(-50%, -100%);
     background: #f5ecd8; color: #241a10; border: 2px solid #241a10; border-radius: 6px;
     padding: 3px 7px; font-size: 11px; max-width: 210px; line-height: 1.25;
+    max-height: 44px; overflow: hidden;  /* backstop: a bubble is a glance, never a report */
     box-shadow: 2px 2px 0 rgba(0,0,0,.55);
   }
   .bubble::after {
@@ -636,7 +637,8 @@ async function focusAgent(id) {
   let res;
   try { res = await (await fetch("/api/focus", { method: "POST", body: JSON.stringify({ id }) })).json(); }
   catch (e) { res = { ok: false, error: String(e) }; }
-  toast(res.ok ? "⚔ jumped to " + res.window : "✗ " + (res.error || "failed") + (res.attach_cmd ? " — try: " + res.attach_cmd : ""));
+  toast(res.ok ? "⚔ " + (res.method || "jumped") + " → " + res.window + (res.hint ? " — " + res.hint : "")
+               : "✗ " + (res.error || "failed") + (res.attach_cmd ? " — try: " + res.attach_cmd : ""));
 }
 function toast(msg) {
   const el = document.getElementById("toast");
