@@ -79,6 +79,13 @@ to its own repo is a `git mv` plus keeping those feeds reachable.
 
 ## Runtime notes
 
+- **The tavern sees the machine it runs on.** Remote sessions — Claude Code on the web/mobile,
+  cloud containers — leave no transcript under `~/.claude/projects/` on your disk, so they cannot
+  be discovered. What appears is everything local: sessions, crewmate worktrees, the fleet home.
+- **Raising your terminal:** the ⚔ focus button switches tmux windows; set `terminal_app` in
+  `tavern.toml` (e.g. `"Terminal"`, `"iTerm"`, `"Visual Studio Code"`) so it also brings that app
+  to the front on macOS — the server can't guess which app hosts your tmux client.
+
 - Claude Code: full fidelity — `SubagentStart`/`SubagentStop` hooks feed the activity log.
 - opencode: has **no subagent lifecycle events**, so opencode sessions surface through the
   pipeline artifacts and fleet state only; their in-session subagents don't appear individually.

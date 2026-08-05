@@ -51,6 +51,7 @@ class Config:
         self.cache_secs = 2.0
         self.demo = False
         self.scan = True  # auto-discover crewmate worktrees + active Claude sessions
+        self.terminal_app = ""  # macOS app to raise after a tmux focus (e.g. "Terminal", "iTerm")
 
 
 def load_config(args: argparse.Namespace) -> Config:
@@ -68,6 +69,7 @@ def load_config(args: argparse.Namespace) -> Config:
             cfg.fm_home = Path(data["fm_home"]).expanduser().resolve()
         if data.get("fm_bin"):
             cfg.fm_bin = Path(data["fm_bin"]).expanduser().resolve()
+        cfg.terminal_app = str(data.get("terminal_app", cfg.terminal_app))
     if args.root:
         cfg.roots = [Path(r).expanduser().resolve() for r in args.root]
     if args.fm_home:
@@ -81,6 +83,8 @@ def load_config(args: argparse.Namespace) -> Config:
     cfg.demo = bool(args.demo)
     if getattr(args, "no_scan", False):
         cfg.scan = False
+    if getattr(args, "terminal_app", ""):
+        cfg.terminal_app = args.terminal_app
     return cfg
 
 
@@ -356,7 +360,7 @@ class StateBuilder:
                 return {"ok": False, "error": "no firstmate home configured"}
             window = sources.find_pane_by_path(self.cfg.fm_home)
             if window:
-                return sources.focus_window(window)
+                return sources.focus_window(window, self.cfg.terminal_app)
             return {"ok": False, "error": "the first mate is not in a tmux pane — it runs in "
                                           "whatever window you launched it from (your harness/IDE)"}
         if kind == "session":
@@ -364,7 +368,7 @@ class StateBuilder:
                 if session["session_id"] == key or session["session_id"].startswith(key):
                     window = sources.find_pane_by_path(Path(session["cwd"]))
                     if window:
-                        return sources.focus_window(window)
+                        return sources.focus_window(window, self.cfg.terminal_app)
                     return {"ok": False, "error": "this session is not in a tmux pane — it runs "
                                                   "wherever you started it"}
             return {"ok": False, "error": f"no active session {key!r}"}
@@ -374,7 +378,7 @@ class StateBuilder:
         fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
         for member in fleet["crew"]:
             if member["id"] == key:
-                return sources.focus_window(member.get("window", ""))
+                return sources.focus_window(member.get("window", ""), self.cfg.terminal_app)
         return {"ok": False, "error": f"no crewmate {key!r}"}
 
 
@@ -452,6 +456,9 @@ def main() -> None:
     parser.add_argument("--demo", action="store_true", help="serve the synthetic 3-job fleet")
     parser.add_argument("--no-scan", action="store_true",
                         help="disable auto-discovery of crewmate worktrees and active sessions")
+    parser.add_argument("--terminal-app", default="",
+                        help='macOS app to raise after a tmux focus, e.g. "Terminal", "iTerm", '
+                             '"Visual Studio Code"')
     args = parser.parse_args()
 
     cfg = load_config(args)

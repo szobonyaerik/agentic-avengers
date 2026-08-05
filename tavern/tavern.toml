@@ -8,3 +8,6 @@ port = 8377
 bind = "127.0.0.1"
 cache_secs = 2.0
 roots = [".."]
+# macOS app hosting your tmux client — the ⚔ focus button raises it after switching windows.
+# e.g. "Terminal", "iTerm", "Visual Studio Code". Empty = switch windows only, with a hint.
+terminal_app = ""
