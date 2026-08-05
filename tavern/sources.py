@@ -349,8 +349,14 @@ def _parse_harness_rows(ps_output: str) -> list[tuple[str, str]]:
         if len(parts) != 2:
             continue
         pid, args = parts
-        names = {token.rsplit("/", 1)[-1] for token in args.split()[:2]}
-        if not names & {"claude", "opencode"}:
+        tokens = args.split()
+        harness = {"claude", "opencode"}
+        # argv0 may be the binary itself, or an interpreter with the binary's PATH as argv1
+        # ("node /usr/local/bin/claude"); a bare word in argv1 ("grep claude") is not a harness.
+        is_harness = tokens and tokens[0].rsplit("/", 1)[-1] in harness
+        if not is_harness and len(tokens) > 1 and "/" in tokens[1]:
+            is_harness = tokens[1].rsplit("/", 1)[-1] in harness
+        if not is_harness:
             continue
         if any(marker in args for marker in _HELPER_MARKERS):
             continue
