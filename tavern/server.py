@@ -417,6 +417,9 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         elif self.path == "/api/state":
             self._send_json(self.builder.state())
+        elif self.path == "/api/debug":
+            # inspection beats assumption: what the liveness filter saw, verdict per session
+            self._send_json(sources.session_debug())
         elif self.path.startswith("/api/agent/"):
             agent_id = unquote(self.path[len("/api/agent/"):])
             self._send_json(self.builder.agent_detail(agent_id))
