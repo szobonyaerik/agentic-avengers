@@ -21,6 +21,12 @@ Run these before anything else, and stop with the fix if one fails:
 - `git rev-parse --abbrev-ref HEAD` — **the run must be on `feat/<feature-id>` and stay there.**
   - On `main`/`master`: create `feat/<feature-id>`. Never work on the default branch.
   - Already on `feat/<feature-id>`: continue — that is the normal resume path.
+  - **Detached `HEAD`** — a fresh `git worktree`, which is exactly how firstmate/treehouse hand a
+    crewmate its checkout — is nobody's branch, so do not stop: `git fetch origin` then
+    `git switch feat/<feature-id>` when the branch exists locally or on origin (the crewmate resume
+    path), else `git switch -c feat/<feature-id>`. One refusal is terminal here: git rejecting the
+    switch because the branch is **checked out in another worktree** — stop and say which, because
+    two checkouts building one branch is the collision worktrees exist to prevent.
   - On any **other** branch: stop, naming the branch you are on, and tell the user to switch
     (`git switch -c feat/<feature-id>`) or re-invoke with the feature id matching the branch. Do not
     build on it silently: §4a requires this branch, and `no-mistakes axi respond` resolves to the
@@ -29,7 +35,9 @@ Run these before anything else, and stop with the fix if one fails:
 - `docs/features/<feature-id>/` exists? If not and a brief was given, create it. If `docs/features/`
   itself is missing, tell the user to run `/plan-build-verify:pipeline-init <feature-id>` first and stop.
 - `OPENROUTER_API_KEY` set (or `opencode` on PATH). Gates fail closed without it — do not start a run
-  that will halt at the first gate.
+  that will halt at the first gate. The key may live in the project `.env`; in a linked worktree that
+  gitignored file stays behind in the primary checkout, and `scripts/load_env.sh` deliberately falls
+  back to it — check both places before declaring it missing.
 - **The §4a ship gate's three preconditions — the binary, an initialised repo, and a filled-in
   config.** All three are needed in interactive *and* `--auto` runs, and each is checked by
   *interrogating state*, never by printing advice and hoping:

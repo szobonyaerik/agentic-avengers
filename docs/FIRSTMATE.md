@@ -75,6 +75,21 @@ supervises via the zero-token watcher.
 > Ship task on `<project-a>`: run `/plan-build-verify:avenger-run <feature-id> "<one-line brief>"
 > --auto`. The run halts on ask-user findings — escalate them to me rather than answering.
 
+To **continue a feature that already has artifacts** (a `feat/<feature-id>` branch with
+`docs/features/<feature-id>/` on it), the brief is the same minus the one-line brief — the run is
+resumable from the artifacts, and the command's preflight handles the worktree's detached HEAD by
+switching to `feat/<feature-id>` from origin itself:
+
+> Ship task on `<project-a>`: run `/plan-build-verify:avenger-run <feature-id> --auto`. This
+> resumes an existing feature — the `feat/<feature-id>` branch exists on origin. Escalate ask-user
+> findings and NO-GO halts to me.
+
+Two crewmate mechanics the pipeline already accounts for, worth knowing when reading its output:
+the project's gitignored `.env` (with `OPENROUTER_API_KEY`) stays in the primary checkout, and the
+gates' env loader falls back to it from a linked worktree; and `feat/<feature-id>` must not be
+checked out in the primary checkout at the same time — git refuses one branch in two worktrees, and
+the run stops naming the collision.
+
 **Job 2 — scout: a second worktree of the same repo, in parallel:**
 
 > Scout task on `<project-a>`: audit `docs/` for drift against the current code; leave a report.
@@ -122,6 +137,9 @@ yet on this machine.
 | patrons but no avengers on job 1 | `<project-a>` lacks the activity hook | re-run `scripts/install.sh <project-a>` (vendors `hook_activity.sh` + hooks.json) |
 | job 1 quiet for long | `--auto` halted on ask-user / NO-GO, or preflight failed | read its window (⚔ Focus); preflight §0 above |
 | `⚑ stage` never moves | resolver can't run in that root | `python3 scripts/pipeline_state.py <feature-id> --root <root>` by hand and read the error |
+| job 1 halts at preflight: branch | `feat/<feature-id>` checked out in the primary checkout too | `git switch main` in the primary, re-dispatch |
+| job 1 halts at preflight: no-mistakes | `no-mistakes axi` reports uninitialised *inside the worktree* | run `no-mistakes init` once in that worktree (the bare gate repo + DB record may be keyed per working dir) |
+| crewmate says `/plan-build-verify:...` unknown | plugin not installed for the harness user | install the plan-build-verify plugin (user-level) — crewmates on the same machine share it |
 | tavern empty, sources all `absent` | wrong `--root`s | roots must be the project checkouts (worktrees inherit the artifact tree per-worktree; add the active worktree path as a root too if you want per-worktree boards) |
 
 One honest limitation, one honest note: **worktree roots.** Job 1's pipeline artifacts are written
