@@ -199,6 +199,7 @@ agentic-avengers/
 │   ├── sync_runtimes.sh       run the opencode transpiler
 │   ├── install.sh             versioned vendor into a target repo (NEW/UPDATE/DRIFT/GONE)
 │   └── vendor_runtime.sh      legacy copy (superseded by install.sh)
+├── tavern/                pixel-art fleet monitor (tavern/README.md; docs/FIRSTMATE.md for fleet layering)
 ├── .opencode/
 │   ├── agents/            generated
 │   ├── skills/            symlink -> ../skills
