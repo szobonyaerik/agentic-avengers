@@ -267,3 +267,48 @@ def test_fresh_break_glass_is_a_moment(project, fm_home):
     state = StateBuilder(cfg).state()
     (moment,) = [m for m in state["moments"] if m["kind"] == "break_glass"]
     assert "fresh override" in moment["text"]
+
+
+def test_gone_quiet_subagent_leaves_the_tavern(tmp_path):
+    # a start with no stop, whose own transcript stopped moving: the ghost-at-the-table bug
+    import os
+    root = tmp_path / "wt"
+    root.mkdir()
+    parent = tmp_path / "claude" / "sess.jsonl"
+    sub_dir = tmp_path / "claude" / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+    parent.write_text("{}\n")
+    quiet = sub_dir / "agent-a1.jsonl"
+    quiet.write_text("{}\n")
+    os.utime(quiet, (1_700_000_000, 1_700_000_000))
+    (root / ".agent-activity.jsonl").write_text(json.dumps({
+        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart", "agent_type": "avenger-verifier",
+        "agent_id": "a1", "transcript_path": str(parent),
+    }) + "\n")
+    import sources
+    assert sources.read_activity(root)["live"] == []
+    # a transcript still being written keeps the agent seated
+    os.utime(quiet, None)
+    (live,) = sources.read_activity(root)["live"]
+    assert live["agent_id"] == "a1"
+
+
+def test_live_agent_detail_reaches_discovered_roots(tmp_path, monkeypatch):
+    # the 'gone: no live agent' bug — the sprite came from a discovered root the detail
+    # lookup never searched
+    workdir = tmp_path / "someproject"
+    workdir.mkdir()
+    (workdir / ".agent-activity.jsonl").write_text(json.dumps({
+        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
+        "agent_type": "general-purpose", "agent_id": "g1",
+    }) + "\n")
+    config_dir = tmp_path / "claude-home"
+    proj = config_dir / "projects" / "-someproject"
+    proj.mkdir(parents=True)
+    (proj / "sess-9.jsonl").write_text(json.dumps({"cwd": str(workdir)}) + "\n")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+    cfg = Config()
+    cfg.cache_secs = 0.0
+    detail = StateBuilder(cfg).agent_detail("live:g1")
+    assert detail["kind"] == "live"
+    assert detail["root"] == str(workdir)

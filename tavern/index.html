@@ -480,6 +480,8 @@ function render() {
     drawCharacter(BARKEEP[0], BARKEEP[1], BARKEEP_LOOK, bob);
     rect(20, 96, 150, 6, "#553517"); rect(20, 102, 150, 26, "#412a12"); rect(20, 96, 150, 2, "#6a4520");
     clickables.push({ x: BARKEEP[0] - 2, y: BARKEEP[1] - 10, w: 20, h: 34, id: "fm" });
+    if (state.barkeep_sentence)
+      overlays.push({ x: BARKEEP[0] + 8, y: BARKEEP[1] - 12, kind: "bubble", text: state.barkeep_sentence });
     overlays.push({ x: BARKEEP[0] + 8, y: BARKEEP[1] + 28, kind: "tag",
                     html: state.crew && state.crew.length ? "firstmate <small>the Barkeep</small>" : "<small>the house</small>" });
     seats.forEach(seat => {
@@ -494,10 +496,11 @@ function render() {
         const projectName = String(m.project || "").split("/").filter(Boolean).pop() || "";
         overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
                         html: `${m.id} <small>${m.kind || ""} · ${esc(projectName)}${stageNote}</small>` });
-        // the patron speaks only when no avenger at the table is already saying the same work
+        // everyone speaks; when an avenger shares the table, the patron's bubble sits higher so
+        // the two don't stack
         const agentSpeaks = (seat.agents || []).some(a => a.sentence);
-        if (m.sentence && !agentSpeaks)
-          overlays.push({ x: tx - 22, y: ty - 26, kind: "bubble", text: m.sentence });
+        if (m.sentence)
+          overlays.push({ x: tx - 22, y: agentSpeaks ? ty - 44 : ty - 26, kind: "bubble", text: m.sentence });
       } else if (seat.kind === "session") {
         const s = seat.session;
         drawCharacter(tx - 30, ty - 12, patronLook(s.session_id), bob);
@@ -507,6 +510,7 @@ function render() {
         const stageNote = seat.feature && seat.feature.stage ? ` · ⚑ ${esc(seat.feature.stage)}` : "";
         overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
                         html: `${esc(dirName)} <small>session · ${patronLook(s.session_id).epithet}${stageNote}</small>` });
+        if (s.sentence) overlays.push({ x: tx - 22, y: ty - 26, kind: "bubble", text: s.sentence });
       } else if (seat.feature) {
         overlays.push({ x: tx, y: ty + 26, kind: "tag",
                         html: `<small>feature</small> ${esc(seat.feature.feature)} <small>@ ${esc(seat.feature.stage || "?")}</small>` });
@@ -600,12 +604,14 @@ async function openPanel(id) {
     const dirName = String(detail.cwd || "").split("/").filter(Boolean).pop() || "session";
     rows.push(`<h2>${esc(dirName)} <small>${patronLook(detail.session_id).epithet}</small></h2>`);
     rows.push(`<div class="meta">auto-discovered session · last active ${detail.age_secs ?? "?"}s ago<br>cwd: ${esc(detail.cwd || "—")}</div>`);
+    rows.push(`<button onclick="focusAgent('session:${esc(detail.session_id)}')">⚔ Focus terminal (if it lives in tmux)</button>`);
     rows.push(`<div class="meta">${esc(detail.note || "")}</div>`);
     (detail.doings || []).forEach(d => {
       rows.push(`<div class="doing">${d.kind === "tool" ? "<b>" + esc(d.name) + "</b> " : ""}${esc(d.summary)}</div>`);
     });
   } else if (detail.kind === "fm") {
     rows.push(`<h2>firstmate <small>the Barkeep</small></h2>`);
+    rows.push(`<button onclick="focusAgent('fm')">⚔ Focus terminal (if it lives in tmux)</button>`);
     rows.push(`<div class="meta">${esc(detail.note || "")}</div>`);
     if (detail.watcher) rows.push(`<div class="meta">${esc(detail.watcher)} · crew on the books: ${detail.crew_count ?? 0}</div>`);
     (detail.crew || []).forEach(m => {

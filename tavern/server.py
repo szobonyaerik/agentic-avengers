@@ -142,31 +142,50 @@ class StateBuilder:
                 add(Path(session["cwd"]))
         return roots
 
-    def _build_live(self) -> dict:
+    def _context(self) -> tuple[dict, list[dict], list[Path]]:
+        """One consistent view of fleet + sessions + watched roots.
+
+        Detail lookups and focus MUST use the same roots the snapshot was built from — resolving
+        them differently is how a sprite on screen 404s when clicked.
+        """
         fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
+        sessions = sources.discover_sessions() if self.cfg.scan else []
+        return fleet, sessions, self._watched_roots(fleet, sessions)
+
+    def _build_live(self) -> dict:
+        fleet, sessions, roots = self._context()
         crew = []
         for member in fleet["crew"]:
             sentence = member["last_status"].split(": ", 1)[-1] if member["last_status"] else ""
             crew.append({**member, "sentence": sentence})
+        def last_doing(transcript: str) -> str:
+            doings = sources.transcript_tail(Path(transcript), limit=1)
+            if not doings:
+                return ""
+            doing = doings[-1]
+            name = doing.get("name", "")
+            return f"{name}: {doing['summary']}" if name else doing["summary"]
 
-        sessions = sources.discover_sessions() if self.cfg.scan else []
-        # the first mate's own session is the barkeeper, and a crewmate's session is already its
-        # patron — only sessions nobody in the fleet owns get their own seat
+        # the first mate's own session is the barkeeper (it still gets a speech bubble), and a
+        # crewmate's session is already its patron — only unowned sessions get their own seat
         fm_home_str = str(self.cfg.fm_home) if self.cfg.fm_home else None
+        barkeep_sentence = ""
         seated_sessions = []
         for session in sessions:
             if fm_home_str and session["cwd"] == fm_home_str:
+                barkeep_sentence = last_doing(session["transcript_path"])
                 continue
             owner = sources.match_crew(fleet["crew"], session["cwd"])
-            seated_sessions.append(
-                {**session, "crew_id": owner["id"]} if owner else session
-            )
+            seated = {**session, "sentence": last_doing(session["transcript_path"])}
+            if owner:
+                seated["crew_id"] = owner["id"]
+            seated_sessions.append(seated)
 
         features: list[dict] = []
         live_agents: list[dict] = []
         moments: list[dict] = []
         source_notes = {"fleet": fleet["status"]}
-        for root in self._watched_roots(fleet, sessions):
+        for root in roots:
             pipeline = sources.read_pipeline(root)
             source_notes[f"pipeline:{root.name}"] = pipeline["status"]
             for feature in pipeline["features"]:
@@ -211,6 +230,7 @@ class StateBuilder:
             "sources": source_notes,
             "crew": crew,
             "sessions": seated_sessions,
+            "barkeep_sentence": barkeep_sentence,
             "features": features,
             "live_agents": live_agents,
             "moments": moments[-15:],
@@ -240,8 +260,8 @@ class StateBuilder:
                     return detail
             return {"error": f"no crewmate {key!r}"}
         if kind == "live":
-            fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
-            for root in self.cfg.roots:
+            fleet, _sessions, roots = self._context()
+            for root in roots:
                 for entry in sources.read_activity(root)["live"]:
                     if key in (entry.get("agent_id"), entry.get("agent_type")):
                         detail = {**entry, "root": str(root), "kind": "live"}
@@ -259,9 +279,9 @@ class StateBuilder:
                 if session["session_id"] == key or session["session_id"].startswith(key):
                     detail = {**session, "kind": "session"}
                     detail["doings"] = sources.transcript_tail(Path(session["transcript_path"]))
-                    detail["note"] = ("an auto-discovered harness session — the tavern found it via "
-                                      "its transcript, so there is no terminal to focus; it lives "
-                                      "wherever you started it")
+                    detail["note"] = ("an auto-discovered harness session — the focus button works "
+                                      "when it runs in a tmux pane; otherwise it lives wherever "
+                                      "you started it")
                     return detail
             return {"error": f"no active session {key!r}"}
         return {"error": f"unknown id scheme {agent_id!r}"}
@@ -283,8 +303,9 @@ class StateBuilder:
             detail["backlog"] = backlog.read_text(encoding="utf-8", errors="replace")[-4000:]
         lock = self.cfg.fm_home / "state" / ".watch.lock"
         detail["watcher"] = "watcher lock present" if lock.exists() else "no watcher lock"
-        detail["note"] = ("the first mate runs in its own session (your harness window), not a tmux "
-                         "pane — speak to it there; this panel is read-only")
+        detail["note"] = ("the panel is read-only; the focus button jumps to the first mate's tmux "
+                         "pane when it has one, otherwise it lives in the window you launched it "
+                         "from (harness/IDE) — speak to it there")
         return detail
 
     def _demo_detail(self, agent_id: str) -> dict:
@@ -310,6 +331,23 @@ class StateBuilder:
         if self.cfg.demo:
             return {"ok": False, "error": "demo mode has no terminals"}
         kind, _, key = agent_id.partition(":")
+        if agent_id == "fm":
+            if self.cfg.fm_home is None:
+                return {"ok": False, "error": "no firstmate home configured"}
+            window = sources.find_pane_by_path(self.cfg.fm_home)
+            if window:
+                return sources.focus_window(window)
+            return {"ok": False, "error": "the first mate is not in a tmux pane — it runs in "
+                                          "whatever window you launched it from (your harness/IDE)"}
+        if kind == "session":
+            for session in sources.discover_sessions():
+                if session["session_id"] == key or session["session_id"].startswith(key):
+                    window = sources.find_pane_by_path(Path(session["cwd"]))
+                    if window:
+                        return sources.focus_window(window)
+                    return {"ok": False, "error": "this session is not in a tmux pane — it runs "
+                                                  "wherever you started it"}
+            return {"ok": False, "error": f"no active session {key!r}"}
         if kind != "crew":
             return {"ok": False, "error": "only crewmates have terminals; "
                                           "in-session subagents live inside their parent session"}
