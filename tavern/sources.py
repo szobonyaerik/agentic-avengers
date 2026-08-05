@@ -295,7 +295,57 @@ def _transcript_cwd(path: Path) -> str | None:
     return None
 
 
-def discover_sessions(max_age_secs: int = 3600, limit: int = 12) -> list[dict]:
+def _live_cwds() -> set[str] | None:
+    """Working directories of running harness processes (claude/opencode), or None if unknowable.
+
+    A transcript's mtime says "recently written", not "still running" — a session closed twenty
+    minutes ago looks identical. The process table is the liveness truth: no harness process
+    working in a directory, no seat at the bar.
+    """
+    import os
+
+    pids: list[str] = []
+    try:
+        ps = subprocess.run(["ps", "-axo", "pid=,args="], capture_output=True, text=True, timeout=5)
+    except OSError:
+        return None
+    if ps.returncode != 0:
+        return None
+    for line in ps.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, args = parts
+        names = {token.rsplit("/", 1)[-1] for token in args.split()[:2]}
+        if names & {"claude", "opencode"}:
+            pids.append(pid)
+    if not pids:
+        return set()
+    cwds: set[str] = set()
+    if Path("/proc").is_dir():
+        for pid in pids:
+            try:
+                cwds.add(os.readlink(f"/proc/{pid}/cwd"))
+            except OSError:
+                continue
+        return cwds
+    try:
+        lsof = subprocess.run(
+            ["lsof", "-a", "-p", ",".join(pids), "-d", "cwd", "-Fn"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except OSError:
+        return None
+    if lsof.returncode not in (0, 1):  # lsof exits 1 when some pids vanished mid-query
+        return None
+    for line in lsof.stdout.splitlines():
+        if line.startswith("n"):
+            cwds.add(line[1:])
+    return cwds
+
+
+def discover_sessions(max_age_secs: int = 3600, limit: int = 12,
+                      require_process: bool = True) -> list[dict]:
     """Every recently-active Claude Code session on this machine, no configuration needed.
 
     The harness writes one transcript per session under ~/.claude/projects/<munged-cwd>/, and each
@@ -336,6 +386,13 @@ def discover_sessions(max_age_secs: int = 3600, limit: int = 12) -> list[dict]:
             continue
         seen.add(session["cwd"])
         unique.append(session)
+    if require_process:
+        cwds = _live_cwds()
+        if cwds is not None:  # tools unavailable -> keep mtime behaviour rather than empty the bar
+            import os
+
+            alive = {os.path.realpath(c) for c in cwds}
+            unique = [s for s in unique if os.path.realpath(s["cwd"]) in alive]
     return unique[:limit]
 
 

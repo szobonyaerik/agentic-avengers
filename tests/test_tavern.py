@@ -230,6 +230,7 @@ def test_sessions_are_discovered_and_watched_without_configuration(tmp_path, mon
 
     cfg = Config()
     cfg.cache_secs = 0.0  # scan stays on: that is the feature under test
+    cfg.proc_check = False  # tmp fixture dirs have no live harness process
     state = StateBuilder(cfg).state()
 
     (session,) = state["sessions"]
@@ -309,6 +310,7 @@ def test_live_agent_detail_reaches_discovered_roots(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
     cfg = Config()
     cfg.cache_secs = 0.0
+    cfg.proc_check = False  # tmp fixture dirs have no live harness process
     detail = StateBuilder(cfg).agent_detail("live:g1")
     assert detail["kind"] == "live"
     assert detail["root"] == str(workdir)
@@ -322,3 +324,21 @@ def test_summarize_turns_a_report_into_a_glance():
     assert short == "phase 4 halted at the spec-review gate."
     assert len(summarize("x" * 500)) <= 110
     assert summarize("") == ""
+
+
+def test_closed_sessions_lose_their_seat(tmp_path, monkeypatch):
+    # a fresh transcript whose harness process is gone: recency is not liveness
+    import sources
+    workdir = tmp_path / "closedproject"
+    workdir.mkdir()
+    config_dir = tmp_path / "claude-home"
+    proj = config_dir / "projects" / "-closedproject"
+    proj.mkdir(parents=True)
+    (proj / "sess-dead.jsonl").write_text(json.dumps({"cwd": str(workdir)}) + "\n")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(sources, "_live_cwds", lambda: set())
+    assert sources.discover_sessions() == []
+    # and when the process table is unreadable, fall back to recency rather than an empty bar
+    monkeypatch.setattr(sources, "_live_cwds", lambda: None)
+    (session,) = sources.discover_sessions()
+    assert session["session_id"] == "sess-dead"

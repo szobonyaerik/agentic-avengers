@@ -52,6 +52,7 @@ class Config:
         self.demo = False
         self.scan = True  # auto-discover crewmate worktrees + active Claude sessions
         self.terminal_app = ""  # macOS app to raise after a tmux focus (e.g. "Terminal", "iTerm")
+        self.proc_check = True  # only seat sessions with a live harness process in their cwd
 
 
 def load_config(args: argparse.Namespace) -> Config:
@@ -172,7 +173,8 @@ class StateBuilder:
         them differently is how a sprite on screen 404s when clicked.
         """
         fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
-        sessions = sources.discover_sessions() if self.cfg.scan else []
+        sessions = (sources.discover_sessions(require_process=self.cfg.proc_check)
+                    if self.cfg.scan else [])
         return fleet, sessions, self._watched_roots(fleet, sessions)
 
     def _build_live(self) -> dict:
@@ -299,7 +301,7 @@ class StateBuilder:
                         return detail
             return {"error": f"no live agent {key!r}"}
         if kind == "session":
-            for session in sources.discover_sessions():
+            for session in sources.discover_sessions(require_process=self.cfg.proc_check):
                 if session["session_id"] == key or session["session_id"].startswith(key):
                     detail = {**session, "kind": "session"}
                     detail["doings"] = sources.transcript_tail(Path(session["transcript_path"]))
@@ -364,7 +366,7 @@ class StateBuilder:
             return {"ok": False, "error": "the first mate is not in a tmux pane — it runs in "
                                           "whatever window you launched it from (your harness/IDE)"}
         if kind == "session":
-            for session in sources.discover_sessions():
+            for session in sources.discover_sessions(require_process=self.cfg.proc_check):
                 if session["session_id"] == key or session["session_id"].startswith(key):
                     window = sources.find_pane_by_path(Path(session["cwd"]))
                     if window:
