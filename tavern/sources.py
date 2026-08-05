@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 AVENGER_STAGES = [
@@ -243,27 +244,132 @@ def _fm_env(fm_home: Path) -> dict[str, str]:
     return env
 
 
+# ---------------------------------------------------------------- session discovery
+
+
+def _transcript_cwd(path: Path) -> str | None:
+    """The session's working directory, from the tail of its transcript JSONL."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 65536))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in reversed(tail.splitlines()):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        cwd = rec.get("cwd") if isinstance(rec, dict) else None
+        if isinstance(cwd, str) and cwd.strip():
+            return cwd.strip()
+    return None
+
+
+def discover_sessions(max_age_secs: int = 900, limit: int = 12) -> list[dict]:
+    """Every recently-active Claude Code session on this machine, no configuration needed.
+
+    The harness writes one transcript per session under ~/.claude/projects/<munged-cwd>/, and each
+    record carries the session's cwd. Recency comes from the transcript's mtime — an agent that is
+    thinking or running tools keeps appending. This is how the tavern seats sessions the operator
+    never told it about.
+    """
+    import os
+    import time
+
+    base = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects"
+    if not base.is_dir():
+        return []
+    now = time.time()
+    sessions = []
+    for transcript in base.glob("*/*.jsonl"):
+        try:
+            age = now - transcript.stat().st_mtime
+        except OSError:
+            continue
+        if age > max_age_secs:
+            continue
+        cwd = _transcript_cwd(transcript)
+        if not cwd:
+            continue
+        sessions.append({
+            "session_id": transcript.stem,
+            "cwd": cwd,
+            "transcript_path": str(transcript),
+            "age_secs": int(age),
+        })
+    sessions.sort(key=lambda s: s["age_secs"])
+    # one seat per cwd: the newest session in a directory represents it
+    seen: set[str] = set()
+    unique = []
+    for session in sessions:
+        if session["cwd"] in seen:
+            continue
+        seen.add(session["cwd"])
+        unique.append(session)
+    return unique[:limit]
+
+
+def match_crew(crew: list[dict], root: str) -> dict | None:
+    """Which crewmate owns this watched root? Worktree containment first, then exact project."""
+    import os
+
+    for member in crew:
+        worktree = os.path.expanduser(member.get("worktree") or "")
+        if worktree and (root == worktree or root.startswith(worktree.rstrip("/") + "/")):
+            return member
+    for member in crew:
+        if member.get("project") and member["project"] == root:
+            return member
+    return None
+
+
 # ---------------------------------------------------------------- focus / detail helpers
 
 
 def focus_window(window: str) -> dict:
-    """Jump the user's tmux client to a crewmate's window. Never raises; reports what it did."""
+    """Put the crewmate's tmux window in front of the user. Never raises; reports what it did.
+
+    Two distinct situations hide behind "focus": a tmux client is already attached (select-window
+    is enough — the user's terminal visibly switches), or nothing is attached (select-window
+    "succeeds" invisibly — the classic 'the button did nothing'). In the second case, on macOS,
+    open Terminal.app attached to the session; elsewhere hand back the attach command.
+    """
     if not window:
         return {"ok": False, "error": "no window recorded in meta"}
+    session = window.split(":", 1)[0]
+    attach_cmd = f"tmux attach -t {session} \\; select-window -t {window}"
     try:
+        clients = subprocess.run(
+            ["tmux", "list-clients"], capture_output=True, text=True, timeout=5,
+        )
+        attached = clients.returncode == 0 and clients.stdout.strip() != ""
         proc = subprocess.run(
             ["tmux", "select-window", "-t", window],
             capture_output=True, text=True, timeout=5,
         )
-        if proc.returncode == 0:
+        if proc.returncode != 0:
+            return {"ok": False, "error": (proc.stderr or "tmux failed").strip()[:200],
+                    "attach_cmd": attach_cmd}
+        if attached:
             return {"ok": True, "method": "tmux select-window", "window": window}
-        return {
-            "ok": False,
-            "error": (proc.stderr or "tmux failed").strip()[:200],
-            "attach_cmd": f"tmux attach \\; select-window -t {window}",
-        }
+        if sys.platform == "darwin":
+            script = (
+                f'tell application "Terminal" to do script '
+                f'"tmux select-window -t {window}; tmux attach -t {session}"'
+            )
+            osa = subprocess.run(
+                ["osascript", "-e", script, "-e", 'tell application "Terminal" to activate'],
+                capture_output=True, text=True, timeout=10,
+            )
+            if osa.returncode == 0:
+                return {"ok": True, "method": "opened Terminal attached to tmux", "window": window}
+        return {"ok": False,
+                "error": "no terminal is attached to the tmux session — attach one",
+                "attach_cmd": attach_cmd}
     except OSError as exc:
-        return {"ok": False, "error": str(exc), "attach_cmd": f"tmux select-window -t {window}"}
+        return {"ok": False, "error": str(exc), "attach_cmd": attach_cmd}
 
 
 def transcript_tail(path: Path, limit: int = 30) -> list[dict]:

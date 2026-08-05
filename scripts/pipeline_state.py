@@ -29,6 +29,9 @@ FEATURE_ORDER: tuple[tuple[str, str], ...] = (
 
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 LEADING_NUMBERS = re.compile(r"\d+")
+# The planner's contractual heading (docs/templates/plan.template.md): `### Phase <n> — <slug>`.
+# Tolerate the dash variants people type; nothing else in a plan looks like this.
+PLAN_PHASE_HEADING = re.compile(r"^###\s*Phase\s+(\d+)\s*[—–-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 class PipelineStateError(Exception):
@@ -198,6 +201,47 @@ def _phase_state(feature: str, phase: Path) -> State | None:
     return None
 
 
+def _planned_phases(feature_dir: Path) -> list[tuple[int, str]]:
+    """Phase numbers and titles the plan commits to, in order; empty when plan.md is unreadable.
+
+    This is what stops the resolver from calling a feature finished just because every phase
+    *folder that exists* is green: the plan, not the filesystem, says how many phases there are.
+    A plan without recognisable headings yields [] and the folder-walk behaviour stands — a
+    malformed plan must not wedge a feature, only an explicit one may extend it.
+    """
+    try:
+        text = (feature_dir / "plan.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [(int(num), title) for num, title in PLAN_PHASE_HEADING.findall(text)]
+
+
+def _slugify(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug or "phase"
+
+
+def _missing_planned_phase(feature_dir: Path, phases: list[Path]) -> State | None:
+    """The first planned phase with no folder on disk, as a spec-writer obligation."""
+    planned = _planned_phases(feature_dir)
+    if not planned:
+        return None
+    on_disk = {_numeric_key(p.name)[0] for p in phases}
+    for number, title in planned:
+        if number not in on_disk:
+            name = f"{number}-{_slugify(title)}"
+            return State(
+                feature=feature_dir.name,
+                stage="spec-writer",
+                reason=(
+                    f"plan.md lists {len(planned)} phases but only {len(phases)} exist on disk; "
+                    f"phase {number} ({title}) has not been specced"
+                ),
+                phase=name,
+            )
+    return None
+
+
 def next_stage(root: Path, feature: str) -> State:
     """Resolve the one stage `feature` owes next, walking phases in dependency order.
 
@@ -224,6 +268,13 @@ def next_stage(root: Path, feature: str) -> State:
         pending = _phase_state(feature, phase)
         if pending is not None:
             return pending
+
+    # Every phase folder on disk is green — but the plan may promise more. Without this check the
+    # resolver skipped straight to e2e/done after the last *existing* phase, silently dropping every
+    # phase nobody had specced yet.
+    missing = _missing_planned_phase(feature_dir, phases)
+    if missing is not None:
+        return missing
 
     if not (feature_dir / "e2e-mapping.md").is_file():
         return State(

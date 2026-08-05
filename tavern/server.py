@@ -50,6 +50,7 @@ class Config:
         self.fm_bin: Path | None = None
         self.cache_secs = 2.0
         self.demo = False
+        self.scan = True  # auto-discover crewmate worktrees + active Claude sessions
 
 
 def load_config(args: argparse.Namespace) -> Config:
@@ -78,6 +79,8 @@ def load_config(args: argparse.Namespace) -> Config:
     if args.bind:
         cfg.bind = args.bind
     cfg.demo = bool(args.demo)
+    if getattr(args, "no_scan", False):
+        cfg.scan = False
     return cfg
 
 
@@ -109,6 +112,36 @@ class StateBuilder:
         state["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         return state
 
+    def _watched_roots(self, fleet: dict, sessions: list[dict]) -> list[Path]:
+        """Configured roots + every crewmate worktree + every active session's cwd, deduped.
+
+        This is what makes new agents appear without the operator re-running the server with the
+        exact paths: the fleet's meta files and the harness's own transcripts name the directories.
+        """
+        roots: list[Path] = []
+        seen: set[str] = set()
+
+        def add(candidate: Path) -> None:
+            try:
+                resolved = candidate.expanduser().resolve()
+            except OSError:
+                return
+            key = str(resolved)
+            if key in seen or not resolved.is_dir():
+                return
+            seen.add(key)
+            roots.append(resolved)
+
+        for root in self.cfg.roots:
+            add(root)
+        if self.cfg.scan:
+            for member in fleet["crew"]:
+                if member.get("worktree"):
+                    add(Path(member["worktree"]))
+            for session in sessions:
+                add(Path(session["cwd"]))
+        return roots
+
     def _build_live(self) -> dict:
         fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
         crew = []
@@ -116,11 +149,24 @@ class StateBuilder:
             sentence = member["last_status"].split(": ", 1)[-1] if member["last_status"] else ""
             crew.append({**member, "sentence": sentence})
 
+        sessions = sources.discover_sessions() if self.cfg.scan else []
+        # the first mate's own session is the barkeeper, and a crewmate's session is already its
+        # patron — only sessions nobody in the fleet owns get their own seat
+        fm_home_str = str(self.cfg.fm_home) if self.cfg.fm_home else None
+        seated_sessions = []
+        for session in sessions:
+            if fm_home_str and session["cwd"] == fm_home_str:
+                continue
+            owner = sources.match_crew(fleet["crew"], session["cwd"])
+            seated_sessions.append(
+                {**session, "crew_id": owner["id"]} if owner else session
+            )
+
         features: list[dict] = []
         live_agents: list[dict] = []
         moments: list[dict] = []
         source_notes = {"fleet": fleet["status"]}
-        for root in self.cfg.roots:
+        for root in self._watched_roots(fleet, sessions):
             pipeline = sources.read_pipeline(root)
             source_notes[f"pipeline:{root.name}"] = pipeline["status"]
             for feature in pipeline["features"]:
@@ -128,7 +174,10 @@ class StateBuilder:
 
             activity = sources.read_activity(root)
             source_notes[f"activity:{root.name}"] = activity["status"]
+            owner = sources.match_crew(fleet["crew"], str(root))
             for entry in activity["live"]:
+                if owner:
+                    entry = {**entry, "crew_id": owner["id"]}
                 sentence = ""
                 transcript = entry.get("transcript_path")
                 if transcript:
@@ -156,6 +205,7 @@ class StateBuilder:
             "mode": "live",
             "sources": source_notes,
             "crew": crew,
+            "sessions": seated_sessions,
             "features": features,
             "live_agents": live_agents,
             "moments": moments[-15:],
@@ -164,6 +214,8 @@ class StateBuilder:
     # ------------------------------------------------------------ detail + actions
 
     def agent_detail(self, agent_id: str) -> dict:
+        if agent_id == "fm":
+            return self._fm_detail()
         if self.cfg.demo:
             return self._demo_detail(agent_id)
         kind, _, key = agent_id.partition(":")
@@ -183,16 +235,52 @@ class StateBuilder:
                     return detail
             return {"error": f"no crewmate {key!r}"}
         if kind == "live":
+            fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
             for root in self.cfg.roots:
                 for entry in sources.read_activity(root)["live"]:
                     if key in (entry.get("agent_id"), entry.get("agent_type")):
                         detail = {**entry, "root": str(root), "kind": "live"}
+                        owner = sources.match_crew(fleet["crew"], str(root))
+                        if owner:
+                            detail["crew_id"] = owner["id"]
+                            detail["crew_window"] = owner.get("window", "")
                         transcript = entry.get("transcript_path")
                         if transcript:
                             detail["doings"] = sources.transcript_tail(Path(transcript))
                         return detail
             return {"error": f"no live agent {key!r}"}
+        if kind == "session":
+            for session in sources.discover_sessions():
+                if session["session_id"] == key or session["session_id"].startswith(key):
+                    detail = {**session, "kind": "session"}
+                    detail["doings"] = sources.transcript_tail(Path(session["transcript_path"]))
+                    detail["note"] = ("an auto-discovered harness session — the tavern found it via "
+                                      "its transcript, so there is no terminal to focus; it lives "
+                                      "wherever you started it")
+                    return detail
+            return {"error": f"no active session {key!r}"}
         return {"error": f"unknown id scheme {agent_id!r}"}
+
+    def _fm_detail(self) -> dict:
+        """The barkeeper's panel: what the first mate's home says about the fleet right now."""
+        detail: dict = {"kind": "fm"}
+        if self.cfg.demo:
+            return {**detail, "note": "demo first mate", "crew_count": 3,
+                    "backlog": "- ship: brave-anvil\n- scout: quiet-lantern\n- ship: gilded-fox"}
+        if self.cfg.fm_home is None:
+            return {**detail, "note": "no firstmate home configured (--fm-home); the house runs itself"}
+        fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
+        detail["crew_count"] = len(fleet["crew"])
+        detail["crew"] = [{"id": m["id"], "kind": m.get("kind", ""), "last_status": m["last_status"]}
+                          for m in fleet["crew"]]
+        backlog = self.cfg.fm_home / "data" / "backlog.md"
+        if backlog.is_file():
+            detail["backlog"] = backlog.read_text(encoding="utf-8", errors="replace")[-4000:]
+        lock = self.cfg.fm_home / "state" / ".watch.lock"
+        detail["watcher"] = "watcher lock present" if lock.exists() else "no watcher lock"
+        detail["note"] = ("the first mate runs in its own session (your harness window), not a tmux "
+                         "pane — speak to it there; this panel is read-only")
+        return detail
 
     def _demo_detail(self, agent_id: str) -> dict:
         state = demo_mod.demo_state(self.started)
@@ -291,11 +379,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--bind", default="")
     parser.add_argument("--demo", action="store_true", help="serve the synthetic 3-job fleet")
+    parser.add_argument("--no-scan", action="store_true",
+                        help="disable auto-discovery of crewmate worktrees and active sessions")
     args = parser.parse_args()
 
     cfg = load_config(args)
-    if not cfg.demo and not cfg.roots and cfg.fm_home is None:
-        parser.error("nothing to watch: give --root/--fm-home, a tavern.toml, or --demo")
+    if not cfg.demo and not cfg.scan and not cfg.roots and cfg.fm_home is None:
+        parser.error("nothing to watch: give --root/--fm-home, a tavern.toml, --demo, "
+                     "or drop --no-scan so sessions are discovered")
     server = serve(cfg)
     mode = "demo" if cfg.demo else f"live, {len(cfg.roots)} root(s)"
     print(f"tavern open at http://{cfg.bind}:{cfg.port}/  [{mode}]")

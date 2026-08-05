@@ -198,6 +198,11 @@ const HATS = {
     "................", "................", "................", "................",
     "..KEEEEEEEEEEK..", ".KEKyyKEEKyyKEK.", "..KKKKKKKKKKKK..", "................",
   ],
+  helm: [
+    "................", "................", "................", "......Krr.......",
+    "......Krr.......", "....KKKKKKKK....", "...KeeeeeeeeK...", "..KeEeeeeeeEeK..",
+    "..KeeKKKKKKeeK..", "..KeeK....KeeK..", "..KeeK....KeeK..", "...KK......KK...",
+  ],
   barkeep: [
     "................", "................", "................", "................",
     "................", "................", "................", "....KhhhhhhK....",
@@ -259,6 +264,18 @@ const PROPS = {
     "........", "........", "........", "........", ".Kww....", ".KKKKK..", ".KyyyKK.",
     ".KyYyKK.", ".KyyyK..", ".KKKKK..", "........", "........", "........", "........",
   ],
+  wand: [
+    "........", "...Ky...", "..KyYyK.", "...Ky...", "...KT...", "...KT...", "...KT...",
+    "...KT...", "........", "........", "........", "........", "........", "........",
+  ],
+  sword: [
+    "...Kw...", "..KweK..", "..KweK..", "..KweK..", "..KweK..", "..KweK..", "...KyK..",
+    "..KyyyK.", "...KT...", "...KT...", "........", "........", "........", "........",
+  ],
+  dagger: [
+    "........", "........", "........", "...Kw...", "..KweK..", "..KweK..", "...KyK..",
+    "..KyyyK.", "...KT...", "........", "........", "........", "........", "........",
+  ],
 };
 const ARCHETYPES = { // agent name -> {hat, coat, trim, epithet, beard?, prop?}
   "avenger-task-analyst":           { hat: "fortune",      coat: "p", trim: "y", epithet: "the Fortune Teller", prop: "orb" },
@@ -273,7 +290,29 @@ const ARCHETYPES = { // agent name -> {hat, coat, trim, epithet, beard?, prop?}
   "avenger-handover":               { hat: "courier",      coat: "o", trim: "w", epithet: "the Courier", prop: "satchel" },
   "avenger-agent-factory":          { hat: "artificer",    coat: "n", trim: "y", epithet: "the Artificer", prop: "wrench" },
 };
-const PATRON_COATS = ["g", "b", "r", "n", "m", "o"]; // crewmates get stable coat colors by name hash
+/* Everyone in the tavern is a fantasy character — no plain civilians. Unknown agent types (a
+ * plugin-prefixed name, a built-in like general-purpose) become apprentice mages, and crewmates
+ * get a stable adventurer look picked by name hash. */
+const APPRENTICE = { hat: "wizard", coat: "n", trim: "y", epithet: "an apprentice mage", prop: "wand" };
+function archFor(agentType) {
+  const name = String(agentType || "");
+  const short = name.split(":").pop();          // plan-build-verify:avenger-x -> avenger-x
+  return ARCHETYPES[name] || ARCHETYPES[short] || APPRENTICE;
+}
+function shortName(agentType) { return String(agentType || "").split(":").pop(); }
+const PATRON_LOOKS = [
+  { hat: "patron", coat: "t", trim: "y", prop: "dagger", epithet: "a hooded rogue" },
+  { hat: "helm",   coat: "e", trim: "r", prop: "sword",  epithet: "a knight" },
+  { hat: "wizard", coat: "p", trim: "y", prop: "wand",   epithet: "a mage" },
+  { hat: "ranger", coat: "g", trim: "t", prop: "staff",  epithet: "a druid" },
+  { hat: "bard",   coat: "m", trim: "y", prop: "lute",   epithet: "a minstrel" },
+  { hat: "patron", coat: "b", trim: "w", prop: "sword",  epithet: "a sellsword", beard: "brown" },
+];
+function patronLook(id) {
+  let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return PATRON_LOOKS[Math.abs(h) % PATRON_LOOKS.length];
+}
+const BARKEEP_LOOK = { hat: "barkeep", coat: "w", trim: "t", prop: "mug", beard: "brown" };
 
 const canvas = document.getElementById("stage");
 const ctx = canvas.getContext("2d");
@@ -365,11 +404,6 @@ let seenLive = new Set();
 let momentFlash = null; // {kind, until}
 let shakeUntil = 0;
 
-function hashCoat(name) {
-  let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) | 0;
-  return PATRON_COATS[Math.abs(h) % PATRON_COATS.length];
-}
-
 function layout() {
   // Seats: one table per crewmate; features without a matching crewmate get their own table;
   // live agents matched to a seat sit beside its patron, the rest take the bar counter.
@@ -378,10 +412,15 @@ function layout() {
   crew.forEach((member, i) => seats.push({ table: TABLES[i % TABLES.length], kind: "crew", crew: member }));
   // Each feature belongs to at most ONE seat — prefer a ship crewmate over a scout that merely
   // shares the project; a feature nobody owns gets its own table.
+  // auto-discovered sessions nobody in the fleet owns get their own table
+  (state.sessions || []).filter(s => !s.crew_id).forEach(session => {
+    if (seats.length < TABLES.length) seats.push({ table: TABLES[seats.length], kind: "session", session });
+  });
   const matches = (f, m) => f.root === m.project || (m.worktree && f.root.includes(m.worktree));
   (state.features || []).forEach(feature => {
     const candidates = seats.filter(s => s.kind === "crew" && !s.feature && matches(feature, s.crew));
-    const target = candidates.find(s => s.crew.kind === "ship") || candidates[0];
+    const target = candidates.find(s => s.crew.kind === "ship") || candidates[0]
+      || seats.find(s => s.kind === "session" && !s.feature && feature.root === s.session.cwd);
     if (target) target.feature = feature;
     else if (seats.length < TABLES.length) seats.push({ table: TABLES[seats.length], kind: "feature", feature });
   });
@@ -391,6 +430,7 @@ function layout() {
     let seat = seats.find(s =>
       (agent.crew_id && s.kind === "crew" && s.crew.id === agent.crew_id) ||
       (s.kind === "crew" && agent.root && (agent.root === s.crew.project || (s.crew.worktree && agent.root.includes(s.crew.worktree)))) ||
+      (s.kind === "session" && agent.root === s.session.cwd) ||
       (s.kind === "feature" && s.feature && agent.root === s.feature.root));
     if (seat) (seat.agents = seat.agents || []).push(agent);
     else counter.push(agent);
@@ -410,10 +450,13 @@ function renderGallery(bob) {
     overlays.push({ x: x + 8, y: y + 30, kind: "tag",
                     html: `${name.replace("avenger-", "")}<br><small>${ARCHETYPES[name].epithet}</small>` });
   });
-  drawCharacter(28, 26 + 2 * 76, { hat: "barkeep", coat: "w", trim: "t", prop: "mug" }, bob);
+  drawCharacter(28, 26 + 2 * 76, BARKEEP_LOOK, bob);
   overlays.push({ x: 36, y: 26 + 2 * 76 + 30, kind: "tag", html: "firstmate<br><small>the Barkeep</small>" });
-  drawCharacter(96, 26 + 2 * 76, { hat: "patron", coat: "g", trim: "y" }, !bob);
-  overlays.push({ x: 104, y: 26 + 2 * 76 + 30, kind: "tag", html: "crewmate<br><small>a patron</small>" });
+  PATRON_LOOKS.forEach((look, i) => {
+    drawCharacter(96 + i * 60, 26 + 2 * 76, look, (i + (bob ? 1 : 0)) % 2 === 0);
+    overlays.push({ x: 104 + i * 60, y: 26 + 2 * 76 + 30, kind: "tag",
+                    html: `crewmate<br><small>${look.epithet}</small>` });
+  });
   renderOverlays(overlays);
 }
 function render() {
@@ -433,8 +476,9 @@ function render() {
     const { seats, counter } = layout();
     // barkeep = the first mate (or the house, if no firstmate); counter front redrawn over
     // the lower body so they stand BEHIND the bar
-    drawCharacter(BARKEEP[0], BARKEEP[1], { hat: "barkeep", coat: "w", trim: "t", prop: "mug" }, bob);
+    drawCharacter(BARKEEP[0], BARKEEP[1], BARKEEP_LOOK, bob);
     rect(20, 96, 150, 6, "#553517"); rect(20, 102, 150, 26, "#412a12"); rect(20, 96, 150, 2, "#6a4520");
+    clickables.push({ x: BARKEEP[0] - 2, y: BARKEEP[1] - 10, w: 20, h: 34, id: "fm" });
     overlays.push({ x: BARKEEP[0] + 8, y: BARKEEP[1] + 28, kind: "tag",
                     html: state.crew && state.crew.length ? "firstmate <small>the Barkeep</small>" : "<small>the house</small>" });
     seats.forEach(seat => {
@@ -442,40 +486,50 @@ function render() {
       drawTable(tx, ty);
       if (seat.kind === "crew") {
         const m = seat.crew;
-        drawCharacter(tx - 30, ty - 12, { hat: "patron", coat: hashCoat(m.id), trim: "y" }, bob);
+        drawCharacter(tx - 30, ty - 12, patronLook(m.id), bob);
         drawTankard(tx + 4, ty + 1, momentFlash && momentFlash.kind !== "gate_pass" && Date.now() < momentFlash.until);
         clickables.push({ x: tx - 32, y: ty - 22, w: 20, h: 34, id: "crew:" + m.id });
         const stageNote = seat.feature && seat.feature.stage ? ` · ⚑ ${esc(seat.feature.stage)}` : "";
+        const projectName = String(m.project || "").split("/").filter(Boolean).pop() || "";
         overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
-                        html: `${m.id} <small>${m.kind || ""} · ${esc(m.project || "")}${stageNote}</small>` });
+                        html: `${m.id} <small>${m.kind || ""} · ${esc(projectName)}${stageNote}</small>` });
         // the patron speaks only when no avenger at the table is already saying the same work
         const agentSpeaks = (seat.agents || []).some(a => a.sentence);
         if (m.sentence && !agentSpeaks)
           overlays.push({ x: tx - 22, y: ty - 26, kind: "bubble", text: m.sentence });
+      } else if (seat.kind === "session") {
+        const s = seat.session;
+        drawCharacter(tx - 30, ty - 12, patronLook(s.session_id), bob);
+        drawTankard(tx + 4, ty + 1, false);
+        clickables.push({ x: tx - 32, y: ty - 22, w: 20, h: 34, id: "session:" + s.session_id });
+        const dirName = String(s.cwd || "").split("/").filter(Boolean).pop() || "?";
+        const stageNote = seat.feature && seat.feature.stage ? ` · ⚑ ${esc(seat.feature.stage)}` : "";
+        overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
+                        html: `${esc(dirName)} <small>session · ${patronLook(s.session_id).epithet}${stageNote}</small>` });
       } else if (seat.feature) {
         overlays.push({ x: tx, y: ty + 26, kind: "tag",
                         html: `<small>feature</small> ${esc(seat.feature.feature)} <small>@ ${esc(seat.feature.stage || "?")}</small>` });
       }
       (seat.agents || []).forEach((agent, k) => {
-        const arch = ARCHETYPES[agent.agent_type] || { hat: "patron", coat: "e", trim: "w", epithet: "" };
+        const arch = archFor(agent.agent_type);
         const ax = tx + 16 + k * 24, ay = ty - 12;
         const key = agent.agent_id || agent.agent_type;
         const slide = entering[key] > 0 ? entering[key]-- * 3 : 0;
         drawCharacter(ax + slide, ay, arch, !bob);
         clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
         overlays.push({ x: ax + 8, y: ay + 38, kind: "tag",
-                        html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
+                        html: `${esc(shortName(agent.agent_type))} <small>${arch.epithet}</small>` });
         if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
       });
     });
     counter.forEach((agent, k) => {
       if (k >= COUNTER_SEATS.length) return;
       const [ax, ay] = COUNTER_SEATS[k];
-      const arch = ARCHETYPES[agent.agent_type] || { hat: "patron", coat: "e", trim: "w", epithet: "" };
+      const arch = archFor(agent.agent_type);
       const key = agent.agent_id || agent.agent_type;
       drawCharacter(ax, ay, arch, bob);
       clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
-      overlays.push({ x: ax + 8, y: ay + 34, kind: "tag", html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
+      overlays.push({ x: ax + 8, y: ay + 34, kind: "tag", html: `${esc(shortName(agent.agent_type))} <small>${arch.epithet}</small>` });
       if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
     });
     // gate flash on moments
@@ -541,11 +595,29 @@ async function openPanel(id) {
       rows.push(`<h2>last heard (wake events, not truth)</h2><pre>${esc(detail.status_tail.join("\n"))}</pre>`);
     if (detail.brief) rows.push(`<h2>brief</h2><pre>${esc(detail.brief.slice(0, 3000))}</pre>`);
     if (detail.report) rows.push(`<h2>report</h2><pre>${esc(detail.report.slice(0, 3000))}</pre>`);
+  } else if (detail.kind === "session") {
+    const dirName = String(detail.cwd || "").split("/").filter(Boolean).pop() || "session";
+    rows.push(`<h2>${esc(dirName)} <small>${patronLook(detail.session_id).epithet}</small></h2>`);
+    rows.push(`<div class="meta">auto-discovered session · last active ${detail.age_secs ?? "?"}s ago<br>cwd: ${esc(detail.cwd || "—")}</div>`);
+    rows.push(`<div class="meta">${esc(detail.note || "")}</div>`);
+    (detail.doings || []).forEach(d => {
+      rows.push(`<div class="doing">${d.kind === "tool" ? "<b>" + esc(d.name) + "</b> " : ""}${esc(d.summary)}</div>`);
+    });
+  } else if (detail.kind === "fm") {
+    rows.push(`<h2>firstmate <small>the Barkeep</small></h2>`);
+    rows.push(`<div class="meta">${esc(detail.note || "")}</div>`);
+    if (detail.watcher) rows.push(`<div class="meta">${esc(detail.watcher)} · crew on the books: ${detail.crew_count ?? 0}</div>`);
+    (detail.crew || []).forEach(m => {
+      rows.push(`<div class="doing"><b>${esc(m.id)}</b> ${esc(m.kind)} — ${esc(m.last_status)}</div>`);
+    });
+    if (detail.backlog) rows.push(`<h2>backlog</h2><pre>${esc(detail.backlog)}</pre>`);
   } else {
-    const arch = ARCHETYPES[detail.agent_type] || { epithet: "" };
-    rows.push(`<h2>${esc(detail.agent_type || "agent")} <small>${arch.epithet}</small></h2>`);
+    const arch = archFor(detail.agent_type);
+    rows.push(`<h2>${esc(shortName(detail.agent_type) || "agent")} <small>${arch.epithet}</small></h2>`);
     rows.push(`<div class="meta">in the tavern since ${esc(detail.since || "?")}<br>root: ${esc(detail.root || "—")}</div>`);
-    rows.push(`<div class="meta">an in-session subagent has no terminal of its own — it lives inside its parent session. Its doings:</div>`);
+    if (detail.crew_id)
+      rows.push(`<button onclick="focusAgent('crew:${esc(detail.crew_id)}')">⚔ Focus its crewmate's terminal (${esc(detail.crew_id)})</button>`);
+    rows.push(`<div class="meta">an in-session subagent has no terminal of its own — it lives inside its crewmate's session${detail.crew_id ? " (button above)" : ""}. Its doings:</div>`);
     (detail.doings || []).forEach(d => {
       rows.push(`<div class="doing">${d.kind === "tool" ? "<b>" + esc(d.name) + "</b> " : ""}${esc(d.summary)}</div>`);
     });

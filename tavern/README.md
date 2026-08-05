@@ -55,6 +55,13 @@ gates are moments at the door, not people at a table.
 A missing source renders as `absent` in the footer — the tavern never fakes a population. Demo
 mode is stamped `DEMO` in the header for the same reason.
 
+**Auto-discovery (default on, `--no-scan` to disable):** you don't have to name every path. The
+server also watches every crewmate worktree found in `$FM_HOME/state/*.meta`, and every recently
+active Claude Code session on the machine — found via transcript mtime under
+`~/.claude/projects/`, with the session's own `cwd` read from its transcript tail. Sessions the
+fleet doesn't own get their own table as adventurers; `python3 tavern/server.py` with no flags is
+a valid way to run it.
+
 ## API
 
 - `GET /api/state` — merged snapshot `{mode, sources, crew, features, live_agents, moments}`
