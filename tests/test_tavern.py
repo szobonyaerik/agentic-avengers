@@ -342,3 +342,24 @@ def test_closed_sessions_lose_their_seat(tmp_path, monkeypatch):
     monkeypatch.setattr(sources, "_live_cwds", lambda: None)
     (session,) = sources.discover_sessions()
     assert session["session_id"] == "sess-dead"
+
+
+def test_session_debug_reports_verdict_per_session(tmp_path, monkeypatch):
+    import sources
+    workdir = tmp_path / "someproject"
+    workdir.mkdir()
+    config_dir = tmp_path / "claude-home"
+    proj = config_dir / "projects" / "-someproject"
+    proj.mkdir(parents=True)
+    (proj / "sess-1.jsonl").write_text(json.dumps({"cwd": str(workdir)}) + "\n")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(sources, "_live_cwds", lambda: set())
+    monkeypatch.setattr(sources, "_harness_processes", lambda: [])
+    report = sources.session_debug()
+    (verdict,) = report["sessions"]
+    assert verdict["kept"] is False
+    assert "no harness process" in verdict["reason"]
+    monkeypatch.setattr(sources, "_live_cwds", lambda: {str(workdir)})
+    report = sources.session_debug()
+    (verdict,) = report["sessions"]
+    assert verdict["kept"] is True

@@ -304,23 +304,12 @@ def _live_cwds() -> set[str] | None:
     """
     import os
 
-    pids: list[str] = []
-    try:
-        ps = subprocess.run(["ps", "-axo", "pid=,args="], capture_output=True, text=True, timeout=5)
-    except OSError:
+    procs = _harness_processes()
+    if procs is None:
         return None
-    if ps.returncode != 0:
-        return None
-    for line in ps.stdout.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) != 2:
-            continue
-        pid, args = parts
-        names = {token.rsplit("/", 1)[-1] for token in args.split()[:2]}
-        if names & {"claude", "opencode"}:
-            pids.append(pid)
-    if not pids:
+    if not procs:
         return set()
+    pids = [pid for pid, _ in procs]
     cwds: set[str] = set()
     if Path("/proc").is_dir():
         for pid in pids:
@@ -334,7 +323,7 @@ def _live_cwds() -> set[str] | None:
             ["lsof", "-a", "-p", ",".join(pids), "-d", "cwd", "-Fn"],
             capture_output=True, text=True, timeout=10,
         )
-    except OSError:
+    except (OSError, subprocess.SubprocessError):  # TimeoutExpired is NOT an OSError
         return None
     if lsof.returncode not in (0, 1):  # lsof exits 1 when some pids vanished mid-query
         return None
@@ -342,6 +331,52 @@ def _live_cwds() -> set[str] | None:
         if line.startswith("n"):
             cwds.add(line[1:])
     return cwds
+
+
+def _harness_processes() -> list[tuple[str, str]] | None:
+    """(pid, args) of running claude/opencode processes; None when ps is unusable."""
+    try:
+        ps = subprocess.run(["ps", "-axo", "pid=,args="], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if ps.returncode != 0:
+        return None
+    procs: list[tuple[str, str]] = []
+    for line in ps.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, args = parts
+        names = {token.rsplit("/", 1)[-1] for token in args.split()[:2]}
+        if names & {"claude", "opencode"}:
+            procs.append((pid, args))
+    return procs
+
+
+def session_debug() -> dict:
+    """Everything the liveness filter saw, for /api/debug — inspection instead of assumption."""
+    import os
+
+    procs = _harness_processes()
+    cwds = _live_cwds()
+    candidates = discover_sessions(require_process=False)
+    alive = {os.path.realpath(c) for c in cwds} if cwds is not None else None
+    verdicts = []
+    for session in candidates:
+        real = os.path.realpath(session["cwd"])
+        if alive is None:
+            kept, reason = True, "process table unreadable -> mtime fallback"
+        elif real in alive:
+            kept, reason = True, "live harness process working here"
+        else:
+            kept, reason = False, "no harness process with this cwd"
+        verdicts.append({**session, "kept": kept, "reason": reason})
+    return {
+        "harness_processes": [{"pid": p, "args": a[:200]} for p, a in (procs or [])],
+        "ps_readable": procs is not None,
+        "live_cwds": sorted(cwds) if cwds is not None else None,
+        "sessions": verdicts,
+    }
 
 
 def discover_sessions(max_age_secs: int = 3600, limit: int = 12,
@@ -450,23 +485,65 @@ def _activate_app(app: str) -> bool:
         return False
 
 
-def focus_window(window: str, terminal_app: str = "") -> dict:
-    """Put the crewmate's tmux window in front of the user. Never raises; reports what it did.
+def _client_tty_for_session(session: str) -> str | None:
+    """The tty of a tmux client attached to THIS session (not just any client)."""
+    try:
+        proc = subprocess.run(
+            ["tmux", "list-clients", "-F", "#{client_session}\t#{client_tty}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        client_session, _, tty = line.partition("\t")
+        if client_session == session and tty:
+            return tty
+    return None
 
-    Three situations hide behind "focus": a tmux client is attached and its host app is known
-    (select-window + raise the app — the full magic), attached but host unknown (select-window
-    works, but the browser can't raise an app it can't name — say so instead of looking broken),
-    or nothing attached (on macOS, open Terminal.app onto the session).
+
+def _raise_terminal_by_tty(terminal_app: str, tty: str) -> bool:
+    """Bring the specific Terminal.app WINDOW hosting `tty` to the front.
+
+    Terminal windows expose their tty over AppleScript, so the right window — not just the app —
+    can be raised. Other terminal apps don't expose this uniformly; they get an app-level
+    activate instead.
+    """
+    if sys.platform != "darwin":
+        return False
+    if terminal_app in ("", "Terminal"):
+        tty_name = tty.rsplit("/", 1)[-1]
+        script = (
+            'tell application "Terminal"\n'
+            "  repeat with w in windows\n"
+            f'    if (tty of w) contains "{tty_name}" then set frontmost of w to true\n'
+            "  end repeat\n"
+            "  activate\n"
+            "end tell"
+        )
+        try:
+            osa = subprocess.run(["osascript", "-e", script],
+                                 capture_output=True, text=True, timeout=10)
+            return osa.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return _activate_app(terminal_app)
+
+
+def focus_window(window: str, terminal_app: str = "") -> dict:
+    """Put the target tmux session in front of the user, one terminal window per session.
+
+    The model the operator asked for: every tmux session owns its own terminal window. If a
+    client is already attached to THIS session, raise that window (by tty for Terminal.app,
+    app-level otherwise). If not, open a fresh Terminal window attached to this session — other
+    sessions' windows are never hijacked.
     """
     if not window:
         return {"ok": False, "error": "no window recorded in meta"}
     session = window.split(":", 1)[0]
     attach_cmd = f"tmux attach -t {session} \\; select-window -t {window}"
     try:
-        clients = subprocess.run(
-            ["tmux", "list-clients"], capture_output=True, text=True, timeout=5,
-        )
-        attached = clients.returncode == 0 and clients.stdout.strip() != ""
         proc = subprocess.run(
             ["tmux", "select-window", "-t", window],
             capture_output=True, text=True, timeout=5,
@@ -474,14 +551,14 @@ def focus_window(window: str, terminal_app: str = "") -> dict:
         if proc.returncode != 0:
             return {"ok": False, "error": (proc.stderr or "tmux failed").strip()[:200],
                     "attach_cmd": attach_cmd}
-        if attached:
-            if _activate_app(terminal_app):
-                return {"ok": True, "method": f"tmux select-window + raised {terminal_app}",
+        tty = _client_tty_for_session(session)
+        if tty:
+            if _raise_terminal_by_tty(terminal_app, tty):
+                return {"ok": True, "method": f"raised this session's terminal ({tty})",
                         "window": window}
             return {"ok": True, "method": "tmux select-window", "window": window,
-                    "hint": "bring your tmux terminal to the front — set terminal_app in "
-                            "tavern.toml (e.g. \"Terminal\", \"iTerm\", \"Visual Studio Code\") "
-                            "to auto-raise it"}
+                    "hint": "session has a terminal attached but it could not be raised — set "
+                            "terminal_app in tavern.toml, or bring it forward yourself"}
         if sys.platform == "darwin":
             script = (
                 f'tell application "Terminal" to do script '
@@ -492,9 +569,10 @@ def focus_window(window: str, terminal_app: str = "") -> dict:
                 capture_output=True, text=True, timeout=10,
             )
             if osa.returncode == 0:
-                return {"ok": True, "method": "opened Terminal attached to tmux", "window": window}
+                return {"ok": True, "method": "opened a new Terminal window for this session",
+                        "window": window}
         return {"ok": False,
-                "error": "no terminal is attached to the tmux session — attach one",
+                "error": "no terminal is attached to this tmux session — attach one",
                 "attach_cmd": attach_cmd}
     except OSError as exc:
         return {"ok": False, "error": str(exc), "attach_cmd": attach_cmd}

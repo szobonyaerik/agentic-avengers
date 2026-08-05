@@ -516,16 +516,28 @@ function render() {
         overlays.push({ x: tx, y: ty + 26, kind: "tag",
                         html: `<small>feature</small> ${esc(seat.feature.feature)} <small>@ ${esc(seat.feature.stage || "?")}</small>` });
       }
-      (seat.agents || []).forEach((agent, k) => {
-        const arch = archFor(agent.agent_type);
-        const ax = tx + 16 + k * 24, ay = ty - 12;
+      // a crowd of the same archetype (parallel subagents) is one character with a ×N badge —
+      // five overlapping scribes with five identical bubbles is noise, not information
+      const groups = [];
+      (seat.agents || []).forEach(agent => {
+        const g = groups.find(g => g.type === agent.agent_type);
+        if (g) g.items.push(agent); else groups.push({ type: agent.agent_type, items: [agent] });
+      });
+      groups.forEach((group, k) => {
+        const agent = group.items[0];
+        const n = group.items.length;
+        const arch = archFor(group.type);
+        const ax = tx + 16 + k * 26, ay = ty - 12;
         const key = agent.agent_id || agent.agent_type;
         const slide = entering[key] > 0 ? entering[key]-- * 3 : 0;
+        if (n > 1) drawCharacter(ax + slide + 4, ay - 2, arch, bob);  // a second head peeking out
         drawCharacter(ax + slide, ay, arch, !bob);
         clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
         overlays.push({ x: ax + 8, y: ay + 38, kind: "tag",
-                        html: `${esc(shortName(agent.agent_type))} <small>${arch.epithet}</small>` });
-        if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
+                        html: `${esc(shortName(group.type))}${n > 1 ? " ×" + n : ""} <small>${arch.epithet}${n > 1 ? "s" : ""}</small>` });
+        const spoken = group.items.find(a => a.sentence);
+        if (spoken) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble",
+                                    text: spoken.sentence + (n > 1 ? ` (×${n})` : "") });
       });
     });
     counter.forEach((agent, k) => {
