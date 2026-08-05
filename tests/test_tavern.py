@@ -174,3 +174,34 @@ def test_demo_state_shape_matches_live(tmp_path):
 def test_handler_has_no_default_logging():
     # the browser polls every 2s; BaseHTTPRequestHandler's default stderr log would flood a tmux pane
     assert Handler.log_message.__qualname__.startswith("Handler")
+
+
+def test_firstmate_panel_detail(tavern):
+    detail = get(tavern, "/api/agent/fm")
+    assert detail["kind"] == "fm"
+    assert detail["crew_count"] == 1
+    assert detail["crew"][0]["id"] == "brave-anvil"
+    assert "read-only" in detail["note"]
+
+
+def test_live_agent_detail_links_its_crewmate(tmp_path):
+    # the crewmate's worktree IS the watched root -> the live agent panel gets a focus target
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / ".agent-activity.jsonl").write_text(json.dumps({
+        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
+        "agent_type": "plan-build-verify:avenger-spec-writer", "agent_id": "a9",
+    }) + "\n")
+    home = tmp_path / "fm"
+    (home / "state").mkdir(parents=True)
+    (home / "state" / "r1.meta").write_text(f"window=firstmate:fm-r1\nworktree={root}\nkind=ship\n")
+    cfg = Config()
+    cfg.roots = [root]
+    cfg.fm_home = home
+    cfg.cache_secs = 0.0
+    builder = StateBuilder(cfg)
+    (live,) = builder.state()["live_agents"]
+    assert live["crew_id"] == "r1"
+    detail = builder.agent_detail("live:a9")
+    assert detail["crew_id"] == "r1"
+    assert detail["crew_window"] == "firstmate:fm-r1"

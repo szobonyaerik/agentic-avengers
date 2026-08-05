@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 AVENGER_STAGES = [
@@ -243,27 +244,65 @@ def _fm_env(fm_home: Path) -> dict[str, str]:
     return env
 
 
+def match_crew(crew: list[dict], root: str) -> dict | None:
+    """Which crewmate owns this watched root? Worktree containment first, then exact project."""
+    import os
+
+    for member in crew:
+        worktree = os.path.expanduser(member.get("worktree") or "")
+        if worktree and (root == worktree or root.startswith(worktree.rstrip("/") + "/")):
+            return member
+    for member in crew:
+        if member.get("project") and member["project"] == root:
+            return member
+    return None
+
+
 # ---------------------------------------------------------------- focus / detail helpers
 
 
 def focus_window(window: str) -> dict:
-    """Jump the user's tmux client to a crewmate's window. Never raises; reports what it did."""
+    """Put the crewmate's tmux window in front of the user. Never raises; reports what it did.
+
+    Two distinct situations hide behind "focus": a tmux client is already attached (select-window
+    is enough — the user's terminal visibly switches), or nothing is attached (select-window
+    "succeeds" invisibly — the classic 'the button did nothing'). In the second case, on macOS,
+    open Terminal.app attached to the session; elsewhere hand back the attach command.
+    """
     if not window:
         return {"ok": False, "error": "no window recorded in meta"}
+    session = window.split(":", 1)[0]
+    attach_cmd = f"tmux attach -t {session} \\; select-window -t {window}"
     try:
+        clients = subprocess.run(
+            ["tmux", "list-clients"], capture_output=True, text=True, timeout=5,
+        )
+        attached = clients.returncode == 0 and clients.stdout.strip() != ""
         proc = subprocess.run(
             ["tmux", "select-window", "-t", window],
             capture_output=True, text=True, timeout=5,
         )
-        if proc.returncode == 0:
+        if proc.returncode != 0:
+            return {"ok": False, "error": (proc.stderr or "tmux failed").strip()[:200],
+                    "attach_cmd": attach_cmd}
+        if attached:
             return {"ok": True, "method": "tmux select-window", "window": window}
-        return {
-            "ok": False,
-            "error": (proc.stderr or "tmux failed").strip()[:200],
-            "attach_cmd": f"tmux attach \\; select-window -t {window}",
-        }
+        if sys.platform == "darwin":
+            script = (
+                f'tell application "Terminal" to do script '
+                f'"tmux select-window -t {window}; tmux attach -t {session}"'
+            )
+            osa = subprocess.run(
+                ["osascript", "-e", script, "-e", 'tell application "Terminal" to activate'],
+                capture_output=True, text=True, timeout=10,
+            )
+            if osa.returncode == 0:
+                return {"ok": True, "method": "opened Terminal attached to tmux", "window": window}
+        return {"ok": False,
+                "error": "no terminal is attached to the tmux session — attach one",
+                "attach_cmd": attach_cmd}
     except OSError as exc:
-        return {"ok": False, "error": str(exc), "attach_cmd": f"tmux select-window -t {window}"}
+        return {"ok": False, "error": str(exc), "attach_cmd": attach_cmd}
 
 
 def transcript_tail(path: Path, limit: int = 30) -> list[dict]:

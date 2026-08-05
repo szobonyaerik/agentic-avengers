@@ -128,7 +128,10 @@ class StateBuilder:
 
             activity = sources.read_activity(root)
             source_notes[f"activity:{root.name}"] = activity["status"]
+            owner = sources.match_crew(fleet["crew"], str(root))
             for entry in activity["live"]:
+                if owner:
+                    entry = {**entry, "crew_id": owner["id"]}
                 sentence = ""
                 transcript = entry.get("transcript_path")
                 if transcript:
@@ -164,6 +167,8 @@ class StateBuilder:
     # ------------------------------------------------------------ detail + actions
 
     def agent_detail(self, agent_id: str) -> dict:
+        if agent_id == "fm":
+            return self._fm_detail()
         if self.cfg.demo:
             return self._demo_detail(agent_id)
         kind, _, key = agent_id.partition(":")
@@ -183,16 +188,42 @@ class StateBuilder:
                     return detail
             return {"error": f"no crewmate {key!r}"}
         if kind == "live":
+            fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
             for root in self.cfg.roots:
                 for entry in sources.read_activity(root)["live"]:
                     if key in (entry.get("agent_id"), entry.get("agent_type")):
                         detail = {**entry, "root": str(root), "kind": "live"}
+                        owner = sources.match_crew(fleet["crew"], str(root))
+                        if owner:
+                            detail["crew_id"] = owner["id"]
+                            detail["crew_window"] = owner.get("window", "")
                         transcript = entry.get("transcript_path")
                         if transcript:
                             detail["doings"] = sources.transcript_tail(Path(transcript))
                         return detail
             return {"error": f"no live agent {key!r}"}
         return {"error": f"unknown id scheme {agent_id!r}"}
+
+    def _fm_detail(self) -> dict:
+        """The barkeeper's panel: what the first mate's home says about the fleet right now."""
+        detail: dict = {"kind": "fm"}
+        if self.cfg.demo:
+            return {**detail, "note": "demo first mate", "crew_count": 3,
+                    "backlog": "- ship: brave-anvil\n- scout: quiet-lantern\n- ship: gilded-fox"}
+        if self.cfg.fm_home is None:
+            return {**detail, "note": "no firstmate home configured (--fm-home); the house runs itself"}
+        fleet = sources.read_fleet(self.cfg.fm_home, self.cfg.fm_bin)
+        detail["crew_count"] = len(fleet["crew"])
+        detail["crew"] = [{"id": m["id"], "kind": m.get("kind", ""), "last_status": m["last_status"]}
+                          for m in fleet["crew"]]
+        backlog = self.cfg.fm_home / "data" / "backlog.md"
+        if backlog.is_file():
+            detail["backlog"] = backlog.read_text(encoding="utf-8", errors="replace")[-4000:]
+        lock = self.cfg.fm_home / "state" / ".watch.lock"
+        detail["watcher"] = "watcher lock present" if lock.exists() else "no watcher lock"
+        detail["note"] = ("the first mate runs in its own session (your harness window), not a tmux "
+                         "pane — speak to it there; this panel is read-only")
+        return detail
 
     def _demo_detail(self, agent_id: str) -> dict:
         state = demo_mod.demo_state(self.started)
