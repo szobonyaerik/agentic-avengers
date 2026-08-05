@@ -23,7 +23,7 @@ A real second opinion, not a rubber stamp — it fails closed and routes NO-GO b
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/gate_runner.py" \
      --rubric "${CLAUDE_PLUGIN_ROOT:-.}/prompts/spec-review-rubric.md" \
-     --model "${GATE_MODEL:-google/gemini-3.1-pro-preview}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
+     --model "${GATE_MODEL:-opencode-go/deepseek-v4-pro}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
      --print-verdict --target "<spec path>"
    ```
 2. Read the printed verdict token:
