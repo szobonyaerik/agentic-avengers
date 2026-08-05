@@ -401,6 +401,7 @@ let state = null;
 let clickables = [];   // {x, y, w, h, id, label}
 let entering = {};     // agent_id -> frames remaining of walk-in
 let seenLive = new Set();
+let seenMoments = new Set(); // a moment animates once — a re-polled record must not re-shake the room
 let momentFlash = null; // {kind, until}
 let shakeUntil = 0;
 
@@ -647,6 +648,10 @@ async function poll() {
       if (!seenLive.has(key)) { entering[key] = 12; seenLive.add(key); }
     });
     (next.moments || []).slice(-3).forEach(m => {
+      const key = `${m.kind}|${m.ts || ""}|${m.text || ""}`;
+      if (seenMoments.has(key)) return;
+      seenMoments.add(key);
+      if (seenMoments.size > 500) seenMoments.clear();
       if (m.kind === "gate_pass" || m.kind === "gate_fail" || m.kind === "route_back")
         momentFlash = { kind: m.kind, until: Date.now() + 2500 };
       if (m.kind === "break_glass") shakeUntil = Date.now() + 900;

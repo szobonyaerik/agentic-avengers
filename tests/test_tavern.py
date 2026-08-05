@@ -238,3 +238,32 @@ def test_sessions_are_discovered_and_watched_without_configuration(tmp_path, mon
     (live,) = state["live_agents"]
     assert live["agent_id"] == "g1"
     assert live["root"] == str(workdir)
+
+
+def test_stale_break_glass_is_history_not_a_moment(project, fm_home):
+    # the vibrating-tavern bug: a day-old gate-overrides.log line replayed as a fresh moment
+    import os
+    log = project / "gate-overrides.log"
+    log.write_text("2026-08-04T07:18:03Z\tuser\tgate:fidelity\treason: credit exhausted\n")
+    old = 1_700_000_000
+    os.utime(log, (old, old))
+    cfg = Config()
+    cfg.roots = [project]
+    cfg.fm_home = fm_home
+    cfg.cache_secs = 0.0
+    cfg.scan = False
+    state = StateBuilder(cfg).state()
+    assert not [m for m in state["moments"] if m["kind"] == "break_glass"]
+
+
+def test_fresh_break_glass_is_a_moment(project, fm_home):
+    log = project / "gate-overrides.log"
+    log.write_text("2026-08-05T14:00:00Z\tuser\tgate:fidelity\treason: fresh override\n")
+    cfg = Config()
+    cfg.roots = [project]
+    cfg.fm_home = fm_home
+    cfg.cache_secs = 0.0
+    cfg.scan = False
+    state = StateBuilder(cfg).state()
+    (moment,) = [m for m in state["moments"] if m["kind"] == "break_glass"]
+    assert "fresh override" in moment["text"]

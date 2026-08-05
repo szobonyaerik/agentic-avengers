@@ -194,10 +194,15 @@ class StateBuilder:
                     "text": f"{rec.get('agent_type', 'agent')} {'enters' if kind == 'spawn' else 'leaves'} the tavern",
                 })
 
+            # Only a FRESH break-glass is a moment. The log is append-only history; replaying its
+            # last line forever made the room shake for a day-old override on every poll.
             overrides = root / "gate-overrides.log"
-            text = overrides.is_file() and overrides.read_text(encoding="utf-8", errors="replace")
-            if text:
-                last = text.strip().splitlines()[-1]
+            try:
+                recent = overrides.is_file() and time.time() - overrides.stat().st_mtime < 600
+            except OSError:
+                recent = False
+            if recent:
+                last = overrides.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1]
                 moments.append({"kind": "break_glass", "ts": last.split("\t", 1)[0],
                                 "text": f"break-glass on record: {last[:120]}"})
 
@@ -319,12 +324,17 @@ class Handler(BaseHTTPRequestHandler):
     builder: StateBuilder  # set by serve()
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        # A browser aborting its poll (refresh, tab close) breaks the pipe mid-write; that is the
+        # client's business, not a server error worth a traceback on the operator's terminal.
+        try:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         if self.path in ("/", "/index.html"):
@@ -333,11 +343,14 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_error(404, "index.html missing")
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         elif self.path == "/api/state":
             self._send_json(self.builder.state())
         elif self.path.startswith("/api/agent/"):
