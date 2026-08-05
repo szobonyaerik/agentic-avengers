@@ -94,7 +94,7 @@ untouched — firstmate refuses ship briefs that resolve to the primary checkout
 ```bash
 python3 tavern/server.py \
   --root ~/code/<project-a> --root ~/code/<project-b> \
-  --fm-home <FM_HOME, default is the firstmate checkout> \
+  --fm-home <the home the first mate runs from — no default; omitting it disables the fleet feed> \
   --fm-bin  ~/src/firstmate/bin
 # → http://127.0.0.1:8377/
 ```

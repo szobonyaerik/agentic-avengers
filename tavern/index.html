@@ -91,60 +91,187 @@
  * Archetypes = base body + palette swap + a hat/prop overlay, so each of the 11
  * avenger roles reads distinctly at 16px tall without 11 hand-drawn bodies.
  */
-const W = 400, H = 220;
+const W = 440, H = 240;
 const PALETTE = {
-  k: "#1b1209", K: "#000000", s: "#e8b88a", S: "#c98d5a", // skin
-  h: "#5a3a1a", w: "#f5ecd8", r: "#b03030", R: "#7a1f1f",
-  b: "#3a5a9a", B: "#24365e", g: "#3f7a34", G: "#2a5222",
-  p: "#7a3a9a", P: "#4e2364", y: "#e0b840", Y: "#9a7a1a",
-  o: "#c87830", O: "#8a4a14", t: "#7a5230", T: "#553517",
-  e: "#9aa0a8", E: "#5a6068", m: "#c05a80", n: "#2a7a7a",
+  k: "#1b1209", K: "#14100a", s: "#f0c096", S: "#cf9464", // skin + shade
+  h: "#6a4520", w: "#f5ecd8", W: "#cfc4a8", r: "#c23a34", R: "#7a1f1f",
+  b: "#4a66b0", B: "#2c3d6e", g: "#4a8a3c", G: "#2a5222",
+  p: "#8a48b0", P: "#4e2364", y: "#f0c040", Y: "#a8811c",
+  o: "#d08034", O: "#8a4a14", t: "#8a5e36", T: "#553517",
+  e: "#a8aeb8", E: "#5a6068", m: "#c05a80", n: "#2a8a8a",
 };
-// 12-wide x 14-tall base body: head(4) torso(6) legs(4). C = coat color, c = trim.
+/* Chibi base body, 16x22: big outlined head (the reference look), shaded chin, arms with hands,
+ * short legs. C = coat, c = trim; per-archetype layers stack beard -> hat -> prop on top. */
 const BODY = [
-  "....ssss....",
-  "...ssssss...",
-  "...sKssKs...",
-  "....ssss....",
-  "..CCCCCCCC..",
-  ".CCcCCCCcCC.",
-  ".CsCCCCCCsC.",
-  ".CsCCccCCsC.",
-  ".CCCCCCCCCC.",
-  "..CCCCCCCC..",
-  "..TT....TT..",
-  "..TT....TT..",
-  "..kk....kk..",
-  "............",
+  "....KKKKKKKK....",
+  "...KssssssssK...",
+  "..KssssssssssK..",
+  "..KssssssssssK..",
+  "..KssKssssKssK..",
+  "..KssKssssKssK..",
+  "..KssssssssssK..",
+  "..KsSssssssSsK..",
+  "..KssssssssSsK..",
+  "...KssSSSSssK...",
+  "..KKCCCCCCCCKK..",
+  ".KCCcCCCCCCcCCK.",
+  ".KCsCCCCCCCCsCK.",
+  ".KCsCCccccCCsCK.",
+  ".KCCCCCCCCCCCCK.",
+  "..KCCCCCCCCCCK..",
+  "..KCCCCCCCCCCK..",
+  "...KCCCCCCCCK...",
+  "...KTTK..KTTK...",
+  "...KTTK..KTTK...",
+  "...KkkK..KkkK...",
+  "....KK....KK....",
 ];
-// Hats/props drawn ABOVE the body (6 rows, same width).
-const HATS = {
-  wizard:      [".....bb.....", "....bbbb....", "...bbbbbb...", "..bbybbbyb..", ".bbbbbbbbbb.", "............"],
-  fortune:     ["............", "...pppppp...", "..pppppppp..", "..pyp..pyp..", "............", "............"],
-  cartographer:["............", "....tttt....", "...tttttt...", "..tt.ww.tt..", ".....ww.....", "............"],
-  scribe:      ["............", "............", "....wwww....", "...w....w...", ".....yy.....", "............"],
-  smith:       ["............", "............", "...EEEEEE...", "..EE....EE..", "............", "............"],
-  bard:        ["............", ".....rr.....", "...rrrrrr...", "..rr.y..rr..", "............", "............"],
-  judge:       ["............", "...wwwwww...", "..wwwwwwww..", "..ww.ww.ww..", "..w......w..", "............"],
-  barbarian:   ["............", "...yy..yy...", "..yhhhhhhy..", "..hhhhhhhh..", "............", "............"],
-  ranger:      ["............", "....gggg....", "...gggggg...", "..gg....gg..", ".g........g.", "............"],
-  courier:     ["............", "............", "....oooo....", "...oooooo...", "............", "............"],
-  artificer:   ["............", "...yy..yy...", "..yEEyyEEy..", "...EEEEEE...", "............", "............"],
-  barkeep:     ["............", "............", "....hhhh....", "...hhhhhh...", "............", "............"],
-  patron:      ["............", "............", "....tttt....", "...tttttt...", "............", "............"],
+/* Beards overlay the lower face (same origin as BODY). */
+const BEARDS = {
+  white: [
+    "................", "................", "................", "................",
+    "................", "................", "..KwWwwwwwwWwK..", "..KwwwwwwwwwwK..",
+    "..KwwwWwwWwwwK..", "...KwwwwwwwwK...", "....KwwwwwwK....", ".....KwWwwK.....",
+    "......KwwK......", ".......KK.......",
+  ],
+  brown: [
+    "................", "................", "................", "................",
+    "................", "................", "..KhhhhhhhhhhK..", "..KhhhhhhhhhhK..",
+    "...KhhhhhhhhK...", "....KhhhhhhK....", ".....KKKKKK.....", "................",
+    "................", "................",
+  ],
 };
-const ARCHETYPES = { // agent name -> {hat, coat, trim, epithet}
-  "avenger-task-analyst":           { hat: "fortune",      coat: "p", trim: "y", epithet: "the Fortune Teller" },
-  "avenger-solution-architect":     { hat: "wizard",       coat: "b", trim: "y", epithet: "the Wizard" },
-  "avenger-implementation-planner": { hat: "cartographer", coat: "t", trim: "w", epithet: "the Cartographer" },
-  "avenger-spec-writer":            { hat: "scribe",       coat: "w", trim: "t", epithet: "the Scribe" },
-  "avenger-backend-architect":      { hat: "smith",        coat: "E", trim: "o", epithet: "the Blacksmith" },
-  "avenger-frontend-developer":     { hat: "bard",         coat: "m", trim: "y", epithet: "the Bard" },
-  "avenger-verifier":               { hat: "judge",        coat: "e", trim: "K", epithet: "the Judge" },
-  "avenger-breaker":                { hat: "barbarian",    coat: "r", trim: "K", epithet: "the Barbarian" },
-  "avenger-bug-hunter":             { hat: "ranger",       coat: "g", trim: "t", epithet: "the Ranger" },
-  "avenger-handover":               { hat: "courier",      coat: "o", trim: "w", epithet: "the Courier" },
-  "avenger-agent-factory":          { hat: "artificer",    coat: "n", trim: "y", epithet: "the Artificer" },
+/* Hats, 16x12 drawn at y-8: rows 8..11 overlap the top of the head. */
+const HATS = {
+  wizard: [
+    "..........KK....", ".........KbbK...", "........KbbbK...", ".......KbbbbK...",
+    "......KbBbbbK...", ".....KbbbbbbbK..", "....KbbbbbbbbK..", "..KKbbbbybbbbKK.",
+    ".KbbbbbBbbbbbbK.", ".KKKKKKKKKKKKKK.", "................", "................",
+  ],
+  fortune: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KppppppppK...", "..KpPpppppppPK..", "..KyK......KyK..", "................",
+  ],
+  cartographer: [
+    "................", "................", "................", "................",
+    "................", "....KKKKKKKK....", "...KttttttttK...", "...KtTttttTtK...",
+    ".KKKttttttttKKK.", "KttttttttttttttK", ".KKKKKKKKKKKKKK.", "................",
+  ],
+  scribe: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KwwwwwwwwK...", "..KwWw....wWwK..", "................", "................",
+  ],
+  smith: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "................",
+    "...KEEEEEEEEK...", "..KEe......eEK..", "................", "................",
+  ],
+  bard: [
+    "................", "................", "................", "..........Ky....",
+    ".........KyyK...", "....KKKKKyyK....", "...KrrrrrryK....", "..KrrRrrrrrrK...",
+    "..KKKKKKKKKKK...", "................", "................", "................",
+  ],
+  judge: [
+    "................", "................", "................", "................",
+    "................", "................", "....KKKKKKKK....", "...KwwwwwwwwK...",
+    "..KwwKwwwwKwwK..", "..KwwK....KwwK..", "..KwWK....KWwK..", "..KKK......KKK..",
+  ],
+  barbarian: [
+    "................", "................", "................", "................",
+    "................", ".KyK........KyK.", ".KyyK......KyyK.", "..KyyKKKKKKyyK..",
+    "...KhhhhhhhhK...", "..KhhThhhhhhhK..", "................", "................",
+  ],
+  ranger: [
+    "................", "................", "................", "................",
+    "................", "................", "....KKKKKKKK....", "...KggggggggK...",
+    "..KgGggggggGgK..", "..KgK......KgK..", "..KgK......KgK..", "................",
+  ],
+  courier: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KooooooooK...", "..KwwKoOooooK...", "..KKK.......K...", "................",
+  ],
+  artificer: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "................",
+    "..KEEEEEEEEEEK..", ".KEKyyKEEKyyKEK.", "..KKKKKKKKKKKK..", "................",
+  ],
+  barkeep: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KhhhhhhK....",
+    "...KhhhhhhhhK...", "..KhhK....KhhK..", "................", "................",
+  ],
+  patron: [
+    "................", "................", "................", "................",
+    "................", "................", "................", "....KKKKKKKK....",
+    "...KCCCCCCCCK...", "..KCCK.....CK...", "................", "................",
+  ],
+};
+/* Held props, 8 wide, drawn beside the right hand (behind the body). */
+const PROPS = {
+  staff: [
+    "..KKK...", ".KrRrK..", ".KrrrK..", "..KKK...", "...KT...", "...KT...", "...KT...",
+    "...KT...", "...KT...", "...KT...", "...KT...", "...KT...", "...KT...", "...KT...",
+  ],
+  orb: [
+    "........", "........", "........", "........", "........", "..KKK...", ".KpPyK..",
+    ".KpppK..", ".KPppK..", "..KKK...", ".KtttK..", "........", "........", "........",
+  ],
+  map: [
+    "........", "........", "........", "........", "........", ".KKKKK..", "KwwwwwK.",
+    "KwWwwwK.", "KwwwwWK.", ".KKKKK..", "........", "........", "........", "........",
+  ],
+  quill: [
+    "........", "........", "....Kw..", "...KwwK.", "...KwK..", "..KwwK..", "..KwK...",
+    ".KyK....", ".KK.....", "........", "........", "........", "........", "........",
+  ],
+  hammer: [
+    "........", "..KKKK..", ".KEeEEK.", ".KEEEEK.", "..KKKK..", "...KT...", "...KT...",
+    "...KT...", "...KT...", "...KT...", "........", "........", "........", "........",
+  ],
+  lute: [
+    "........", "...Kt...", "...Kt...", "...Kt...", "..KttK..", ".KoOooK.", ".KooyoK.",
+    ".KoooOK.", "..KooK..", "...KK...", "........", "........", "........", "........",
+  ],
+  scales: [
+    "..KKKKK.", ".KyKTKyK", ".KyKTKyK", "..K.T.K.", "....T...", "....T...", "...KTK..",
+    "..KKKKK.", "........", "........", "........", "........", "........", "........",
+  ],
+  axe: [
+    "..KKK...", ".KyyyK..", "KyyYyK..", "KyyK....", ".KK.....", "..KT....", "..KT....",
+    "..KT....", "..KT....", "..KT....", "..KT....", "........", "........", "........",
+  ],
+  bow: [
+    "..KK....", ".KtTK...", ".KtKw...", ".KtKw...", ".KtKw...", ".KtKw...", ".KtKw...",
+    ".KtTK...", "..KK....", "........", "........", "........", "........", "........",
+  ],
+  satchel: [
+    "........", "........", "........", "........", "..KKKK..", ".KooooK.", ".KoOooK.",
+    ".KooooK.", ".KKyKK..", "........", "........", "........", "........", "........",
+  ],
+  wrench: [
+    "........", ".KK.KK..", ".KeKeK..", "..KeK...", "..KeK...", "..KeK...", "..KeK...",
+    "..KKK...", "........", "........", "........", "........", "........", "........",
+  ],
+  mug: [
+    "........", "........", "........", "........", ".Kww....", ".KKKKK..", ".KyyyKK.",
+    ".KyYyKK.", ".KyyyK..", ".KKKKK..", "........", "........", "........", "........",
+  ],
+};
+const ARCHETYPES = { // agent name -> {hat, coat, trim, epithet, beard?, prop?}
+  "avenger-task-analyst":           { hat: "fortune",      coat: "p", trim: "y", epithet: "the Fortune Teller", prop: "orb" },
+  "avenger-solution-architect":     { hat: "wizard",       coat: "b", trim: "y", epithet: "the Wizard", beard: "white", prop: "staff" },
+  "avenger-implementation-planner": { hat: "cartographer", coat: "t", trim: "w", epithet: "the Cartographer", prop: "map" },
+  "avenger-spec-writer":            { hat: "scribe",       coat: "w", trim: "t", epithet: "the Scribe", prop: "quill" },
+  "avenger-backend-architect":      { hat: "smith",        coat: "E", trim: "o", epithet: "the Blacksmith", beard: "brown", prop: "hammer" },
+  "avenger-frontend-developer":     { hat: "bard",         coat: "m", trim: "y", epithet: "the Bard", prop: "lute" },
+  "avenger-verifier":               { hat: "judge",        coat: "e", trim: "K", epithet: "the Judge", prop: "scales" },
+  "avenger-breaker":                { hat: "barbarian",    coat: "r", trim: "K", epithet: "the Barbarian", beard: "brown", prop: "axe" },
+  "avenger-bug-hunter":             { hat: "ranger",       coat: "g", trim: "t", epithet: "the Ranger", prop: "bow" },
+  "avenger-handover":               { hat: "courier",      coat: "o", trim: "w", epithet: "the Courier", prop: "satchel" },
+  "avenger-agent-factory":          { hat: "artificer",    coat: "n", trim: "y", epithet: "the Artificer", prop: "wrench" },
 };
 const PATRON_COATS = ["g", "b", "r", "n", "m", "o"]; // crewmates get stable coat colors by name hash
 
@@ -170,11 +297,14 @@ function drawMap(rows, x, y) {
     }
   });
 }
-function drawCharacter(x, y, coat, trim, hat, bob) {
-  const body = BODY.map(r => r.replace(/C/g, coat).replace(/c/g, trim));
+function drawCharacter(x, y, arch, bob) {
+  const coat = arch.coat || "t", trim = arch.trim || "w";
   const dy = bob ? -1 : 0;
-  drawMap(HATS[hat] || HATS.patron, x, y - 6 + dy);
-  drawMap(body, x, y + dy);
+  if (arch.prop) drawMap(PROPS[arch.prop], x + 13, y + 2 + dy);      // behind the right hand
+  drawMap(BODY.map(r => r.replace(/C/g, coat).replace(/c/g, trim)), x, y + dy);
+  if (arch.beard) drawMap(BEARDS[arch.beard], x, y + dy);
+  const hat = (HATS[arch.hat] || HATS.patron).map(r => r.replace(/C/g, coat));
+  drawMap(hat, x, y - 8 + dy);
 }
 function rect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }
 
@@ -186,8 +316,8 @@ function drawRoom(frame) {
   // bar counter, back center-left
   rect(20, 96, 150, 6, "#553517"); rect(20, 102, 150, 26, "#412a12"); rect(20, 96, 150, 2, "#6a4520");
   // shelves + bottles
-  rect(28, 40, 130, 3, "#553517"); rect(28, 62, 130, 3, "#553517");
-  for (let i = 0; i < 9; i++) {
+  rect(28, 40, 162, 3, "#553517"); rect(28, 62, 162, 3, "#553517");
+  for (let i = 0; i < 11; i++) {
     const bx = 34 + i * 14;
     rect(bx, 30 + (i % 3), 4, 10 - (i % 3), ["#3f7a34", "#b03030", "#3a5a9a"][i % 3]);
     rect(bx + 1, 28 + (i % 3), 2, 2, "#241a10");
@@ -197,6 +327,12 @@ function drawRoom(frame) {
   rect(2, 84, 3, 44, "#5a6068"); rect(17, 84, 3, 44, "#5a6068"); rect(2, 80, 18, 5, "#5a6068");
   const f = frame % 2;
   rect(6, 112 - f, 10, 14 + f, "#e05548"); rect(8, 116 - f * 2, 6, 10, "#e0a030"); rect(9, 120, 4, 6, "#f5ecd8");
+  // hanging lanterns, warm glow
+  for (const lx of [230, 310]) {
+    rect(lx + 3, 0, 1, 26, "#14100a");
+    rect(lx, 26, 7, 10, "#14100a"); rect(lx + 1, 27, 5, 8, "#f0c040");
+    rect(lx + 2, 29 + (frame % 2), 3, 4, "#f5ecd8");
+  }
   // the GATE (door), right — gates are literal here
   rect(W - 40, 68, 30, 62, "#553517"); rect(W - 38, 70, 26, 58, "#412a12");
   rect(W - 38, 96, 26, 2, "#553517"); rect(W - 27, 70, 2, 58, "#553517");
@@ -218,9 +354,9 @@ function drawTankard(x, y, spilled) {
 }
 
 /* ------------------------------------------------------------------ layout + state */
-const TABLES = [ [60, 152], [185, 168], [310, 150], [100, 200], [225, 204], [345, 200] ];
-const COUNTER_SEATS = [ [50, 110], [90, 110], [130, 110] ];
-const BARKEEP = [95, 78];
+const TABLES = [ [66, 162], [200, 178], [334, 160], [120, 210], [260, 212], [386, 206] ];
+const COUNTER_SEATS = [ [46, 104], [84, 104], [122, 104] ];
+const BARKEEP = [92, 72];
 
 let state = null;
 let clickables = [];   // {x, y, w, h, id, label}
@@ -263,9 +399,31 @@ function layout() {
 }
 
 let frame = 0;
+function renderGallery(bob) {
+  // #gallery: every archetype on one screen — the reference sheet for re-skinning sprites
+  rect(0, 0, W, H, "#241a10");
+  const names = Object.keys(ARCHETYPES);
+  const overlays = [];
+  names.forEach((name, i) => {
+    const x = 28 + (i % 6) * 68, y = 26 + Math.floor(i / 6) * 76;
+    drawCharacter(x, y, ARCHETYPES[name], bob && i % 2 === 0);
+    overlays.push({ x: x + 8, y: y + 30, kind: "tag",
+                    html: `${name.replace("avenger-", "")}<br><small>${ARCHETYPES[name].epithet}</small>` });
+  });
+  drawCharacter(28, 26 + 2 * 76, { hat: "barkeep", coat: "w", trim: "t", prop: "mug" }, bob);
+  overlays.push({ x: 36, y: 26 + 2 * 76 + 30, kind: "tag", html: "firstmate<br><small>the Barkeep</small>" });
+  drawCharacter(96, 26 + 2 * 76, { hat: "patron", coat: "g", trim: "y" }, !bob);
+  overlays.push({ x: 104, y: 26 + 2 * 76 + 30, kind: "tag", html: "crewmate<br><small>a patron</small>" });
+  renderOverlays(overlays);
+}
 function render() {
   frame++;
   const bob = Math.floor(frame / 30) % 2 === 1;
+  if (location.hash === "#gallery") {
+    renderGallery(bob);
+    requestAnimationFrame(render);
+    return;
+  }
   const shake = Date.now() < shakeUntil ? ((frame % 2) * 2 - 1) : 0;
   ctx.save(); ctx.translate(shake, 0);
   drawRoom(Math.floor(frame / 15));
@@ -273,39 +431,41 @@ function render() {
   const overlays = [];
   if (state) {
     const { seats, counter } = layout();
-    // barkeep = the first mate (or the house, if no firstmate)
-    drawCharacter(BARKEEP[0], BARKEEP[1], "w", "t", "barkeep", bob);
-    overlays.push({ x: BARKEEP[0] + 6, y: BARKEEP[1] + 16, kind: "tag",
+    // barkeep = the first mate (or the house, if no firstmate); counter front redrawn over
+    // the lower body so they stand BEHIND the bar
+    drawCharacter(BARKEEP[0], BARKEEP[1], { hat: "barkeep", coat: "w", trim: "t", prop: "mug" }, bob);
+    rect(20, 96, 150, 6, "#553517"); rect(20, 102, 150, 26, "#412a12"); rect(20, 96, 150, 2, "#6a4520");
+    overlays.push({ x: BARKEEP[0] + 8, y: BARKEEP[1] + 28, kind: "tag",
                     html: state.crew && state.crew.length ? "firstmate <small>the Barkeep</small>" : "<small>the house</small>" });
     seats.forEach(seat => {
       const [tx, ty] = seat.table;
       drawTable(tx, ty);
       if (seat.kind === "crew") {
         const m = seat.crew;
-        drawCharacter(tx - 24, ty - 6, hashCoat(m.id), "y", "patron", bob);
+        drawCharacter(tx - 30, ty - 12, { hat: "patron", coat: hashCoat(m.id), trim: "y" }, bob);
         drawTankard(tx + 4, ty + 1, momentFlash && momentFlash.kind !== "gate_pass" && Date.now() < momentFlash.until);
-        clickables.push({ x: tx - 26, y: ty - 14, w: 16, h: 22, id: "crew:" + m.id });
+        clickables.push({ x: tx - 32, y: ty - 22, w: 20, h: 34, id: "crew:" + m.id });
         const stageNote = seat.feature && seat.feature.stage ? ` · ⚑ ${esc(seat.feature.stage)}` : "";
-        overlays.push({ x: tx - 18, y: ty + 26, kind: "tag",
+        overlays.push({ x: tx - 22, y: ty + 28, kind: "tag",
                         html: `${m.id} <small>${m.kind || ""} · ${esc(m.project || "")}${stageNote}</small>` });
         // the patron speaks only when no avenger at the table is already saying the same work
         const agentSpeaks = (seat.agents || []).some(a => a.sentence);
         if (m.sentence && !agentSpeaks)
-          overlays.push({ x: tx - 18, y: ty - 24, kind: "bubble", text: m.sentence });
+          overlays.push({ x: tx - 22, y: ty - 26, kind: "bubble", text: m.sentence });
       } else if (seat.feature) {
         overlays.push({ x: tx, y: ty + 26, kind: "tag",
                         html: `<small>feature</small> ${esc(seat.feature.feature)} <small>@ ${esc(seat.feature.stage || "?")}</small>` });
       }
       (seat.agents || []).forEach((agent, k) => {
         const arch = ARCHETYPES[agent.agent_type] || { hat: "patron", coat: "e", trim: "w", epithet: "" };
-        const ax = tx + 14 + k * 18, ay = ty - 6;
+        const ax = tx + 16 + k * 24, ay = ty - 12;
         const key = agent.agent_id || agent.agent_type;
         const slide = entering[key] > 0 ? entering[key]-- * 3 : 0;
-        drawCharacter(ax + slide, ay, arch.coat, arch.trim, arch.hat, !bob);
-        clickables.push({ x: ax - 2, y: ay - 8, w: 16, h: 22, id: "live:" + key });
-        overlays.push({ x: ax + 6, y: ay + 26, kind: "tag",
+        drawCharacter(ax + slide, ay, arch, !bob);
+        clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
+        overlays.push({ x: ax + 8, y: ay + 38, kind: "tag",
                         html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
-        if (agent.sentence) overlays.push({ x: ax + 6, y: ay - 26, kind: "bubble", text: agent.sentence });
+        if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
       });
     });
     counter.forEach((agent, k) => {
@@ -313,10 +473,10 @@ function render() {
       const [ax, ay] = COUNTER_SEATS[k];
       const arch = ARCHETYPES[agent.agent_type] || { hat: "patron", coat: "e", trim: "w", epithet: "" };
       const key = agent.agent_id || agent.agent_type;
-      drawCharacter(ax, ay, arch.coat, arch.trim, arch.hat, bob);
-      clickables.push({ x: ax - 2, y: ay - 8, w: 16, h: 22, id: "live:" + key });
-      overlays.push({ x: ax + 6, y: ay + 22, kind: "tag", html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
-      if (agent.sentence) overlays.push({ x: ax + 6, y: ay - 24, kind: "bubble", text: agent.sentence });
+      drawCharacter(ax, ay, arch, bob);
+      clickables.push({ x: ax - 2, y: ay - 10, w: 20, h: 34, id: "live:" + key });
+      overlays.push({ x: ax + 8, y: ay + 34, kind: "tag", html: `${esc(agent.agent_type)} <small>${arch.epithet}</small>` });
+      if (agent.sentence) overlays.push({ x: ax + 8, y: ay - 12, kind: "bubble", text: agent.sentence });
     });
     // gate flash on moments
     if (momentFlash && Date.now() < momentFlash.until) {
