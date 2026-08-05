@@ -39,17 +39,27 @@ VERDICT_OK = {"GO", "PASS"}
 
 
 def model_family(model):
-    """Vendor family of a model id, ignoring an OpenRouter prefix.
+    """Vendor family of a model id, ignoring routing prefixes (OpenRouter, opencode).
 
     deepseek/deepseek-chat            -> deepseek
     google/gemini-3.1-pro-preview     -> google
     openrouter/anthropic/claude-opus  -> anthropic
     anthropic/claude-sonnet-5         -> anthropic
+    opencode-go/deepseek-v4-pro       -> deepseek
+    opencode/anthropic/claude-x       -> anthropic  (a router prefix must not hide the family)
     """
-    parts = [p for p in str(model).split("/") if p]
-    if parts and parts[0] == "openrouter":
+    parts = [p.lower() for p in str(model).split("/") if p]
+    while parts and parts[0] in ("openrouter", "opencode", "opencode-go", "opencode-anthropic"):
         parts = parts[1:]
-    return parts[0].lower() if parts else ""
+    if not parts:
+        return ""
+    # a bare model name after a router prefix (opencode-go/deepseek-v4-pro): family is the
+    # leading vendor token of the model itself
+    head = parts[0]
+    for vendor in ("deepseek", "gemini", "google", "claude", "gpt", "grok", "qwen", "mistral"):
+        if head.startswith(vendor):
+            return {"gemini": "google", "claude": "anthropic", "gpt": "openai"}.get(vendor, vendor)
+    return head
 
 
 def assert_cross_family(model, author_family):

@@ -312,3 +312,13 @@ def test_live_agent_detail_reaches_discovered_roots(tmp_path, monkeypatch):
     detail = StateBuilder(cfg).agent_detail("live:g1")
     assert detail["kind"] == "live"
     assert detail["root"] == str(workdir)
+
+
+def test_summarize_turns_a_report_into_a_glance():
+    from server import summarize
+    report = ("needs-decision: phase 4 halted at the spec-review gate. Specs 4.1-4.5 written and "
+              "pushed (c0c7be3), all fidelity REVIEW, none approved. The gate returned NO-GO...")
+    short = summarize(report.split(": ", 1)[-1])
+    assert short == "phase 4 halted at the spec-review gate."
+    assert len(summarize("x" * 500)) <= 110
+    assert summarize("") == ""

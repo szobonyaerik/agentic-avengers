@@ -84,6 +84,25 @@ def load_config(args: argparse.Namespace) -> Config:
     return cfg
 
 
+def summarize(text: str, limit: int = 110) -> str:
+    """One speech-bubble-sized clause from a status that may be a whole escalation report.
+
+    The bubble is a glance, not the record — the full text stays in the click-through panel.
+    Cut at the first sentence boundary, then hard-cap; never ship a wall of text over a sprite.
+    """
+    text = " ".join(str(text or "").split())
+    if not text:
+        return ""
+    for boundary in (". ", "; ", " — ", " - "):
+        idx = text.find(boundary)
+        if 0 < idx < limit:
+            text = text[:idx + (1 if boundary == ". " else 0)]
+            break
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return text
+
+
 class StateBuilder:
     """Builds the merged snapshot, cached briefly so the browser poll never stampedes the
     subprocess-backed adapters (pipeline_state.py, fm-fleet-snapshot.sh)."""
@@ -157,14 +176,15 @@ class StateBuilder:
         crew = []
         for member in fleet["crew"]:
             sentence = member["last_status"].split(": ", 1)[-1] if member["last_status"] else ""
-            crew.append({**member, "sentence": sentence})
+            crew.append({**member, "sentence": summarize(sentence)})
         def last_doing(transcript: str) -> str:
             doings = sources.transcript_tail(Path(transcript), limit=1)
             if not doings:
                 return ""
             doing = doings[-1]
             name = doing.get("name", "")
-            return f"{name}: {doing['summary']}" if name else doing["summary"]
+            text = f"{name}: {doing['summary']}" if name else doing["summary"]
+            return summarize(text)
 
         # the first mate's own session is the barkeeper (it still gets a speech bubble), and a
         # crewmate's session is already its patron — only unowned sessions get their own seat
@@ -205,7 +225,7 @@ class StateBuilder:
                         doing = doings[-1]
                         name = doing.get("name", "")
                         sentence = f"{name}: {doing['summary']}" if name else doing["summary"]
-                live_agents.append({**entry, "root": str(root), "sentence": sentence})
+                live_agents.append({**entry, "root": str(root), "sentence": summarize(sentence)})
             for rec in activity["recent"][-10:]:
                 kind = "spawn" if rec["event"] == "SubagentStart" else "finish"
                 moments.append({

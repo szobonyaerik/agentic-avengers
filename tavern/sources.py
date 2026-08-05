@@ -295,7 +295,7 @@ def _transcript_cwd(path: Path) -> str | None:
     return None
 
 
-def discover_sessions(max_age_secs: int = 900, limit: int = 12) -> list[dict]:
+def discover_sessions(max_age_secs: int = 3600, limit: int = 12) -> list[dict]:
     """Every recently-active Claude Code session on this machine, no configuration needed.
 
     The harness writes one transcript per session under ~/.claude/projects/<munged-cwd>/, and each
