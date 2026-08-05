@@ -363,3 +363,20 @@ def test_session_debug_reports_verdict_per_session(tmp_path, monkeypatch):
     report = sources.session_debug()
     (verdict,) = report["sessions"]
     assert verdict["kept"] is True
+
+
+def test_harness_helpers_are_not_liveness(tmp_path):
+    # verbatim shapes from the field: daemon + pty-host + spare helpers outlive closed sessions
+    import sources
+    ps = "\n".join([
+        '72037 /Users/x/.local/bin/claude daemon run --origin transient --spawned-by {"cwd":"/p"}',
+        "54331 claude bg-pty-host --bg-pty-host /tmp/cc-daemon/a.pty.sock 200 50 -- /x/2.1.221",
+        "54351 claude bg-spare --bg-spare /tmp/cc-daemon/a.claim.sock",
+        "9606 claude --dangerously-skip-permissions --effort high -cFIRSTMATE_OP: v1 launch-brief",
+        "38370 claude",
+        "1259 opencode run --format json -m opencode-go/deepseek-v4-pro You are a reviewer",
+        "1300 grep claude something",
+    ])
+    rows = sources._parse_harness_rows(ps)
+    pids = [pid for pid, _ in rows]
+    assert pids == ["9606", "38370", "1259"]
