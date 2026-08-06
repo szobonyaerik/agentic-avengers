@@ -407,6 +407,13 @@ def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
         # clicking again reuses the same viewer instead of minting a third
         sources.focus_window("fleet:mate")
         assert tmux("list-sessions", "-F", "#{session_name}").stdout.split().count("gate-fleet-mate") == 1
+        # the two field lessons: the server survives an empty moment, viewers reap themselves
+        assert tmux("show", "-s", "exit-empty").stdout.strip() == "exit-empty off"
+        hooks = tmux("show-hooks", "-t", "gate-fleet-mate").stdout
+        assert "client-detached" in hooks and "kill-session" in hooks
+        # a vanished base session is a clear error, not a half-created viewer
+        gone = sources.focus_window("nosuch:win")
+        assert gone["ok"] is False and "no longer exists" in gone["error"]
         for r in (r1, r2):
             assert r["attach_cmd"].startswith("tmux attach -t gate-fleet-")
     finally:
