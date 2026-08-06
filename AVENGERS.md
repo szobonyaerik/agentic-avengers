@@ -28,6 +28,8 @@ decisions: `pipeline-flow.png` (2026-07-28) and, the same day, a **convergence o
 | §F | Gate models run in hooks and in CI | **Model gates run in chat; mechanical gates run in hooks/CI**, which only check committed artifacts. The Fidelity Gate is the one exception |
 | §I | Mutation is always blocking | **Optional and off by default**: `MUTATION_POLICY` = `off` \| `advisory` \| `enforce`. An extra signal, not the independence mechanism |
 | §3.2 | Three test-author skills (`tdd-red-author`, `migration-`, `brownfield-`) | One `skills/tdd`; the other three are deleted. Refactor means baseline-first parity, not a preserve/change partition |
+| §1, §4B, §4C, §4F | Every requirement carries **paired pass/fail acceptance criteria**, and the Verifier traces every `R<n>.<k>.<m>` to a passing test | **Tiered `binding:`** per requirement — `e2e` (carried by a shared journey, never its own test) \| `integration` (its own test, and the spec says why an e2e cannot see it) \| `none` (no test). Suite size follows risk, not id count; coverage is judged per `binding:`, never per id |
+| §4C | The spec-review gate reads for correctness only, and re-reviews the whole spec each time | Spec-review also carries the **only cost gate** (`scripts/subprocess_check.py`, mechanical, both modes), and a spec already approved **and** implemented is re-gated on its **diff** only |
 
 Deliberate differences from `klm-agentic-pipeline`, and the only ones: the Claude Code + opencode
 runtime, the automated **Fidelity Gate**, the **feature-level e2e** stage and **spec-isolation-review**,

@@ -198,6 +198,11 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
   "bypassed": false
 }
 ```
+`coverage.requirements` and `coverage.traced` count only the requirements the spec asked to be bound —
+`binding: e2e` (traced by the journey listing the id) plus `binding: integration`. A `binding: none` id
+is outside the count and never appears in `untraced`, so a phase with unbound requirements still
+reports `traced == requirements`.
+
 `gamed-test` covers the tautological / implementation-coupled / missing-edge patterns above; name the
 exact pattern in the finding's `instruction`. If the mutation gate is off (the default), set
 `mutation.enabled: false` and omit the rest — do not run any mutation tool.

@@ -103,8 +103,13 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • The spec lands with review_status: pending.
 
 5. /spec-review docs/features/health-endpoint/phases/1-endpoint/specs/1.1-health/spec.md
+      • First, no model: scripts/subprocess_check.py flags any test that spawns a process without
+        @pytest.mark.subprocess("<why>"). Register that marker in the project's pytest config and
+        point SUBPROC_CHECK_PATHS at your tests if they are not at tests/ (skills/tdd).
       • You are grilled ONE question at a time against the spec-review checklist, each with a
         recommendation. Answer them; when the bar is met it sets review_status: approved.
+      • Re-reviewing a spec that is already approved AND implemented covers its DIFF only
+        (skills/spec-review-checklist names what still warrants a full pass).
       • Implementation does NOT start until review_status: approved AND fidelity_verdict != NO-GO.
         Those two gates are what pre-agree the seams the tests get written at.
 
@@ -116,8 +121,9 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 
 # once every spec in the phase is green:
 7. @avenger-verifier 1-endpoint
-      • Cross-family (family B != the implementer's A). Runs the full phase suite, traces every
-        R<n>.<k>.<m> to a passing test, and READS THE TESTS over a bounded review set — the tests
+      • Cross-family (family B != the implementer's A). Runs the full phase suite, traces coverage
+        per requirement `binding:` — a `binding: e2e` id is covered by the journey that lists it,
+        `binding: none` is never a gap. It also READS THE TESTS over a bounded review set — the tests
         mapped to the phase plus the test files it changed, and their direct helpers. A gamed test
         (tautological / implementation-coupled / missing-negative) fails the phase even when green.
       • Writes docs/features/<feat>/phases/1-endpoint/verdict.json. On pass the phase's tests LOCK.
