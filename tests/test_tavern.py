@@ -389,11 +389,19 @@ def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
     import sources
     if not shutil.which("tmux"):
         pytest.skip("no tmux on this machine")
+    # ISOLATION IS LOAD-BEARING. This test once nuked an operator's real fleet four times:
+    # TMUX_TMPDIR alone is NOT enough, because when pytest itself runs inside a tmux pane —
+    # exactly what a crewmate working on this repo is — $TMUX overrides it and every call below
+    # lands on the REAL server. $TMUX must be dropped, and teardown must never be kill-server.
+    monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))  # private tmux server for this test
     def tmux(*a):
         return sp.run(["tmux", *a], capture_output=True, text=True, timeout=10)
     try:
         assert tmux("new-session", "-d", "-s", "fleet", "-n", "mate").returncode == 0
+        # isolation proof: a freshly created private server holds ONLY our fixture session.
+        # Anything else here means we are on somebody's real server — stop before touching it.
+        assert tmux("list-sessions", "-F", "#{session_name}").stdout.split() == ["fleet"]
         assert tmux("new-window", "-t", "fleet", "-n", "crew").returncode == 0
 
         r1 = sources.focus_window("fleet:mate")
@@ -417,4 +425,7 @@ def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
         for r in (r1, r2):
             assert r["attach_cmd"].startswith("tmux attach -t gate-fleet-")
     finally:
-        tmux("kill-server")
+        # Never kill-server in a test: if isolation ever regresses, killing only the named
+        # fixture sessions costs the operator two ghost sessions, not their entire fleet.
+        for name in ("gate-fleet-mate", "gate-fleet-crew", "fleet"):
+            tmux("kill-session", "-t", "=" + name)
