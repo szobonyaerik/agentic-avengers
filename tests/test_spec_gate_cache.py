@@ -12,8 +12,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from spec_gate_cache import (  # noqa: E402
+    NEEDS_GATING,
+    UNCHANGED,
     body_hash,
+    main,
     needs_gating,
+    previous,
     split_spec,
     stamp,
 )
@@ -89,6 +93,59 @@ class TestStamp:
         edited = stamped.replace("exactly once", "twice")
         assert needs_gating(edited, "fidelity") is True
         assert needs_gating(stamp(edited, "fidelity"), "fidelity") is False
+
+
+class TestKeptBody:
+    """`stamp` keeps the body it judged, so a re-gate can be scoped to what changed.
+
+    A verdict is a sample from a distribution: re-judging already-approved text is how one spec drew
+    three different verdicts from the same model. The kept body is what bounds the second look.
+    """
+
+    @pytest.fixture
+    def spec(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        path = tmp_path / "spec.md"
+        path.write_text(SPEC, encoding="utf-8")
+        return path
+
+    def test_nothing_is_kept_before_the_first_gate(self, spec):
+        assert previous(spec, "review") is None
+
+    def test_stamp_keeps_the_body_it_judged(self, spec):
+        assert main(["stamp", str(spec), "review"]) == NEEDS_GATING
+        assert previous(spec, "review") == split_spec(SPEC)[1]
+
+    def test_the_kept_body_survives_a_later_edit(self, spec):
+        """The point of keeping it: it is the predecessor the current text is diffed against."""
+        main(["stamp", str(spec), "review"])
+        spec.write_text(
+            spec.read_text(encoding="utf-8").replace("exactly once", "at least once"),
+            encoding="utf-8",
+        )
+        assert "exactly once" in (previous(spec, "review") or "")
+
+    def test_each_gate_keeps_its_own_body(self, spec):
+        main(["stamp", str(spec), "fidelity"])
+        assert previous(spec, "review") is None
+
+    def test_sibling_specs_do_not_collide(self, spec, tmp_path):
+        other = tmp_path / "other.md"
+        other.write_text(SPEC.replace("R1.1.1", "R1.2.1"), encoding="utf-8")
+        main(["stamp", str(spec), "review"])
+        main(["stamp", str(other), "review"])
+        assert "R1.1.1" in (previous(spec, "review") or "")
+        assert "R1.2.1" in (previous(other, "review") or "")
+
+    def test_previous_reports_a_miss_without_failing(self, spec, capsys):
+        """A lost cache costs a full re-gate — the safe direction — not an error."""
+        assert main(["previous", str(spec), "review"]) == UNCHANGED
+        assert capsys.readouterr().out == ""
+
+    def test_previous_prints_the_kept_body(self, spec, capsys):
+        main(["stamp", str(spec), "review"])
+        assert main(["previous", str(spec), "review"]) == NEEDS_GATING
+        assert "R1.1.1" in capsys.readouterr().out
 
 
 class TestParsing:

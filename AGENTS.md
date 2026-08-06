@@ -21,6 +21,16 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    NO-GO routes back) **and** human grill-me via `@spec-review` (sets `review_status: approved`). A spec
    reaches the implementer only when `fidelity_verdict != NO-GO` and `review_status: approved`. Both
    gates are also what pre-agrees the **seams** the tests get written at.
+3a. **Spec-review is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
+   spawners lacking `@pytest.mark.subprocess("<why>")` — no model, both modes, on every spec write via
+   `hook_spec_review.sh`. It is the only stage that can see cost: fidelity, cross-family review and
+   verification all read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
+   budget on purpose — one unchanged suite measured 66.43s to 137.76s across seven runs.
+   **A spec already approved and implemented is re-gated on its changes only**; unchanged text was
+   passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body each gate judged
+   and the hook supplies a `## CHANGES SINCE APPROVAL` diff; with none kept, the whole spec is gated.
+   A full re-gate is still owed when the requirement set, Scope, Interfaces / contracts, `work_kind`
+   or a `binding:` changed — and a first gate is always full.
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
    `@avenger-verifier` passes it; from then they are **locked** and weakening one needs
@@ -32,14 +42,25 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `scripts/verifier_review.sh` (`$VERIFIER_GATE_MODEL`), because every subagent here is Anthropic. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
    · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
    unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
-4a. **Integration by default.** Every test drives its requirement through a **seam** (the public entry
-   point a caller uses), with real collaborators; mock only trust/cost boundaries. `test-mapping.md`
-   carries `level`: `integration` (default) · `e2e` · `narrow` — **`narrow` needs a written
-   justification**. Requirements with no integration surface get no dedicated test. Migration is exempt
-   (parity outranks the default).
+4a. **Tiered binding, then integration by default.** Every requirement declares `binding:` —
+   **`e2e`** (an end user can observe it → carried by a **journey** with the other `e2e` requirements
+   on its path, never its own test) · **`integration`** (visible *only* under concurrency, fault
+   injection or schema migration, **and the spec says in one sentence why an e2e cannot see it** →
+   its own test) · **`none`** (structural/build-time → **no test**; CI, a type checker, or nothing).
+   This replaced paired pass/fail criteria on every requirement, which tied suite size to id count:
+   288 ids became 458 tests at 4.87:1 test-to-source. A red journey names a journey, not a line —
+   that is the accepted trade.
+   Whatever does get a test drives it through a **seam** (the public entry point a caller uses), with
+   real collaborators; mock only trust/cost boundaries. `test-mapping.md` carries `level`:
+   `integration` (default) · `e2e` · `narrow` — **`narrow` needs a written justification**. `binding`
+   says *whether and where*, `level` says *how*; a journey's row is `level: e2e` and lists several
+   ids, and every requirement not marked `none` appears in some row. Migration is exempt (parity
+   outranks the default).
 4b. **Feature-level e2e**: 1-3 tests (5 max) in `tests/e2e/<feature>/`, tracing to the goal in
    `overview.md` — the one exception to "no spec id → no test". Recorded in `e2e-mapping.md`. Excluded
-   from mutation and from the phase verifier hook.
+   from mutation and from the phase verifier hook. **Unchanged by 4a**: the journeys carrying
+   `binding: e2e` requirements are *phase*-level and live with the phase's tests; this ceiling governs
+   `tests/e2e/<feature>/` only.
 5. **Phases run in dependency/risk order**, one at a time, fully through build-and-verify.
 6. **Fresh model ≠ author** — every per-phase gate runs on a cross-family model (family ≠ author).
    The one sanctioned exception is the feature-close `no-mistakes` ship gate (`.no-mistakes.yaml`),
@@ -58,7 +79,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
    and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
    learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
-   files that matter. `docs/features/<feature>/pipeline-observations.md`
+   files that matter. **Every lesson carries a `cost`** — tests added, invocations, runtime, tokens —
+   and, where the rule could justify unbounded growth, its limit. Ten lessons once came out of one
+   feature with **none** about cost; a true rule like "'it already works' precedes a silent
+   regression" licenses writing tests forever when nothing bounds it. `docs/features/<feature>/pipeline-observations.md`
    (`skills/pipeline-retrospective`) is about the **machinery** — a gate that misfires, a stage that
    churns — written by the orchestrator as things happen, triaged at feature close, and filed upstream
    on the agentic-avengers repo. On Claude Code the lessons pointer is injected by

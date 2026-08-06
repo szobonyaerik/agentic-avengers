@@ -50,9 +50,43 @@ The implementer authors **both tests and code** test-first (there is no separate
   tests/e2e/<feature>/...         # feature-level only
   ```
 - **Requirement IDs:** `R<n>.<k>.<m>` (phase.spec.requirement). Globally unique and traceable. Every
-  test authored or ported for a spec maps to exactly one id in that spec's `test-mapping.md`; an
-  inherited migration suite need not be exhaustively remapped.
+  test authored or ported for a spec lists the ids it covers in that spec's `test-mapping.md`, and
+  every requirement not marked `binding: none` appears in at least one row; an inherited migration
+  suite need not be exhaustively remapped.
 - Artifact templates live in `docs/templates/`.
+
+## Tiered requirement binding — what decides suite size
+
+Every requirement declares a **`binding:`**, written by the Spec Writer and settled at spec-review.
+It, and not the requirement count, is what determines how many tests exist.
+
+| `binding:` | Meaning | Verified by |
+|---|---|---|
+| `e2e` | An end user can observe it | a **journey** shared with the other `e2e` requirements on its path — **never its own test** |
+| `integration` | Observable *only* under concurrency, fault injection, or schema migration, **and the spec says in one sentence why an e2e cannot see it** | its own test at the seam |
+| `none` | A structural or build-time property | CI, a type checker, or nothing. **No test.** |
+
+`binding` decides **whether and where** a requirement is verified; the `level` column in
+`test-mapping.md` (`integration` · `e2e` · `narrow`) describes **how** a test that exists drives it.
+A journey's row is `level: e2e` and lists several ids; an `integration` requirement's row is
+`level: integration` (or `narrow` with its written justification) and lists one.
+
+**This replaced a rule requiring paired pass/fail criteria on every requirement.** That rule made
+suite size a mechanical function of id count with no counterweight anywhere in the pipeline: one
+measured feature turned 288 requirement ids into 458 tests, 4.87 lines of test per line of source,
+and cost never entered any stage's judgement. The tiers put the question back. The trade is named and
+accepted: **a red journey tells you which journey broke, not which line.**
+
+Two consequences worth stating outright:
+- **The journeys here are phase-level**, living with the phase's other tests. The **feature-level**
+  e2e stage below is unchanged — still 1-3 tests, 5 maximum, written once at feature close.
+- **Cost is only visible at spec-review.** Fidelity, cross-family review and verification all read
+  for **correctness**, and an expensive test is not incorrect. `scripts/subprocess_check.py` is the
+  mechanical half of that gate: an AST walk over `tests/` for spawners without
+  `@pytest.mark.subprocess("<why>")`. It runs on every spec write in **both** modes via
+  `scripts/hook_spec_review.sh`. Deliberately **not** a wall-clock budget — seven runs of one
+  unchanged suite spanned 66.43s to 137.76s on one machine, so a runtime gate would fail green suites
+  at random and teach everyone to bypass it.
 
 ## Gates
 
@@ -65,6 +99,15 @@ The implementer authors **both tests and code** test-first (there is no separate
   implementation. Automated mode (`/spec-review --auto`, `SPEC_REVIEW_MODE=auto`) exists for
   unattended runs and fails closed like any gate.
   A spec reaches the implementer only when `fidelity_verdict != NO-GO` **and** `review_status: approved`.
+  - **A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
+    passed by this same gate before and is not a finding. One spec drew REVIEW, REVIEW, then a NO-GO
+    naming requirements the gate itself had approved twice, unchanged — a verdict is a **sample from
+    a distribution**, not a fact about the artifact, and variance in a gate that fails closed is far
+    more expensive than variance in one that fails open. `scripts/spec_gate_cache.py` keeps the body
+    each gate last judged and `scripts/hook_spec_review.sh` hands the reviewer a
+    `## CHANGES SINCE APPROVAL` diff; with no kept body the whole spec is gated, the safe direction.
+    A **full** re-gate is still owed when the diff changes the requirement set, Scope, Interfaces /
+    contracts, `work_kind`, or any `binding:` — and a **first** gate is always full.
 - **Verifier (per phase, cross-family)** — after every spec in the phase is green, the Verifier runs
   the full suite, traces coverage, and puts the phase-mapped/changed tests and their directly
   referenced helpers through a **targeted test-quality review on a cross-family model** (the
@@ -229,6 +272,16 @@ The procedure the pointer refers to: read the *index only*, filter to your role 
 just the handful of prose files that matter. Write a lesson the moment something is learning-worthy
 — a user correction, a self-caught mistake, or a confirmed-good approach — appending or refining,
 never overriding. If the file is missing, skip silently.
+
+**Every lesson carries a `cost`.** A lesson is an instruction to a future session, and an instruction
+with no price attached gets followed without limit. One pipeline wrote ten lessons about a single
+feature and **not one was about cost** — ten ways to be more correct, zero ways to be cheaper, which
+is how a suite reaches 4.87 lines of test per line of source without anyone deciding to. So the index
+entry and the prose file both state what following the rule spends (tests added, agent invocations,
+runtime, tokens) and, **where the rule could otherwise justify unbounded growth, the limit that stops
+it**. "It already works is exactly the state that precedes a silent regression" is true, and without
+a budget it licenses writing tests forever — there are infinitely many correct behaviours. Bound it:
+the spec's `binding:` set is the budget. Full procedure in `skills/self-improvement`.
 
 Test: "would this help someone building a *different* project with this pipeline?" → it is a
 pipeline observation. "Would it help someone building *this* project again?" → it is a lesson.

@@ -50,7 +50,7 @@ flowchart TD
     ip --> sw
 
     subgraph phase ["per phase — specs iterate · the verifier runs once, after all specs are green"]
-        sw["spec-writer"] -.-> swA[/"spec.md · R n.k.m + paired criteria"/]
+        sw["spec-writer"] -.-> swA[/"spec.md · R n.k.m + binding: e2e|integration|none"/]
         sw --> fg{"fidelity gate?<br/>automated · cross-family"}
         fg -->|"NO-GO"| sw
         fg -->|"GO / REVIEW"| sr{"spec approved?<br/>grill-me + checklist"}

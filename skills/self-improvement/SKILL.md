@@ -29,6 +29,7 @@ Index entry (`lessons.json`):
   "date": "YYYY-MM-DD",
   "title": "<short imperative title>",
   "summary": "<one line — the rule, not the story>",
+  "cost": "<one line — what following this costs, and its limit>",
   "tags": ["<free tags: e.g. verifier, migration, pytest, ci>"],
   "scope": "<agent | stack | area this applies to, e.g. backend-architect, python, gates>",
   "path": "docs/lessons/<id>-<slug>.md"
@@ -36,6 +37,32 @@ Index entry (`lessons.json`):
 ```
 Keep entries to summaries + pointers so the index stays cheap to load as it grows. The `id` is a short
 stable hash — `sha1(title)[:12]` is fine; the point is that dedup can match on it.
+
+## Every lesson states its cost — `cost` is required
+
+A lesson is an instruction to your future self, and an instruction with no price attached gets
+followed without limit. One pipeline wrote **ten** lessons about a single feature and **not one was
+about cost**: it had taught itself ten ways to be more correct and zero ways to be cheaper, which is
+how a suite reaches 4.87 lines of test per line of source without anyone ever deciding to.
+
+So `cost` is not optional, and "none" is a real answer that has to be defended. State what following
+the lesson spends, in whichever of these it actually spends:
+
+- **tests added** — per requirement, per phase, or per occurrence
+- **agent invocations** — an extra gate, review pass, or route-back
+- **runtime** — suite seconds, and whether it scales with suite size
+- **tokens** — a larger bundle, an extra model call
+
+**And where the lesson could justify unbounded growth, it must carry its own limit.** The live
+example is a real lesson that reads *"'it already works' is exactly the state that precedes a silent
+regression."* That is correct in principle and worth keeping. Applied without a budget it justifies
+writing tests forever, because every correct behavior is unbound until you write a test and there are
+infinitely many correct behaviors. The fix is not to delete the lesson; it is to bound it — *"…so
+bind it **when the spec has a requirement for it**; an unbound behavior is a route-back to the
+spec-writer, not a test you add on your own initiative."*
+
+A lesson whose `cost` says "none" and whose rule begins with "always" is almost certainly one of
+these. Write the limit before you write the rule.
 
 ## At session start (read)
 For a known project, if `docs/lessons/lessons.json` exists:
@@ -64,10 +91,11 @@ Write a lesson the moment something learning-worthy happens — **not only when 
      and never delete prior content — append or tighten.
    - **If no match:** create a new prose file `docs/lessons/<id>-<slug>.md` and append a new entry to
      `lessons.json`.
-2. **Prose file** holds the full lesson: what happened, why it matters, and the concrete rule to
-   follow next time. Keep it short and actionable.
-3. **Index entry** is the summary + pointer described above. Append it to the JSON array; keep the
-   file valid JSON.
+2. **Prose file** holds the full lesson: what happened, why it matters, the concrete rule to follow
+   next time, and **what following it costs**. Keep it short and actionable.
+3. **Index entry** is the summary + `cost` + pointer described above. Append it to the JSON array;
+   keep the file valid JSON. An entry without a `cost` line is incomplete — when you refine an older
+   lesson that predates this field, add one while you are in there.
 4. Never rewrite or reorder existing entries beyond the one you touched. The log is additive.
 
 ## Prose file shape
@@ -83,4 +111,8 @@ Write a lesson the moment something learning-worthy happens — **not only when 
 
 ## Rule
 <the concrete, do-this-next-time rule>
+
+## Cost
+<what following this spends: tests added, agent invocations, runtime, tokens — and, if the rule
+ could otherwise justify unbounded growth, the limit that stops it>
 ```

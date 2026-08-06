@@ -66,14 +66,24 @@ What this spec delivers — and explicitly what it does NOT (deferred to a later
 ## Requirements
 Each requirement has a stable id R<n>.<k>.<m> so tests can trace to it.
 Each is ONE behavior observable at a seam — a caller-visible outcome, not an internal step.
-- R<n>.<k>.1 — <single, verifiable behavior, observable through a public entry point>
-- R<n>.<k>.2 — …
+Each declares a `binding:` that decides whether, and where, it is verified.
+- R<n>.<k>.1 — `binding: e2e` — <single behavior an end user can observe>
+- R<n>.<k>.2 — `binding: integration` — <behavior visible only under concurrency / fault injection /
+  schema migration>. Why an e2e cannot see it: <one sentence>.
+- R<n>.<k>.3 — `binding: none` — <structural or build-time property>. Enforced by: <CI job / type
+  checker / nothing>.
+
+## Journeys (the `binding: e2e` requirements, grouped)
+One journey per user-observable path, each covering SEVERAL requirements. Name the requirement ids
+it carries. These replace per-requirement tests; do not also ask for one test per id.
+- J1 — <what the user does, end to end> — covers R<n>.<k>.1, R<n>.<k>.4, …
 
 ## Acceptance criteria
-For each requirement: the observable pass condition AND at least one failure/edge condition,
-so the implementer can write paired pass/fail tests. State them in terms of what a caller of the
-seam observes.
-- R<n>.<k>.1 — passes when: …; fails when: …
+For each `integration` requirement and each journey: the observable pass condition AND at least one
+failure/edge condition. State them in terms of what a caller of the seam observes.
+`binding: none` requirements get no acceptance criteria — there is nothing to run.
+- R<n>.<k>.2 — passes when: …; fails when: …
+- J1 — passes when: …; fails when: …
 
 ## Interfaces / contracts
 Inputs, outputs, signatures, schemas, and error modes this spec exposes or consumes.
@@ -109,7 +119,27 @@ Verifier passes the phase: `pipeline-conventions`: *locked-after-verify*.)
 - **Self-contained and independently testable**: Each spec must be implementable and gated without reading other specs. Reference the overview; don't restate it.
 - **Concrete**: Include actual file paths, function signatures, data types — no hand-waving.
 - **Stable requirement IDs**: Every requirement gets an id `R<n>.<k>.<m>` (e.g. `R1.1.1`, `R1.1.2`). These IDs are the contract — the implementer traces each test to one in `test-mapping.md`.
-- **Paired acceptance criteria**: Every requirement must specify at least one pass condition AND at least one failure/edge condition. The implementer needs both to write the red→green slices. No pass-only requirements.
+- **Tiered binding — the rule that decides how big the suite gets.** Every requirement declares
+  `binding: e2e | integration | none`.
+  - `e2e` — an end user can observe it. It is carried by a **journey** shared with the other `e2e`
+    requirements on its path, and gets **no test of its own**.
+  - `integration` — observable *only* under concurrency, fault injection, or schema migration. It
+    gets its own test **and one sentence saying why an e2e cannot see it.** If you cannot write that
+    sentence honestly, the requirement is `e2e`.
+  - `none` — structural or build-time. **No test.** Name what enforces it — a CI job, a type
+    checker, or nothing. "Nothing" is an acceptable and often correct answer.
+  This replaced a rule requiring paired pass/fail criteria on *every* requirement. That rule made
+  suite size a mechanical function of id count: one measured feature turned 288 ids into 458 tests at
+  4.87 lines of test per line of source, and no stage anywhere pushed back. Default to `e2e`. Reach
+  for `integration` when you can name the failure an e2e is blind to, and prefer `none` over inventing
+  a test for a property CI already fails on.
+- **Cost is yours to control, because no later stage can see it.** Fidelity, cross-family review and
+  verification all read for correctness; none of them can see that a test spawns a subprocess or that
+  its runtime scales with the suite. Do not write a requirement whose only verification is shelling
+  out. If one is unavoidable, say so in the spec and justify it in a sentence.
+- **"Additive" is a claim you must check.** A new constraint on an existing interface that rejects a
+  value a current caller passes is a breaking change, whatever the spec calls it — one such line,
+  described as purely additive, broke sixteen callers. Name the callers you checked.
 - **Human summaries**: `Phase summary` and `Spec summary` are mandatory and are checked by `spec-review-checklist`. Neither may promise anything the scope, requirements, or acceptance criteria do not support.
 - **Observable at a seam**: A requirement is one behavior a **caller** can observe through a public
   entry point (HTTP handler, service method, CLI) — never an internal step. Write "a replayed delivery

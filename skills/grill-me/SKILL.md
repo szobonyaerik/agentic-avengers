@@ -27,6 +27,11 @@ tree, resolving dependencies between decisions one by one.
 
 ## Spec-review framing
 When grilling a spec reviewer, drive questions from the checklist: is every requirement verifiable and
-ID'd? Does every requirement have paired pass/fail criteria? Does the spec contradict the overview or
-a prior phase's delivered contract? For a migration: does the spec name the existing tests and the
-parity it must preserve? Make the reviewer defend each "yes."
+ID'd? Does every requirement declare a `binding:` the reviewer can defend — and for each
+`integration` one, can they say why an end-to-end journey could not see the same failure? Does the
+spec contradict the overview or a prior phase's delivered contract? For a migration: does the spec
+name the existing tests and the parity it must preserve? Make the reviewer defend each "yes."
+
+Cost counts as correctness here, because no later stage can see it: ask what each requirement's tests
+will cost to run, and whether any of them spawns a process. If the spec is a **re-gate** of something
+already implemented, grill only what changed — settled text is not on the table.

@@ -19,20 +19,49 @@ A **seam** is the public boundary you test at: the interface where you observe b
 inside. Tests live at seams, never against internals.
 
 In this pipeline the seams are **already agreed in the spec**: each requirement
-(`R<n>.<k>.<m>`) and its paired pass/fail acceptance criteria define the observable behavior, while
+(`R<n>.<k>.<m>`) and its acceptance criteria define the observable behavior, while
 the spec's interfaces/contracts name the public boundary where it is tested. You do **not**
 re-negotiate seams interactively. If that boundary is genuinely untestable as written, the spec is
 wrong: stop and route it back to the spec-writer; do not invent a seam.
 
+## The spec decides what gets a test — read `binding:` before you write one
+
+Every requirement declares a `binding:`, set by the spec-writer and settled at the spec-review gate.
+It is not advisory and it is not yours to re-open: writing a test the binding does not call for is
+the same defect as skipping one it does.
+
+| `binding:` | What you write | Where it maps in `test-mapping.md` |
+|---|---|---|
+| `e2e` | **No test of its own.** It is covered by the **journey** the spec groups it into, alongside the other `e2e` requirements on that path. | the journey's row lists every id it covers, `level: e2e` |
+| `integration` | **One test**, at the seam, driving the failure the spec says an e2e cannot see — concurrency, fault injection, or migration. | its own row, `level: integration` (or `narrow` with the written justification) |
+| `none` | **Nothing.** CI, a type checker, or nothing at all enforces it. | no row |
+
+**One journey, many requirements.** Write the journey once and add ids to its row as you cover them
+— do not fork it per requirement. The trade is deliberate: a red journey tells you which journey
+broke, not which line. That is what the granularity bought, and it was bought on purpose, because
+per-requirement pairing once turned 288 requirement ids into 458 tests.
+
+Traceability is unchanged in substance: **every requirement with `binding: e2e` or `integration`
+appears in at least one `test-mapping.md` row, and every test lists the ids it covers.** A journey
+lists several; an integration test lists one. A requirement with no row and no `binding: none` is a
+coverage gap and the Verifier will route it back.
+
+**No test may spawn a subprocess** unless it carries `@pytest.mark.subprocess("<why a real process is
+required>")` — or the stack's equivalent — and the justification is not optional.
+`scripts/subprocess_check.py` enforces this at the spec-review gate; it is the only stage that can
+see the cost, since every reading stage reads for correctness and a subprocess is not incorrect.
+
 ## Choose your mode from `work_kind` (in `task-analysis.md`)
 
 ### Greenfield (`work_kind: greenfield`) — red before green
-New behavior, no prior contract. For **each requirement `R<n>.<k>.<m>`, one at a time**:
-1. Write **one failing test** at the requirement's seam, straight from its acceptance criteria — a
-   positive case first, then negative/edge cases as separate slices. Confirm it is **RED** (fails now).
-   A test that passes before you write code is testing nothing.
+New behavior, no prior contract. Work through the spec's **journeys and `integration` requirements,
+one at a time** — never its raw requirement list, which includes ids that get no test of their own:
+1. Write **one failing test** at the seam, straight from the acceptance criteria — for a journey, the
+   user's path end to end; for an `integration` requirement, the failure the spec says an e2e cannot
+   see. Add negative/edge cases as separate slices where the criteria call for them. Confirm it is
+   **RED** (fails now). A test that passes before you write code is testing nothing.
 2. Write **just enough code** to make it green. No speculative features, no anticipating later tests.
-3. Record the test → requirement mapping in `test-mapping.md`.
+3. Record the test → requirement ids in `test-mapping.md`. A journey's row grows as it covers more.
 4. Repeat for the next slice. Each test is a **tracer bullet** that responds to what the last slice
    taught you — never write the whole suite first (that is *horizontal slicing*, an anti-pattern below).
 
@@ -83,9 +112,15 @@ See [tests.md](tests.md) for good/bad examples and [mocking.md](mocking.md) for 
 - **Red before green** (greenfield). Write the failing test first, then only enough code to pass it.
 - **One slice at a time.** One seam, one test, one minimal implementation per cycle.
 - **Refactoring is not part of the loop.** Clean up after green, not during red→green.
-- **Trace the spec work.** Every test authored or ported for the spec maps to exactly one
-   `R<n>.<k>.<m>` in `test-mapping.md`; do not burn effort retroactively mapping an untouched inherited
-   migration suite.
+- **Trace the spec work.** Every test authored or ported for the spec lists the `R<n>.<k>.<m>` ids it
+   covers in `test-mapping.md` — one for an `integration` test, several for a journey — and every
+   requirement not marked `binding: none` appears in at least one row. Do not burn effort
+   retroactively mapping an untouched inherited migration suite.
+- **Do not add a test the spec's bindings did not ask for.** If a behavior looks unbound, that is a
+   route-back to the spec-writer, not a test you write on your own initiative. "It already works" is
+   indeed the state that precedes a silent regression — and there are infinitely many correct
+   behaviors, so that reasoning without a budget justifies writing tests forever. The budget is the
+   spec.
 - **Never weaken a test to go green after the phase is verified.** Before the Verifier passes, you own
   the tests and may reshape them as the design teaches you; after it passes they are locked, and
   weakening them requires re-verification (see `pipeline-conventions`).

@@ -16,6 +16,10 @@ __pycache__/
 # opencode local deps
 .opencode/node_modules/
 
+# spec-gate scratch: the body each gate last judged, so a re-gate can be scoped to the diff
+# (scripts/spec_gate_cache.py). Rebuildable — a lost entry costs one full re-gate, the safe direction.
+.avenger-gate-cache/
+
 # note: gate-overrides.log is intentionally NOT ignored — break-glass must stay visible/auditable.
 .avenger-auto
 .env
