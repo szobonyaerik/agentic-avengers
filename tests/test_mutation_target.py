@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mutation_target import (  # noqa: E402
@@ -26,6 +28,10 @@ from mutation_target import (  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 TARGET = REPO / "scripts" / "mutation_target.py"
 STOCK_CONFIG = REPO / "cosmic-ray.toml"
+
+pytestmark = pytest.mark.subprocess(
+    "pins the resolver's exit codes and argv handling, which only a process has"
+)
 
 
 def stock_text() -> str:

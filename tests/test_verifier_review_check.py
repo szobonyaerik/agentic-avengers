@@ -23,6 +23,10 @@ from verifier_review_check import (  # noqa: E402
     assert_substance,
 )
 
+pytestmark = pytest.mark.subprocess(
+    "pins the checker's exit codes and argv handling, which only a process has"
+)
+
 
 def verdict(**over):
     base = {

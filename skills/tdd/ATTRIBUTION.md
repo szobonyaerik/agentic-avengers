@@ -13,8 +13,8 @@ The upstream skill assumes an interactive human and a TypeScript codebase. The p
 
 - **Replaces interactive seam negotiation with the spec.** Upstream says *"before writing any test,
   write down the seams under test and confirm them with the user."* Here the seams are already agreed:
-  each `R<n>.<k>.<m>` and its paired acceptance criteria define the observable behavior, and the spec's
-  interfaces/contracts name the boundary. An untestable boundary is a spec defect — route it back to
+  each `R<n>.<k>.<m>`, its `binding:` and the acceptance criteria that binding calls for define the
+  observable behavior, and the spec's interfaces/contracts name the boundary. An untestable boundary is a spec defect — route it back to
   the Spec Writer rather than inventing a seam.
 - **Adds the three `work_kind` modes inline** — greenfield (red→green), migration (parity-first) and
   refactor (baseline-first, behavior unchanged). These were previously separate skills in this repo

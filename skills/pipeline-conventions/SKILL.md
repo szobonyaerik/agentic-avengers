@@ -77,9 +77,14 @@ measured feature turned 288 requirement ids into 458 tests, 4.87 lines of test p
 and cost never entered any stage's judgement. The tiers put the question back. The trade is named and
 accepted: **a red journey tells you which journey broke, not which line.**
 
-Two consequences worth stating outright:
+Three consequences worth stating outright:
 - **The journeys here are phase-level**, living with the phase's other tests. The **feature-level**
   e2e stage below is unchanged — still 1-3 tests, 5 maximum, written once at feature close.
+- **The Verifier judges coverage per `binding:`, never per id.** A `binding: e2e` requirement is
+  covered by the journey that lists it and a `binding: none` one is never a gap — reading the old
+  one-test-per-id rule here would route back a coverage gap on every requirement the spec
+  deliberately left unbound, and hand the suite straight back its lost multiplier. The rule is in
+  `skills/verifier-triage`, and `prompts/verifier-review.md` carries it for the cross-family reader.
 - **Cost is only visible at spec-review.** Fidelity, cross-family review and verification all read
   for **correctness**, and an expensive test is not incorrect. `scripts/subprocess_check.py` is the
   mechanical half of that gate: an AST walk over `tests/` for spawners without

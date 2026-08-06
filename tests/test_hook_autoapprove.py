@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "scripts" / "hook_autoapprove.sh"
 SENTINEL = ".avenger-auto"
 
+pytestmark = pytest.mark.subprocess(
+    "the subject is a bash hook invoked by the harness exactly this way"
+)
+
 
 def run_hook(
     project: Path, payload: dict, env: dict[str, str] | None = None

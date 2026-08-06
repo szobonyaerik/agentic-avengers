@@ -63,9 +63,10 @@ seam rule, the three anti-patterns the Verifier will read your tests for, and th
 | `migration` | parity-first | the **existing suite is the contract** — run it, don't re-author it; characterize only genuine gaps at critical seams |
 | `refactor` | baseline-first | migration procedure without a port; behavior unchanged. An intentional behavior change is greenfield work and needs its own requirement |
 
-**The approved spec is your seam list — do not re-negotiate it.** Each `R<n>.<k>.<m>` and its paired
-acceptance criteria define the observable behavior; the spec's interfaces/contracts name the public
-boundary. If that boundary is genuinely untestable as written, the spec is wrong: route it back to
+**The approved spec is your seam list — do not re-negotiate it.** Each `R<n>.<k>.<m>`, its
+`binding:` and the acceptance criteria that binding calls for define the observable behavior; the
+spec's interfaces/contracts name the public boundary. The `binding:` also decides whether the
+requirement gets a test of its own at all — see the table in `skills/tdd`. If that boundary is genuinely untestable as written, the spec is wrong: route it back to
 `avenger-spec-writer` rather than inventing a seam.
 
 Write the mapping into **that spec's** `test-mapping.md`

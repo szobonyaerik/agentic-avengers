@@ -56,6 +56,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    says *whether and where*, `level` says *how*; a journey's row is `level: e2e` and lists several
    ids, and every requirement not marked `none` appears in some row. Migration is exempt (parity
    outranks the default).
+   **The Verifier judges coverage per `binding:`, not per id** — a `binding: e2e` requirement is
+   covered by the journey listing it, and `binding: none` is never a gap; the old one-test-per-id
+   reading would route back a gap on every deliberately unbound requirement (`skills/verifier-triage`).
 4b. **Feature-level e2e**: 1-3 tests (5 max) in `tests/e2e/<feature>/`, tracing to the goal in
    `overview.md` — the one exception to "no spec id → no test". Recorded in `e2e-mapping.md`. Excluded
    from mutation and from the phase verifier hook. **Unchanged by 4a**: the journeys carrying
@@ -167,3 +170,14 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
 
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
+
+`AGENTS.md` and `CLAUDE.md` are both real files here on purpose — one per runtime, opencode and
+Claude Code — and `skills/pipeline-conventions/SKILL.md` is the canonical source both mirror. A rule
+that changes belongs in the skill first, then in whichever of these two the change is visible from.
+Do not collapse them into a symlink.

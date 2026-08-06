@@ -98,6 +98,12 @@ has no reachable seam. `binding` says *whether and where*; `level` says *how*. A
 Migration is exempt: parity outranks the default. Rationale: tests bound to internals are the ones
 rewritten on every refactor.
 
+**The Verifier judges coverage per `binding:`, not per id** — a `binding: e2e` requirement is covered
+by the journey that lists it, and `binding: none` is never a gap. Reading the old one-test-per-id
+rule at that stage would route back a coverage gap on every deliberately unbound requirement and hand
+the suite back the multiplier this tier removed. Rule in `skills/verifier-triage`; the cross-family
+reader gets it from `prompts/verifier-review.md`.
+
 ### 4b. Feature-level e2e
 **1-3 tests (5 max)**, written once after the last phase is green, in `tests/e2e/<feature>/`, tracing
 to the goal in `overview.md` rather than a spec id (the one exception to "no spec id → no test").

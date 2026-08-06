@@ -118,12 +118,24 @@ def cache_path(spec: Path, gate: str) -> Path:
     return cache_root() / CACHE_DIR / gate / f"{key}.md"
 
 
+def normalized(body: str) -> str:
+    """A body ending in exactly one newline, so a re-gate diff shows only real edits.
+
+    `previous` and `body` are diffed against each other by the hook, and a shell reads one of them
+    through a command substitution, which eats every trailing newline. Without a single shared
+    convention the two sides disagree about the end of the file and every re-gate opens with a
+    phantom hunk — noise handed to the reviewer, which is the exact failure the diff exists to
+    prevent. Normalising in one place beats each caller remembering to.
+    """
+    return body.rstrip("\n") + "\n"
+
+
 def keep(spec: Path, gate: str, body: str) -> None:
     """Store the body a gate just judged. Best-effort: a cache miss only costs a full re-gate."""
     target = cache_path(spec, gate)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
+        target.write_text(normalized(body), encoding="utf-8")
     except OSError as exc:
         print(f"[spec_gate_cache] could not keep {target}: {exc}", file=sys.stderr)
 
@@ -131,7 +143,7 @@ def keep(spec: Path, gate: str, body: str) -> None:
 def previous(spec: Path, gate: str) -> str | None:
     """The body that gate last judged, or None when nothing was kept."""
     try:
-        return cache_path(spec, gate).read_text(encoding="utf-8")
+        return normalized(cache_path(spec, gate).read_text(encoding="utf-8"))
     except OSError:
         return None
 
@@ -167,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if action == "body":
-            sys.stdout.write(split_spec(text)[1])
+            sys.stdout.write(normalized(split_spec(text)[1]))
             return NEEDS_GATING
         if action == "check":
             return NEEDS_GATING if needs_gating(text, gate) else UNCHANGED

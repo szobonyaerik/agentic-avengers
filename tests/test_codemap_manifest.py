@@ -20,6 +20,10 @@ import codemap  # noqa: E402
 
 CACHED_PURPOSE = "Cached purpose a model was paid to write"
 
+pytestmark = pytest.mark.subprocess(
+    "asserts the codemap CLI's real behaviour, which only exists as a process"
+)
+
 
 def _seed_manifest(out: Path, files: dict[str, dict], model: str = "openai/gpt-5") -> bytes:
     out.mkdir(parents=True, exist_ok=True)

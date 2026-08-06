@@ -77,7 +77,10 @@ non-JSON, same-family), the phase **does not pass**.
 5. **Triage** anything that isn't green or is gamed: classify each as a *code* issue, a *wrong/gamed
    test*, or a *coverage gap*. All three route back to the **implementer**
    (`avenger-backend-architect` / `avenger-frontend-developer`), who owns both code and tests. Never
-   fix anything yourself.
+   fix anything yourself. **Coverage is judged per `binding:`, not per id** — a `binding: e2e`
+   requirement is covered by the journey that lists it, and a `binding: none` requirement is never a
+   gap. The table in `skills/verifier-triage` is the rule; applying the old one-test-per-id reading
+   would route back a gap on every requirement the spec deliberately left unbound.
 6. **Verdict (persisted artifact).** Merge `.verifier-review.json` with your own coverage/suite
    findings and write the structured verdict to
    `docs/features/<feature>/phases/<n>-<slug>/verdict.json` (schema and procedure in

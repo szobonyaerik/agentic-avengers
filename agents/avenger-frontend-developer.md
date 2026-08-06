@@ -36,6 +36,12 @@ and the Verifier will route it back.
 **The approved spec is your seam list — do not re-negotiate it.** A requirement with no reachable
 boundary is a spec defect: route it back to `avenger-spec-writer`.
 
+**Its `binding:` decides whether a requirement gets a test at all** — see the table in `skills/tdd`.
+For UI this is where the tiering bites hardest: nearly everything a component does is observable by
+an end user, so nearly everything is `binding: e2e` and belongs to a **journey** driving the whole
+flow, not to a per-requirement render test. Reach for `integration` only when you can say why the
+journey cannot see the failure.
+
 Record each test in **that spec's** `test-mapping.md`
 (`docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/test-mapping.md`); tests live at
 `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`.

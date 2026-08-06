@@ -68,7 +68,9 @@ match your role and this task, then open only the handful of `docs/lessons/<id>-
 that matter. Do not read the whole folder.
 
 When something learning-worthy happens — a user correction, a self-caught mistake, a confirmed-good
-approach — append or refine a lesson per `skills/self-improvement`. Never override an existing one."""
+approach — append or refine a lesson per `skills/self-improvement`. Never override an existing one.
+Every lesson states its `cost` — what following it spends, and the limit that stops it where the rule
+could otherwise justify unbounded growth. A rule with no price attached gets followed without one."""
 
 json.dump(
     {

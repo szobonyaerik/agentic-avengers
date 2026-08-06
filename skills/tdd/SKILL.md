@@ -47,7 +47,16 @@ lists several; an integration test lists one. A requirement with no row and no `
 coverage gap and the Verifier will route it back.
 
 **No test may spawn a subprocess** unless it carries `@pytest.mark.subprocess("<why a real process is
-required>")` — or the stack's equivalent — and the justification is not optional.
+required>")` — or the stack's equivalent — and the justification is not optional. When every test in
+a file spawns, declare it once as `pytestmark = pytest.mark.subprocess("<why>")` rather than per test.
+Register the marker in the project's pytest config so an unregistered spelling shows up as a warning
+instead of being silently ignored:
+
+```ini
+markers =
+    subprocess(why): this test spawns a real process, for the stated reason.
+```
+
 `scripts/subprocess_check.py` enforces this at the spec-review gate; it is the only stage that can
 see the cost, since every reading stage reads for correctness and a subprocess is not incorrect.
 

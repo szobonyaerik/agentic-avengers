@@ -31,11 +31,17 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 # that can see it, and it sees it while the spec is still cheap to change.
 if ! SUBPROC=$(python3 "$SD/subprocess_check.py" tests 2>&1); then
   echo "$SUBPROC" >&2
-  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-review-subprocess"
-  echo "spec-review: undeclared subprocess spawners in tests/ — mark each one" >&2
-  echo "  @pytest.mark.subprocess(\"<why a real process is required>\") or drive it in-process." >&2
-  echo "  route_back: the implementer that owns those tests." >&2
-  exit 2
+  # Break-glass here waives THIS half only, then falls through to the model half. `exec` would
+  # replace the shell and end the hook at exit 0, so one bypass aimed at a subprocess finding would
+  # silently take the cross-family review with it — a bypass must waive what it names and no more.
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    "$SD/bypass_log.sh" "spec-review-subprocess"
+  else
+    echo "spec-review: undeclared subprocess spawners in tests/ — mark each one" >&2
+    echo "  @pytest.mark.subprocess(\"<why a real process is required>\") or drive it in-process." >&2
+    echo "  route_back: the implementer that owns those tests." >&2
+    exit 2
+  fi
 fi
 
 [ "${SPEC_REVIEW_MODE:-}" = "auto" ] || exit 0   # --- HITL (default): the model half is /spec-review

@@ -28,6 +28,10 @@ from pipeline_observations import (  # noqa: E402
     read_triage,
 )
 
+pytestmark = pytest.mark.subprocess(
+    "pins the CLI's exit codes and argv handling, which only a process has"
+)
+
 
 def feature_dir(root: Path, name: str) -> Path:
     d = root / "docs" / "features" / name

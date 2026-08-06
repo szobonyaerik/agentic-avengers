@@ -13,6 +13,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "verifier_review.sh"
 
@@ -24,6 +26,10 @@ printf '%s' "$last" > "$VERIFIER_TEST_CAPTURE"
 echo '{"verdict":"GO","report":"Reviewed test_a.py (expected values are independent) and test_b.py \
 (asserts through the seam).","route_back":"","findings":[]}'
 """
+
+pytestmark = pytest.mark.subprocess(
+    "the subject is a bash script that shells out to the gate runner"
+)
 
 
 def phase(tmp_path: Path) -> Path:

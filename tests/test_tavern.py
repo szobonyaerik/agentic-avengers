@@ -34,6 +34,10 @@ criticality: normal
 # Spec
 """
 
+pytestmark = pytest.mark.subprocess(
+    "drives a real tmux server on a private socket; tmux has no in-process form"
+)
+
 
 @pytest.fixture()
 def project(tmp_path):
@@ -382,10 +386,11 @@ def test_harness_helpers_are_not_liveness(tmp_path):
     assert pids == ["9606", "38370", "1259"]
 
 
-def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
+def test_each_character_gets_its_own_viewer_session(monkeypatch):
     # firstmate crews share ONE tmux session; two clicks must yield two independent viewers
     import shutil
     import subprocess as sp
+    import tempfile
     import sources
     if not shutil.which("tmux"):
         pytest.skip("no tmux on this machine")
@@ -394,7 +399,21 @@ def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
     # exactly what a crewmate working on this repo is — $TMUX overrides it and every call below
     # lands on the REAL server. $TMUX must be dropped, and teardown must never be kill-server.
     monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))  # private tmux server for this test
+    # NOT pytest's tmp_path: tmux appends `tmux-<uid>/default` and binds that as a unix socket,
+    # which caps at 104 bytes on macOS. `/var/folders/…/pytest-of-<user>/pytest-N/<test-name>0`
+    # blows through it and every tmux call fails "File name too long" — so the isolation the
+    # comment above is about would quietly stop being exercised at all. Keep the root short.
+    # The subject is the tmux session topology, not the terminal launcher. Left alone on a real
+    # Mac, focus_window osascripts a Terminal window into existence per viewer — the test would
+    # pop GUI windows on every developer's screen to assert something it never looks at.
+    monkeypatch.setattr(sources.sys, "platform", "test-headless")
+    with tempfile.TemporaryDirectory(prefix="tmux-", dir="/tmp") as tmux_root:
+        monkeypatch.setenv("TMUX_TMPDIR", tmux_root)  # private tmux server for this test
+        _assert_viewer_sessions_are_independent(sp, sources)
+
+
+def _assert_viewer_sessions_are_independent(sp, sources):
+    """The body of the viewer test, under an already-isolated private tmux server."""
     def tmux(*a):
         return sp.run(["tmux", *a], capture_output=True, text=True, timeout=10)
     try:

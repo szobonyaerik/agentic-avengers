@@ -28,7 +28,11 @@ Your value is precisely that you judge your slice on its own merits, with no anc
 - **Gaps** — a behavior, input, output, or error path the spec leaves unspecified.
 - **Ambiguities** — wording two engineers would implement differently.
 - **Edge cases** — boundaries, duplicates, failures, empty/oversized inputs, unauthorized access.
-- **Testability** — could each requirement in your slice be turned into a concrete pass/fail test?
+- **Binding** — does each requirement declare a `binding:` its wording supports? `e2e` when an end
+  user can observe it (a journey covers it, not a test of its own) · `integration` only with a
+  sentence saying why an e2e cannot see the failure · `none` for a structural or build-time property
+  that gets no test. Do not ask for a test the binding does not call for.
+- **Testability** — for what the binding does bind, could it be turned into a concrete pass/fail test?
 
 ## Output
 Write `docs/features/<feature>/scoped/review-<slice>.md`:
