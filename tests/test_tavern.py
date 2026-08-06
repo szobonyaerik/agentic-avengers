@@ -416,11 +416,13 @@ def _assert_viewer_sessions_are_independent(sp, sources):
     """The body of the viewer test, under an already-isolated private tmux server."""
     def tmux(*a):
         return sp.run(["tmux", *a], capture_output=True, text=True, timeout=10)
+    private = False
     try:
         assert tmux("new-session", "-d", "-s", "fleet", "-n", "mate").returncode == 0
         # isolation proof: a freshly created private server holds ONLY our fixture session.
         # Anything else here means we are on somebody's real server — stop before touching it.
         assert tmux("list-sessions", "-F", "#{session_name}").stdout.split() == ["fleet"]
+        private = True
         assert tmux("new-window", "-t", "fleet", "-n", "crew").returncode == 0
 
         r1 = sources.focus_window("fleet:mate")
@@ -444,7 +446,16 @@ def _assert_viewer_sessions_are_independent(sp, sources):
         for r in (r1, r2):
             assert r["attach_cmd"].startswith("tmux attach -t gate-fleet-")
     finally:
-        # Never kill-server in a test: if isolation ever regresses, killing only the named
-        # fixture sessions costs the operator two ghost sessions, not their entire fleet.
+        # Never kill-server in a test by default: if isolation ever regresses, killing only the
+        # named fixture sessions costs the operator two ghost sessions, not their entire fleet.
         for name in ("gate-fleet-mate", "gate-fleet-crew", "fleet"):
             tmux("kill-session", "-t", "=" + name)
+        # The one sanctioned exception, and ONLY because this test proved the server is its own:
+        # $TMUX was dropped, TMUX_TMPDIR is a unique per-run dir, and `private` is set only after
+        # list-sessions showed nothing but our fixture session. If that proof never ran, neither
+        # does this. Needed because the viewers set `exit-empty off` server-wide, so the server
+        # outlives its last session and the enclosing TemporaryDirectory then deletes the socket
+        # dir underneath it — one orphan tmux process per run. Never copy this into a test that
+        # has not earned it the same way.
+        if private:
+            tmux("kill-server")

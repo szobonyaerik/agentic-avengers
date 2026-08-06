@@ -89,7 +89,9 @@ Three consequences worth stating outright:
   for **correctness**, and an expensive test is not incorrect. `scripts/subprocess_check.py` is the
   mechanical half of that gate: an AST walk over `tests/` for spawners without
   `@pytest.mark.subprocess("<why>")`. It runs on every spec write in **both** modes via
-  `scripts/hook_spec_review.sh`. Deliberately **not** a wall-clock budget — seven runs of one
+  `scripts/hook_spec_review.sh`, over `$SUBPROC_CHECK_PATHS` when a project's tests are not at
+  `tests/` — an absent root scans nothing, which is CLEAN but always reported on stderr, never a
+  silent pass. Deliberately **not** a wall-clock budget — seven runs of one
   unchanged suite spanned 66.43s to 137.76s on one machine, so a runtime gate would fail green suites
   at random and teach everyone to bypass it.
 

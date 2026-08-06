@@ -134,6 +134,82 @@ class TestMarker:
         )
         assert violations(source)
 
+    def test_a_class_decorator_declares_its_methods(self):
+        """`@pytest.mark.subprocess` above a test class is idiomatic pytest, not a violation."""
+        source = (
+            "import pytest, subprocess\n\n"
+            '@pytest.mark.subprocess("drives the real CLI binary")\n'
+            "class TestCli:\n"
+            "    def test_a(self):\n        subprocess.run(['ls'])\n"
+        )
+        assert not violations(source)
+
+    def test_a_class_decorator_without_a_justification_is_a_violation(self):
+        source = (
+            "import pytest, subprocess\n\n"
+            "@pytest.mark.subprocess\n"
+            "class TestCli:\n"
+            "    def test_a(self):\n        subprocess.run(['ls'])\n"
+        )
+        found = violations(source)
+        assert found and "justification" in found[0]
+
+    def test_in_class_pytestmark_declares_its_methods(self):
+        source = (
+            "import pytest, subprocess\n\n"
+            "class TestCli:\n"
+            '    pytestmark = pytest.mark.subprocess("every method drives the real binary")\n\n'
+            "    def test_a(self):\n        subprocess.run(['ls'])\n"
+        )
+        assert not violations(source)
+
+    def test_in_class_pytestmark_without_a_justification_is_a_violation(self):
+        source = (
+            "import pytest, subprocess\n\n"
+            "class TestCli:\n"
+            "    pytestmark = pytest.mark.subprocess\n\n"
+            "    def test_a(self):\n        subprocess.run(['ls'])\n"
+        )
+        found = violations(source)
+        assert found and "justification" in found[0]
+
+    def test_a_class_marker_does_not_leak_to_a_sibling_class(self):
+        source = (
+            "import pytest, subprocess\n\n"
+            '@pytest.mark.subprocess("drives the real binary")\n'
+            "class TestOne:\n"
+            "    def test_a(self):\n        subprocess.run(['ls'])\n\n"
+            "class TestTwo:\n"
+            "    def test_b(self):\n        subprocess.run(['ls'])\n"
+        )
+        found = scan_source(source, Path("tests/test_x.py"))
+        assert len(found) == 1
+        assert found[0].line == 10  # TestTwo's call
+
+    def test_the_nearest_declaration_wins_over_the_outer_one(self):
+        """A method's own marker answers for it; the class's answers only for the rest."""
+        source = (
+            "import pytest, subprocess\n\n"
+            "@pytest.mark.subprocess\n"
+            "class TestCli:\n"
+            '    @pytest.mark.subprocess("this one drives the real binary")\n'
+            "    def test_a(self):\n        subprocess.run(['ls'])\n\n"
+            "    def test_b(self):\n        subprocess.run(['ls'])\n"
+        )
+        found = scan_source(source, Path("tests/test_x.py"))
+        assert len(found) == 1
+        assert found[0].line == 10  # test_b, falling back to the unjustified class marker
+
+    def test_a_class_marker_overrides_an_unjustified_module_marker(self):
+        source = (
+            "import pytest, subprocess\n\n"
+            "pytestmark = pytest.mark.subprocess\n\n"
+            '@pytest.mark.subprocess("drives the real binary")\n'
+            "class TestCli:\n"
+            "    def test_a(self):\n        subprocess.run(['ls'])\n"
+        )
+        assert not violations(source)
+
     def test_the_marker_does_not_leak_to_a_sibling_test(self):
         source = (
             "import pytest, subprocess\n\n"
@@ -166,6 +242,43 @@ class TestCli:
     def test_a_missing_path_is_clean_not_an_error(self, tmp_path):
         """A project with no tests/ yet is not a failure — it is a project with no tests yet."""
         assert main([str(tmp_path / "tests")]) == CLEAN
+
+    def test_a_missing_path_says_so_on_stderr(self, tmp_path, capsys):
+        """Scanning nothing and printing nothing is indistinguishable from a gate that passed."""
+        assert main([str(tmp_path / "tests")]) == CLEAN
+        err = capsys.readouterr().err
+        assert "no such test root" in err
+        assert "SUBPROC_CHECK_PATHS" in err
+
+    def test_the_env_override_picks_the_test_root(self, tmp_path, monkeypatch):
+        """A project whose tests live at packages/api/tests/ must be able to point the gate there."""
+        self.write(
+            tmp_path,
+            "packages/api/tests/test_a.py",
+            "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("SUBPROC_CHECK_PATHS", "packages/api/tests")
+        assert main([]) == VIOLATIONS
+
+    def test_an_explicit_path_wins_over_the_env_override(self, tmp_path, monkeypatch):
+        self.write(
+            tmp_path,
+            "packages/api/tests/test_a.py",
+            "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n",
+        )
+        self.write(tmp_path, "tests/test_b.py", "def test_b():\n    assert True\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("SUBPROC_CHECK_PATHS", "packages/api/tests")
+        assert main([str(tmp_path / "tests")]) == CLEAN
+
+    def test_without_the_override_the_default_root_is_tests(self, tmp_path, monkeypatch):
+        self.write(
+            tmp_path, "tests/test_a.py", "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("SUBPROC_CHECK_PATHS", raising=False)
+        assert main([]) == VIOLATIONS
 
     def test_unparseable_python_fails_closed(self, tmp_path):
         """A file the checker cannot read is a file it cannot clear."""

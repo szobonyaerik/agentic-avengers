@@ -17,10 +17,17 @@ otherwise HITL. Strip `--auto` from `$ARGUMENTS` to get the spec path.
 
 ## First, in both modes — the mechanical check (no model)
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/subprocess_check.py" tests
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/subprocess_check.py"
 ```
+With no argument it scans `$SUBPROC_CHECK_PATHS`, falling back to `tests/` — set that variable in
+the project's `.env` when the tests live somewhere else, because a root that does not exist scans
+nothing. That case is CLEAN, but it says so on stderr; if you see the "no such test root" note, the
+gate read no files and has cleared nothing.
+
 Exit 1 lists tests that spawn a process without `@pytest.mark.subprocess("<why>")` and a
-justification. **Do not approve while it is red.** This is the only stage that can see the cost —
+justification. Exit 2 means a file could not be read or parsed — it fails closed, and the fix is the
+unreadable file it names, not a marker. **Do not approve while it is red.** This is the only stage
+that can see the cost —
 fidelity, cross-family review and verification all read for correctness, and a subprocess is not
 incorrect. Four tests that each spawned a nested run of the whole suite once survived all of them
 across five phases. Route violations to the **implementer** that owns those tests, not the

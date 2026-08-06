@@ -2,9 +2,10 @@
 # PostToolUse: the spec-review gate, in two halves.
 #
 #   1. The MECHANICAL half runs in BOTH modes and calls no model: an AST walk over the project's
-#      tests/ for undeclared subprocess spawners (scripts/subprocess_check.py). It fires here rather
-#      than only in `--auto` because HITL is the default, and a check that runs in the mode nobody
-#      uses is a check that does not run. Per pipeline-conventions, mechanical gates belong in hooks.
+#      tests/ for undeclared subprocess spawners (scripts/subprocess_check.py; `SUBPROC_CHECK_PATHS`
+#      points it elsewhere when the tests are not at `tests/`). It fires here rather than only in
+#      `--auto` because HITL is the default, and a check that runs in the mode nobody uses is a
+#      check that does not run. Per pipeline-conventions, mechanical gates belong in hooks.
 #   2. The MODEL half is auto-only (SPEC_REVIEW_MODE=auto): on a spec.md write, run the cross-family
 #      checklist gate; GO/REVIEW -> stamp review_status: approved in place; NO-GO -> stop (fail
 #      closed, surfaces route-back). HITL runs that half interactively via /spec-review.
@@ -29,13 +30,26 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 # Cost is invisible to every reading stage — spec review, fidelity, cross-family review and
 # verification all read for correctness, and a subprocess is not incorrect. This is the one stage
 # that can see it, and it sees it while the spec is still cheap to change.
-if ! SUBPROC=$(python3 "$SD/subprocess_check.py" tests 2>&1); then
-  echo "$SUBPROC" >&2
-  # Break-glass here waives THIS half only, then falls through to the model half. `exec` would
-  # replace the shell and end the hook at exit 0, so one bypass aimed at a subprocess finding would
-  # silently take the cross-family review with it — a bypass must waive what it names and no more.
+# No path argument: the checker resolves its own root from $SUBPROC_CHECK_PATHS, falling back to
+# `tests`, so a project whose tests live elsewhere has one place to say so. Its output is echoed
+# even on success, because the "no such test root" note is exactly the case that must not be silent.
+SUBPROC=$(python3 "$SD/subprocess_check.py" 2>&1); subproc_rc=$?
+[ -n "$SUBPROC" ] && echo "$SUBPROC" >&2
+if [ "$subproc_rc" -ne 0 ]; then
+  # Break-glass here logs and FALLS THROUGH to the model half. `exec` would replace the shell and
+  # end the hook at exit 0, so the cross-family review never ran at all. GATE_BYPASS is a single
+  # unscoped variable: setting it for this half also waives a later cross-family NO-GO in the same
+  # hook run. That is audited, not silent — each override writes its own record to
+  # gate-overrides.log. Scoping break-glass per gate is deliberately out of scope here.
   if [ -n "${GATE_BYPASS:-}" ]; then
     "$SD/bypass_log.sh" "spec-review-subprocess"
+  elif [ "$subproc_rc" -eq 2 ]; then
+    # Fail closed, but say the true reason: a file the checker could not read has no spawner to
+    # declare, and telling its author to add a marker sends them looking for one that isn't there.
+    echo "spec-review: the subprocess check could not read a file under the tests root (named" >&2
+    echo "  above) — a file it cannot read is a file it cannot clear, so this fails closed." >&2
+    echo "  Fix the syntax or encoding error, then write the spec again." >&2
+    exit 2
   else
     echo "spec-review: undeclared subprocess spawners in tests/ — mark each one" >&2
     echo "  @pytest.mark.subprocess(\"<why a real process is required>\") or drive it in-process." >&2

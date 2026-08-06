@@ -26,11 +26,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `hook_spec_review.sh`. It is the only stage that can see cost: fidelity, cross-family review and
    verification all read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
    budget on purpose — one unchanged suite measured 66.43s to 137.76s across seven runs.
+   `SUBPROC_CHECK_PATHS` points it at the real root when a project's tests are not at `tests/`; an
+   absent root is CLEAN but reported on stderr, never a silent pass.
    **A spec already approved and implemented is re-gated on its changes only**; unchanged text was
    passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body each gate judged
    and the hook supplies a `## CHANGES SINCE APPROVAL` diff; with none kept, the whole spec is gated.
    A full re-gate is still owed when the requirement set, Scope, Interfaces / contracts, `work_kind`
-   or a `binding:` changed — and a first gate is always full.
+   or a `binding:` changed, and when the Verifier routed the phase back with a **coverage gap** —
+   there the question is what the spec failed to require, so unchanged text is where to look. A
+   first gate is always full.
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
    `@avenger-verifier` passes it; from then they are **locked** and weakening one needs

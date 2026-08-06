@@ -2,8 +2,8 @@
 
 The hook is where the cost gate and the diff-scoped re-gate actually fire, and both are easy to get
 subtly wrong in ways nothing else notices: a mechanical check that quietly stops running in the mode
-everyone uses, a break-glass that waives more than it names, or a re-gate bundle that hands the
-reviewer a diff full of noise. Each of those is pinned here.
+everyone uses, a break-glass that ends the hook before the paid gate ever runs, or a re-gate bundle
+that hands the reviewer a diff full of noise. Each of those is pinned here.
 
 No test calls a model. The model half is exercised by copying `scripts/` and replacing
 `gate_runner.py` with a stub that records the `--target` it was handed — the real hook runs, only the
@@ -127,6 +127,34 @@ def test_an_undeclared_spawner_blocks_in_auto_mode_before_any_model_call(project
     assert not (project / "scripts" / "gate_runner.py.target").exists()
 
 
+def test_an_unreadable_test_file_blocks_without_the_marker_guidance(project: Path) -> None:
+    """Exit 2 is a file the checker could not parse — it has no spawner to declare a marker for."""
+    (project / "tests" / "test_broken.py").write_text("def test_a(:\n")
+    result = run_hook(project, write_spec(project))
+    assert result.returncode == 2
+    assert "could not read a file" in result.stderr
+    assert "mark each one" not in result.stderr
+
+
+def test_the_tests_root_is_overridable(project: Path) -> None:
+    """A project whose tests are not at tests/ must still be gated, not silently passed."""
+    (project / "packages" / "api" / "tests").mkdir(parents=True)
+    (project / "packages" / "api" / "tests" / "test_spawn.py").write_text(SPAWNING_TEST)
+    result = run_hook(
+        project, write_spec(project), {"SUBPROC_CHECK_PATHS": "packages/api/tests"}
+    )
+    assert result.returncode == 2
+    assert "packages/api/tests/test_spawn.py" in result.stderr
+
+
+def test_an_absent_tests_root_is_reported_but_does_not_block(project: Path) -> None:
+    """A fresh repo must still be able to write a spec — the defect is invisibility, not leniency."""
+    shutil.rmtree(project / "tests")
+    result = run_hook(project, write_spec(project))
+    assert result.returncode == 0, result.stderr
+    assert "no such test root" in result.stderr
+
+
 def test_a_declared_and_justified_spawner_passes(project: Path) -> None:
     (project / "tests" / "test_spawn.py").write_text(
         "import subprocess\n\nimport pytest\n\n\n"
@@ -136,8 +164,13 @@ def test_a_declared_and_justified_spawner_passes(project: Path) -> None:
     assert run_hook(project, write_spec(project)).returncode == 0
 
 
-def test_break_glass_waives_the_subprocess_half_only_and_the_model_half_still_runs(project: Path) -> None:
-    """`exec`ing the bypass logger would end the hook here, silently taking the paid gate with it."""
+def test_break_glass_on_the_subprocess_half_falls_through_to_the_model_half(project: Path) -> None:
+    """`exec`ing the bypass logger would end the hook here at exit 0, so the paid gate never ran.
+
+    It pins reachability, not scope: GATE_BYPASS is one unscoped variable, so the same value also
+    waives a cross-family NO-GO later in this run. That is audited, not silent — both overrides get
+    their own record in gate-overrides.log — and scoping break-glass per gate is separate work.
+    """
     (project / "tests" / "test_spawn.py").write_text(SPAWNING_TEST)
     result = run_hook(
         project,

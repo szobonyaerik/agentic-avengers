@@ -47,8 +47,10 @@ lists several; an integration test lists one. A requirement with no row and no `
 coverage gap and the Verifier will route it back.
 
 **No test may spawn a subprocess** unless it carries `@pytest.mark.subprocess("<why a real process is
-required>")` — or the stack's equivalent — and the justification is not optional. When every test in
-a file spawns, declare it once as `pytestmark = pytest.mark.subprocess("<why>")` rather than per test.
+required>")` — or the stack's equivalent — and the justification is not optional. The marker also
+reads on a test **class**, and when every test in a file (or a class) spawns, declare it once as
+`pytestmark = pytest.mark.subprocess("<why>")` in that module or class body rather than per test.
+The nearest declaration wins: method over class, class over module.
 Register the marker in the project's pytest config so an unregistered spelling shows up as a warning
 instead of being silently ignored:
 
@@ -58,7 +60,9 @@ markers =
 ```
 
 `scripts/subprocess_check.py` enforces this at the spec-review gate; it is the only stage that can
-see the cost, since every reading stage reads for correctness and a subprocess is not incorrect.
+see the cost, since every reading stage reads for correctness and a subprocess is not incorrect. It
+scans `$SUBPROC_CHECK_PATHS` (os.pathsep-separated), falling back to `tests/`; set it in the
+project's `.env` when the tests are elsewhere, or the gate scans nothing and says so on stderr.
 
 ## Choose your mode from `work_kind` (in `task-analysis.md`)
 

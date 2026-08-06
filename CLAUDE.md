@@ -43,14 +43,18 @@ Spec-review also carries the pipeline's **only cost gate**, in two parts. Mechan
 cross-family review and verification all read for *correctness* and an expensive test is not
 incorrect. Deliberately not a wall-clock budget: seven runs of one unchanged suite spanned 66.43s to
 137.76s, so a runtime gate would fail green suites at random. By judgement, the checklist asks what a
-requirement's tests will cost before approving it.
+requirement's tests will cost before approving it. A project whose tests are not at `tests/` points
+the check at them with **`SUBPROC_CHECK_PATHS`**; an absent root scans nothing, which is CLEAN but
+always said on stderr rather than passing invisibly.
 
 **A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
 passed by this gate before and is not a finding — one spec drew REVIEW, REVIEW, then a NO-GO naming
 requirements the same model had approved twice, unchanged. `scripts/spec_gate_cache.py` keeps the
 body each gate judged; the hook hands the reviewer a `## CHANGES SINCE APPROVAL` diff, and with no
 kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
-set, Scope, Interfaces / contracts, `work_kind`, or any `binding:`; a first gate is always full.
+set, Scope, Interfaces / contracts, `work_kind`, or any `binding:`, and when the Verifier routed the
+phase back with a **coverage gap** — there the question is what the spec failed to require, and
+unchanged text is exactly where to look; a first gate is always full.
 
 ### 4. The implementer writes the tests, test-first — and they lock at the Verifier
 The **implementer** writes both the tests and the code, in a red → green loop (`skills/tdd`, vendored

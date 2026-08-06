@@ -12,9 +12,14 @@ This is the cheap complement to those stages: an AST walk, no model, under a sec
 spec-review time so the cost is visible while the spec is still cheap to change.
 
 **It is a declaration requirement, not a ban.** Some tests genuinely must drive a real binary. Those
-carry `@pytest.mark.subprocess("<why>")` — or, when every test in the file spawns,
-`pytestmark = pytest.mark.subprocess("<why>")` — and the justification is mandatory, because the
-marker alone is a rubber stamp while the sentence is what a reviewer weighs.
+carry `@pytest.mark.subprocess("<why>")` — on the test, or on its class — or, when every test in the
+file spawns, `pytestmark = pytest.mark.subprocess("<why>")` at module or class level. The
+justification is mandatory, because the marker alone is a rubber stamp while the sentence is what a
+reviewer weighs. The nearest declaration wins: method over class, class over module.
+
+A file-wide or class-wide declaration is the accepted cost of supporting the module-level helper
+shape (`def run_hook(...): return subprocess.run(...)`, which belongs to no test function): it also
+covers spawners added later that its one sentence was never written about.
 
 Deliberately NOT a wall-clock budget. Seven runs of one unchanged suite spanned 66.43s to 137.76s on
 one machine — a 2.1x swing with zero code change — so a runtime gate would fail green suites at
@@ -26,14 +31,21 @@ Exit codes:
     2  ERROR       — a file could not be read or parsed. Fail closed: a file the checker cannot
                      read is a file it cannot clear.
 
+A root that does not exist is CLEAN but never silent: it is reported on stderr. A project with no
+tests yet must still be able to write a spec, but a project whose tests live somewhere else would
+otherwise get a permanently green gate with no output — invisible is the defect, not permissive.
+Point it at the real root with `SUBPROC_CHECK_PATHS` (os.pathsep-separated) when tests are not at
+`tests/`; explicit arguments win over it.
+
 Usage:
-    subprocess_check.py [path ...]        # default: tests/
+    subprocess_check.py [path ...]        # default: $SUBPROC_CHECK_PATHS, else tests/
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +62,11 @@ SPAWNERS: dict[str, frozenset[str]] = {
 }
 
 MARKER = "subprocess"
+
+# Where to look when no path is given. The env override exists because a project whose tests are at
+# `packages/api/tests/` would otherwise get a gate that passes without ever reading a file.
+PATHS_ENV = "SUBPROC_CHECK_PATHS"
+DEFAULT_PATHS = ("tests",)
 
 
 @dataclass(frozen=True)
@@ -121,14 +138,14 @@ def justified(decorator: ast.expr) -> bool | None:
     )
 
 
-def module_marker(tree: ast.Module) -> bool | None:
-    """The file-wide `pytestmark` declaration, read the same way as a decorator.
+def pytestmark_marker(body: list[ast.stmt]) -> bool | None:
+    """The `pytestmark` declaration in one body — a module's or a class's — read as a decorator is.
 
-    Both the single-marker and list forms are accepted — a file whose every test drives a real
-    binary should say so once, not once per test.
+    Both the single-marker and list forms are accepted — a file (or a class) whose every test drives
+    a real binary should say so once, not once per test.
     """
     verdict: bool | None = None
-    for node in tree.body:
+    for node in body:
         if not isinstance(node, ast.Assign):
             continue
         if not any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
@@ -144,14 +161,37 @@ def module_marker(tree: ast.Module) -> bool | None:
     return verdict
 
 
+def module_marker(tree: ast.Module) -> bool | None:
+    """The file-wide `pytestmark` declaration."""
+    return pytestmark_marker(tree.body)
+
+
+def scope_marker(scope: ast.AST) -> bool | None:
+    """The marker a single scope declares, or None when it declares nothing.
+
+    A class counts as a scope: `@pytest.mark.subprocess("why")` above `class TestCli:` and a
+    `pytestmark` assignment in its body are both idiomatic pytest, and reading only functions here
+    reported a correctly-declared test as a violation.
+    """
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        for decorator in scope.decorator_list:
+            found = justified(decorator)
+            if found is not None:
+                return found
+    if isinstance(scope, ast.ClassDef):
+        return pytestmark_marker(scope.body)
+    return None
+
+
 def declaration(scopes: list[ast.AST], file_wide: bool | None) -> bool | None:
-    """The nearest applicable marker for a call, innermost scope first, then the module."""
+    """The nearest applicable marker for a call: innermost scope out, then the module.
+
+    Nearest wins, so a method's own marker overrides its class's and a class's overrides the file's.
+    """
     for scope in reversed(scopes):
-        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for decorator in scope.decorator_list:
-                found = justified(decorator)
-                if found is not None:
-                    return found
+        found = scope_marker(scope)
+        if found is not None:
+            return found
     return file_wide
 
 
@@ -193,10 +233,15 @@ def scan_source(source: str, path: Path) -> list[Violation]:
     return sorted(found, key=lambda v: v.line)
 
 
-def scan_path(root: Path) -> tuple[list[Violation], list[str]]:
-    """Scan one file or directory tree. Returns (violations, unreadable-file errors)."""
+def scan_path(root: Path) -> tuple[list[Violation], list[str], list[Path]]:
+    """Scan one file or directory tree.
+
+    Returns (violations, unreadable-file errors, absent roots). An absent root is not an error — a
+    project with no tests yet must still be able to write a spec — but it is reported, because a
+    gate that reads nothing and says nothing is indistinguishable from a gate that passed.
+    """
     if not root.exists():
-        return [], []  # a project with no tests yet is not a failure
+        return [], [], [root]
     files = sorted(root.rglob("*.py")) if root.is_dir() else [root]
 
     found: list[Violation] = []
@@ -206,24 +251,46 @@ def scan_path(root: Path) -> tuple[list[Violation], list[str]]:
             found.extend(scan_source(path.read_text(encoding="utf-8"), path))
         except (OSError, SyntaxError, UnicodeDecodeError) as exc:
             errors.append(f"{path}: {exc}")
-    return found, errors
+    return found, errors, []
+
+
+def requested_paths(argv_paths: list[Path]) -> list[Path]:
+    """The roots to scan: explicit arguments, else `$SUBPROC_CHECK_PATHS`, else `tests/`."""
+    if argv_paths:
+        return argv_paths
+    override = os.environ.get(PATHS_ENV, "").strip()
+    if override:
+        return [Path(p) for p in override.split(os.pathsep) if p.strip()]
+    return [Path(p) for p in DEFAULT_PATHS]
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Scan the given paths (default `tests/`) and return the gate's exit code."""
+    """Scan the requested paths and return the gate's exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "paths", nargs="*", default=["tests"], type=Path, help="files or directories (default: tests)"
+        "paths",
+        nargs="*",
+        default=[],
+        type=Path,
+        help=f"files or directories (default: ${PATHS_ENV}, else {DEFAULT_PATHS[0]})",
     )
     args = parser.parse_args(argv)
 
     found: list[Violation] = []
     errors: list[str] = []
-    for path in args.paths or [Path("tests")]:
-        path_found, path_errors = scan_path(Path(path))
+    absent: list[Path] = []
+    for path in requested_paths(args.paths):
+        path_found, path_errors, path_absent = scan_path(Path(path))
         found.extend(path_found)
         errors.extend(path_errors)
+        absent.extend(path_absent)
 
+    for root in absent:
+        print(
+            f"[subprocess_check] no such test root: {root} — nothing was scanned. Set "
+            f"${PATHS_ENV} if this project's tests live elsewhere.",
+            file=sys.stderr,
+        )
     for error in errors:
         print(f"[subprocess_check] unreadable: {error}", file=sys.stderr)
     for violation in found:
