@@ -579,11 +579,21 @@ def focus_window(window: str, terminal_app: str = "") -> dict:
     attach_cmd = f"tmux attach -t {viewer}"
     try:
         session, _, win_part = window.partition(":")
+        if _tmux("has-session", "-t", "=" + session).returncode != 0:
+            return {"ok": False,
+                    "error": f"tmux session '{session}' no longer exists — the fleet restarted?"}
+        # Field lesson: grouped sessions die with their group's last window, and with zero
+        # sessions the tmux SERVER exits — a crewmate teardown once collapsed the whole fleet's
+        # terminals. exit-empty off makes the server survive an empty moment; the client-detached
+        # hook reaps a viewer when its terminal window closes (destroy-unattached would kill it
+        # at birth: it destroys DETACHED sessions immediately, and viewers are born detached).
+        _tmux("set", "-s", "exit-empty", "off")
         if _tmux("has-session", "-t", "=" + viewer).returncode != 0:
             made = _tmux("new-session", "-d", "-s", viewer, "-t", session)
             if made.returncode != 0:
                 return {"ok": False, "error": (made.stderr or "tmux new-session failed").strip()[:200],
                         "attach_cmd": f"tmux attach -t {session} \\; select-window -t {window}"}
+            _tmux("set-hook", "-t", viewer, "client-detached", f"kill-session -t {viewer}")
         target = f"{viewer}:{win_part}" if win_part else viewer
         sel = _tmux("select-window", "-t", target)
         if sel.returncode != 0:
