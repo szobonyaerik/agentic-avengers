@@ -50,6 +50,11 @@ gates are moments at the door, not people at a table.
 | activity | `<root>/.agent-activity.jsonl` (written by `scripts/hook_activity.sh`) | who is in the tavern right now; enter/leave moments |
 | pipeline | `<root>/scripts/pipeline_state.py` + `docs/features/**` artifacts | per-feature stage flag, spec stamps, phase verdicts |
 | fleet | `fm-fleet-snapshot.sh --json` when `fm_bin` is set, else `$FM_HOME/state/<id>.meta`/`.status` directly | patrons, worktrees, tmux windows, wake-event tails |
+
+> **`fm_bin` is optional and off is the safe default.** Setting it makes the tavern *execute
+> firstmate's scripts* on every poll — foreign code with its own tmux interactions, run against
+> whatever state the fleet is in. The state-file fallback reads the same crew data with zero code
+> execution. Use `fm_bin` only when you specifically want the structured snapshot schema.
 | break-glass | `<root>/gate-overrides.log` | the room-shake moment |
 
 A missing source renders as `absent` in the footer — the tavern never fakes a population. Demo
