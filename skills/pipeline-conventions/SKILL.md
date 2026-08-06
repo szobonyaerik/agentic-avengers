@@ -10,10 +10,9 @@ references this. (A plugin's CLAUDE.md is not loaded as context, so this skill i
 for these rules; `/pipeline-init` can also copy them into a target repo's own CLAUDE.md.)
 
 > This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. The
-> only intended differences are: **(1)** this one runs on Claude Code + opencode rather than GitHub
-> Copilot, **(2)** it adds an automated **Fidelity Gate** before the human spec review, **(3)** it
-> keeps a **feature-level e2e** stage and **spec-isolation-review**, and **(4)** its mutation gate has
-> a deterministic, diff-scoped scorer. Anything else that diverges is drift — fix it here.
+> known intended differences — and the two whose status against the sibling is unconfirmed — are
+> listed in one place, `README.md` § *Relationship to `klm-agentic-pipeline`*. That list is not a
+> completeness claim, so a divergence absent from it is not thereby drift; the rules below are.
 
 ## The chain
 

@@ -149,11 +149,17 @@ That means the author of the code also authors its judge, so two controls buy th
   intentional behavior change is greenfield work with its own requirement.
 
 ### Relationship to `klm-agentic-pipeline`
-This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. The
-intended differences are exactly four: this one runs on **Claude Code + opencode** rather than GitHub
-Copilot; it adds the automated **Fidelity Gate**; it keeps a **feature-level e2e** stage and
-**spec-isolation-review**; and its mutation gate has a **deterministic, diff-scoped scorer**
-(`scripts/mutation_score.py` + `cr-filter-git`). Anything else that diverges is drift.
+This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. Known
+intended differences: this one runs on **Claude Code + opencode** rather than GitHub Copilot; it adds
+the automated **Fidelity Gate**; it keeps a **feature-level e2e** stage and **spec-isolation-review**;
+and its mutation gate has a **deterministic, diff-scoped scorer** (`scripts/mutation_score.py` +
+`cr-filter-git`).
+
+Two further mechanisms live here whose status against the sibling is **unconfirmed**: the mechanical
+**subprocess cost gate** (`scripts/subprocess_check.py`, run from the spec-review hook in both modes)
+and **diff-scoped re-gating** of a spec already approved and implemented. Whether
+`klm-agentic-pipeline` has either was not checkable from this repository, so this list is not a
+completeness claim in either direction — a divergence absent from it is not thereby drift.
 
 ---
 
