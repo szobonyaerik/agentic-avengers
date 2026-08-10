@@ -96,8 +96,8 @@ created: YYYY-MM-DD
 
 ## Definition of Done (feature level)
 - [ ] High-level outcomes that mean the feature is complete
-  (the Spec Writer turns these into per-requirement, paired acceptance criteria — keep them
-  outcome-level here)
+  (the Spec Writer turns these into requirements, each with a `binding:` deciding whether and where
+  it is verified — keep them outcome-level here)
 
 ## Risks & Considerations
 - Known risks

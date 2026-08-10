@@ -10,7 +10,13 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 HOOK = Path(__file__).resolve().parents[1] / "scripts" / "hook_activity.sh"
+
+pytestmark = pytest.mark.subprocess(
+    "the subject is a bash hook invoked by the harness exactly this way"
+)
 
 
 def run_hook(tmp_path, payload: str, env: dict | None = None) -> subprocess.CompletedProcess:

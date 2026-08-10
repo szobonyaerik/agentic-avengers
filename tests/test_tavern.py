@@ -34,6 +34,10 @@ criticality: normal
 # Spec
 """
 
+pytestmark = pytest.mark.subprocess(
+    "drives a real tmux server on a private socket; tmux has no in-process form"
+)
+
 
 @pytest.fixture()
 def project(tmp_path):
@@ -382,10 +386,11 @@ def test_harness_helpers_are_not_liveness(tmp_path):
     assert pids == ["9606", "38370", "1259"]
 
 
-def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
+def test_each_character_gets_its_own_viewer_session(monkeypatch):
     # firstmate crews share ONE tmux session; two clicks must yield two independent viewers
     import shutil
     import subprocess as sp
+    import tempfile
     import sources
     if not shutil.which("tmux"):
         pytest.skip("no tmux on this machine")
@@ -394,14 +399,30 @@ def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
     # exactly what a crewmate working on this repo is — $TMUX overrides it and every call below
     # lands on the REAL server. $TMUX must be dropped, and teardown must never be kill-server.
     monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))  # private tmux server for this test
+    # NOT pytest's tmp_path: tmux appends `tmux-<uid>/default` and binds that as a unix socket,
+    # which caps at 104 bytes on macOS. `/var/folders/…/pytest-of-<user>/pytest-N/<test-name>0`
+    # blows through it and every tmux call fails "File name too long" — so the isolation the
+    # comment above is about would quietly stop being exercised at all. Keep the root short.
+    # The subject is the tmux session topology, not the terminal launcher. Left alone on a real
+    # Mac, focus_window osascripts a Terminal window into existence per viewer — the test would
+    # pop GUI windows on every developer's screen to assert something it never looks at.
+    monkeypatch.setattr(sources.sys, "platform", "test-headless")
+    with tempfile.TemporaryDirectory(prefix="tmux-", dir="/tmp") as tmux_root:
+        monkeypatch.setenv("TMUX_TMPDIR", tmux_root)  # private tmux server for this test
+        _assert_viewer_sessions_are_independent(sp, sources)
+
+
+def _assert_viewer_sessions_are_independent(sp, sources):
+    """The body of the viewer test, under an already-isolated private tmux server."""
     def tmux(*a):
         return sp.run(["tmux", *a], capture_output=True, text=True, timeout=10)
+    private = False
     try:
         assert tmux("new-session", "-d", "-s", "fleet", "-n", "mate").returncode == 0
         # isolation proof: a freshly created private server holds ONLY our fixture session.
         # Anything else here means we are on somebody's real server — stop before touching it.
         assert tmux("list-sessions", "-F", "#{session_name}").stdout.split() == ["fleet"]
+        private = True
         assert tmux("new-window", "-t", "fleet", "-n", "crew").returncode == 0
 
         r1 = sources.focus_window("fleet:mate")
@@ -425,7 +446,16 @@ def test_each_character_gets_its_own_viewer_session(tmp_path, monkeypatch):
         for r in (r1, r2):
             assert r["attach_cmd"].startswith("tmux attach -t gate-fleet-")
     finally:
-        # Never kill-server in a test: if isolation ever regresses, killing only the named
-        # fixture sessions costs the operator two ghost sessions, not their entire fleet.
+        # Never kill-server in a test by default: if isolation ever regresses, killing only the
+        # named fixture sessions costs the operator two ghost sessions, not their entire fleet.
         for name in ("gate-fleet-mate", "gate-fleet-crew", "fleet"):
             tmux("kill-session", "-t", "=" + name)
+        # The one sanctioned exception, and ONLY because this test proved the server is its own:
+        # $TMUX was dropped, TMUX_TMPDIR is a unique per-run dir, and `private` is set only after
+        # list-sessions showed nothing but our fixture session. If that proof never ran, neither
+        # does this. Needed because the viewers set `exit-empty off` server-wide, so the server
+        # outlives its last session and the enclosing TemporaryDirectory then deletes the socket
+        # dir underneath it — one orphan tmux process per run. Never copy this into a test that
+        # has not earned it the same way.
+        if private:
+            tmux("kill-server")

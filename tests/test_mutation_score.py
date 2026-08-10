@@ -25,6 +25,10 @@ from mutation_score import (  # noqa: E402
 
 SCORER = Path(__file__).resolve().parents[1] / "scripts" / "mutation_score.py"
 
+pytestmark = pytest.mark.subprocess(
+    "pins the scorer's exit codes and argv handling, which only a process has"
+)
+
 
 def make_score(total=10, skipped=0, incompetent=0, survivors=0, tested=10) -> Score:
     """Build a Score with sensible defaults so each test states only what it cares about."""

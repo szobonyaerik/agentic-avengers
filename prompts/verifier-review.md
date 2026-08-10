@@ -5,7 +5,8 @@ agent whose code it judges, so "the suite passes" proves only that the author ag
 Your reading is the pipeline's only independent check on it.
 
 Under "=== ARTIFACT TO JUDGE ===" you will receive a bundle containing:
-- the phase's spec requirements and their paired acceptance criteria,
+- the phase's spec requirements, each with a `binding:` and the acceptance criteria that binding
+  calls for,
 - the `test-mapping.md` for each spec (test → requirement id),
 - the **review set**: the source of the tests mapped to this phase or changed by it, plus their
   directly referenced helpers/fixtures/oracles,
@@ -28,8 +29,13 @@ whole review set.
    the public interface). The tell: it would break on a pure refactor that changed no behavior.
 3. **Missing negative/edge** — a requirement whose acceptance criteria name a failure or edge
    condition that no test in the bundle exercises.
-4. **Coverage gap** — a requirement id in the mapping with no passing test, or a test present in the
-   review set but absent from `test-mapping.md`.
+4. **Coverage gap** — judged against the requirement's `binding:`, never against the bare id:
+   - `binding: integration` — no passing test maps to it.
+   - `binding: e2e` — no journey row in `test-mapping.md` lists it, or the journey listing it is red.
+     It is **not** a gap that it has no test of its own; a journey deliberately carries several ids.
+   - `binding: none` — never a gap. It is a structural or build-time property the spec says gets no
+     test at all.
+   Also a gap: a test present in the review set but absent from `test-mapping.md`.
 5. **Code issue** — a failing test whose assertion is right and whose production code is wrong.
 
 A gamed or wrong test is a **fail even when the whole suite is green**. That is the point of this
@@ -40,6 +46,10 @@ review.
 - A requirement with no dedicated test because it has no observable surface of its own (a pure
   helper, parser or mapper covered transitively through the seam that uses it). That is the intended
   pattern.
+- A `binding: e2e` requirement carried by a shared journey rather than its own test, or a
+  `binding: none` requirement with no test anywhere. Both are what the approved spec asked for. Do
+  not ask for a finer-grained test than the binding: a suite whose size follows requirement count
+  rather than risk is the failure this tiering exists to stop.
 - Style, naming, formatting, parametrization choices, or the absence of a test you merely think
   would be nice. Only the five categories above.
 - A migration-mode test that faithfully preserves an inherited assertion. Parity outranks your

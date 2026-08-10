@@ -38,7 +38,9 @@ task-analyst → solution-architect → implementation-planner → spec-writer
 The ship gate runs **before** the triage on purpose: a defect it catches that no avengers gate
 covers is the most valuable thing the retrospective can record about the pipeline.
 Route-backs it must honor (all already emitted by the gates):
-- fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate.
+- fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate — scoped to the spec's
+  diff once it has been implemented (`commands/avenger-run.md` §6 names the cases that still owe a
+  full pass).
 - verifier code failure → back to `avenger-backend-architect`.
 - verifier **test-quality** finding (tautological / off-seam / untraced requirement) → back to the
   implementer to ADD or rewrite its own not-yet-locked tests.
@@ -57,7 +59,10 @@ Route-backs it must honor (all already emitted by the gates):
 - **Never bypasses a gate** except with an explicit `GATE_BYPASS="reason"` (logged, visible).
 - Respects `work_kind` (greenfield | migration | refactor) for the implementer's test mode;
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.
-- **Integration-level by default**; a `narrow` test needs a written justification in `test-mapping.md`.
+- **Whether a requirement gets a test is its `binding:`** (`e2e` → a shared journey · `integration` →
+  its own test · `none` → none), and coverage is judged per `binding:`, never per id
+  (`skills/pipeline-conventions`). Whatever does get one is **integration-level by default**; a
+  `narrow` test needs a written justification in `test-mapping.md`.
 - Stops-and-explains on any fail-closed gate rather than pushing past it.
 
 ### BUILT — as a command, not an agent

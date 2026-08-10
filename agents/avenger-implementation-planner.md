@@ -57,7 +57,8 @@ Order riskiest/most foundational first. The Verifier runs once per phase, after 
 - **Scope**: in — …; out (deferred to later phases) — ….
 - **Touches**: key files / modules / areas, using real paths from the codebase.
 - **Done when**: the high-level outcome that proves the phase works. (The Spec Writer turns each spec
-  into `R<n>.<k>.<m>` ids and paired pass/fail acceptance criteria — keep it outcome-level here.)
+  into `R<n>.<k>.<m>` ids, a `binding:` each, and the acceptance criteria those bindings call for —
+  keep it outcome-level here.)
 
 ### Phase 2 — <slug>
 ...
@@ -79,8 +80,11 @@ per-phase specs remain coherent (the fidelity gate checks each spec against thes
 - **Order matters.** A phase may depend only on earlier phases, never later ones. Foundational and
   risky work goes first.
 - **Be explicit about files.** Name the real paths each phase touches; don't invent structure.
-- **Stay outcome-level on acceptance.** Define what each phase delivers; leave requirement ids and
-  paired acceptance criteria to the Spec Writer.
+- **Stay outcome-level on acceptance.** Define what each phase delivers; leave requirement ids,
+  their `binding:` tiers and the acceptance criteria to the Spec Writer.
+- **A phase's "done when" is a user-observable outcome**, because that is what the `binding: e2e`
+  tier turns into a journey. Phrase it as something someone can watch happen, not as a count of
+  requirements met.
 - **Phase boundaries are gate points.** Each phase ends green (tests pass, mutants killed) before the
   next begins.
 

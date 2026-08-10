@@ -50,17 +50,17 @@ flowchart TD
     ip --> sw
 
     subgraph phase ["per phase — specs iterate · the verifier runs once, after all specs are green"]
-        sw["spec-writer"] -.-> swA[/"spec.md · R n.k.m + paired criteria"/]
+        sw["spec-writer"] -.-> swA[/"spec.md · R n.k.m + binding: e2e|integration|none"/]
         sw --> fg{"fidelity gate?<br/>automated · cross-family"}
         fg -->|"NO-GO"| sw
-        fg -->|"GO / REVIEW"| sr{"spec approved?<br/>grill-me + checklist"}
+        fg -->|"GO / REVIEW"| sr{"spec approved?<br/>subprocess cost check + grill-me + checklist<br/>re-gate = diff only"}
         sr -->|"rework"| sw
         sr -->|"approved"| impl["backend / frontend implementer<br/>writes tests + code · test-first · skills-tdd"]
         impl -.-> implA[/"tests + src + test-mapping.md"/]
         impl -->|"next spec"| sw
     end
 
-    impl -->|"all specs green"| ver{"avenger-verifier · family B is not A<br/>suite + R-trace + bounded TEST REVIEW"}
+    impl -->|"all specs green"| ver{"avenger-verifier · family B is not A<br/>suite + coverage per binding + bounded TEST REVIEW"}
     ver -->|"cannot reach verdict"| stop(["fail-closed / stop"])
     ver -->|"senior override"| bg[/"break-glass · gate-overrides.log · bypassed on PR"/]
     ver -->|"code issue · wrong test · coverage gap"| impl
@@ -87,6 +87,9 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
     2. Human spec review -> sets review_status: approved
          HITL:      /spec-review <spec>            (grill-me, one question at a time)
          Automated: /spec-review <spec> --auto     (SPEC_REVIEW_MODE=auto)
+       + the only COST gate, mechanical, no model, both modes: scripts/subprocess_check.py
+         (a test that spawns a process needs @pytest.mark.subprocess("<why>"))
+       + an already-approved, already-implemented spec is re-gated on its DIFF only
     A spec reaches the implementer only when fidelity_verdict != NO-GO AND review_status: approved.
     Those two gates are also what pre-agrees the SEAMS the tests will be written at.
 
@@ -99,7 +102,8 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
   [repeat for each spec in the phase]
 
   avenger-verifier (once per phase, cross-family) -> verdict.json
-                 full suite + R<n>.<k>.<m> trace + a BOUNDED test-quality review:
+                 full suite + coverage traced per requirement `binding:` (an e2e id is covered by
+                 its journey; `none` is never a gap) + a BOUNDED test-quality review:
                  the tests mapped to the phase + test files it changed + their direct helpers.
                  Tautological / implementation-coupled / missing-negative = fail, even when green.
                  route-backs: code | wrong-gamed test | coverage gap -> implementer
@@ -145,11 +149,17 @@ That means the author of the code also authors its judge, so two controls buy th
   intentional behavior change is greenfield work with its own requirement.
 
 ### Relationship to `klm-agentic-pipeline`
-This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. The
-intended differences are exactly four: this one runs on **Claude Code + opencode** rather than GitHub
-Copilot; it adds the automated **Fidelity Gate**; it keeps a **feature-level e2e** stage and
-**spec-isolation-review**; and its mutation gate has a **deterministic, diff-scoped scorer**
-(`scripts/mutation_score.py` + `cr-filter-git`). Anything else that diverges is drift.
+This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. Known
+intended differences: this one runs on **Claude Code + opencode** rather than GitHub Copilot; it adds
+the automated **Fidelity Gate**; it keeps a **feature-level e2e** stage and **spec-isolation-review**;
+and its mutation gate has a **deterministic, diff-scoped scorer** (`scripts/mutation_score.py` +
+`cr-filter-git`).
+
+Two further mechanisms live here whose status against the sibling is **unconfirmed**: the mechanical
+**subprocess cost gate** (`scripts/subprocess_check.py`, run from the spec-review hook in both modes)
+and **diff-scoped re-gating** of a spec already approved and implemented. Whether
+`klm-agentic-pipeline` has either was not checkable from this repository, so this list is not a
+completeness claim in either direction — a divergence absent from it is not thereby drift.
 
 ---
 
@@ -190,6 +200,8 @@ agentic-avengers/
 ├── scripts/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
+│   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
+│   ├── spec_gate_cache.py     body each gate last judged, so a re-gate can be scoped to the diff
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── bypass_log.sh          break-glass logger for hooks

@@ -34,6 +34,10 @@ LESSON_ENTRY = {
 }
 PROSE_BODY = "# Never trust a bare pytest exit code\n\nSECRET_PROSE_MARKER — the full story.\n"
 
+pytestmark = pytest.mark.subprocess(
+    "the subject is a bash hook invoked by the harness exactly this way"
+)
+
 
 def make_project(tmp_path: Path, lessons: str | None, prose: bool = True) -> Path:
     """Build a throwaway project root; `lessons` is the raw lessons.json body (None = no file)."""

@@ -32,6 +32,10 @@ NON_IMPLEMENTERS = [
     "general-purpose",
 ]
 
+pytestmark = pytest.mark.subprocess(
+    "the subject is a bash hook invoked by the harness exactly this way"
+)
+
 
 def run_hook(payload: str, env: dict[str, str] | None = None) -> str:
     """Run the hook with `payload` on stdin and return its stdout."""

@@ -36,6 +36,26 @@ cross-family AI reviewer). A spec reaches the implementer only when `fidelity_ve
 The Fidelity Gate is this repo's only automated model gate and is the main deliberate divergence from
 `klm-agentic-pipeline`, which has no such gate.
 
+Spec-review also carries the pipeline's **only cost gate**, in two parts. Mechanically,
+`scripts/subprocess_check.py` walks `tests/` for spawners lacking
+`@pytest.mark.subprocess("<why>")` — it runs on every spec write in **both** modes via
+`hook_spec_review.sh`, no model, and it is the only stage that can see cost at all, since fidelity,
+cross-family review and verification all read for *correctness* and an expensive test is not
+incorrect. Deliberately not a wall-clock budget: seven runs of one unchanged suite spanned 66.43s to
+137.76s, so a runtime gate would fail green suites at random. By judgement, the checklist asks what a
+requirement's tests will cost before approving it. A project whose tests are not at `tests/` points
+the check at them with **`SUBPROC_CHECK_PATHS`**; an absent root scans nothing, which is CLEAN but
+always said on stderr rather than passing invisibly.
+
+**A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
+passed by this gate before and is not a finding — one spec drew REVIEW, REVIEW, then a NO-GO naming
+requirements the same model had approved twice, unchanged. `scripts/spec_gate_cache.py` keeps the
+body each gate judged; the hook hands the reviewer a `## CHANGES SINCE APPROVAL` diff, and with no
+kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
+set, Scope, Interfaces / contracts, `work_kind`, or any `binding:`, and when the Verifier routed the
+phase back with a **coverage gap** — there the question is what the spec failed to require, and
+unchanged text is exactly where to look; a first gate is always full.
+
 ### 4. The implementer writes the tests, test-first — and they lock at the Verifier
 The **implementer** writes both the tests and the code, in a red → green loop (`skills/tdd`, vendored
 from mattpocock/skills): one seam, one failing test, minimal code, repeat. **Vertical slices, never
@@ -63,19 +83,37 @@ parity, no port; an intentional behavior change is greenfield work with its own 
 **e2e-author**, not selected by `work_kind` — the implementer runs it once per feature, after the
 final phase is green.
 
-### 4a. Tests are integration-level by default
-Every test drives its requirement through a **seam** — the public entry point a caller uses (HTTP
+### 4a. Tiered binding decides what gets a test; tests are integration-level by default
+Every requirement declares a **`binding:`** — `e2e` (an end user can observe it → carried by a
+**journey** shared with the other `e2e` requirements on its path, **never its own test**) ·
+`integration` (observable *only* under concurrency, fault injection or schema migration, **and the
+spec says in one sentence why an e2e cannot see it** → its own test) · `none` (structural or
+build-time → **no test**, enforced by CI, a type checker, or nothing). This replaced "every
+requirement gets paired pass/fail criteria", which made suite size a mechanical function of id count
+with no counterweight anywhere: 288 requirement ids became 458 tests at 4.87 lines of test per line
+of source. The trade is accepted and named — a red journey names a journey, not a line.
+
+Whatever does get a test drives it through a **seam** — the public entry point a caller uses (HTTP
 handler, service method, CLI) — with real collaborators. Mock only what crosses a trust/cost boundary
 (third-party API, LLM, vault). `test-mapping.md` carries a `level` column: `integration` (default) ·
 `e2e` · `narrow`; **`narrow` requires a written justification** and is allowed only when a requirement
-has no reachable seam. Requirements with no integration surface (pure parsers, mappers) get **no
-dedicated test** — they're covered transitively. Migration is exempt: parity outranks the default.
-Rationale: tests bound to internals are the ones rewritten on every refactor.
+has no reachable seam. `binding` says *whether and where*; `level` says *how*. A journey's row is
+`level: e2e` and lists **several** ids; every requirement not marked `none` appears in some row.
+Migration is exempt: parity outranks the default. Rationale: tests bound to internals are the ones
+rewritten on every refactor.
+
+**The Verifier judges coverage per `binding:`, not per id** — a `binding: e2e` requirement is covered
+by the journey that lists it, and `binding: none` is never a gap. Reading the old one-test-per-id
+rule at that stage would route back a coverage gap on every deliberately unbound requirement and hand
+the suite back the multiplier this tier removed. Rule in `skills/verifier-triage`; the cross-family
+reader gets it from `prompts/verifier-review.md`.
 
 ### 4b. Feature-level e2e
 **1-3 tests (5 max)**, written once after the last phase is green, in `tests/e2e/<feature>/`, tracing
 to the goal in `overview.md` rather than a spec id (the one exception to "no spec id → no test").
-Excluded from the mutation gate and the phase verifier hook.
+Excluded from the mutation gate and the phase verifier hook. **Unchanged by §4a**: the journeys that
+carry `binding: e2e` requirements are *phase*-level and live with the phase's other tests; this
+feature-level ceiling still applies to `tests/e2e/<feature>/` alone.
 
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.
@@ -199,6 +237,14 @@ no lessons sees no change. `LESSONS_OFF=1` kills it, and opencode's agents get n
 a migration gotcha. Any agent reads the index at start and appends when something is learning-worthy.
 It was dormant until now; `pipeline-conventions` is where every agent picks it up, so it needs no
 per-agent wiring.
+
+**Every lesson states its `cost`** — tests added, agent invocations, runtime, tokens — and, where the
+rule could justify unbounded growth, its limit. One pipeline wrote ten lessons about one feature and
+not one was about cost: ten ways to be more correct, zero ways to be cheaper, which is how a suite
+reaches 4.87:1 without anyone deciding to. The live case is a true lesson — *"'it already works' is
+exactly the state that precedes a silent regression"* — that, unbounded, licenses writing tests
+forever, since there are infinitely many correct behaviours. The fix is a limit, not a deletion: the
+spec's `binding:` set is the budget.
 
 `docs/features/<feature>/pipeline-observations.md` (`skills/pipeline-retrospective`) is about the
 **machinery** — a gate that misfires, a stage that churns — and its destination is **this repo**. The

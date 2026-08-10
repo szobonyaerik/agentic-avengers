@@ -29,6 +29,10 @@ from env_file import (  # noqa: E402
 
 # --- parsing ------------------------------------------------------------------------------------
 
+pytestmark = pytest.mark.subprocess(
+    "load_env.sh is sourced by a shell; only a real shell can say what it exports"
+)
+
 
 def test_parses_simple_pairs() -> None:
     assert parse("A=1\nB=two\n") == {"A": "1", "B": "two"}

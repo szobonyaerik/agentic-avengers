@@ -451,7 +451,11 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - **Mutation is tighter**: if the same phase bounces twice on survivors, stop immediately. Either the
   requirement sits below the seam (→ spec-writer) or the threshold is wrong for this codebase (→ ask
   the user). Do not let the implementer farm narrow tests to chase mutants.
-- Route-backs to honour: fidelity/spec-review NO-GO → spec-writer, then re-gate. Verifier code failure
+- Route-backs to honour: fidelity/spec-review NO-GO → spec-writer, then re-gate — and once a spec has
+  been implemented that re-gate covers its **diff only**, except for the cases
+  `skills/spec-review-checklist` still owes a full pass (a changed requirement set, Scope,
+  Interfaces / contracts, `work_kind` or `binding:`, and a Verifier **coverage-gap** route-back, where
+  the question is what the spec failed to require). Verifier code failure
   → implementer. Verifier test-quality finding → implementer, to fix or add its own tests. Breaker
   counterexample → implementer, additions only.
 

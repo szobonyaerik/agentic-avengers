@@ -19,14 +19,28 @@ makes every later gate skip — the composed quality wall would collapse to whic
 Fails toward gating: any parse problem, missing hash, or unreadable file means "gate it". A gate
 that skips when unsure is a gate that does not exist.
 
+**`stamp` also keeps the body itself**, not just its digest, so a later re-gate can be scoped to what
+actually changed. Re-judging a whole spec that was already approved and built is how one spec drew
+three different verdicts from the same model on the same rubric — the third a NO-GO over text the
+first two had passed — and a verdict is a sample from a distribution, not a fact about the artifact.
+The digest answers "did it change"; the body answers "what changed", and only the second lets the
+re-gate stay inside the diff. Git cannot stand in for this: a spec is typically approved, implemented
+and re-gated well before the phase's commit, so there is no committed predecessor to diff against.
+
+The kept bodies are a rebuildable cache, not an artifact: losing one costs a full re-gate, which is
+the safe direction. `.avenger-gate-cache/` is gitignored for that reason.
+
 Usage:
-    spec_gate_cache.py check <spec.md> <gate>   exit 0 = needs gating, 1 = unchanged since last run
-    spec_gate_cache.py stamp <spec.md> <gate>   record the current body hash for that gate
+    spec_gate_cache.py check <spec.md> <gate>      exit 0 = needs gating, 1 = unchanged since last run
+    spec_gate_cache.py stamp <spec.md> <gate>      record the current body hash + body for that gate
+    spec_gate_cache.py previous <spec.md> <gate>   print the body that gate last judged (1 = none kept)
+    spec_gate_cache.py body <spec.md>              print the current body, for diffing against it
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,6 +50,10 @@ UNCHANGED = 1
 ERROR = 2
 
 GATES = ("fidelity", "review")
+
+ACTIONS = ("check", "stamp", "previous", "body")
+
+CACHE_DIR = ".avenger-gate-cache"
 
 FRONTMATTER = re.compile(r"^---\n(.*?\n)---\n(.*)\Z", re.DOTALL)
 
@@ -85,14 +103,74 @@ def stamp(text: str, gate: str) -> str:
     return f"---\n{frontmatter}---\n{body}"
 
 
+def cache_root() -> Path:
+    """Where kept bodies live. The project dir when a hook supplies one, else the working dir."""
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+
+
+def cache_path(spec: Path, gate: str) -> Path:
+    """The kept-body file for one spec and gate.
+
+    Keyed by a digest of the resolved spec path so sibling specs never collide and the layout stays
+    flat — the cache is scratch, and nothing reads it by browsing.
+    """
+    key = hashlib.sha256(str(spec.resolve()).encode("utf-8")).hexdigest()[:16]
+    return cache_root() / CACHE_DIR / gate / f"{key}.md"
+
+
+def normalized(body: str) -> str:
+    """A body ending in exactly one newline, so a re-gate diff shows only real edits.
+
+    `previous` and `body` are diffed against each other by the hook, and a shell reads one of them
+    through a command substitution, which eats every trailing newline. Without a single shared
+    convention the two sides disagree about the end of the file and every re-gate opens with a
+    phantom hunk — noise handed to the reviewer, which is the exact failure the diff exists to
+    prevent. Normalising in one place beats each caller remembering to.
+    """
+    return body.rstrip("\n") + "\n"
+
+
+def keep(spec: Path, gate: str, body: str) -> None:
+    """Store the body a gate just judged. Best-effort: a cache miss only costs a full re-gate."""
+    target = cache_path(spec, gate)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(normalized(body), encoding="utf-8")
+    except OSError as exc:
+        print(f"[spec_gate_cache] could not keep {target}: {exc}", file=sys.stderr)
+
+
+def previous(spec: Path, gate: str) -> str | None:
+    """The body that gate last judged, or None when nothing was kept."""
+    try:
+        return normalized(cache_path(spec, gate).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Dispatch `check` / `stamp` for one spec path and gate."""
+    """Dispatch `check` / `stamp` / `previous` / `body` for one spec path and gate."""
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 3 or args[0] not in {"check", "stamp"} or args[2] not in GATES:
+    if not args or args[0] not in ACTIONS:
         print(__doc__, file=sys.stderr)
         return ERROR
 
-    action, path, gate = args[0], Path(args[1]), args[2]
+    # `body` is gate-agnostic — it reads the spec, not a gate's record of it.
+    wanted = 2 if args[0] == "body" else 3
+    if len(args) != wanted or (wanted == 3 and args[2] not in GATES):
+        print(__doc__, file=sys.stderr)
+        return ERROR
+
+    action, path = args[0], Path(args[1])
+    gate = args[2] if wanted == 3 else ""
+
+    if action == "previous":
+        body = previous(path, gate)
+        if body is None:
+            return UNCHANGED  # nothing kept -> the caller gates the whole spec
+        sys.stdout.write(body)
+        return NEEDS_GATING
+
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -100,14 +178,19 @@ def main(argv: list[str] | None = None) -> int:
         return ERROR
 
     try:
+        if action == "body":
+            sys.stdout.write(normalized(split_spec(text)[1]))
+            return NEEDS_GATING
         if action == "check":
             return NEEDS_GATING if needs_gating(text, gate) else UNCHANGED
         path.write_text(stamp(text, gate), encoding="utf-8")
+        keep(path, gate, split_spec(text)[1])
         return NEEDS_GATING
     except ValueError as exc:
-        # No frontmatter -> cannot reason about it -> gate it.
+        # No frontmatter -> cannot reason about it -> gate it. `body` has nothing to hand back, so
+        # it errors instead, and its caller falls back to gating the whole spec.
         print(f"[spec_gate_cache] {path}: {exc} — gating anyway", file=sys.stderr)
-        return NEEDS_GATING
+        return ERROR if action == "body" else NEEDS_GATING
     except OSError as exc:
         print(f"[spec_gate_cache] cannot write {path}: {exc}", file=sys.stderr)
         return ERROR

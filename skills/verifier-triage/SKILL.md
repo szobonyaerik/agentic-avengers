@@ -19,8 +19,22 @@ and tests that pass but are gamed. All routes go back to the **implementer** (`a
 - **code issue** → the test is right, the code is wrong. Route with the failing test named.
 - **wrong/gamed test** → a tautological or implementation-coupled test (see the `tdd` skill
   anti-patterns), or a test that asserts the wrong behavior. Route with the specific fix.
-- **coverage gap** → a requirement id with no passing test, or an acceptance-criteria failure
-  condition no test exercises. Route with the missing case named.
+- **coverage gap** → a requirement the spec asked to be bound that nothing binds, or an
+  acceptance-criteria failure condition no test exercises. Route with the missing case named.
+
+**Read the requirement's `binding:` before calling a gap.** Not every id is owed a test of its own,
+and treating one as owed is how a suite grows without anyone deciding to:
+
+| `binding:` | A gap is | Not a gap |
+|---|---|---|
+| `e2e` | no journey in `test-mapping.md` lists this id, or the journey covering it is red | it has no test of its own — by design, the journey is the test |
+| `integration` | no passing test maps to this id | — |
+| `none` | never a gap | it has no test at all — the spec says so, and CI or a type checker or nothing enforces it |
+
+A missing `binding:` is a **spec** defect, not a coverage gap: the phase should not have reached you,
+so fail closed and say the spec never declared one. And if you believe a requirement is bound at the
+wrong tier, that is still a finding against the spec — never a test you ask the implementer to add on
+top of the binding the gate approved.
 
 Never edit code or tests. Triage and route only.
 
@@ -184,6 +198,11 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
   "bypassed": false
 }
 ```
+`coverage.requirements` and `coverage.traced` count only the requirements the spec asked to be bound —
+`binding: e2e` (traced by the journey listing the id) plus `binding: integration`. A `binding: none` id
+is outside the count and never appears in `untraced`, so a phase with unbound requirements still
+reports `traced == requirements`.
+
 `gamed-test` covers the tautological / implementation-coupled / missing-edge patterns above; name the
 exact pattern in the finding's `instruction`. If the mutation gate is off (the default), set
 `mutation.enabled: false` and omit the rest — do not run any mutation tool.

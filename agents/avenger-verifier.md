@@ -39,8 +39,12 @@ non-JSON, same-family), the phase **does not pass**.
 ## What you do
 
 1. **Run the full suite for the phase** — every spec's mapped tests. Confirm all pass.
-2. **Trace coverage**: every requirement id (`R<n>.<k>.<m>`) in the phase's specs maps to at least one
-   passing test in that spec's `test-mapping.md`. An untraced requirement is a fail.
+2. **Trace coverage per `binding:`, never per id** (the table in `skills/verifier-triage` is the rule):
+   a `binding: integration` requirement needs a passing test of its own in that spec's
+   `test-mapping.md`; a `binding: e2e` requirement is traced by the green journey row that lists it,
+   and never by a test of its own; a `binding: none` requirement is never a gap. A requirement the
+   spec asked to be bound with nothing binding it is a fail — and a requirement with no `binding:` at
+   all is a spec defect, so fail closed on it rather than demanding a test.
 3. **Review test quality (independence), with bounded scope — on a cross-family model.**
 
    a. **Compute the review set yourself**, per the deterministic scope algorithm in
@@ -77,7 +81,10 @@ non-JSON, same-family), the phase **does not pass**.
 5. **Triage** anything that isn't green or is gamed: classify each as a *code* issue, a *wrong/gamed
    test*, or a *coverage gap*. All three route back to the **implementer**
    (`avenger-backend-architect` / `avenger-frontend-developer`), who owns both code and tests. Never
-   fix anything yourself.
+   fix anything yourself. **Coverage is judged per `binding:`, not per id** — a `binding: e2e`
+   requirement is covered by the journey that lists it, and a `binding: none` requirement is never a
+   gap. The table in `skills/verifier-triage` is the rule; applying the old one-test-per-id reading
+   would route back a gap on every requirement the spec deliberately left unbound.
 6. **Verdict (persisted artifact).** Merge `.verifier-review.json` with your own coverage/suite
    findings and write the structured verdict to
    `docs/features/<feature>/phases/<n>-<slug>/verdict.json` (schema and procedure in

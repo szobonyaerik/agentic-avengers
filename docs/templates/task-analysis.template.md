@@ -29,6 +29,6 @@ work_kind: <migration|greenfield|refactor>  # <!-- selects the implementer's tdd
      does a suite exist? what coverage? is it bound to the old stack (needs porting)? -->
 
 ## Definition of Done (feature level)
-- [ ] <!-- outcome-level only; the Spec Writer turns these into paired acceptance criteria -->
+- [ ] <!-- outcome-level only; the Spec Writer turns these into requirements with a `binding:` each -->
 
 ## Risks & Considerations

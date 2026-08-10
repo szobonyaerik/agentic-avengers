@@ -14,8 +14,10 @@ write no production code.
 2. **gitignore.** Ensure `.gitignore` contains `**/.pytest_cache/`, `session.sqlite` and
    `.gate-session.sqlite` (cosmic-ray sessions), `.gate-cosmic-ray.toml` (the generated diff-scoped
    config), `.gate-tmp.txt`, `.avenger-auto` (the `/avenger-run --auto` permission sentinel),
-   `.lavish/` (scratch HTML review surfaces for the plan stop and the retrospective triage), and
-   **`.env`** (it holds a live API key). None of these may ever be committed.
+   `.lavish/` (scratch HTML review surfaces for the plan stop and the retrospective triage),
+   `.avenger-gate-cache/` (the body each gate last judged, so a re-gate can be scoped to the diff —
+   rebuildable, and a lost entry costs one full re-gate, the safe direction), and **`.env`** (it
+   holds a live API key). None of these may ever be committed.
 
 2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to `.env.example`
    in the project, then to `.env` **only if one does not already exist** — check first, never

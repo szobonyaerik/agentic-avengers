@@ -23,13 +23,29 @@ criticality: standard    # <!-- standard | critical — 'critical' runs the Brea
 <!-- what this spec delivers, and explicitly what it does NOT -->
 
 ## Requirements
-- R<n>.<k>.1 — <!-- a SINGLE verifiable behavior; not a bundle -->
-- R<n>.<k>.2 — …
+<!-- A SINGLE verifiable behavior each; not a bundle. Every one declares a `binding:`, which decides
+     whether and where it is verified:
+       e2e         — an end user can observe it. Carried by a JOURNEY below, never its own test.
+       integration — visible ONLY under concurrency, fault injection, or schema migration. Gets its
+                     own test, and must say in one sentence why an e2e cannot see it.
+       none        — structural or build-time. NO test. Name what enforces it (a CI job, a type
+                     checker, or nothing — "nothing" is often the right answer).
+     Default to e2e. This tiering is what keeps suite size tied to risk instead of to id count. -->
+- R<n>.<k>.1 — `binding: e2e` — …
+- R<n>.<k>.2 — `binding: integration` — … Why an e2e cannot see it: …
+- R<n>.<k>.3 — `binding: none` — … Enforced by: …
+
+## Journeys
+<!-- One per user-observable path, each covering SEVERAL e2e requirements. This is where the e2e tier
+     is verified. Do not also ask for one test per requirement. -->
+- J1 — <!-- what the user does, end to end --> — covers R<n>.<k>.1, …
 
 ## Acceptance criteria
-- R<n>.<k>.1 — passes when: …; fails when: …
-<!-- COMMON FAILURE: a pass condition with no fail/edge condition. The implementer needs BOTH to
-     write the paired positive/negative red→green slices. No pass-only requirements. -->
+<!-- For each `integration` requirement and each journey: a pass condition AND at least one
+     fail/edge condition — the implementer needs both to write the red→green slice.
+     `binding: none` requirements get none; there is nothing to run. -->
+- R<n>.<k>.2 — passes when: …; fails when: …
+- J1 — passes when: …; fails when: …
 
 ## Interfaces / contracts
 <!-- real signatures, schemas, error modes -->

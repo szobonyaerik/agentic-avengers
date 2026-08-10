@@ -27,6 +27,10 @@ BYPASS_LOG = ROOT / "scripts" / "bypass_log.sh"
 
 SEPARATORS = ["\n", "\r", "\t", "\r\n"]
 
+pytestmark = pytest.mark.subprocess(
+    "the subject is a bash script and a real git repo; in-process there is nothing to test"
+)
+
 
 def run_bypass(
     project: Path,
