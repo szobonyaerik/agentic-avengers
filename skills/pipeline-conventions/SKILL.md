@@ -126,7 +126,13 @@ Three consequences worth stating outright:
     never reached this bundle. `scripts/verifier_bundle_scope.py` sends only the specs whose text
     changed since the last completed review, names the rest in the bundle as carried forward, and
     merges their findings back into this run's verdict — **an open carried finding still forces
-    NO-GO**, so the scope shrinks the prompt, never the bar. No state, a lost state file, nothing
+    NO-GO**, so the scope shrinks the prompt, never the bar. **A spec that still holds an OPEN
+    finding is never carried**, however unchanged its text is: a `gamed test` finding is fixed in a
+    TEST file, so `spec.md` and `test-mapping.md` never change, and a spec that is never re-bundled
+    is a finding that is never regenerated — one that used to hold the phase at NO-GO forever with
+    no way out but deleting the state file. It goes back to the cross-family reader instead, and
+    clears or reappears on its own evidence; the token saving is given up only on the specs actually
+    under repair, which is exactly where economising is wrong. No state, a lost state file, nothing
     changed, or `VERIFIER_SCOPE=full` sends the whole phase; the safe direction costs tokens, not
     coverage.
 - **Mutation gate (optional)** — off by default and most teams leave it off. Only when a project sets

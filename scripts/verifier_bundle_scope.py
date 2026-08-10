@@ -7,14 +7,17 @@ in it — one measured bundle reached ~832k tokens, and one phase had to be spli
 fit a context at all. PR #27's diff-only rule covers spec RE-GATES; it never reached this bundle.
 
 So a spec whose `spec.md` and `test-mapping.md` are byte-identical to what the last completed review
-saw is CARRIED: its verdict and its findings come forward from that review, it is named in the
-bundle as carried, and its text is not re-sent. Everything else is reviewed.
+saw AND whose findings are all resolved or waived is CARRIED: its verdict and its findings come
+forward from that review, it is named in the bundle as carried, and its text is not re-sent.
+Everything else is reviewed — including a spec that still holds an OPEN finding, however unchanged
+its text is, because a finding fixed in a TEST file changes neither of those two documents and a
+spec that is never re-bundled is a finding that is never regenerated.
 
 Three properties this keeps, because each one is a way the scoping could quietly weaken the gate:
 
-  * **Carried is not forgotten.** A carried spec's open findings are merged back into this run's
-    verdict, and an open carried finding forces NO-GO. Dropping a finding by not re-sending its
-    spec would be a fail-open dressed as an optimisation.
+  * **Carried is not forgotten.** A carried spec's findings are merged back into this run's verdict,
+    and an open one there forces NO-GO. Dropping a finding by not re-sending its spec would be a
+    fail-open dressed as an optimisation.
   * **No state, no scoping.** A first run, a lost state file, or `VERIFIER_SCOPE=full` sends
     everything — the same bundle as before. The safe direction costs tokens, not correctness.
   * **What was carried is stated**, in the bundle and on stderr and in the verdict artifact. A
@@ -103,6 +106,16 @@ def scoping_disabled() -> bool:
     return os.environ.get("VERIFIER_SCOPE", "").strip().lower() == "full"
 
 
+def open_findings(findings: list[dict]) -> list[dict]:
+    """Findings that are still unresolved — these are what keep a spec in the review set."""
+    return [
+        f for f in findings
+        if isinstance(f, dict)
+        and str(f.get("status") or "open").lower() == "open"
+        and not f.get("break_glass")
+    ]
+
+
 def plan(phase_dir: Path) -> dict:
     """Which spec dirs to review and which to carry, with the carried verdicts."""
     state = load_state(phase_dir)
@@ -112,12 +125,21 @@ def plan(phase_dir: Path) -> dict:
         # Keyed by directory name: stable across checkouts, unique within a phase.
         key = spec_dir.name
         record = state["specs"].get(key)
+        stored = (record.get("findings") or []) if isinstance(record, dict) else []
         unchanged = (
             isinstance(record, dict)
             and record.get("fingerprint") == spec_fingerprint(spec_dir)
             and record.get("verdict")
         )
-        if unchanged and not scoping_disabled():
+        # A spec with an OPEN finding is never carried, however unchanged its text is. Carrying one
+        # wedged the phase in permanent NO-GO: a `gamed test` finding is fixed in a TEST file, so
+        # `spec.md` and `test-mapping.md` never change, so the spec is never re-bundled, so the
+        # finding is never regenerated, so nothing ever marks it fixed — and the merge below keeps
+        # forcing NO-GO on every later attempt, with no way out but deleting the state file. Sending
+        # it back to the cross-family reader is what lets the finding either clear or reappear on its
+        # own. It keeps the bar, removes the wedge, and gives up the token saving only on the specs
+        # actually under repair, which is exactly where economising is wrong.
+        if unchanged and not open_findings(stored) and not scoping_disabled():
             carry.append({
                 "spec": key,
                 "path": str(spec_dir),
@@ -133,16 +155,6 @@ def plan(phase_dir: Path) -> dict:
         # against. Fall back to the whole phase — the safe direction costs tokens, not coverage.
         return {"review": [str(d) for d in spec_dirs(phase_dir)], "carry": [], "full": True}
     return {"review": review, "carry": carry, "full": scoping_disabled() or not carry}
-
-
-def open_findings(findings: list[dict]) -> list[dict]:
-    """Carried findings that are still unresolved — these are what force a NO-GO forward."""
-    return [
-        f for f in findings
-        if isinstance(f, dict)
-        and str(f.get("status") or "open").lower() == "open"
-        and not f.get("break_glass")
-    ]
 
 
 def finalize(phase_dir: Path, verdict_path: Path) -> int:
@@ -185,6 +197,10 @@ def finalize(phase_dir: Path, verdict_path: Path) -> int:
     if carried_open and value in PASS_VERDICTS:
         # A carried spec still holding an open finding is not a passed phase, whatever this run's
         # narrower review concluded. Scoping may shrink the bundle; it may not shrink the bar.
+        # `plan()` no longer carries a spec that has one, so this is an invariant guard rather than
+        # a live path — NOT dead code to delete. If it is ever reached again (a hand-edited or
+        # half-written state file, a later change to the carry condition), forcing NO-GO is the safe
+        # direction, and the only alternative is a silent fail-open.
         verdict["verdict"] = "NO-GO"
         verdict["report"] = (
             f"{verdict.get('report') or ''}\n\n[scope] {carried_open} finding(s) carried forward "
@@ -215,13 +231,29 @@ def finalize(phase_dir: Path, verdict_path: Path) -> int:
             "verdict": entry["verdict"],
             "findings": entry["findings"],
         }
+    # The verdict recorded against a reviewed spec is that SPEC's, not the phase's. Stamping the
+    # merged phase verdict on all of them stored a spec reviewed clean in a run that failed on a
+    # sibling as NO-GO, and the next bundle then announced "previous verdict NO-GO, 0 finding(s)
+    # carried" for a spec nothing was ever said against — misinforming the reviewer about the work
+    # it was told not to look at. The findings do the blocking; this is the label.
+    #
+    # A failure is only localised when every open finding names a spec. A rejection carrying an open
+    # finding with no resolvable `spec_id` — or none at all — belongs to the phase, so no spec in it
+    # may be labelled clean: those runs keep the phase verdict against every reviewed spec rather
+    # than localise a failure that was never localised.
+    still_open = open_findings(verdict["findings"])
+    localised = value in PASS_VERDICTS or (
+        bool(still_open) and all(finding_spec_id(f) for f in still_open)
+    )
     for path in current["review"]:
         spec_dir = Path(path)
         sid = spec_id_of(spec_dir.name)
+        own = by_spec.get(sid or "", [])
         specs[spec_dir.name] = {
             "fingerprint": spec_fingerprint(spec_dir),
-            "verdict": value or "NO-GO",
-            "findings": by_spec.get(sid or "", []),
+            "verdict": ("NO-GO" if open_findings(own) else "GO") if localised
+            else (value or "NO-GO"),
+            "findings": own,
         }
     try:
         state_path(phase_dir).write_text(

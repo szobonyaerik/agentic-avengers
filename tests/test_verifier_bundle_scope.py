@@ -8,8 +8,11 @@ covers spec RE-GATES and never reached this bundle.
 Scoping a gate down is the easiest place in this repo to write a fail-open by accident, so the tests
 split evenly between "does it shrink" and "does it still hold the bar":
 
-  * a carried spec's open findings come forward, and an open one forces NO-GO even when this run's
-    narrower review said GO;
+  * a spec with an OPEN finding is never carried — it goes back to the reader, because a finding
+    fixed in a TEST file changes no spec text, and carrying it either drops it (fail-open) or wedges
+    the phase in a NO-GO nothing can clear;
+  * a carried spec's findings still come forward, and one that reaches the merge open forces NO-GO
+    even when this run's narrower review said GO;
   * no state, a corrupt state, or `VERIFIER_SCOPE=full` sends everything;
   * what was carried is stated in the artifact, so a scoped review can be audited afterwards.
 """
@@ -104,30 +107,110 @@ FINDING = {
 }
 
 
-def test_an_open_finding_on_a_carried_spec_still_holds_the_phase(tmp_path: Path) -> None:
-    """The fail-open this scoping could have been: a spec whose finding is unfixed stops being sent,
-    so nothing re-reports it and the phase passes on a review that never looked at it."""
+def test_a_spec_with_an_open_finding_is_re_reviewed_never_carried(tmp_path: Path) -> None:
+    """The two ways this could go wrong, and the one narrow path between them.
+
+    Carrying a spec with an open finding is a fail-open if the finding is dropped and a WEDGE if it
+    is kept (see the multi-run test below). Neither is acceptable, so the spec goes back to the
+    reader: the finding is regenerated, and clears or reappears on its own evidence."""
     phase_dir = phase(tmp_path)
     review(phase_dir, verdict="NO-GO", findings=[FINDING])
 
     changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
     changed.write_text(changed.read_text() + "\n- R8.1.2 another req\n")
 
+    result = plan(phase_dir)
+
+    assert [Path(p).name for p in result["review"]] == ["8.0-alpha", "8.1-beta"], (
+        "the spec under repair must be re-sent, whatever its text says"
+    )
+    assert result["carry"] == []
+
+
+def test_an_open_finding_still_holds_the_phase(tmp_path: Path) -> None:
+    """Re-reviewing rather than carrying must not become a way for a finding to evaporate: while the
+    reader still raises it, the phase does not pass."""
+    phase_dir = phase(tmp_path)
+    review(phase_dir, verdict="NO-GO", findings=[FINDING])
+
+    changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
+    changed.write_text(changed.read_text() + "\n- R8.1.2 another req\n")
+
+    result = review(phase_dir, verdict="NO-GO", findings=[FINDING])
+
+    assert result["exit"] == 2
+    assert result["verdict"]["verdict"] == "NO-GO"
+    assert FINDING["id"] in [f["id"] for f in result["verdict"]["findings"]]
+
+
+def test_a_carried_open_finding_forces_no_go_if_one_ever_reaches_the_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`plan()` no longer produces this state, which is exactly why the guard behind it is worth
+    pinning: a hand-edited state file or a later change to the carry condition must still fail
+    closed rather than pass a phase on a review that never looked at the finding."""
+    import verifier_bundle_scope
+
+    phase_dir = phase(tmp_path)
+    monkeypatch.setattr(verifier_bundle_scope, "plan", lambda _: {
+        "review": [str(phase_dir / "specs" / "8.1-beta")],
+        "carry": [{"spec": "8.0-alpha", "path": str(phase_dir / "specs" / "8.0-alpha"),
+                   "verdict": "NO-GO", "findings": [FINDING]}],
+        "full": False,
+    })
+
     result = review(phase_dir, verdict="GO")
 
     assert result["exit"] == 2, "a carried open finding must not be passed over"
     assert result["verdict"]["verdict"] == "NO-GO"
-    ids = [f["id"] for f in result["verdict"]["findings"]]
-    assert FINDING["id"] in ids, "the carried finding must survive into this run's verdict"
+    assert FINDING["id"] in [f["id"] for f in result["verdict"]["findings"]]
+
+
+def test_a_finding_fixed_in_a_test_file_does_not_wedge_the_phase_forever(tmp_path: Path) -> None:
+    """The wedge, which needs REPEATED runs to show: one round looks identical either way.
+
+    Introduced by the fix for defect 7 and caught by no-mistakes review, not by the suite that
+    shipped with it. A `gamed test` finding is fixed in a TEST file, so `spec.md` and
+    `test-mapping.md` never change; carrying on fingerprint alone left 8.0-alpha out of every later
+    bundle, so nothing ever regenerated its finding and nothing could ever mark it fixed. Runs 2, 3
+    and 4 all returned NO-GO with open_findings=1 against 8.0-alpha while every review was clean,
+    and the only exits were VERIFIER_SCOPE=full or deleting the state file by hand."""
+    phase_dir = phase(tmp_path)
+    review(phase_dir, verdict="NO-GO", findings=[{**FINDING, "kind": "gamed test"}])
+
+    sibling = phase_dir / "specs" / "8.1-beta" / "spec.md"
+    for round_no in (2, 3, 4):
+        sibling.write_text(sibling.read_text() + f"\n- R8.1.{round_no} req added in round {round_no}\n")
+        reviewed = [Path(p).name for p in plan(phase_dir)["review"]]
+
+        if round_no == 2:
+            assert "8.0-alpha" in reviewed, (
+                "the spec under repair must be re-sent so its finding can be regenerated"
+            )
+        else:
+            assert "8.0-alpha" not in reviewed, (
+                "with the finding gone the spec is carried again — the saving returns with the repair"
+            )
+
+        result = review(phase_dir, verdict="GO")
+        carried_open = sum(c["open_findings"] for c in result["verdict"]["carried_specs"])
+
+        assert carried_open == 0, (
+            f"round {round_no}: a stale finding no review can regenerate is still holding the phase"
+        )
+        assert result["exit"] == 0, f"round {round_no}: every review was clean and the phase failed"
+        assert result["verdict"]["verdict"] == "GO"
 
 
 def test_a_resolved_carried_finding_no_longer_blocks(tmp_path: Path) -> None:
-    """Carrying findings forward must not make a phase unpassable — `fixed` is respected."""
+    """A settled finding is what carriage is FOR: `fixed` keeps the spec out of the bundle and does
+    not make the phase unpassable."""
     phase_dir = phase(tmp_path)
     review(phase_dir, verdict="NO-GO", findings=[{**FINDING, "status": "fixed"}])
     changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
     changed.write_text(changed.read_text() + "\n- R8.1.2 another req\n")
 
+    assert [e["spec"] for e in plan(phase_dir)["carry"]] == ["8.0-alpha"]
     assert review(phase_dir, verdict="GO")["exit"] == 0
 
 
@@ -137,6 +220,7 @@ def test_a_waived_carried_finding_no_longer_blocks(tmp_path: Path) -> None:
     changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
     changed.write_text(changed.read_text() + "\n- R8.1.2 another req\n")
 
+    assert [e["spec"] for e in plan(phase_dir)["carry"]] == ["8.0-alpha"]
     assert review(phase_dir, verdict="GO")["exit"] == 0
 
 
@@ -193,11 +277,43 @@ def test_a_run_with_nothing_changed_sends_everything(tmp_path: Path) -> None:
     assert result["carry"] == []
 
 
-def test_a_finding_on_a_failed_spec_is_re_raised_when_a_sibling_changes(tmp_path: Path) -> None:
-    """A spec whose review said NO-GO carries its FINDING, not a clean bill: while it is open, the
-    phase stays NO-GO however narrow the next review is."""
+def test_a_finding_on_a_failed_spec_is_kept_and_re_judged_when_a_sibling_changes(
+    tmp_path: Path,
+) -> None:
+    """A spec whose review said NO-GO does not get a clean bill from a sibling's edit: its finding
+    stays on the record, and the spec goes back to the reader to be judged again rather than being
+    inherited either way."""
     phase_dir = phase(tmp_path)
     review(phase_dir, verdict="NO-GO", findings=[FINDING])
+    state = json.loads((phase_dir / STATE_NAME).read_text())
+    assert state["specs"]["8.0-alpha"]["verdict"] == "NO-GO"
+    assert [f["id"] for f in state["specs"]["8.0-alpha"]["findings"]] == [FINDING["id"]]
+
     changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
     changed.write_text(changed.read_text() + "\n- R8.1.2 another req\n")
-    assert review(phase_dir, verdict="GO")["verdict"]["verdict"] == "NO-GO"
+
+    assert "8.0-alpha" in [Path(p).name for p in plan(phase_dir)["review"]]
+
+
+def test_a_spec_reviewed_clean_is_not_recorded_as_the_phases_failure(tmp_path: Path) -> None:
+    """The phase verdict used to be stamped on every reviewed spec, so a spec nothing was said
+    against was stored as NO-GO and the next bundle announced it that way — misinforming the reader
+    about the work it was told not to look at. The findings do the blocking; this is the label."""
+    phase_dir = phase(tmp_path)
+    review(phase_dir, verdict="NO-GO", findings=[FINDING])
+
+    state = json.loads((phase_dir / STATE_NAME).read_text())["specs"]
+    assert state["8.1-beta"]["verdict"] == "GO", "the sibling's failure is not this spec's verdict"
+    assert state["8.0-alpha"]["verdict"] == "NO-GO"
+
+
+def test_a_failure_that_names_no_spec_is_recorded_against_every_spec_reviewed(
+    tmp_path: Path,
+) -> None:
+    """Localising a verdict per spec must not invent a clean bill: a rejection whose finding resolves
+    to no spec belongs to the phase, so nothing it reviewed may be labelled clean."""
+    phase_dir = phase(tmp_path)
+    review(phase_dir, verdict="NO-GO", findings=[{**FINDING, "spec_id": ""}])
+
+    state = json.loads((phase_dir / STATE_NAME).read_text())["specs"]
+    assert {s["verdict"] for s in state.values()} == {"NO-GO"}

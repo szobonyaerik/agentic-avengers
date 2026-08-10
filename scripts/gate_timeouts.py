@@ -17,9 +17,11 @@ The relation that must hold, for every hook that can reach `gate_runner.py`:
 The headroom is not padding: the hook also loads env, checks the gate cache, assembles a diff
 bundle, stamps frontmatter and writes the cache, all outside the call it wraps.
 
-Which hooks are gate hooks is DERIVED, not listed: this walks the `$SD/…` and
+Which hooks are gate hooks is DERIVED, not listed: this walks the `$SD/…`, `$SCRIPT_DIR/…` and
 `${CLAUDE_PLUGIN_ROOT}/scripts/…` references out of each hook script and follows them, so a hook
-that starts calling the gate tomorrow is covered without anyone remembering to add it here.
+that starts calling the gate tomorrow is covered without anyone remembering to add it here. That
+guarantee is only as wide as the reference forms below, which is why they are pinned to the same
+three `tests/test_install_manifest.py` audits install.sh on.
 
     python3 scripts/gate_timeouts.py verify [hooks.json]    exit 0 = sound, 2 = inverted
 
@@ -61,10 +63,15 @@ HOOK_HEADROOM_S = 120
 #: through another script, is a gate hook.
 GATE_RUNNER = "gate_runner.py"
 
-#: The two ways a shipped file names another script (same forms scripts/install.sh is audited on).
+#: The three ways a shipped file names another script — the same forms scripts/install.sh is audited
+#: on in tests/test_install_manifest.py, and they must stay the same three. A spelling this regex
+#: does not know is a reference this walk cannot follow, so the hook that made it would not be
+#: recognised as a gate hook at all: `violations()` would return nothing for it and `verify` would
+#: exit 0 with the inversion live. A check whose whole point is failing closed, failing open.
 REFERENCE = re.compile(
     r"\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/([A-Za-z0-9_.-]+\.(?:py|sh))"
     r"|\$SD/([A-Za-z0-9_.-]+\.(?:py|sh))"
+    r"|\$SCRIPT_DIR/([A-Za-z0-9_.-]+\.(?:py|sh))"
 )
 
 #: A hook command names its script the same way.
@@ -77,12 +84,12 @@ def required_hook_timeout(call_s: int | None = None) -> int:
 
 
 def references(script: Path) -> set[str]:
-    """Script basenames referenced by `script` as executables ($SD/… or plugin-root/scripts/…)."""
+    """Script basenames `script` names as executables ($SD/…, $SCRIPT_DIR/…, plugin-root/scripts/…)."""
     try:
         text = script.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
-    return {a or b for a, b in REFERENCE.findall(text)}
+    return {plugin or sd or script_dir for plugin, sd, script_dir in REFERENCE.findall(text)}
 
 
 def reaches_gate_runner(script: Path, scripts_dir: Path, seen: set[str] | None = None) -> bool:

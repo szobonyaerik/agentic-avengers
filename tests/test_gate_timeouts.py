@@ -23,6 +23,7 @@ from gate_timeouts import (  # noqa: E402
     call_timeout,
     gate_hooks,
     reaches_gate_runner,
+    references,
     required_hook_timeout,
     violations,
 )
@@ -55,6 +56,35 @@ def test_the_gate_hooks_are_derived_from_what_they_call_not_from_a_list() -> Non
     """A hook that starts calling the gate is covered without anyone updating this module."""
     assert reaches_gate_runner(SCRIPTS / "hook_fidelity.sh", SCRIPTS)
     assert reaches_gate_runner(SCRIPTS / "verifier_review.sh", SCRIPTS)
+
+
+REFERENCE_FORMS = {
+    "plugin root": '  bash "${CLAUDE_PLUGIN_ROOT}/scripts/gate_runner.py"\n',
+    "$SD": '  python3 "$SD/gate_runner.py"\n',
+    "$SCRIPT_DIR": '  python3 "$SCRIPT_DIR/gate_runner.py"\n',
+}
+
+
+@pytest.mark.parametrize("form", sorted(REFERENCE_FORMS))
+def test_every_spelling_of_a_script_reference_is_followed(form: str, tmp_path: Path) -> None:
+    """The derivation is only as wide as the forms it recognises. `$SCRIPT_DIR/` (gate_ci.sh's
+    spelling) was known to tests/test_install_manifest.py and not here, so a hook reaching the gate
+    through one would not have been recognised as a gate hook at all: no violation reported, verify
+    exits 0, and the inverted pair this module exists to catch stays live. The two scanners audit
+    the same repo and must recognise the same three forms."""
+    hook = tmp_path / "hook_x.sh"
+    hook.write_text(f"#!/usr/bin/env bash\n{REFERENCE_FORMS[form]}")
+
+    assert references(hook) == {"gate_runner.py"}, f"{form} reference not followed"
+    assert reaches_gate_runner(hook, SCRIPTS)
+
+
+def test_this_module_and_the_install_audit_recognise_the_same_forms() -> None:
+    """Two regexes for one question drift, and the one that drifts first is the one nobody reads."""
+    import test_install_manifest as manifest
+
+    probe = " ".join(f'"{ref}"' for ref in REFERENCE_FORMS.values())
+    assert {a or b or c for a, b, c in manifest.REFERENCE.findall(probe)} == {"gate_runner.py"}
 
 
 # ── the relation itself ──────────────────────────────────────────────────────

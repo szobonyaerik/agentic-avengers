@@ -80,8 +80,11 @@ optional, and it fails closed.
 `test-mapping.md` on every attempt (~832k tokens measured; one phase needed four chunks to fit at
 all) — the diff-only rule above covers spec *re-gates*, not this bundle.
 `scripts/verifier_bundle_scope.py` sends only changed specs, names the rest as carried forward, and
-merges their findings back, so an **open carried finding still forces NO-GO**. No state, nothing
-changed, or `VERIFIER_SCOPE=full` sends the whole phase — cheaper is never the safe direction here.
+merges their findings back, so an **open carried finding still forces NO-GO**. **A spec holding an
+open finding is never carried** — a `gamed test` finding is fixed in a TEST file, so no spec text
+changes, and a spec never re-bundled is a finding never regenerated, which wedged the phase at NO-GO
+forever; it goes back to the reader and clears or reappears on its own. No state, nothing changed, or
+`VERIFIER_SCOPE=full` sends the whole phase — cheaper is never the safe direction here.
 
 Three test modes by `work_kind`, all inside `skills/tdd`: **greenfield** (red → green per vertical
 slice) · **migration** (parity-first — the *existing suite is the contract*, run it rather than
