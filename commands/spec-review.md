@@ -40,11 +40,18 @@ A real second opinion, not a rubber stamp — it fails closed and routes NO-GO b
 1. Run the cross-family checklist gate (decorrelated from the anthropic build family, and from
    fidelity's DeepSeek):
    ```bash
+   . "${CLAUDE_PLUGIN_ROOT:-.}/scripts/gate_runner_guard.sh"
+   require_gate_runner "${CLAUDE_PLUGIN_ROOT:-.}/scripts/gate_runner.py" || exit 2
    python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/gate_runner.py" \
      --rubric "${CLAUDE_PLUGIN_ROOT:-.}/prompts/spec-review-rubric.md" \
      --model "${GATE_MODEL:-opencode-go/deepseek-v4-pro}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
      --print-verdict --target "<spec path>"
    ```
+   The guard is not decoration: a scaffold `gate_runner.py` that printed a bare `GO` having checked
+   nothing was once believed, and this path is the one that runs the gate by hand rather than through
+   a hook, so it is where a substituted runner would go unnoticed longest. If the gate stops, its
+   stderr carries a `cause=` (`timeout`, `provider-payment-required`, `provider-unreachable`, …) and
+   the provider's own words — read the cause before concluding anything about the spec.
    For a spec that is already approved **and** implemented, this is a **re-gate**: pass a bundle
    instead of the bare spec, so the reviewer gates the diff rather than re-rolling a verdict on text
    it already passed. `scripts/hook_spec_review.sh` builds exactly that bundle on every spec write
@@ -53,12 +60,18 @@ A real second opinion, not a rubber stamp — it fails closed and routes NO-GO b
    - **GO** or **REVIEW** → `Edit` the spec frontmatter `review_status: approved` (that one field
      only), then record what was judged so the next re-gate can be scoped to the diff:
      ```bash
-     python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/spec_gate_cache.py" stamp <spec> review
+     python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/spec_gate_cache.py" stamp <spec> review GO
      ```
      State the spec may now go to the implementer.
    - **NO-GO** → leave `review_status: pending`, print the report (stderr) and `route_back:
-     avenger-spec-writer`.
-   - **non-zero exit / no token** → fail closed: do NOT approve; surface the error.
+     avenger-spec-writer`. Record the rejection too, against the body that earned it:
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/spec_gate_cache.py" stamp <spec> review NO-GO <report-file>
+     ```
+     Recording only passes is what left a refusal with no trace of which text was refused, and made
+     the next frontmatter-only edit look unchanged-and-therefore-fine.
+   - **non-zero exit / no token** → fail closed: do NOT approve; surface the error **including its
+     `cause=`**. A `provider-payment-required` or a `timeout` says nothing at all about the spec.
 
 ## HITL mode (default)
 Load the `grill-me` and `spec-review-checklist` skills, then:

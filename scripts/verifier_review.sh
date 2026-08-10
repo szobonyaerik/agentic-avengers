@@ -147,24 +147,32 @@ fi
 
   printf '=== SPEC REQUIREMENTS & ACCEPTANCE CRITERIA ===\n'
   found_spec=0
-  for spec_dir in $SCOPED_SPECS; do
+  # `while read`, not `for $VAR`: word-splitting an unquoted list silently drops half a path that
+  # contains a space, and the bundle would be short one spec without saying so.
+  while IFS= read -r spec_dir; do
+    [ -n "$spec_dir" ] || continue
     spec="$spec_dir/spec.md"
     [ -f "$spec" ] || continue
     found_spec=1
     printf -- '--- %s ---\n' "$spec"; cat "$spec"; printf '\n'
-  done
+  done <<EOF_SPECS
+$SCOPED_SPECS
+EOF_SPECS
   if [ "$found_spec" -ne 1 ] && [ -z "$CARRIED_SPECS" ]; then
     printf '(no spec.md found under %s/specs — report this)\n' "$PHASE_DIR"
   fi
 
   printf '\n=== TEST MAPPINGS ===\n'
   found_map=0
-  for spec_dir in $SCOPED_SPECS; do
+  while IFS= read -r spec_dir; do
+    [ -n "$spec_dir" ] || continue
     m="$spec_dir/test-mapping.md"
     [ -f "$m" ] || continue
     found_map=1
     printf -- '--- %s ---\n' "$m"; cat "$m"; printf '\n'
-  done
+  done <<EOF_MAPS
+$SCOPED_SPECS
+EOF_MAPS
   if [ "$found_map" -ne 1 ] && [ -z "$CARRIED_SPECS" ]; then
     printf '(no test-mapping.md found — every requirement is untraced; report it)\n'
   fi

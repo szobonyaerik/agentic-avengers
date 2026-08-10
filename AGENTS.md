@@ -72,7 +72,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 6. **Fresh model ≠ author** — every per-phase gate runs on a cross-family model (family ≠ author).
    The one sanctioned exception is the feature-close `no-mistakes` ship gate (`.no-mistakes.yaml`),
    documented in `skills/pipeline-conventions/SKILL.md`.
-7. **Gates fail closed** — a gate that cannot reach a verdict (incl. same-family) stops; it never passes.
+7. **Gates fail closed, and a stop names its own cause.** A gate that cannot reach a verdict (incl.
+   same-family) stops; it never passes. Every stop carries a `cause=` from `scripts/gate_errors.py`
+   plus the provider's own words verbatim — a timeout kill, an HTTP 402 and an unreachable provider
+   used to be one indistinguishable line, and a day went into reading one as a model failure.
+   Four things keep that honest: a hook's `hooks.json` budget must exceed `GATE_CALL_TIMEOUT` plus
+   headroom (`scripts/gate_timeouts.py`, asserted); a timeout kills the child's whole **process
+   group** and reports measured wall clock (`scripts/proc_group.py`); a rejection emits its report
+   and records the judged hash **with its verdict**; and the runner must identify itself
+   (`scripts/gate_runner_guard.sh`) rather than being trusted by path.
    Break-glass `GATE_BYPASS="reason"` is logged to `gate-overrides.log`, shown, and recorded in `handover.md`.
    The reason is prose, so under `--auto` it comes from a file — see rule 10.
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
@@ -170,6 +178,10 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `GATE_MODEL` | per-gate defaults | routes every gate to one model |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
 | `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
+| `VERIFIER_SCOPE` | unset | `full` sends the Verifier the whole phase; by default the bundle carries only the specs whose text changed since the last completed review, names the rest as carried forward, and merges their findings back (an open carried finding still forces NO-GO) |
+| `GATE_CALL_TIMEOUT` | `300` | seconds the provider call gets. The gate hooks refuse to run if their `hooks.json` budget cannot outlive it plus headroom — raise this and raise `hooks/hooks.json` with it |
+| `GATE_MODEL_FAMILY` | unset | declare a gate model's vendor family when `scripts/model_vendors.py` has no entry for it; without it an unknown vendor is refused, never guessed |
+| `GATE_RUNNER_SHA256` | unset | pin the gate runner by content digest. Callers already refuse a runner that cannot identify itself; this refuses any but the exact one named |
 | `VERIFIER_SRC_LIMIT` | `400000` | max chars of **review-set source** sent to that model — it does *not* bound the whole bundle, whose specs, test-mappings and test output are extra and uncounted. A set **over** the cap is refused (exit 2) *before* the model is called — a truncated review is an unreviewed phase. Raise it only to what the gate model can actually read, or split the set |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
