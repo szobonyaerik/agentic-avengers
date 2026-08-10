@@ -18,6 +18,12 @@ set -uo pipefail
 
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (gate_runner, prompts, bypass_log)
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
+. "$SD/gate_runner_guard.sh"
+
+# A hook the harness kills leaves nothing behind, and the run reads that absence as an objection.
+# Name it instead — this is the shape a 120s-vs-300s timeout inversion took for a whole phase.
+trap 'echo "spec-review: HOOK KILLED by the harness (signal) — this is NOT a gate verdict. The gate did not answer." >&2; exit 2' TERM INT
+
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 case "$FILE" in
@@ -61,11 +67,28 @@ fi
 [ "${SPEC_REVIEW_MODE:-}" = "auto" ] || exit 0   # --- HITL (default): the model half is /spec-review
 
 # --- 2. Model half: auto only -------------------------------------------------------------------
+# The gate must be able to outlive the call it wraps; and the runner must be the shipped one, not
+# whatever happens to sit at that path. Both fail closed — see gate_timeouts.py, gate_runner_guard.sh.
+if [ -f "$SD/../hooks/hooks.json" ]; then
+  python3 "$SD/gate_timeouts.py" verify "$SD/../hooks/hooks.json" || exit 2
+fi
+require_gate_runner "$SD/gate_runner.py" || exit 2
+
 # Skip when the spec's BODY is unchanged since this gate last judged it — a frontmatter-only edit
 # (`status: done`, a verdict stamp) must not re-run a paid gate. Own key, so fidelity's stamp can't
-# make this one skip. Exit 1 = unchanged; anything else falls through and gates.
-python3 "$SD/spec_gate_cache.py" check "$FILE" review; cached=$?
-[ "$cached" -eq 1 ] && exit 0
+# make this one skip. Exit 1 = unchanged, with the stored verdict on stdout: an unchanged body that
+# this gate REJECTED replays the rejection instead of skipping past it.
+CACHED=$(python3 "$SD/spec_gate_cache.py" check "$FILE" review); cached=$?
+if [ "$cached" -eq 1 ]; then
+  case "$CACHED" in
+    GO|REVIEW) exit 0 ;;
+    *)
+      echo "spec-review (auto): $CACHED (unchanged since it was judged) — review_status stays pending" >&2
+      python3 "$SD/spec_gate_cache.py" report "$FILE" review >&2 ||
+        echo "  (the report for that verdict is no longer in the gate cache — edit the spec to re-gate)" >&2
+      exit 2 ;;
+  esac
+fi
 
 # Diff-scoped re-gate: only for a spec that was approved AND has reached the implementer. A spec
 # still in draft has no settled text to protect, so it is always gated whole.
@@ -100,20 +123,50 @@ if grep -qE '^review_status:[[:space:]]*approved[[:space:]]*$' "$FILE" 2>/dev/nu
   rm -f "$PREV_FILE" "$NOW_FILE"
 fi
 
-VERDICT=$(python3 "$SD/gate_runner.py" \
+# The gate's own `report` comes back through --emit-json rather than off stderr: the previous code
+# forwarded stderr through a process substitution the hook could outrun, so a NO-GO's reasoning was
+# lost exactly when it was needed. Stderr is captured to a file for the same reason.
+VJSON="$(mktemp "${TMPDIR:-/tmp}/spec-review-verdict.XXXXXX")"
+GERR="$(mktemp "${TMPDIR:-/tmp}/spec-review-stderr.XXXXXX")"
+REPORT="$(mktemp "${TMPDIR:-/tmp}/spec-review-report.XXXXXX")"
+VOUT="$(mktemp "${TMPDIR:-/tmp}/spec-review-token.XXXXXX")"
+cleanup () { rm -f "$VJSON" "$GERR" "$REPORT" "$VOUT" ${BUNDLE:+"$BUNDLE"}; }
+trap cleanup EXIT
+# `exec` replaces this shell, so the EXIT trap would never run — clean up first, by hand.
+bypass_and_exit () { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "spec-review-auto"; }
+
+# Background + `wait`, not a foreground call: bash defers a trap until the running foreground
+# command returns, so a hook killed mid-call could not report the kill until the call had finished —
+# and the call outlived the hook either way. `wait` is interruptible, so the kill is reported at once
+# and the gate child goes down with the hook.
+python3 "$SD/gate_runner.py" \
   --rubric "$SD/../prompts/spec-review-rubric.md" \
   --model "${GATE_MODEL:-google/gemini-3.1-pro-preview}" --author-family "${AUTHOR_FAMILY:-anthropic}" \
   ${GATE_PROVIDER:+--provider "$GATE_PROVIDER"} \
-  --print-verdict --target "$TARGET" 2> >(cat >&2))
-rc=$?
-[ -n "$BUNDLE" ] && rm -f "$BUNDLE"
+  --emit-json "$VJSON" \
+  --print-verdict --target "$TARGET" >"$VOUT" 2>"$GERR" &
+gate_pid=$!
+trap 'kill -TERM "$gate_pid" 2>/dev/null; cat "$GERR" >&2; echo "spec-review: HOOK KILLED by the harness (signal) while the gate was still running — this is NOT a gate verdict. The gate did not answer; the call was terminated." >&2; exit 2' TERM INT
+wait "$gate_pid"; rc=$?
+trap 'echo "spec-review: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2; exit 2' TERM INT
+VERDICT="$(cat "$VOUT")"
+cat "$GERR" >&2
+[ -n "$BUNDLE" ] && rm -f "$BUNDLE" && BUNDLE=""
 
-# Fail closed: any error (missing key, same-family, no verdict) stops — do not approve.
+# Fail closed: any error (missing key, same-family, timeout, no verdict) stops — do not approve.
+# The runner's stderr above names which; do not flatten it back to "errored".
 if [ "$rc" -ne 0 ]; then
-  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-review-auto"
-  echo "spec-review (auto): gate errored (fail closed) — review_status left pending" >&2
+  [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
+  echo "spec-review (auto): gate did not reach a verdict (fail closed) — review_status left pending;" >&2
+  echo "  the cause is named above." >&2
   exit 2
 fi
+
+python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("report") or "")
+except Exception:
+    pass' "$VJSON" > "$REPORT" 2>/dev/null
 
 case "$VERDICT" in
   GO|REVIEW)
@@ -124,12 +177,18 @@ case "$VERDICT" in
     fi
     # Record the body this verdict was reached against, so frontmatter-only edits don't re-gate and
     # the next re-gate can diff against exactly what was approved here.
-    python3 "$SD/spec_gate_cache.py" stamp "$FILE" review >/dev/null 2>&1
+    python3 "$SD/spec_gate_cache.py" stamp "$FILE" review "$VERDICT" "$REPORT" >/dev/null 2>&1
     exit 0
     ;;
   *)  # NO-GO or anything unexpected
-    [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-review-auto"
+    # Recorded on rejection too: a hash stamped only on passes is a rejection with no record of
+    # which text was rejected, and no reasoning to answer.
+    python3 "$SD/spec_gate_cache.py" stamp "$FILE" review "$VERDICT" "$REPORT" >/dev/null 2>&1
+    [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
     echo "spec-review (auto): NO-GO — review_status stays pending; route back to avenger-spec-writer" >&2
+    echo "--- spec-review gate report ---" >&2
+    cat "$REPORT" >&2
+    echo "--- end spec-review gate report ---" >&2
     exit 2
     ;;
 esac

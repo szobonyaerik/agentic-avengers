@@ -94,16 +94,11 @@ fi
 #     runtime is Anthropic, so the agent can never differ in family from the implementer. What must be
 #     decorrelated is $VERIFIER_GATE_MODEL, the model scripts/verifier_review.sh sends the tests to.
 model_token () { grep -m1 '^model:' "$1" 2>/dev/null | sed 's/.*:[[:space:]]*//;s/[[:space:]].*//' | tr '[:upper:]' '[:lower:]'; }
-model_family () {
-  case "$1" in
-    claude*|opus*|sonnet*|haiku*) echo anthropic ;;
-    gpt*|o[0-9]*)                 echo openai ;;
-    gemini*|google*)              echo google ;;
-    deepseek*)                    echo deepseek ;;
-    */*)                          model_family "${1#*/}" ;;   # strip a vendor/ or openrouter/ prefix
-    *) return 1 ;;
-  esac
-}
+# One vendor table, not two. This used to carry its own `case` over four vendors; a second copy of
+# the pipeline's only independence primitive is a copy that drifts, and the one that drifted first
+# would be the one nobody was reading. scripts/model_vendors.py is the table; unknown still exits
+# non-zero here, so the caller's loud refusal below is unchanged.
+model_family () { python3 "$SCRIPT_DIR/model_vendors.py" family "$1"; }
 cross_family_check () {
   local gate="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}" gfam impl itok ifam
   gfam="$(model_family "$gate")" || { echo "  ✗ unknown VERIFIER_GATE_MODEL family: '$gate'" >&2; return 1; }

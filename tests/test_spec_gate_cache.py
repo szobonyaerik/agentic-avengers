@@ -155,3 +155,75 @@ class TestParsing:
 
     def test_trailing_whitespace_is_not_a_content_change(self):
         assert body_hash("body\n") == body_hash("body\n\n  ")
+
+
+class TestVerdictIsRecordedWithTheHash:
+    """A hash stamped only on passes is a rejection with no record of what was rejected.
+
+    Only GO and REVIEW used to stamp, so a NO-GO left the spec exactly as it found it. Two things
+    followed: the run kept no trace of which text had been refused, and the NEXT frontmatter-only
+    edit found an unchanged body with no verdict attached — which the caller read as "nothing to do".
+    """
+
+    def test_the_verdict_is_stamped_next_to_the_hash(self):
+        text = stamp(SPEC, "fidelity", "NO-GO")
+        assert "fidelity_gated_verdict: NO-GO" in text
+        assert "fidelity_gated_hash:" in text
+
+    def test_check_hands_back_the_verdict_it_recorded(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(stamp(SPEC, "fidelity", "NO-GO"))
+        assert main(["check", str(spec), "fidelity"]) == UNCHANGED
+        assert capsys.readouterr().out.strip() == "NO-GO"
+
+    def test_a_stamp_from_before_verdicts_were_recorded_reads_as_a_pass(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        """Historically only GO and REVIEW stamped at all, so a bare hash IS a pass. Inferring
+        anything else would re-gate every spec approved before this change."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        legacy = stamp(SPEC, "fidelity", "GO").replace("fidelity_gated_verdict: GO\n", "")
+        spec.write_text(legacy)
+        assert main(["check", str(spec), "fidelity"]) == UNCHANGED
+        assert capsys.readouterr().out.strip() == "GO"
+
+    def test_each_gate_records_its_own_verdict(self, tmp_path, capsys, monkeypatch):
+        """A shared key would let the first gate's verdict answer for the second's."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(stamp(stamp(SPEC, "fidelity", "GO"), "review", "NO-GO"))
+        assert main(["check", str(spec), "fidelity"]) == UNCHANGED
+        assert capsys.readouterr().out.strip() == "GO"
+        assert main(["check", str(spec), "review"]) == UNCHANGED
+        assert capsys.readouterr().out.strip() == "NO-GO"
+
+    def test_a_changed_body_is_still_gated_whatever_was_recorded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(stamp(SPEC, "fidelity", "NO-GO") + "\n- R1.1.2 — another requirement.\n")
+        assert main(["check", str(spec), "fidelity"]) == NEEDS_GATING
+
+    def test_the_report_is_kept_and_handed_back(self, tmp_path, monkeypatch, capsys):
+        """So a replayed rejection carries reasoning rather than just a token."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(SPEC)
+        report = tmp_path / "report.txt"
+        report.write_text("R1.1.1 has no observable acceptance criterion.")
+
+        main(["stamp", str(spec), "fidelity", "NO-GO", str(report)])
+        capsys.readouterr()
+
+        assert main(["report", str(spec), "fidelity"]) == NEEDS_GATING
+        assert "no observable acceptance criterion" in capsys.readouterr().out
+
+    def test_a_missing_report_is_reported_as_missing_not_as_empty(self, tmp_path, monkeypatch):
+        """The kept report is rebuildable scratch; its absence must be distinguishable from a
+        rejection that genuinely said nothing."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(SPEC)
+        main(["stamp", str(spec), "fidelity", "NO-GO"])
+        assert main(["report", str(spec), "fidelity"]) == UNCHANGED

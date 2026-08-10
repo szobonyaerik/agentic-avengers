@@ -13,6 +13,7 @@ paid call is swapped out.
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,15 @@ pytestmark = pytest.mark.subprocess(
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def runner_abi() -> str:
+    """The ABI string the real runner announces, read from it rather than restated here."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from gate_runner import RUNNER_ABI
+
+    return RUNNER_ABI
+
 
 SPEC = """---
 feature: demo
@@ -36,9 +46,24 @@ review_status: {review_status}
 
 # A stub gate_runner: records what it was asked to judge, then approves. The hook's own logic is the
 # subject; whether a real model says GO is not.
-STUB_RUNNER = """import sys
+#
+# It answers `--identify` because the hook refuses a runner that cannot say what it is
+# (scripts/gate_runner_guard.sh). That is the intended line: a DELIBERATE double identifies itself,
+# an accidental scaffold does not. The ABI is interpolated from the runner itself so the two cannot
+# drift apart — a stub pinned to a stale ABI would fail for the wrong reason.
+STUB_RUNNER = """import hashlib
+import json
+import sys
+
+if "--identify" in sys.argv:
+    digest = hashlib.sha256(open(sys.argv[0], "rb").read()).hexdigest()
+    print("{abi} " + digest)
+    sys.exit(0)
 target = sys.argv[sys.argv.index("--target") + 1]
 open(sys.argv[0] + ".target", "w").write(open(target).read())
+if "--emit-json" in sys.argv:
+    with open(sys.argv[sys.argv.index("--emit-json") + 1], "w") as fh:
+        json.dump({{"verdict": "GO", "report": "stub approves"}}, fh)
 print("GO")
 """
 
@@ -53,7 +78,7 @@ def project(tmp_path: Path) -> Path:
     (tmp_path / "tests" / "test_ok.py").write_text(CLEAN_TEST)
     (tmp_path / "docs").mkdir()
     shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
-    (tmp_path / "scripts" / "gate_runner.py").write_text(STUB_RUNNER)
+    (tmp_path / "scripts" / "gate_runner.py").write_text(STUB_RUNNER.format(abi=runner_abi()))
     return tmp_path
 
 

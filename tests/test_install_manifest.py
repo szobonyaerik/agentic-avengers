@@ -28,12 +28,23 @@ SCANNED = ("agents", "commands", "hooks", "prompts", "scripts", "skills", ".open
 
 SKIP_DIR_PARTS = {".git", "node_modules", "__pycache__"}
 
-# A reference to a script, in either of the two forms the runtimes use:
+# A reference to a script, in any of the forms the runtimes use:
 #   ${CLAUDE_PLUGIN_ROOT}/scripts/x.py   (plugin root, from skills/commands/agents/hooks)
 #   $SD/x.sh                             (the running script's own dir, from scripts/*.sh)
+#   $SCRIPT_DIR/x.py                     (same idea, gate_ci.sh's spelling)
 REFERENCE = re.compile(
     r"\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/([A-Za-z0-9_.-]+\.(?:py|sh))"
     r"|\$SD/([A-Za-z0-9_.-]+\.(?:py|sh))"
+    r"|\$SCRIPT_DIR/([A-Za-z0-9_.-]+\.(?:py|sh))"
+)
+
+# A python script's dependency on a SIBLING script, which the shell forms above cannot see:
+#   from proc_group import run_bounded      /      import model_vendors
+# A vendored install that ships the importer without the imported module fails at import time — on
+# the gate path, where a missing module is a hook that dies with no verdict. Same class of defect as
+# the shell references above, one layer down, and previously invisible to this test.
+PY_IMPORT = re.compile(
+    r"^\s*(?:from\s+([A-Za-z0-9_]+)\s+import\s|import\s+([A-Za-z0-9_]+)\s*$)", re.M
 )
 
 # Referenced but deliberately outside the vendored surface. Reason per entry, on the record.
@@ -64,9 +75,15 @@ def references() -> dict[str, set[str]]:
                 text = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
-            for plugin_ref, sd_ref in REFERENCE.findall(text):
-                target = f"scripts/{plugin_ref or sd_ref}"
+            for plugin_ref, sd_ref, script_dir_ref in REFERENCE.findall(text):
+                target = f"scripts/{plugin_ref or sd_ref or script_dir_ref}"
                 found.setdefault(target, set()).add(str(path.relative_to(REPO)))
+            if path.suffix == ".py" and path.parent.name == "scripts":
+                for from_mod, plain_mod in PY_IMPORT.findall(text):
+                    module = from_mod or plain_mod
+                    if (REPO / "scripts" / f"{module}.py").is_file():
+                        found.setdefault(f"scripts/{module}.py", set()).add(
+                            str(path.relative_to(REPO)))
     return found
 
 
