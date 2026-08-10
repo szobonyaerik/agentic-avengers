@@ -227,3 +227,32 @@ class TestVerdictIsRecordedWithTheHash:
         spec.write_text(SPEC)
         main(["stamp", str(spec), "fidelity", "NO-GO"])
         assert main(["report", str(spec), "fidelity"]) == UNCHANGED
+
+    def test_a_rejection_does_not_replace_the_body_the_gate_approved(self, tmp_path, monkeypatch):
+        """The kept body is what the next re-gate diffs against under 'PREVIOUSLY APPROVED'. A
+        rejection that overwrote it would label rejected text as approved, and show the author
+        changes-since-rejection while telling them they were changes-since-approval."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(SPEC)
+        main(["stamp", str(spec), "review", "GO"])
+        approved = previous(spec, "review")
+
+        spec.write_text(spec.read_text() + "\n- R1.1.2 — a requirement the gate refused.\n")
+        main(["stamp", str(spec), "review", "NO-GO"])
+
+        assert previous(spec, "review") == approved
+        assert "the gate refused" not in previous(spec, "review")
+
+    def test_a_rejection_still_records_its_own_hash_and_verdict(self, tmp_path, monkeypatch, capsys):
+        """Leaving the approved body alone must not cost the rejection its record."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        spec = tmp_path / "spec.md"
+        spec.write_text(SPEC)
+        main(["stamp", str(spec), "review", "GO"])
+        spec.write_text(spec.read_text() + "\n- R1.1.2 — a requirement the gate refused.\n")
+        main(["stamp", str(spec), "review", "NO-GO"])
+        capsys.readouterr()
+
+        assert main(["check", str(spec), "review"]) == UNCHANGED
+        assert capsys.readouterr().out.strip() == "NO-GO"

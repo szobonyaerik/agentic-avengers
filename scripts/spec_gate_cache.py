@@ -42,6 +42,11 @@ The verdict lives in the frontmatter, not in the cache, on purpose: the cache is
 and losing it must not turn a recorded NO-GO into an assumed pass. The gate's *report* is kept in the
 cache alongside the body — losing that only costs a less informative replay.
 
+A rejection records its hash, its verdict and its report, but does NOT replace the kept **body**.
+That body is the reference the next re-gate diffs against under the heading "PREVIOUSLY APPROVED",
+and rejected text is not approved text: overwriting it would show the author changes-since-rejection
+while telling them they were changes-since-approval.
+
 Usage:
     spec_gate_cache.py check <spec.md> <gate>      exit 0 = needs gating, 1 = unchanged (prints the
                                                    stored verdict on stdout)
@@ -71,6 +76,9 @@ ACTIONS = ("check", "stamp", "previous", "body", "report")
 #: What a stamp that recorded no verdict meant. Before verdicts were recorded, only GO and REVIEW
 #: stamped at all, so a bare hash is a pass — stated once here rather than inferred at each caller.
 LEGACY_VERDICT = "GO"
+
+#: Verdicts that make the judged body the new reference for "what this gate last approved".
+PASSING = {"GO", "REVIEW", "PASS"}
 
 CACHE_DIR = ".avenger-gate-cache"
 
@@ -233,7 +241,13 @@ def main(argv: list[str] | None = None) -> int:
             print(stored_verdict(split_spec(text)[0], gate))
             return UNCHANGED
         path.write_text(stamp(text, gate, verdict), encoding="utf-8")
-        keep(path, gate, split_spec(text)[1])
+        # The kept BODY is the reference the next re-gate diffs against, under the heading
+        # "PREVIOUSLY APPROVED". A rejection is not an approval, so it records its hash and its
+        # verdict but leaves that reference alone: overwriting it would label the rejected text as
+        # approved, and the author would be shown changes-since-rejection while being told they were
+        # changes-since-approval. With nothing kept at all, the whole spec is gated — safe either way.
+        if (verdict or LEGACY_VERDICT).strip().upper() in PASSING:
+            keep(path, gate, split_spec(text)[1])
         if report_file:
             try:
                 keep(path, gate, Path(report_file).read_text(encoding="utf-8"), "report")
