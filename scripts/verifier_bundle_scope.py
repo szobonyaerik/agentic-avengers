@@ -18,6 +18,19 @@ Three properties this keeps, because each one is a way the scoping could quietly
   * **Carried is not forgotten.** A carried spec's findings are merged back into this run's verdict,
     and an open one there forces NO-GO. Dropping a finding by not re-sending its spec would be a
     fail-open dressed as an optimisation.
+  * **A finding that names no spec is re-derived, not carried** — a stated limit, not an oversight.
+    `localised` in `finalize()` protects the per-spec verdict LABEL; it does not protect per-spec
+    SCOPE. A finding whose `spec_id` resolves to no spec in the phase is stored against nothing, and
+    the `NO-GO` written against every reviewed spec in that case is inert: `plan()` only tests
+    `record["verdict"]` for truthiness, and `NO-GO` is truthy. That is safe because of where such a
+    finding comes from. `verifier_review.sh` assembles the REVIEW SET from its own arguments and
+    emits it in full under `=== REVIEW SET ===` on every run, untouched by any of this scoping, which
+    only ever narrows `=== SPEC REQUIREMENTS ===` and `=== TEST MAPPINGS ===`. An unattributed
+    finding is by definition drawn from that review set rather than from a spec, so its evidence is
+    re-presented unchanged and the finding is raised again instead of remembered. The residual, which
+    the machinery is deliberately not being extended to close: a real reader is a sample, so
+    "re-derived" is what an unchanged input makes possible, not what it guarantees — the same terms
+    every regenerated finding in this pipeline is on, carried spec or not.
   * **No state, no scoping.** A first run, a lost state file, or `VERIFIER_SCOPE=full` sends
     everything — the same bundle as before. The safe direction costs tokens, not correctness.
   * **What was carried is stated**, in the bundle and on stderr and in the verdict artifact. A
