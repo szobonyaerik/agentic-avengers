@@ -263,16 +263,22 @@ def changed_paths(root: Path) -> set[Path] | None:
 
     The union of what is modified against HEAD, what is staged, and what is untracked - so an
     artifact written this session is in scope from the moment it exists, before any commit.
+
+    Every command is pinned to **toplevel-relative** output and joined to the toplevel, because the
+    three do not share a path convention on their own: `ls-files` prints cwd-relative names, and
+    `diff` prints cwd-relative ones under `diff.relative`. Combining them as if they agreed makes an
+    untracked artifact resolve to a path that matches nothing whenever `root` is below the git root -
+    and the guard then stops guarding without saying anything, which is worse than not having it.
     """
     toplevel = _git(root, "rev-parse", "--show-toplevel")
     if not toplevel:
         return None
-    base = Path(toplevel[0])
+    base = Path(toplevel[0]).resolve()
     changed: set[Path] = set()
     for args in (
-        ("diff", "--name-only", "HEAD"),
-        ("diff", "--cached", "--name-only", "--diff-filter=ACM"),
-        ("ls-files", "--others", "--exclude-standard"),
+        ("diff", "--name-only", "--no-relative", "HEAD"),
+        ("diff", "--cached", "--name-only", "--no-relative", "--diff-filter=ACM"),
+        ("ls-files", "--others", "--exclude-standard", "--full-name"),
     ):
         lines = _git(root, *args)
         if lines is None:

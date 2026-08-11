@@ -1,4 +1,4 @@
-"""Tests that install.sh vendors every script the shipped surface calls.
+"""Tests that install.sh vendors every file the shipped surface points at.
 
 SRC_SETS in `scripts/install.sh` is the whole opencode distribution: whatever is not in it does not
 exist in a vendored repo. It has rotted three times in a row, always the same class of defect — a
@@ -13,6 +13,11 @@ adding a script and calling it is enough to move this test, with no list to reme
 `NOT_VENDORED` is the escape hatch, and it is deliberately a decision on the record: an entry needs
 a reason, and the test also fails if an entry stops being referenced at all, so it cannot silently
 outlive its justification.
+
+A template a shipped skill names by path is the same defect wearing different clothes: the skill
+still renders, so nothing fails loudly — the writer simply follows a pointer to a file that is not
+there. `docs/templates/…` is therefore derived exactly like `scripts/…`, so pointing at a template is
+enough to move this test.
 """
 
 import re
@@ -47,6 +52,10 @@ PY_IMPORT = re.compile(
     r"^\s*(?:from\s+([A-Za-z0-9_]+)\s+import\s|import\s+([A-Za-z0-9_]+)\s*$)", re.M
 )
 
+# A template a shipped file sends its writer to, by path:
+#   docs/templates/test-mapping.template.md   /   docs/templates/verdict.template.json
+TEMPLATE_REFERENCE = re.compile(r"docs/templates/([A-Za-z0-9_.-]+\.template\.[A-Za-z0-9]+)")
+
 # Referenced but deliberately outside the vendored surface. Reason per entry, on the record.
 NOT_VENDORED = {
     "scripts/sync_opencode.py": (
@@ -65,7 +74,7 @@ def src_sets() -> list[str]:
 
 
 def references() -> dict[str, set[str]]:
-    """Every `scripts/<file>` the repo invokes, mapped to the files that invoke it."""
+    """Every vendored-surface file the repo points at, mapped to the files that point at it."""
     found: dict[str, set[str]] = {}
     for top in SCANNED:
         for path in sorted((REPO / top).rglob("*")):
@@ -78,6 +87,9 @@ def references() -> dict[str, set[str]]:
             for plugin_ref, sd_ref, script_dir_ref in REFERENCE.findall(text):
                 target = f"scripts/{plugin_ref or sd_ref or script_dir_ref}"
                 found.setdefault(target, set()).add(str(path.relative_to(REPO)))
+            for template in TEMPLATE_REFERENCE.findall(text):
+                found.setdefault(f"docs/templates/{template}", set()).add(
+                    str(path.relative_to(REPO)))
             if path.suffix == ".py" and path.parent.name == "scripts":
                 for from_mod, plain_mod in PY_IMPORT.findall(text):
                     module = from_mod or plain_mod
@@ -91,7 +103,7 @@ def covered_by(sets: list[str], path: str) -> bool:
     return any(path == s or path.startswith(f"{s}/") for s in sets)
 
 
-def test_every_referenced_script_is_vendored_or_explicitly_excluded() -> None:
+def test_every_referenced_file_is_vendored_or_explicitly_excluded() -> None:
     sets = src_sets()
     missing = {
         target: sorted(callers)
@@ -100,12 +112,12 @@ def test_every_referenced_script_is_vendored_or_explicitly_excluded() -> None:
     }
 
     assert not missing, (
-        "these scripts are called by the shipped surface but are not in install.sh's SRC_SETS, "
-        f"so a vendored repo cannot run them: {missing}"
+        "these files are pointed at by the shipped surface but are not in install.sh's SRC_SETS, "
+        f"so a vendored repo cannot reach them: {missing}"
     )
 
 
-def test_referenced_scripts_exist_in_the_repo() -> None:
+def test_referenced_files_exist_in_the_repo() -> None:
     """The mutation_run.sh case: a file referenced by a shipped skill that was never written."""
     absent = {
         target: sorted(callers)

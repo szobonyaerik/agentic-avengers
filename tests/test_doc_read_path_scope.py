@@ -52,6 +52,13 @@ def write_card(root: Path, body: str) -> Path:
     return path
 
 
+def project_under(toplevel: Path) -> Path:
+    """A pipeline root that is NOT the git root — a monorepo package, or a vendored install."""
+    project = toplevel / "packages" / "api"
+    project.mkdir(parents=True, exist_ok=True)
+    return project
+
+
 def commit_all(root: Path) -> None:
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "artifacts")
@@ -107,6 +114,37 @@ def test_a_staged_artifact_is_in_scope(tmp_path: Path) -> None:
     write_card(tmp_path, over_cap())
     git(tmp_path, "add", "-A")
     assert check_artifacts(tmp_path)
+
+
+# --- a root below the git root --------------------------------------------------------------------
+# The three commands do not share a path convention: `ls-files` prints cwd-relative names and `diff`
+# does too under `diff.relative`. Read as if they agreed, every artifact under a non-toplevel root
+# resolves to a path that matches nothing — and the check goes on reporting itself clean while
+# enforcing nothing. These pin the convention at the boundary, not at one call site.
+
+def test_an_untracked_artifact_under_a_subdirectory_root_is_still_enforced(tmp_path: Path) -> None:
+    repo(tmp_path)
+    project = project_under(tmp_path)
+    write_card(project, over_cap())
+    assert any(str(project) in problem for problem in check_artifacts(project))
+
+
+def test_a_modified_artifact_under_a_subdirectory_root_survives_diff_relative(tmp_path: Path) -> None:
+    """`diff.relative=true` is a user's own git config, and it must not disarm the check."""
+    repo(tmp_path)
+    project = project_under(tmp_path)
+    write_card(project, "short")
+    commit_all(tmp_path)
+    git(tmp_path, "config", "diff.relative", "true")
+    write_card(project, over_cap())
+    assert check_artifacts(project)
+
+
+def test_the_scope_is_absolute_whatever_the_root(tmp_path: Path) -> None:
+    repo(tmp_path)
+    project = project_under(tmp_path)
+    card = write_card(project, "short")
+    assert card.resolve() in (changed_paths(project) or set())
 
 
 # --- the full audit -------------------------------------------------------------------------------
