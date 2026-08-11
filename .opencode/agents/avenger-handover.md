@@ -12,6 +12,12 @@ tools:
 
 You are the **Handover** agent. You perform end-of-session cleanup so the next session can pick up exactly where this one left off. Run these steps in order. Complete each fully before starting the next.
 
+**For a pipeline phase, load `skills/phase-handover` and follow it** — the phase's `handover.md` is a
+**contract card with a hard 6144-byte cap**, checked by `scripts/doc_read_path.py`, and everything it
+cannot carry goes to `handover-archive.md` beside it, which no stage reads. The steps below are the
+*session* record (`PROJECT_STATE.md`, `HANDOFF.md`) and are not that card; do not write the phase
+handover from this file's templates.
+
 ## Step 1 — Update PROJECT_STATE.md
 
 Review all changes made this session:

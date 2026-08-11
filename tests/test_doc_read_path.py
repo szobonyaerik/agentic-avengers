@@ -220,3 +220,28 @@ def test_cli_returns_one_on_a_violation_and_zero_when_clean(tmp_path: Path) -> N
     write_card(tmp_path, "short")
     assert main(["check", str(tmp_path)]) == 0
     assert main(["table"]) == 0
+
+
+# --- the documented promises are the code's actual behaviour --------------------------------------
+# A doc asserting behaviour is a promise. These pin the three places this PR states a number in
+# prose, so a later edit to the constant cannot leave the documentation quietly lying.
+
+def test_the_shipped_card_template_fits_the_cap_it_teaches() -> None:
+    template = REPO / "docs" / "templates" / "handover.template.md"
+    assert template.stat().st_size <= HANDOVER_MAX_BYTES, (
+        "the handover template — instructional comments and all — must fit under the cap it asks "
+        "writers to respect"
+    )
+
+
+def test_every_document_stating_the_cap_states_the_real_one() -> None:
+    for rel in ("skills/phase-handover/SKILL.md", "skills/pipeline-conventions/SKILL.md",
+                "CLAUDE.md", "AGENTS.md", "skills/ponytail/SKILL.md"):
+        text = (REPO / rel).read_text(encoding="utf-8")
+        assert str(HANDOVER_MAX_BYTES) in text, f"{rel} names the handover cap but not its real value"
+
+
+def test_every_document_stating_the_report_cap_states_the_real_one() -> None:
+    for rel in ("skills/verifier-triage/SKILL.md", "agents/avenger-verifier.md", "CLAUDE.md"):
+        text = (REPO / rel).read_text(encoding="utf-8")
+        assert str(VERDICT_REPORT_MAX_CHARS) in text, f"{rel} names the report cap but not its value"

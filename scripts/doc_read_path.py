@@ -98,6 +98,8 @@ READ_PATH: dict[str, dict] = {
             "skills/tdd/SKILL.md",
             "skills/verifier-triage/SKILL.md",
             "skills/pipeline-conventions/SKILL.md",
+            "prompts/verifier-review.md",   # tells the reviewer its ABSENCE is never a finding
+            "skills/ponytail/SKILL.md",     # forbids minimising it away — the opposite of a read
         },
     },
     "verdict.json": {
@@ -137,6 +139,10 @@ READ_PATH: dict[str, dict] = {
             "agents/avenger-handover.md",
             "skills/phase-handover/SKILL.md",
             "skills/pipeline-conventions/SKILL.md",
+            # ponytail names it to forbid minimising it away. That is the opposite of a read
+            # directive, and it is on this list by a deliberate edit to the table — which is the
+            # sanctioned way to change the read path, and the only one.
+            "skills/ponytail/SKILL.md",
         },
     },
     "pipeline-observations.md": {

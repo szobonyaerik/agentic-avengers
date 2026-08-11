@@ -42,10 +42,14 @@ readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immedia
 - Bypasses: none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
 
 ## Artifacts
-- verdict:   docs/features/<feature>/phases/<n>-<slug>/verdict.json
-- specs:     docs/features/<feature>/phases/<n>-<slug>/specs/
-- tests:     tests/<feature>/<n>-<slug>/
-- archive:   docs/features/<feature>/phases/<n>-<slug>/handover-archive.md   <!-- not on the read path -->
+<!-- Link every artifact that exists. A link is ~80 bytes; the links are what the card is FOR, and
+     omitting one makes this section lie by omission. That is not a saving. -->
+- verdict:        docs/features/<feature>/phases/<n>-<slug>/verdict.json
+- specs:          docs/features/<feature>/phases/<n>-<slug>/specs/
+- tests:          tests/<feature>/<n>-<slug>/
+- implementation: docs/features/<feature>/phases/<n>-<slug>/implementation-report.md
+- test-execution: docs/features/<feature>/phases/<n>-<slug>/test-execution-report.md
+- archive:        docs/features/<feature>/phases/<n>-<slug>/handover-archive.md   <!-- not on the read path -->
 
 ## Open items
 <!-- A table, not a narrative. Measured: of 8 items carried as prose across 53.6 KB, exactly one was

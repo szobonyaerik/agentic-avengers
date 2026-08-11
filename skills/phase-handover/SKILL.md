@@ -131,7 +131,12 @@ readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immedia
 - verdict:        docs/features/<feature>/phases/<phase>/verdict.json
 - specs:          docs/features/<feature>/phases/<phase>/specs/
 - tests:          tests/<feature>/<phase>/
+- implementation: docs/features/<feature>/phases/<phase>/implementation-report.md
+- test-execution: docs/features/<feature>/phases/<phase>/test-execution-report.md
 - archive:        docs/features/<feature>/phases/<phase>/handover-archive.md   (not on the read path)
+
+<!-- Link every artifact that exists. A link is ~80 bytes and the artifact links are exactly what
+     the card is for; omitting one makes this section lie by omission, which is not a saving. -->
 
 ### Open items
 <One line per item, pointing at the structured record. Do not narrate.>

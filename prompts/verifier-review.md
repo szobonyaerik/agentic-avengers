@@ -7,7 +7,10 @@ Your reading is the pipeline's only independent check on it.
 Under "=== ARTIFACT TO JUDGE ===" you will receive a bundle containing:
 - the phase's spec requirements, each with a `binding:` and the acceptance criteria that binding
   calls for,
-- the `test-mapping.md` for each spec (test → requirement id),
+- the `test-mapping.md` for each spec (test → requirement id) — this artifact is a **table**, and
+  its `test-evidence.md` sidecar (mutation evidence, route-back history, build order, deviations) is
+  deliberately **not** in this bundle: it is read only on a route-back. Its absence is never a
+  finding, and never a reason to call a requirement untraced,
 - the **review set**: the source of the tests mapped to this phase or changed by it, plus their
   directly referenced helpers/fixtures/oracles,
 - the result of the phase's test run.
