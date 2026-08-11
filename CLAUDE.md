@@ -19,7 +19,7 @@ stage: <stage-name>
 model: <model-used>
 verdict: <pass|fail|pending>   # gates only
 created: <ISO-8601-timestamp>
-readers: <who reads this, and when>   # every document; `none (archive of <x>)` is a valid answer
+readers: <who reads this, and when>   # the classes READ_PATH governs; `none (archive of <x>)` counts
 links: <related-artifacts>
 ---
 ```
@@ -47,7 +47,10 @@ deleted; the read directives changed.**
 - `verdict.json` archives a superseded attempt to `verdict-attempt-<n>.json` instead of nesting it,
   and caps `report` at 1500 chars. The schema is frozen — a bespoke top-level key is a finding.
 - **A locked phase leaves the read path.** Later phases read its contract card, not its specs.
-- **Every document declares `readers:`. A document no stage reads does not get written.** This is
+- **Every document the read-path table governs declares `readers:`. A document no stage reads does
+  not get written.** Four classes are deliberately outside that table today — `fidelity-report.md`,
+  `scoped/review-*.md`, `implementation-report.md`, `test-execution-report.md` — and are not claimed
+  to carry the line; whether they belong on the read path is issue #29. This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
   `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
   removed read. **Change the directive at the table, never one caller at a time.** Every entry also

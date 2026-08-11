@@ -15,6 +15,7 @@ So the dangerous direction here is a MISS in two places, and both get pinned bel
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -244,17 +245,81 @@ def test_the_shipped_card_template_fits_the_cap_it_teaches() -> None:
     )
 
 
-def test_every_document_stating_the_cap_states_the_real_one() -> None:
+# The file set here is DERIVED, never pinned. A pinned list is a guard attached to a list, and a list
+# omits things: the first version of this test named five paths and missed `README.md` and
+# `docs/USAGE.md`, both of which hand-copy the cap — so changing the constant would have left two
+# user-facing documents quietly lying while this test stayed green. The invariant is "any file that
+# states a cap states the real one", so the test finds the files by their claim.
+
+DOC_SURFACE_ROOTS = ("docs", "skills", "agents", "commands", "prompts")
+DOC_SURFACE_FILES = ("README.md", "CLAUDE.md", "AGENTS.md", "AVENGERS.md")
+
+# A number presented AS one of these caps — not a bare digit run anywhere in a file. The character
+# pattern is additionally anchored to `report`, because this repo states two other char counts that
+# are legitimately different numbers: VERIFIER_SRC_LIMIT ("400000 chars") and a measured size
+# ("12,991 characters"). A drift check that flagged those would be noise, and noise gets deleted.
+# `(?<![\d,])` keeps a thousands-separated measurement ("12,991 characters") from matching on its
+# tail; the char pattern additionally requires a CAP verb, so a stated measurement or a different
+# limit is not mistaken for this one.
+CAP_VERB = r"(?:capped at|caps[^.\n]{0,24}?at|cap of|under|<=|at most|no more than)\s*\**"
+BYTE_CAP_RE = re.compile(r"(?<![\d,])(\d{3,6})[- ](?:byte|bytes)\b", re.IGNORECASE)
+CHAR_CAP_RE = re.compile(
+    CAP_VERB + r"(?<![\d,])(\d{3,6})[- ](?:char|chars|characters)\b", re.IGNORECASE
+)
+
+
+def doc_surface() -> list[Path]:
+    """Every tracked prose file that could state a cap."""
+    found = [REPO / name for name in DOC_SURFACE_FILES]
+    for root in DOC_SURFACE_ROOTS:
+        found += sorted((REPO / root).rglob("*.md"))
+    return [p for p in found if p.is_file()]
+
+
+def stated_caps(pattern: re.Pattern[str]) -> list[tuple[Path, int]]:
+    return [
+        (path, int(m.group(1)))
+        for path in doc_surface()
+        for m in pattern.finditer(path.read_text(encoding="utf-8"))
+    ]
+
+
+def test_every_document_stating_a_byte_cap_states_the_real_one() -> None:
+    wrong = [(str(p.relative_to(REPO)), n) for p, n in stated_caps(BYTE_CAP_RE)
+             if n != HANDOVER_MAX_BYTES]
+    assert not wrong, (
+        f"these documents state a byte cap that is not HANDOVER_MAX_BYTES={HANDOVER_MAX_BYTES}: "
+        f"{wrong}. Change the constant and this test names every document that drifted — no list to "
+        f"remember to update."
+    )
+
+
+def test_every_document_stating_a_char_cap_states_the_real_one() -> None:
+    wrong = [(str(p.relative_to(REPO)), n) for p, n in stated_caps(CHAR_CAP_RE)
+             if n != VERDICT_REPORT_MAX_CHARS]
+    assert not wrong, (
+        f"these documents state a character cap that is not "
+        f"VERDICT_REPORT_MAX_CHARS={VERDICT_REPORT_MAX_CHARS}: {wrong}"
+    )
+
+
+def test_the_documents_required_to_state_a_cap_still_do() -> None:
+    """The derived check above catches a STALE number; this catches a MISSING one."""
     for rel in ("skills/phase-handover/SKILL.md", "skills/pipeline-conventions/SKILL.md",
                 "CLAUDE.md", "AGENTS.md", "skills/ponytail/SKILL.md"):
         text = (REPO / rel).read_text(encoding="utf-8")
-        assert str(HANDOVER_MAX_BYTES) in text, f"{rel} names the handover cap but not its real value"
-
-
-def test_every_document_stating_the_report_cap_states_the_real_one() -> None:
+        assert str(HANDOVER_MAX_BYTES) in text, f"{rel} must state the handover cap"
     for rel in ("skills/verifier-triage/SKILL.md", "agents/avenger-verifier.md", "CLAUDE.md"):
         text = (REPO / rel).read_text(encoding="utf-8")
-        assert str(VERDICT_REPORT_MAX_CHARS) in text, f"{rel} names the report cap but not its value"
+        assert str(VERDICT_REPORT_MAX_CHARS) in text, f"{rel} must state the report cap"
+
+
+def test_the_derived_check_finds_the_hand_copied_literals() -> None:
+    """Pins the omission that motivated this: README and USAGE hand-copy the cap and are covered."""
+    covered = {str(p.relative_to(REPO)) for p, _ in stated_caps(BYTE_CAP_RE)}
+    assert {"README.md", "docs/USAGE.md"} <= covered, (
+        f"the derived scan no longer reaches the files that hand-copy the cap: {sorted(covered)}"
+    )
 
 
 # --- the declaration has an owner ------------------------------------------------------------------
