@@ -64,7 +64,31 @@ see the cost, since every reading stage reads for correctness and a subprocess i
 scans `$SUBPROC_CHECK_PATHS` (os.pathsep-separated), falling back to `tests/`; set it in the
 project's `.env` when the tests are elsewhere, or the gate scans nothing and says so on stderr.
 
-## Choose your mode from `work_kind` (in `task-analysis.md`)
+## `test-mapping.md` is a table; the evidence lives beside it
+
+`test-mapping.md` carries **the table and nothing else** — requirement id, test names, `level`, one
+sentence of why. Everything else you would otherwise write there goes to **`test-evidence.md`** in
+the same directory: mutation evidence, route-back history, build order, deviations from the spec, and
+tests covering no requirement. **Nothing is deleted; the sidecar is committed.**
+
+The reason is where each file sits on the read path. `test-mapping.md` is re-bundled to the
+cross-family reviewer on every verifier attempt, so a phase pays for it once per attempt; one
+measured feature had **59.3% of its test-mappings as prose outside any table** — 285 KB — riding
+along on every one of those attempts. `test-evidence.md` is opened **on route-back only**, by the
+implementer fixing the finding and by the Verifier checking it, which is exactly when that prose is
+worth its tokens. Give it frontmatter that says so:
+
+```markdown
+---
+feature: <feature>
+phase: <n>-<slug>
+spec: <n>.<k>-<subslug>
+stage: test-evidence
+readers: implementer @ on route-back only; avenger-verifier @ on route-back only
+---
+```
+
+## Choose your mode from `work_kind` (in the spec's own frontmatter)
 
 ### Greenfield (`work_kind: greenfield`) — red before green
 New behavior, no prior contract. Work through the spec's **journeys and `integration` requirements,

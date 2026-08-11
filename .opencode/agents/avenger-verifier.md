@@ -105,9 +105,15 @@ non-JSON, same-family), the phase **does not pass**.
    expansion reasons, test-quality findings, mutation if run — by **pointing to files; never paste
    test contents**. On `pass`, the phase's tests are **locked** (`pipeline-conventions`:
    *locked-after-verify*).
-7. **Re-run: merge, don't clobber.** If a prior `verdict.json` exists, regenerate findings, recompute
-   each `id`, and **carry forward** `break_glass` / `waiver_reason` / `waived_by` / `waived_at` for any
-   finding whose `id` still matches — an engineer may have waived it. A waiver is honored only with a
+7. **Re-run: merge, don't clobber — and archive the attempt you superseded.** If a prior
+   `verdict.json` exists, regenerate findings, recompute each `id`, and **carry forward**
+   `break_glass` / `waiver_reason` / `waived_by` / `waived_at` for any finding whose `id` still
+   matches — an engineer may have waived it. Write the superseded attempt out to
+   `verdict-attempt-<n>.json` beside the verdict and leave only its number and a one-line outcome in
+   the live file; never nest a `previous_attempts[]` archive inside a file that phase-handover and
+   feature close both open. Keep `report` under **1500 characters** — it is the headline judgement
+   and what the structured fields cannot say, not a prose retelling of `tests`, `coverage` and
+   `findings`. Rules and the measured sizes are in `skills/verifier-triage`. A waiver is honored only with a
    non-empty `waiver_reason` (any explanation counts; a missing reason still blocks). A waived finding
    is non-blocking (`status: acknowledged`) and drops out of `routed`; record the acknowledgment by
    running `scripts/bypass_log.sh verifier <finding-id> <waived_by>` with the `waiver_reason` in

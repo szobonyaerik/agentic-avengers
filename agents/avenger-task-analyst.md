@@ -54,6 +54,7 @@ type: task-analysis
 status: draft
 work_kind: greenfield | migration | refactor
 created: YYYY-MM-DD
+readers: avenger-solution-architect @ once, at feature start
 ---
 
 # Task Analysis: <Task Title>
@@ -121,3 +122,7 @@ created: YYYY-MM-DD
 - You do NOT create the implementation plan or spec files — those are the Planner's and Spec Writer's.
 - You do NOT make architectural decisions — you surface options and constraints.
 - You do NOT write any file other than `docs/features/<feature>/task-analysis.md`.
+- Your brief has **one reader**: the Solution Architect, once, at feature start. It is not on the
+  per-spec read path and nothing downstream opens it for a field. `work_kind` here is the feature's
+  default; each spec then **carries its own** in its frontmatter, which is what the implementer and
+  spec-review read. Write for the architect, not for a stage that will never open this file.

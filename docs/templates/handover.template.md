@@ -1,30 +1,58 @@
 ---
 feature: <feature>
 phase: <n>-<slug>
-status: done
-verified: YYYY-MM-DD
+stage: handover
+model: <model>
+created: YYYY-MM-DD
+status: green
+next: <next-phase-slug | e2e | ship>
+verdict: pass | pass (bypassed) | fail   <!-- from verdict.json in this phase dir -->
+mutation: n/a (off) | <score> (policy: <enforce|advisory>)
+readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
 ---
 
-# Phase <n>-<slug> — Handover
+<!-- THIS IS A CONTRACT CARD, NOT A RECORD. HARD CAP: 6144 bytes, checked by
+     `python3 scripts/doc_read_path.py check .` — over the cap is a fail.
+     Everything this card cannot carry goes to handover-archive.md beside it, which NO stage reads.
+     Nothing is deleted; it is relocated off the read path.
+     Two tests before any paragraph enters this file — see skills/phase-handover:
+       1. Restatement — is the fact already in verdict.json / gate-overrides.log / docs/lessons/ /
+          git log? Then link to it; do not re-narrate it.
+       2. Reader — name the agent that reads this paragraph AND the decision it changes. If you
+          cannot name both, it belongs in the archive. -->
 
-## What this phase delivered
+# Phase <n>-<slug> — contract card
 
-## Specs in this phase
-| Spec | Status | Verifier |
-|------|--------|----------|
-| <n>.1-<subslug> | ✅ done | pass |
+<!-- 5 LINES MAX: what this phase delivered and what the next one depends on. Not 5 paragraphs. -->
 
-## Decisions & deviations
+## Binding contracts (later phases must not break these)
+<!-- The one thing that exists nowhere else. One row each — no prose. -->
+| contract | shape | defined in |
+|----------|-------|------------|
+| <name>   | <signature / fields / error mapping> | <repo-relative path> |
+
+## Decisions locked in
+<!-- One line each, naming the file that ENFORCES the decision. Reasoning goes in the archive. -->
+- <decision> — enforced by `<path>`
 
 ## Gate record
-- Verifier: pass | pass (bypassed) | fail   <!-- verdict.json in this phase dir -->
-- Test-quality review: clean | findings routed; scope: targeted | expanded (<reason>)
+- Verifier: pass | pass (bypassed) | fail
+- Test-quality review: clean | findings routed; scope: targeted | expanded
 - Mutation: n/a (off) | <score> (policy: <enforce|advisory>)
-- Bypasses (break-glass): none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
-  - Whole-gate (`GATE_BYPASS`): none | gate / who / when / reason
-  - Per-finding (verdict.json `break_glass`): none | finding-id / who / when / reason
+- Bypasses: none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
 
-## Contracts delivered (must not be broken by later phases)
+## Artifacts
+- verdict:   docs/features/<feature>/phases/<n>-<slug>/verdict.json
+- specs:     docs/features/<feature>/phases/<n>-<slug>/specs/
+- tests:     tests/<feature>/<n>-<slug>/
+- archive:   docs/features/<feature>/phases/<n>-<slug>/handover-archive.md   <!-- not on the read path -->
 
-## Next step
-> <!-- exact instruction for the next phase/session -->
+## Open items
+<!-- A table, not a narrative. Measured: of 8 items carried as prose across 53.6 KB, exactly one was
+     ever picked up by a later phase. The id carried them, not the story. -->
+| id | one-line title | where the detail lives |
+|----|----------------|------------------------|
+| OBS-<n> | <title> | verdict.json#observations[<n>] |
+
+## Next phase
+> <next-phase-slug> — needs from this phase: <the one or two things it depends on>.

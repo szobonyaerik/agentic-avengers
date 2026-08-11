@@ -42,7 +42,7 @@ the reason through `scripts/bypass_reason.sh` so it stays one parseable record. 
 ```mermaid
 flowchart TD
     start(["New task"]) --> ta["task-analyst"]
-    ta -.-> taA[/"task-analysis.md · sets work_kind"/]
+    ta -.-> taA[/"task-analysis.md · read once, by solution-architect"/]
     ta --> sa["solution-architect"]
     sa -.-> saA[/"overview.md"/]
     sa --> ip["implementation-planner"]
@@ -76,7 +76,9 @@ flowchart TD
 
 ```
 PLAN
-  task-analyst        -> docs/features/<feat>/task-analysis.md   (scope via grill-me; sets work_kind)
+  task-analyst        -> docs/features/<feat>/task-analysis.md   (scope via grill-me; feature default
+                         work_kind. READ ONCE, by solution-architect — each spec then carries its own
+                         work_kind in frontmatter, so no per-spec stage opens this file)
   solution-architect  -> docs/features/<feat>/overview.md
   implementation-planner -> docs/features/<feat>/plan.md         (phases; each = 1+ candidate specs <n>.<k>)
 
@@ -94,7 +96,8 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
     Those two gates are also what pre-agrees the SEAMS the tests will be written at.
 
   backend/frontend implementer -> tests/<feat>/<n>-<slug>/<n>.<k>-<subslug>/ + src/
-                 + that spec's test-mapping.md
+                 + that spec's test-mapping.md (the TABLE) and test-evidence.md
+                   (mutation evidence, route-back history, build order — read on route-back only)
                  skills/tdd, mode by work_kind:
                    greenfield -> red -> green, one vertical slice at a time
                    migration  -> parity-first; the EXISTING suite is the contract
@@ -112,7 +115,10 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
   mutation (optional; MUTATION_POLICY off by default | advisory | enforce)
                  an extra signal, NOT the independence mechanism
   breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
-  handover -> .../phases/<n>-<slug>/handover.md   (mirrors the verdict + any waived findings)
+  handover -> .../phases/<n>-<slug>/handover.md   CONTRACT CARD, hard cap 6144 bytes
+                 binding contracts + decisions + artifact links + next phase; mirrors the verdict
+                 and any waived findings. Everything else -> handover-archive.md, which NO stage
+                 reads. Checked by scripts/doc_read_path.py, not merely asked for.
 
 FEATURE CLOSE (once, after the final phase is green)
   implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
@@ -193,7 +199,8 @@ agentic-avengers/
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
-├── docs/templates/        spec / plan / overview / task-analysis / handover / verdict templates
+├── docs/templates/        spec / plan / overview / task-analysis / handover (+ archive) /
+│                          test-evidence / verdict templates
 ├── docs/rubrics/          overview + plan rubrics
 ├── docs/lessons/          committed, team-shared lessons log (see the self-improvement skill)
 ├── cosmic-ray.toml        mutation base config (the gate diff-scopes a copy per phase)

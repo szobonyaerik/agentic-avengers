@@ -22,7 +22,7 @@ You receive an implementation plan (from the Planner) and produce **one-or-more 
 2. **Read the overview** at `docs/features/<feature>/overview.md` for architecture, interfaces, and decisions to reference — don't restate them.
 3. **Study the codebase**: gather concrete details — existing interfaces, patterns, real file paths.
 4. **Write the spec file(s)** for the spec(s) you've been asked to produce (all of a phase up front, or just the current spec) at `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`, using the phase/spec numbers and slugs from the plan and following the contract below.
-5. **Hold coherence**: honor the plan's "Notes for the Spec Writer", and for phase 2+ don't contradict any contract a prior phase's `handover.md` marked delivered.
+5. **Hold coherence**: honor the plan's "Notes for the Spec Writer", and for phase 2+ don't contradict any contract a prior phase's **contract card** (`handover.md` — the card is the whole file, capped at 6 KB) marked delivered. **Read the cards, not the prior phases' specs.** A phase the Verifier passed is locked and settled, and its contracts are on its card by construction; re-reading its specs is the largest avoidable read in this stage (`pipeline-conventions`: *The document read path*).
 
 ## Output location — one file per numbered spec
 
@@ -47,9 +47,12 @@ feature: <feature>
 phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 depends_on: [<prior spec ids, e.g. 1.1, 1.2>]
+work_kind: greenfield | migration | refactor   # the implementer's test mode — carried HERE
+criticality: standard | critical
 status: draft
 review_status: pending        # flipped to `approved` only by /spec-review (human grill-me)
 fidelity_verdict: pending     # set to GO|REVIEW|NO-GO by the automated Fidelity Gate
+readers: fidelity gate @ on write; spec-review @ per spec; implementer @ once; verifier bundle @ changed specs only
 ---
 
 # <Spec title>
@@ -120,6 +123,13 @@ Verifier passes the phase: `pipeline-conventions`: *locked-after-verify*.)
 ## Guidelines
 
 - **Self-contained and independently testable**: Each spec must be implementable and gated without reading other specs. Reference the overview; don't restate it.
+- **Carry every scalar a downstream stage needs in this spec's own frontmatter** — `work_kind`,
+  `criticality`, `review_status`, `fidelity_verdict`, and the `readers:` line. **Never send a reader
+  to another document for a single field.** A stage that fires per spec pays the whole document's
+  cost for one enum, every time; `pipeline-conventions` § *The document read path* has the measured
+  case and is the rule.
+- **Declare `readers:`.** Every pipeline document states who reads it and when, in its own
+  frontmatter. A document no stage reads does not get written.
 - **Concrete**: Include actual file paths, function signatures, data types — no hand-waving.
 - **Stable requirement IDs**: Every requirement gets an id `R<n>.<k>.<m>` (e.g. `R1.1.1`, `R1.1.2`). These IDs are the contract — the implementer traces each test to one in `test-mapping.md`.
 - **Tiered binding — the rule that decides how big the suite gets.** Every requirement declares

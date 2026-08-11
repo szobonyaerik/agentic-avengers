@@ -76,8 +76,15 @@ A real second opinion, not a rubber stamp — it fails closed and routes NO-GO b
 ## HITL mode (default)
 Load the `grill-me` and `spec-review-checklist` skills, then:
 
-1. **Read context first.** Read the spec, its `overview.md`, its `task-analysis.md` (for `work_kind`),
-   and any prior phase `handover.md`. Explore the referenced code paths. Do not ask what these answer.
+1. **Read context first — and only what the read path gives you.** Read the spec (whole; `work_kind`
+   and `criticality` are in *its* frontmatter, so no second document is opened for them), the
+   `## Contracts and Decisions` header of its `overview.md`, and the **immediately prior phase's
+   contract card** (`handover.md`, capped at 6 KB) — not every prior phase's, and not the card's
+   archive. Explore the referenced code paths. Do not ask what these answer.
+   This scope is not a suggestion and it is not local to this command: it is
+   `skills/pipeline-conventions` § *The document read path*, which owns the table, the reasons and
+   the measured costs. This stage fires **once per spec**, so everything it opens is multiplied by
+   the spec count — which is why this is the stage the read path is strictest about.
 2. **Check the Fidelity Gate didn't hard-block.** If the spec's `fidelity_verdict` is `NO-GO`, stop —
    route back to the Spec Writer before a review is worth doing.
 3. **Check whether this is a re-gate.** If the spec is already `review_status: approved` **and**

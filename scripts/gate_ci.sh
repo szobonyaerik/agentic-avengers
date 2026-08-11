@@ -89,6 +89,16 @@ if [ "$FULL" -eq 1 ]; then
   done < <(find docs/features -type f -name handover.md 2>/dev/null)
 fi
 
+# 1bb) The document read path — the artifacts obey their declared readers and caps, and no stage
+#      instruction has quietly re-acquired a read that was removed. The second half is the one that
+#      matters over time: the cost this guards against came back one caller at a time last time, so
+#      the check is attached to the invariant (scripts/doc_read_path.py owns the table) rather than
+#      to any single command.
+echo "• read path: docs/features artifacts + canonical stage instructions"
+if ! python3 "$SCRIPT_DIR/doc_read_path.py" check --sources "$ROOT"; then
+  record_fail "read-path"
+fi
+
 # 1c) Cross-family assertion — on the model that actually FORMS THE JUDGEMENT.
 #     Checking the Verifier agent's own `model:` would be meaningless here: every subagent in this
 #     runtime is Anthropic, so the agent can never differ in family from the implementer. What must be

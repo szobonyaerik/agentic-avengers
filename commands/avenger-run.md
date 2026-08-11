@@ -492,9 +492,15 @@ procedure and the triage step in `skills/pipeline-retrospective`.
   `scripts/bypass_reason.sh` so `gate-overrides.log` keeps one parseable record per bypass. See
   `skills/pipeline-conventions`.
 - **Never skip a stage because it looks unnecessary.** The resolver decides; you execute.
-- Respect `work_kind` (greenfield | migration | refactor) for the implementer's test mode.
+- Respect `work_kind` (greenfield | migration | refactor) for the implementer's test mode. It is in
+  **the spec's own frontmatter** — no stage opens a second document for it.
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.
 - Integration-level tests by default; a `narrow` test needs written justification in `test-mapping.md`.
+- **Documentation cost is read frequency, not size.** Each stage reads what
+  `skills/pipeline-conventions` § *The document read path* gives it and no more — the contract card
+  rather than a whole handover, a header rather than a whole overview, the mapping table rather than
+  its evidence sidecar. `python3 scripts/doc_read_path.py check --sources .` enforces it, and CI runs
+  the same check.
 - On any fail-closed gate: **stop and explain**. Never push past it.
 
 ## 8. Report

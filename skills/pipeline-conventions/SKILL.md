@@ -42,9 +42,12 @@ The implementer authors **both tests and code** test-first (there is no separate
     phases/<n>-<slug>/
       specs/<n>.<k>-<subslug>/
         spec.md
-        test-mapping.md           # per SPEC, not per phase
+        test-mapping.md           # per SPEC, not per phase — the TABLE, and nothing else
+        test-evidence.md          # mutation evidence, route-back history, build order, deviations
       verdict.json                # the Verifier's persisted verdict for the phase
-      handover.md                 # written after the Verifier passes the phase
+      verdict-attempt-<n>.json    # a superseded attempt, archived out of verdict.json
+      handover.md                 # the phase's CONTRACT CARD, written after the Verifier passes
+      handover-archive.md         # everything the card does not carry
   tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/...
   tests/e2e/<feature>/...         # feature-level only
   ```
@@ -53,6 +56,52 @@ The implementer authors **both tests and code** test-first (there is no separate
   every requirement not marked `binding: none` appears in at least one row; an inherited migration
   suite need not be exhaustively remapped.
 - Artifact templates live in `docs/templates/`.
+
+## The document read path — what decides documentation cost
+
+**Documentation cost is not size. It is `size x how often the document is read x how long it stays
+resident in context`.** Every intuition that targets bytes on disk targets the wrong number, and a
+measured run says so plainly: `task-analysis.md` is 31 KB and trivial, and cost **~465k tokens**,
+because two stages opened it on every one of 30 specs **to read one frontmatter field**.
+`handover.md` held 272 KB and cost **485k-1,475k tokens**, because every spec write and every spec
+review re-read *every prior phase's* handover — a quadratic, and phase 8 alone paid ~527k tokens
+before it wrote a line. Meanwhile `spec.md` was **990 KB, the largest artifact on disk**, and cost
+comparatively little, because each one is read mostly once, by its own implementer. Nothing was
+deleted to fix this; the read directives changed.
+
+**`scripts/doc_read_path.py` is the table**, and it is the only place the path is declared —
+`python3 scripts/doc_read_path.py table` prints it. The rules it encodes:
+
+| document | read by | extent |
+|---|---|---|
+| `task-analysis.md` | the Solution Architect, **once, at feature start** | whole |
+| `overview.md` | planner + Spec Writer whole; **spec-review reads the `## Contracts and Decisions` header only** | whole / header |
+| `plan.md` | the Spec Writer, per spec | whole |
+| `spec.md` | its own gates and its own implementer; the verifier bundle, changed specs only | whole |
+| `test-mapping.md` | the Verifier, per phase | **the table** |
+| `test-evidence.md` | **on route-back only** | whole |
+| `verdict.json` | phase-handover, feature close | whole; `report` ≤ 1500 chars |
+| `verdict-attempt-<n>.json` | **nobody** — archive | — |
+| `handover.md` | the Spec Writer (prior cards), spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
+| `handover-archive.md` | **nobody** — archive | — |
+
+Four rules follow from it, and each one is enforced rather than requested:
+
+- **Every pipeline document declares `readers:` in its own frontmatter** — who reads it and when.
+  **A document no stage reads does not get written**, and an archive says so explicitly
+  (`readers: none (archive of handover.md)`). This is the rule that stops the recurrence: a new
+  artifact class that nobody can name a reader for is caught while it is being invented, not by the
+  next cost measurement. `doc_read_path.py check` fails a document that declares none.
+- **Never send a reader to another document for a single field.** Every scalar a downstream stage
+  needs rides in the frontmatter of the document that stage is already reading — `work_kind`,
+  `criticality`, `binding` counts. This is what took `task-analysis.md` off the per-spec path.
+- **A locked phase leaves the read path.** Once the Verifier passes a phase, its `spec.md` files are
+  settled and a later phase reads that phase's **contract card**, not its specs. The only stage that
+  re-opens a verified spec is the verifier bundle, and only for specs the diff touched.
+- **Change the directive where the reading is decided — the table — never one caller at a time.**
+  `doc_read_path.py check --sources` scans `agents/`, `skills/`, `commands/` and `prompts/` and
+  fails when a stage instruction names a document that left the read path. A guard bolted onto one
+  command is a guard the next command does not have.
 
 ## Tiered requirement binding — what decides suite size
 
@@ -187,7 +236,8 @@ Three consequences worth stating outright:
   passes the phase; from that point the phase's tests are **locked** and weakening them requires
   re-verification. Tests are derived from the spec, never shaped to fit code. Locked forbids
   *weakening*, not *adding*: a Breaker counterexample or a surviving mutant routes back to the
-  implementer to add a case.
+  implementer to add a case. **A locked phase also leaves the read path**: its specs are settled, so
+  a later phase reads its **contract card** instead — see *The document read path* above.
 - **Independence lives in the Verifier:** because the implementer writes its own tests, a different
   model family reads the bounded phase review set for tautological / implementation-coupled /
   missing-edge anti-patterns and routes gamed tests back. Full test execution stays broad; semantic

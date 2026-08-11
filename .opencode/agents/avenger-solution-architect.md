@@ -34,7 +34,9 @@ optimization systems, or hybrid stacks. You discover the architecture; you do no
 ## Process
 
 ### Step 1 — Read your input
-Read the Task Analyst's scoped problem (the feature brief and constraints). That defines what you are
+Read the Task Analyst's scoped problem at `docs/features/<feature>/task-analysis.md` — the feature
+brief and constraints. **You are its only reader, and you read it once**; no later stage opens it, so
+anything downstream needs must reach `overview.md`. That defines what you are
 designing for.
 
 ### Step 2 — Recon the existing codebase
@@ -62,9 +64,20 @@ feature: <feature>
 type: architecture-overview
 status: draft
 created: YYYY-MM-DD
+readers: avenger-implementation-planner @ once; avenger-spec-writer @ per spec (whole); spec-review @ per spec (## Contracts and Decisions only); e2e-author @ feature close (the goal)
 ---
 
 # <Feature> — Architecture Overview
+
+## Contracts and Decisions
+**A stable header, and the only section some readers open.** The Spec Writer reads this whole file;
+the spec-review gate reads *this section only*, once per spec. So everything a later spec can
+**contradict** belongs here and nowhere else: the interfaces and their signatures, the decisions
+with what each one costs, and the invariants that must hold across phases. One line per item, each
+pointing at where it is defined. If a reader has to go below this header to find out whether a spec
+breaks something, the header is wrong.
+
+Keep it stable across edits — this heading is a read target, not a heading you rename.
 
 ## Summary
 2–4 sentences: what the feature does and the shape of the solution.

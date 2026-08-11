@@ -8,8 +8,8 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
 - Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
-- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `handover.md`)
-- Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`)
+- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `handover.md`, `handover-archive.md`)
+- Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
 ```yaml
 ---
@@ -19,9 +19,41 @@ stage: <stage-name>
 model: <model-used>
 verdict: <pass|fail|pending>   # gates only
 created: <ISO-8601-timestamp>
+readers: <who reads this, and when>   # every document; `none (archive of <x>)` is a valid answer
 links: <related-artifacts>
 ---
 ```
+
+### 1a. The document read path — what decides documentation cost
+**Cost is not size. It is `size x how often it is read x how long it stays resident`.**
+`task-analysis.md` is 31 KB and cost **~465k tokens**, because two stages opened it on every one of
+30 specs to read **one frontmatter field**. `handover.md` held 272 KB and cost **485k-1,475k**,
+because every spec write and every spec review re-read *every prior phase's* handover — phase 8
+alone paid ~527k before writing a line. `spec.md` was **990 KB, the largest artifact on disk**, and
+cost comparatively little, because each is read mostly once, by its own implementer. **Nothing was
+deleted; the read directives changed.**
+
+`scripts/doc_read_path.py` is the one table (`… table` prints it) and the check that enforces it:
+- `handover.md` is a **contract card, capped at 6144 bytes** — binding contracts, decisions,
+  artifact links, next phase. The rest goes to `handover-archive.md`, which **no stage reads**. The
+  ≤5-line summary was always in the template and writers produced 37 KB averages, so it is now
+  checked, and `skills/phase-handover` tells the writer the length the task warrants outright.
+- `work_kind` rides in **the spec's own frontmatter**; `task-analysis.md` is read once, by the
+  Solution Architect. **Never send a reader to another document for a single field.**
+- `overview.md` gains a stable `## Contracts and Decisions` header. **Spec-review reads the header;
+  the spec writer still reads the whole file.**
+- `test-mapping.md` is **the table**; mutation evidence, route-back history, build order and
+  deviations move to `test-evidence.md`, read **on route-back only**.
+- `verdict.json` archives a superseded attempt to `verdict-attempt-<n>.json` instead of nesting it,
+  and caps `report` at 1500 chars. The schema is frozen — a bespoke top-level key is a finding.
+- **A locked phase leaves the read path.** Later phases read its contract card, not its specs.
+- **Every document declares `readers:`. A document no stage reads does not get written.** This is
+  the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
+  `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
+  removed read. **Change the directive at the table, never one caller at a time.**
+
+`docs/lessons/` is untouched and stays at full price — under 2% of the bill, 16 of 18 entries cited
+elsewhere, one drove test design across three phases. It is not where economising belongs.
 
 ### 2. Multi-spec phases + ID scheme
 A phase is an independently verifiable slice holding one or more numbered specs `<n>.<k>`; requirement

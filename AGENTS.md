@@ -13,8 +13,19 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 ## Conventions (always apply)
 1. **Artifacts** under `docs/features/<feature>/` (feature-level: `task-analysis.md`, `overview.md`,
    `plan.md`, `fidelity-report.md`, `scoped/review-*.md`), `docs/features/<feature>/phases/<n>-<slug>/`
-   (`test-mapping.md`, `implementation-report.md`, `test-execution-report.md`, `handover.md`), and
-   spec-level `.../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`. YAML frontmatter on each.
+   (`test-mapping.md`, `test-evidence.md`, `implementation-report.md`, `test-execution-report.md`,
+   `handover.md`, `handover-archive.md`), and spec-level
+   `.../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`. YAML frontmatter on each, **including a
+   `readers:` line** — see 1a.
+1a. **The read path.** Documentation cost is `size x reads x turns resident`, not size:
+   `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
+   `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a
+   **contract card capped at 6144 bytes** (the rest in `handover-archive.md`, which nothing reads),
+   `work_kind` rides in the spec's own frontmatter, spec-review reads `overview.md`'s
+   `## Contracts and Decisions` header only, `test-mapping.md` is the table (evidence in
+   `test-evidence.md`, read on route-back), and a verified phase's specs leave the read path in
+   favour of its card. `scripts/doc_read_path.py` is the table and the check; `check --sources` is
+   what stops a removed read coming back one caller at a time. `docs/lessons/` is untouched.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **Composed quality wall (per spec).** Automated Fidelity Gate on spec write (sets `fidelity_verdict`;
