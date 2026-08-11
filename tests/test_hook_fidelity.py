@@ -151,6 +151,37 @@ def test_an_unchanged_rejected_body_replays_the_rejection(project: Path) -> None
     assert REPORT in result.stderr, "the replay carries the reasoning too"
 
 
+def test_break_glass_is_honoured_on_a_replayed_rejection(project: Path) -> None:
+    """A replayed rejection blocks the turn exactly like a fresh one, so it has to answer to
+    break-glass exactly like a fresh one. It did not: the override was a ONE-SHOT — the stored NO-GO
+    came back on the very next write of the same spec with GATE_BYPASS set and ignored. A bypass
+    silently dropped breaks "never silent" the same way a bypass silently taken does."""
+    spec = write_spec(project)
+    run_hook(project, spec, STUB_VERDICT="NO-GO", STUB_REPORT=REPORT)
+    spec.write_text(spec.read_text().replace("status: pending", "status: done"))
+
+    result = run_hook(
+        project, spec, STUB_VERDICT="NO-GO",
+        GATE_BYPASS="captain-authorised: the requirement is deliberately unobservable",
+    )
+
+    assert result.returncode == 0, result.stderr
+    log = (project / "gate-overrides.log").read_text()
+    assert "gate:fidelity" in log
+    assert "deliberately unobservable" in log, "the override must be logged, not just honoured"
+    assert calls(project) == ["NO-GO"], "and it must not cost a second paid call"
+
+
+def test_a_replayed_rejection_without_break_glass_still_blocks(project: Path) -> None:
+    """The bar itself is untouched: only an explicit, logged override gets past."""
+    spec = write_spec(project)
+    run_hook(project, spec, STUB_VERDICT="NO-GO", STUB_REPORT=REPORT)
+    spec.write_text(spec.read_text().replace("status: pending", "status: done"))
+
+    assert run_hook(project, spec, STUB_VERDICT="NO-GO").returncode == 2
+    assert not (project / "gate-overrides.log").exists()
+
+
 def test_an_unchanged_approved_body_still_skips_silently(project: Path) -> None:
     """The behaviour the cache exists for is untouched: a pass is not re-rolled."""
     spec = write_spec(project)

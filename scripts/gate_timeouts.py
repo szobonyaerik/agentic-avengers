@@ -25,7 +25,7 @@ three `tests/test_install_manifest.py` audits install.sh on.
 
     python3 scripts/gate_timeouts.py verify [hooks.json]    exit 0 = sound, 2 = inverted
 
-Stdlib only.
+Stdlib only, plus `gate_errors.py` for the one failure this module can raise.
 """
 
 from __future__ import annotations
@@ -36,6 +36,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from gate_errors import GateError  # noqa: E402
+
 #: Seconds the provider call gets, and the value `gate_runner.py` passes to the child runner.
 #: Overridable so a slow model can be given room — the relation below is checked against whatever
 #: it actually is, so raising it without raising the hook budget is a loud failure, not a silent one.
@@ -43,15 +47,33 @@ DEFAULT_CALL_TIMEOUT_S = 300
 
 
 def call_timeout() -> int:
-    """The provider-call budget in seconds (`GATE_CALL_TIMEOUT`, default 300)."""
+    """The provider-call budget in seconds (`GATE_CALL_TIMEOUT`, default 300).
+
+    A value that does not parse is a HARD ERROR, never a fallback. `GATE_CALL_TIMEOUT=600s` used to
+    become 300 silently: the operator believed the call had the budget they wrote, the relation below
+    validated the hook against 300 and passed, and the call was killed at 300s with nothing saying
+    why. That is the same defect as the 120s hook around the 300s call — a timeout believed rather
+    than checked — inside the module whose entire job is to make that relation loud.
+    """
     raw = os.environ.get("GATE_CALL_TIMEOUT", "").strip()
     if not raw:
         return DEFAULT_CALL_TIMEOUT_S
     try:
         value = int(float(raw))
-    except ValueError:
-        return DEFAULT_CALL_TIMEOUT_S
-    return value if value > 0 else DEFAULT_CALL_TIMEOUT_S
+    except ValueError as exc:
+        raise GateError(
+            "config",
+            f"GATE_CALL_TIMEOUT={raw!r} is not a number of seconds. It is the budget the provider "
+            f"call is given and the number every hook budget is checked against, so it is not "
+            f"guessed: write a positive integer (e.g. 300), not a duration string.",
+        ) from exc
+    if value <= 0:
+        raise GateError(
+            "config",
+            f"GATE_CALL_TIMEOUT={raw!r} is not a positive number of seconds. A call budget of "
+            f"{value} would kill every gate before it could answer.",
+        )
+    return value
 
 
 #: Seconds a gate hook needs on top of the call it wraps: env load, gate-cache check, re-gate diff
@@ -156,7 +178,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    found = violations(hooks_json, here)
+    try:
+        found = violations(hooks_json, here)
+    except GateError as exc:
+        # Both hooks run `verify` before they call the gate, so a budget that cannot be read stops
+        # the turn here — named — instead of surfacing later as a call killed at a budget nobody set.
+        print(exc.render(), file=sys.stderr)
+        return 2
     for line in found:
         print(f"[gate_timeouts] INVERTED TIMEOUT — {line}", file=sys.stderr)
     return 2 if found else 0

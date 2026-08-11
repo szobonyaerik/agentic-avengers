@@ -111,7 +111,7 @@ def call_openrouter(model, system, user):
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=call_timeout()) as resp:
-            payload = json.loads(resp.read().decode())
+            body = resp.read()
     except urllib.error.HTTPError as exc:
         # The body is the provider's own explanation — a 402 says which credit ran out. Reproduced
         # verbatim rather than summarised, because the classifier below is a heuristic.
@@ -126,6 +126,19 @@ def call_openrouter(model, system, user):
     except TimeoutError as exc:
         raise GateError(
             "timeout", f"openrouter did not answer within {call_timeout()}s", str(exc)
+        ) from exc
+    # A 200 whose body is not JSON is the provider misbehaving, not the gate being misconfigured.
+    # Decoded here rather than left to the catch-all in main(), which would have reported an HTML
+    # error page or a proxy's interstitial to the operator as `cause=config` — the exact
+    # wrong-cause shape this taxonomy exists to remove. The raw body is the appeal, as ever.
+    raw_body = body.decode("utf-8", "replace")
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise GateError(
+            classify_provider_failure(raw_body),
+            f"openrouter returned HTTP 200 with a body that is not JSON: {exc}",
+            raw_body,
         ) from exc
     try:
         return payload["choices"][0]["message"]["content"]
@@ -288,7 +301,10 @@ def main():
         print(e.render(), file=sys.stderr)
         sys.exit(2)
     except Exception as e:  # never fail open on an unexpected shape
-        print(GateError("config", f"{type(e).__name__}: {e}").render(), file=sys.stderr)
+        # `internal`, not `config`: this is the backstop for failures nothing above recognised, and
+        # calling them configuration problems sends the operator to their .env for a bug in the gate.
+        # Every path that CAN name itself raises GateError above; reaching here is itself a defect.
+        print(GateError("internal", f"{type(e).__name__}: {e}").render(), file=sys.stderr)
         sys.exit(2)
 
     v = str(verdict.get("verdict", "")).upper()

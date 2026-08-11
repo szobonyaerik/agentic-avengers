@@ -52,6 +52,51 @@ def test_an_unreachable_provider_is_named_as_one(text: str) -> None:
     assert classify_provider_failure(text) == "provider-unreachable"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "opencode: request req-4021f7 failed after 14023ms",
+        "usage: prompt_tokens=9402 completion_tokens=88",
+        "model returned exit code 1 after 402193 bytes of output",
+    ],
+)
+def test_a_digit_run_that_merely_contains_402_is_not_a_billing_refusal(text: str) -> None:
+    """`402` as a bare substring matched token counts, request ids, latencies and byte counts — and
+    payment is classified first, so an unrelated provider error sent the operator to their billing
+    page to fix a problem their billing page does not have."""
+    assert classify_provider_failure(text) == "provider-error"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "opencode: finished in 15037ms with no output",
+        "trace id 5041aa9c",
+    ],
+)
+def test_a_digit_run_that_merely_contains_a_gateway_code_is_not_an_outage(text: str) -> None:
+    """Same defect, one taxonomy entry over: a bare `503` named an outage that never happened."""
+    assert classify_provider_failure(text) == "provider-error"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "upstream returned HTTP 402",
+        "openrouter status 402",
+        "error 402 from the credits endpoint",
+    ],
+)
+def test_a_status_code_that_says_it_is_one_is_still_read_as_billing(text: str) -> None:
+    """Tightening must not cost the CLI-text path its detection — the HTTP path catches a real 402
+    by status code, but a provider CLI only ever hands us prose."""
+    assert classify_provider_failure(text) == "provider-payment-required"
+
+
+def test_a_status_code_that_says_it_is_one_is_still_read_as_unreachable() -> None:
+    assert classify_provider_failure("upstream returned HTTP 503") == "provider-unreachable"
+
+
 def test_an_unrecognised_error_says_so_rather_than_guessing() -> None:
     """A wrong confident category sends the operator somewhere useless; `provider-error` sends them
     to the verbatim text, which is where the answer actually is."""

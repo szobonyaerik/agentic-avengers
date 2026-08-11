@@ -29,13 +29,26 @@ CAUSES = {
     "provider-error": "the provider returned an error this classifier could not categorise",
     "no-verdict": "the provider replied, but the reply contained no JSON verdict",
     "io": "a file the gate needs could not be read or written",
+    "internal": "the gate itself failed in a way it does not recognise — a defect in the gate",
 }
+
+#: How a provider's text actually names an HTTP status. A status code is only a status code when
+#: something says so: a BARE `402` matched any digit run containing it — a token count, a request
+#: id, a latency, an exit code — and since payment is classified first, an unrelated provider error
+#: sent the operator to their billing page. The real 402 arrives by status code on the HTTPError
+#: path (gate_runner.call_openrouter), so these forms only have to serve provider CLI text.
+_STATUS_PREFIXES = ("http ", "http/1.1 ", "http/2 ", "status ", "status code ", "code ", "error ")
+
+
+def _status_markers(*codes: int) -> tuple[str, ...]:
+    """Every spelling of `<code>` that carries its own evidence of being an HTTP status."""
+    return tuple(f"{prefix}{code}" for code in codes for prefix in _STATUS_PREFIXES)
+
 
 #: Billing refusals. A 402 is the canonical one; vendors also phrase it as credit or quota.
 #: `quota` sits here rather than under unreachable because every vendor that uses the word means
 #: "you have run out of something you pay for", which is an operator action, not a retry.
-_PAYMENT_MARKERS = (
-    "402",
+_PAYMENT_MARKERS = _status_markers(402) + (
     "payment required",
     "insufficient credit",
     "insufficient_quota",
@@ -50,8 +63,10 @@ _PAYMENT_MARKERS = (
 )
 
 #: Reachability failures. Checked AFTER payment, because a 402 body can mention a URL that also
-#: matches nothing here, and because "billing" is actionable while "retry later" is not.
-_UNREACHABLE_MARKERS = (
+#: matches nothing here, and because "billing" is actionable while "retry later" is not. The gateway
+#: codes carry their own status evidence for the same reason 402 does — a bare `503` in a token
+#: count would name an outage that never happened.
+_UNREACHABLE_MARKERS = _status_markers(502, 503, 504) + (
     "connection refused",
     "connection reset",
     "could not resolve",
@@ -64,9 +79,6 @@ _UNREACHABLE_MARKERS = (
     "getaddrinfo",
     "ssl",
     "certificate verify failed",
-    "502",
-    "503",
-    "504",
     "bad gateway",
     "service unavailable",
     "gateway timeout",

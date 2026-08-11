@@ -83,6 +83,11 @@ if [ "$cached" -eq 1 ]; then
   case "$CACHED" in
     GO|REVIEW) exit 0 ;;
     *)
+      # Same as hook_fidelity.sh: a replayed rejection blocks the turn like a fresh one and so
+      # honours break-glass like a fresh one. Ignoring GATE_BYPASS here made an override a one-shot,
+      # and a silently dropped bypass is as much a break of "never silent" as a silently taken one.
+      # `exec` is safe before the tempfiles exist; below, `bypass_and_exit` cleans up first.
+      [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-review-auto"
       echo "spec-review (auto): $CACHED (unchanged since it was judged) — review_status stays pending" >&2
       python3 "$SD/spec_gate_cache.py" report "$FILE" review >&2 ||
         echo "  (the report for that verdict is no longer in the gate cache — edit the spec to re-gate)" >&2

@@ -18,10 +18,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from gate_errors import GateError  # noqa: E402
 from gate_timeouts import (  # noqa: E402
+    DEFAULT_CALL_TIMEOUT_S,
     HOOK_HEADROOM_S,
     call_timeout,
     gate_hooks,
+    main,
     reaches_gate_runner,
     references,
     required_hook_timeout,
@@ -114,6 +117,47 @@ def test_raising_the_call_budget_without_the_hook_budget_is_a_failure(
     so a raised call budget cannot silently re-create the inversion."""
     monkeypatch.setenv("GATE_CALL_TIMEOUT", "600")
     assert violations(HOOKS_JSON, SCRIPTS), "420s cannot outlive a 600s call"
+
+
+# ── the budget itself is read, never guessed ─────────────────────────────────
+
+
+@pytest.mark.parametrize("bad", ["600s", "10m", "five minutes", "5,000"])
+def test_an_unparseable_call_budget_is_refused_and_quoted(
+    bad: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It used to fall back to 300 in silence: the operator believed the budget they wrote, the
+    relation below validated the hook against 300 and passed, and the call was killed at 300s with
+    nothing saying why — the same shape as the inversion this module exists to catch."""
+    monkeypatch.setenv("GATE_CALL_TIMEOUT", bad)
+    with pytest.raises(GateError) as raised:
+        call_timeout()
+    assert raised.value.cause == "config"
+    assert bad.strip() in raised.value.detail, "the offending value has to be in the message"
+
+
+@pytest.mark.parametrize("bad", ["0", "-30"])
+def test_a_non_positive_call_budget_is_refused(bad: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A budget of zero kills every gate before it can answer; falling back to 300 hides that the
+    configured value was never in effect."""
+    monkeypatch.setenv("GATE_CALL_TIMEOUT", bad)
+    with pytest.raises(GateError, match="positive"):
+        call_timeout()
+
+
+def test_verify_stops_on_a_bad_budget_rather_than_checking_against_the_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both gate hooks run `verify` before they call the gate, so this is where a misread budget is
+    caught. Exit 0 here would mean the hook proceeded with a budget nobody set."""
+    monkeypatch.setenv("GATE_CALL_TIMEOUT", "600s")
+    assert main(["verify", str(HOOKS_JSON)]) == 2
+    assert "'600s'" in capsys.readouterr().err
+
+
+def test_an_unset_budget_is_still_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GATE_CALL_TIMEOUT", raising=False)
+    assert call_timeout() == DEFAULT_CALL_TIMEOUT_S
 
 
 def test_a_sound_pair_reports_nothing(tmp_path: Path) -> None:

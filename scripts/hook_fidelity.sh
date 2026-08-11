@@ -45,6 +45,13 @@ if [ "$cached" -eq 1 ]; then
   case "$CACHED" in
     GO|REVIEW) exit 0 ;;
     *)
+      # A replayed rejection blocks the turn exactly like a fresh one, so it honours break-glass
+      # exactly like a fresh one. Without this an override was a ONE-SHOT: the stored NO-GO came
+      # back on the very next write of the same spec with GATE_BYPASS set and ignored — a bypass
+      # that is silently dropped is the same defect as one that is silently taken. `exec` is safe
+      # here because this branch runs before any tempfile exists; below it the EXIT trap owns them
+      # and `bypass_and_exit` cleans up first.
+      [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "fidelity"
       echo "fidelity: $CACHED (unchanged since it was judged) — route back to avenger-spec-writer" >&2
       python3 "$SD/spec_gate_cache.py" report "$FILE" fidelity >&2 ||
         echo "  (the report for that verdict is no longer in the gate cache — edit the spec to re-gate)" >&2

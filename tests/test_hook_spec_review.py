@@ -53,18 +53,21 @@ review_status: {review_status}
 # drift apart — a stub pinned to a stale ABI would fail for the wrong reason.
 STUB_RUNNER = """import hashlib
 import json
+import os
 import sys
 
 if "--identify" in sys.argv:
     digest = hashlib.sha256(open(sys.argv[0], "rb").read()).hexdigest()
     print("{abi} " + digest)
     sys.exit(0)
+verdict = os.environ.get("STUB_VERDICT", "GO")
 target = sys.argv[sys.argv.index("--target") + 1]
 open(sys.argv[0] + ".target", "w").write(open(target).read())
+open(sys.argv[0] + ".calls", "a").write(verdict + "\\n")
 if "--emit-json" in sys.argv:
     with open(sys.argv[sys.argv.index("--emit-json") + 1], "w") as fh:
-        json.dump({{"verdict": "GO", "report": "stub approves"}}, fh)
-print("GO")
+        json.dump({{"verdict": verdict, "report": "stub says " + verdict}}, fh)
+print(verdict)
 """
 
 CLEAN_TEST = "def test_nothing():\n    assert True\n"
@@ -273,6 +276,46 @@ def test_an_unchanged_body_is_not_re_judged_at_all(project: Path) -> None:
     result = run_hook(project, spec, {"SPEC_REVIEW_MODE": "auto"})
     assert result.returncode == 0
     assert not (project / "scripts" / "gate_runner.py.target").exists()
+
+
+def calls(project: Path) -> list[str]:
+    """Every verdict the stub was asked for — how many times the paid gate actually ran."""
+    log = project / "scripts" / "gate_runner.py.calls"
+    return log.read_text().split() if log.exists() else []
+
+
+def test_break_glass_is_honoured_on_a_replayed_rejection(project: Path) -> None:
+    """The same defect as hook_fidelity.sh's replay branch, in the sibling hook. A stored NO-GO
+    replayed on the next write blocked the turn with GATE_BYPASS set and ignored, which made an
+    override a one-shot — and an override that is silently dropped is as much a break of
+    "never silent" as one that is silently taken."""
+    spec = write_spec(project)
+    auto = {"SPEC_REVIEW_MODE": "auto", "STUB_VERDICT": "NO-GO"}
+    assert run_hook(project, spec, auto).returncode == 2
+    spec.write_text(spec.read_text().replace("status: pending", "status: done"))
+
+    result = run_hook(
+        project, spec,
+        {**auto, "GATE_BYPASS": "captain-authorised: the reviewer is wrong about R1.1.1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    log = (project / "gate-overrides.log").read_text()
+    assert "gate:spec-review-auto" in log
+    assert "wrong about R1.1.1" in log, "the override must be logged, not just honoured"
+    assert calls(project) == ["NO-GO"], "and it must not cost a second paid call"
+
+
+def test_a_replayed_rejection_without_break_glass_still_blocks(project: Path) -> None:
+    """The bar itself is untouched: only an explicit, logged override gets past."""
+    spec = write_spec(project)
+    auto = {"SPEC_REVIEW_MODE": "auto", "STUB_VERDICT": "NO-GO"}
+    assert run_hook(project, spec, auto).returncode == 2
+    spec.write_text(spec.read_text().replace("status: pending", "status: done"))
+
+    assert run_hook(project, spec, auto).returncode == 2
+    assert not (project / "gate-overrides.log").exists()
+    assert "review_status: approved" not in spec.read_text()
 
 
 def test_hitl_mode_never_reaches_the_model_half(project: Path) -> None:
