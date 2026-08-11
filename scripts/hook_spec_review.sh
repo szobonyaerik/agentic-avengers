@@ -32,6 +32,11 @@ case "$FILE" in
 esac
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
+# Measurement, never a gate. This gate's target is often a diff BUNDLE in a temp file, from which no
+# spec and no phase can be derived — so the one thing only this caller knows is exported, and
+# gate_runner derives the rest at the point it observes the call.
+export AVENGER_METRICS_SPEC_PATH="$FILE"
+
 # --- 1. Mechanical half: no model, both modes ---------------------------------------------------
 # Cost is invisible to every reading stage — spec review, fidelity, cross-family review and
 # verification all read for correctness, and a subprocess is not incorrect. This is the one stage
@@ -151,7 +156,8 @@ python3 "$SD/gate_runner.py" \
   --emit-json "$VJSON" \
   --print-verdict --target "$TARGET" >"$VOUT" 2>"$GERR" &
 gate_pid=$!
-trap 'kill -TERM "$gate_pid" 2>/dev/null; cat "$GERR" >&2; echo "spec-review: HOOK KILLED by the harness (signal) while the gate was still running — this is NOT a gate verdict. The gate did not answer; the call was terminated." >&2; exit 2' TERM INT
+# Same as hook_fidelity.sh: the runner we kill cannot record its own death, so the hook does it.
+trap 'kill -TERM "$gate_pid" 2>/dev/null; python3 "$SD/pipeline_metrics.py" gate-killed --stage spec-review --spec-path "$FILE" >/dev/null 2>&1 || true; cat "$GERR" >&2; echo "spec-review: HOOK KILLED by the harness (signal) while the gate was still running — this is NOT a gate verdict. The gate did not answer; the call was terminated." >&2; exit 2' TERM INT
 wait "$gate_pid"; rc=$?
 trap 'echo "spec-review: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2; exit 2' TERM INT
 VERDICT="$(cat "$VOUT")"

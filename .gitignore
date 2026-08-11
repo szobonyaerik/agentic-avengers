@@ -34,3 +34,8 @@ __pycache__/
 
 # tavern monitor: per-project subagent lifecycle log (scripts/hook_activity.sh)
 .agent-activity.jsonl
+
+# pipeline metrics: diagnostics from the fail-open emission path (scripts/metrics_sink.py). The
+# measurements themselves live in firstmate's per-phase record, never here — this file only says
+# what could not be written, so a measurement layer that is quietly doing nothing is visible.
+.avenger-metrics.log

@@ -17,7 +17,8 @@ set -uo pipefail
 
 [ "${PONYTAIL_OFF:-0}" = "1" ] && exit 0
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/load_env.sh"   # PONYTAIL_* may live in the project .env
+SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SD/load_env.sh"   # PONYTAIL_* may live in the project .env
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SKILL="$ROOT/skills/ponytail/SKILL.md"
 [ -f "$SKILL" ] || exit 0
@@ -28,7 +29,7 @@ AGENTS_RE="${PONYTAIL_AGENTS:-avenger-backend-architect|avenger-frontend-develop
 # heredoc — so read the payload here and hand it over as an argument instead.
 PAYLOAD="$(cat)"
 
-python3 - "$SKILL" "$AGENTS_RE" "$PAYLOAD" <<'PY'
+INJECTION="$(python3 - "$SKILL" "$AGENTS_RE" "$PAYLOAD" <<'PY'
 import json
 import re
 import sys
@@ -67,5 +68,20 @@ json.dump(
     sys.stdout,
 )
 PY
+)"
+
+# This hook does not tell an implementer to load the ladder — it puts the ladder's own text in their
+# context, so an injection that happened IS the positive evidence the metrics record demands, and it
+# is the only evidence available for a skill nobody is asked to read. Recorded only when something
+# was actually injected, and captured rather than inline so no measurement can reach the stdout this
+# hook uses as its protocol. Measurement, never a gate: `|| true` over a sink that fails open.
+if [ -n "$INJECTION" ]; then
+  AGENT=$(printf '%s' "$PAYLOAD" | jq -r '.agent_type // empty' 2>/dev/null)
+  python3 "$SD/pipeline_metrics.py" skill-load --stage "${AGENT:-unknown}" --skill ponytail \
+    --evidence "SubagentStart hook_ponytail.sh injected skills/ponytail/SKILL.md" \
+    >/dev/null 2>&1 || true
+fi
+
+printf '%s' "$INJECTION"
 
 exit 0

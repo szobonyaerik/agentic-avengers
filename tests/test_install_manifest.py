@@ -49,7 +49,9 @@ REFERENCE = re.compile(
 # the gate path, where a missing module is a hook that dies with no verdict. Same class of defect as
 # the shell references above, one layer down, and previously invisible to this test.
 PY_IMPORT = re.compile(
-    r"^\s*(?:from\s+([A-Za-z0-9_]+)\s+import\s|import\s+([A-Za-z0-9_]+)\s*$)", re.M
+    r"^\s*(?:from\s+([A-Za-z0-9_]+)\s+import\s"
+    r"|import\s+([A-Za-z0-9_]+)\s*(?:as\s+[A-Za-z0-9_]+\s*)?$)",
+    re.M,
 )
 
 # A template a shipped file sends its writer to, by path:

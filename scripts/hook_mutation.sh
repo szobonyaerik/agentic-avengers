@@ -126,6 +126,14 @@ fi
 # Deterministic verdict. 0 = GO (no model call), 1 = survivors below threshold, 2 = cannot score.
 python3 "$SD/mutation_score.py" --min-score "$MUTATION_MIN_SCORE" "$SESSION"
 sc=$?
+
+# Measurement, never a gate. Recorded on GO as well as NO-GO: survivors above the threshold are
+# still behaviours no test catches, and `found_by` only tells you which stage earns its cost if
+# every stage's catches are in it. Fails open — this runs between the verdict and acting on it, and
+# cannot change either.
+python3 "$SD/mutation_score.py" --min-score "$MUTATION_MIN_SCORE" --json "$SESSION" >"$WORK/score.json" 2>/dev/null || true
+python3 "$SD/pipeline_metrics.py" mutation-survivors "$FILE" "$WORK/score.json" >/dev/null 2>&1 || true
+
 if [ "$sc" -eq 0 ]; then
   exit 0
 fi
