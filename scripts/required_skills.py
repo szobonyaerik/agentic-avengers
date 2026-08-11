@@ -222,7 +222,84 @@ def read_records(log: Path) -> list[dict]:
     return records
 
 
-def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
+def is_delivery(record: dict) -> bool:
+    """A required-skill delivery. Records predating the shape carry no `event` and are deliveries."""
+    return record.get("event", "delivery") == "delivery" and bool(record.get("required"))
+
+
+def record_command(record: dict, log: Path | None = None) -> str:
+    """The exact `record` invocation that clears THIS delivery's gap.
+
+    Every match key the audit uses has to appear here, or the printed remedy cannot satisfy the gate
+    that printed it. A load recorded without the delivery's `--session-id` keys as a different run,
+    so the gap never clears however many times the operator follows the instruction - and the only
+    ways out are `GATE_BYPASS` or hand-editing a gitignored log, which is how a break-glass stops
+    meaning what it says.
+    """
+    parts = ["required_skills.py record", str(record.get("agent_type") or "<agent-type>"),
+             str(record.get("skill") or "<skill>")]
+    if record.get("agent_id"):
+        parts.append(f"--agent-id {record['agent_id']}")
+    if record.get("session_id"):
+        parts.append(f"--session-id {record['session_id']}")
+    if log is not None:
+        parts.append(f"--log {log}")
+    return " ".join(parts)
+
+
+def scope_to_run(records: list[dict], session: str) -> tuple[list[dict], str, str | None]:
+    """(records to audit, how the scope resolved, a loud note when it could not be applied).
+
+    **An empty scope is not a clean scope.** Filtering to `session_id == session` and auditing the
+    empty result reported "every delivered skill has evidence of a load — 0 record(s)" over a log
+    holding unrecorded pointers: a check reporting coverage it never had, which is the one failure
+    this whole mechanism exists not to reproduce, and it is the instrument that settles H9.
+
+    The asymmetry that caused it is real and stays: `hook_skills.sh` reads `session_id` from a
+    `SubagentStart` payload that may not carry one, while `hook_verifier.sh` reads it from a
+    `PostToolUse` payload that does. So the scope is resolved by what the DELIVERIES actually carry:
+
+      * some delivery carries this session   -> scope applies; other runs are counted, not enforced.
+      * every delivery carries SOME session, none this one -> the scope applied and this run
+        delivered nothing. Clean, with the out-of-scope count named, which is the phase-1-must-not-
+        block-phase-8 case the scoping was ruled for.
+      * a delivery carries NO session at all  -> the scope cannot be applied. Audit the WHOLE log by
+        `agent_type` attribution and say so loudly. Degrading honestly is the same rule
+        `hook_activity.sh` follows for this field and `doc_read_path.py` follows when git cannot say
+        what changed; silently narrowing to nothing is not a fallback, it is a false clean.
+    """
+    delivered = [r for r in records if is_delivery(r)]
+    if not delivered:
+        return records, f"this run only (session {session}) — no deliveries recorded at all", None
+
+    mine = [d for d in delivered if d.get("session_id") == session]
+    if mine:
+        skipped = len(delivered) - len(mine)
+        return (
+            [r for r in records if r.get("session_id") == session],
+            f"this run only (session {session}); {skipped} delivery/ies from other runs counted, "
+            f"not enforced",
+            None,
+        )
+
+    unattributed = [d for d in delivered if not d.get("session_id")]
+    if not unattributed:
+        return (
+            [],
+            f"this run only (session {session}) — it delivered nothing; {len(delivered)} "
+            f"delivery/ies from other runs counted, not enforced",
+            None,
+        )
+    return (
+        records,
+        f"WHOLE LOG by agent_type (session {session} could not be applied)",
+        f"[required_skills] {len(unattributed)} of {len(delivered)} deliveries carry no session id, "
+        f"so --session {session} matched none of them. The scope could not be applied, so the WHOLE "
+        f"log is audited by agent_type instead — an empty scope is not a clean scope.",
+    )
+
+
+def audit_gaps(records: list[dict], log: Path | None = None) -> tuple[list[str], str]:
     """(one line per required skill with no evidence of a load, the key the match was made on).
 
     Two things are a gap, and they are the same gap wearing different clothes:
@@ -274,7 +351,7 @@ def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
     gaps: list[str] = []
     keys: set[str] = set()
     for record in records:
-        if record.get("event", "delivery") != "delivery" or not record.get("required"):
+        if not is_delivery(record):
             continue
         skill, agent = record.get("skill"), record.get("agent_type", "?")
         agent_id, run = record.get("agent_id"), record.get("session_id")
@@ -289,7 +366,11 @@ def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
                 gaps.append(
                     f"{agent} was handed a POINTER to skills/{skill} and never recorded loading it. "
                     f"A required skill with no evidence of a load is a stage running on whatever the "
-                    f"model already believed."
+                    f"model already believed.\n"
+                    f"      Looking for a load keyed "
+                    f"({'agent_id ' + agent_id if agent_id else 'agent_type ' + str(agent)}, "
+                    f"session {run or 'none'}). Clear it with:\n"
+                    f"      python3 {record_command(record, log)}"
                 )
         elif not record.get("loaded"):
             gaps.append(
@@ -399,10 +480,9 @@ def main(argv: list[str] | None = None) -> int:
         # scope cannot be established, NOTHING is enforced and the check says so, rather than falling
         # back to enforcing everything.
         if args.all:
-            scoped, mode = records, "--all: every delivery ever recorded"
+            scoped, mode, note = records, "--all: every delivery ever recorded", None
         elif args.session:
-            scoped = [r for r in records if r.get("session_id") == args.session]
-            mode = f"this run only (session {args.session})"
+            scoped, mode, note = scope_to_run(records, args.session)
         else:
             print(
                 "[required_skills] no --session given, so which run's deliveries to audit is "
@@ -410,8 +490,10 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return OK
+        if note:
+            print(note, file=sys.stderr)
 
-        gaps, key_used = audit_gaps(scoped)
+        gaps, key_used = audit_gaps(scoped, args.log or default_log())
         if not gaps:
             print(
                 f"  required skills: every delivered skill has evidence of a load — {mode}, "

@@ -83,16 +83,25 @@ bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 # as the gate having objected. Say so instead, exactly as scripts/hook_spec_gate.sh does. This
 # matters more now that the policy defaults to `advisory`: every internal failure path already exits
 # 0 under advisory, and a kill must not be the one that blocks a phase the gate never judged.
-on_kill() {
-  cleanup; trap - EXIT
+#
+# SAY IT FIRST, then clean up. The message is split from the exit precisely so nothing can run before
+# it: a harness that follows SIGTERM with a SIGKILL on a short grace would otherwise kill this hook
+# mid-cleanup and the line would never be emitted, which is indistinguishable from the objection it
+# exists to deny.
+announce_kill() {
   if [ "$MUTATION_POLICY" = "advisory" ]; then
     echo "mutation [advisory]: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2
     echo "  The gate did not answer; advisory never blocks." >&2
-    exit 0
+    return 0
   fi
   echo "mutation: HOOK KILLED by the harness (signal) — this is NOT a gate verdict. The gate did not answer." >&2
+}
+exit_killed() {
+  cleanup; trap - EXIT
+  [ "$MUTATION_POLICY" = "advisory" ] && exit 0
   exit 2
 }
+on_kill() { announce_kill; exit_killed; }
 trap on_kill TERM INT
 
 # bash defers a trap until the running FOREGROUND command returns, so a long child must run in the
@@ -111,10 +120,15 @@ trap on_kill TERM INT
 # pipeline's own primitive lives here.
 TERM_GRACE_S=5
 
-kill_child_group() {
+signal_child_group() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
   kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
+}
+
+reap_child_group() {
+  local pgid="$1"
+  [ -n "$pgid" ] || return 0
   local waited=0
   while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
     sleep 0.1; waited=$((waited + 1))
@@ -129,7 +143,10 @@ run_child() {
   # reaches every worker it spawns. `setsid(1)` is not on macOS, which is why this is done in python.
   python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" >>"$TMP" 2>&1 &
   local pid=$!
-  trap 'kill_child_group "'"$pid"'"; on_kill' TERM INT
+  # Signal, SAY IT, then wait out the grace and escalate. The grace poll is up to TERM_GRACE_S of
+  # `sleep`, so announcing after it puts a five-second window between the signal and the one line
+  # whose absence reads as a gate objection — and a harness KILL inside that window loses it.
+  trap 'signal_child_group "'"$pid"'"; announce_kill; reap_child_group "'"$pid"'"; exit_killed' TERM INT
   wait "$pid"; local rc=$?
   trap on_kill TERM INT
   return "$rc"

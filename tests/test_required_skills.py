@@ -357,6 +357,59 @@ def test_the_audit_is_scoped_to_one_run(tmp_path: Path) -> None:
     assert main(["audit", "--all", "--log", str(log)]) == 1, "--full still sweeps everything"
 
 
+def test_a_scope_that_matches_nothing_over_a_non_empty_log_is_never_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty scope is not a clean scope. hook_skills.sh reads session_id from a SubagentStart
+    payload that may not carry one while hook_verifier.sh reads it from a PostToolUse payload that
+    does, so filtering to a session that matches nothing reported coverage over a log holding an
+    unrecorded pointer — the false clean this whole mechanism exists to refuse."""
+    log = tmp_path / "loads.jsonl"
+    log.write_text(json.dumps(
+        {"event": "delivery", "agent_type": "avenger-backend-architect", "session_id": None,
+         "skill": "tdd", "required": True, "delivery": "pointer"}
+    ) + "\n")
+    assert main(["audit", "--session", "run-42", "--log", str(log)]) == 1
+    err = capsys.readouterr().err
+    assert "could not be applied" in err
+    assert "WHOLE LOG by agent_type" in err
+
+
+def test_a_run_that_delivered_nothing_stays_clean_and_names_what_it_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The phase-1-must-not-block-phase-8 case: the scope APPLIED and this run delivered nothing.
+    That is clean, and the out-of-scope count is named rather than silently dropped."""
+    log = tmp_path / "loads.jsonl"
+    log.write_text(json.dumps(
+        {"event": "delivery", "agent_type": "avenger-backend-architect", "session_id": "phase-1",
+         "skill": "tdd", "required": True, "delivery": "pointer"}
+    ) + "\n")
+    assert main(["audit", "--session", "phase-8", "--log", str(log)]) == 0
+    assert "1 delivery/ies from other runs counted, not enforced" in capsys.readouterr().err
+
+
+def test_the_printed_remedy_actually_clears_the_gap(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A remedy that cannot clear the gate that printed it is worse than no remedy: it loops the
+    operator and then sends them to the bypass. So the loop closing IS the test — the printed line is
+    parsed and run verbatim, and the audit must then pass."""
+    log = tmp_path / "loads.jsonl"
+    log.write_text(json.dumps(
+        {"event": "delivery", "agent_type": "avenger-backend-architect", "agent_id": "spawn-7",
+         "session_id": "run-42", "skill": "tdd", "required": True, "delivery": "pointer"}
+    ) + "\n")
+    assert main(["audit", "--session", "run-42", "--log", str(log)]) == 1
+    printed = [line.strip() for line in capsys.readouterr().err.splitlines()
+               if "required_skills.py record" in line]
+    assert printed, "the gap must print the command that clears it"
+    argv = printed[0].split("required_skills.py", 1)[1].split()
+    assert "--session-id" in argv and "--agent-id" in argv, "every match key must be in the remedy"
+    assert main(argv) == 0
+    assert main(["audit", "--session", "run-42", "--log", str(log)]) == 0
+
+
 def test_an_unscoped_audit_enforces_nothing_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

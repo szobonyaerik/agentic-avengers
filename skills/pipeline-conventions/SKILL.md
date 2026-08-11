@@ -375,19 +375,25 @@ prevention when both end the same way**:
 - **At or under the ceiling → injected whole.** For these the injection *is* the load, recorded
   `loaded: true` at injection.
 - **Over it → a POINTER**: path, size, one-line description, and the command that records the load
-  (`required_skills.py record <agent-type> <skill>`). **A pointer is not a suggestion** —
-  `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`),
-  and a pointer with no matching load **fails the phase**, naming the stage and the skill. A pointer
-  nothing checks would be the instruction-with-no-mechanism this whole section removes. It matches on
-  the **spawn's own id** when the record carries one and on `agent_type` when it does not, and always
-  within one run: a load by the Verifier says nothing about whether the implementer loaded it, and
-  neither does a load in a different run. The handover audit is **scoped to the current run**
-  (`--session`), because the evidence log is one append-only file per repository and an unscoped
-  audit would let a pointer nobody recorded in phase 1 block phase 8 — the same
-  you-are-responsible-for-what-you-change rule as everywhere else here, with the same edge: no
-  session id means the run is unknowable, so nothing is enforced and it says so. `--all` sweeps every
-  delivery, which is what CI runs, and `SKILLS_OFF=1` makes the audit a no-op because nothing was
-  delivered to load.
+  (`required_skills.py record <agent-type> <skill> [--agent-id …] [--session-id …]`). **Every key the
+  audit matches on has to be in that command**, or the printed remedy cannot clear the gate that
+  printed it and the only ways out are `GATE_BYPASS` and editing the log by hand — so the pointer and
+  every route-back print the exact invocation rather than the shape of one. **A pointer is not a
+  suggestion** — `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI
+  (`gate_ci.sh --full`), and a pointer with no matching load **fails the phase**, naming the stage,
+  the skill and the keys it looked for. A pointer nothing checks would be the
+  instruction-with-no-mechanism this whole section removes. It matches on the **spawn's own id** when
+  the record carries one and on `agent_type` when it does not, and always within one run: a load by
+  the Verifier says nothing about whether the implementer loaded it, and neither does a load in a
+  different run. The handover audit is **scoped to the current run** (`--session`), because the
+  evidence log is one append-only file per repository and an unscoped audit would let a pointer
+  nobody recorded in phase 1 block phase 8 — the same you-are-responsible-for-what-you-change rule as
+  everywhere else here. Its edges are all stated out loud: no session id at all means the run is
+  unknowable and nothing is enforced; a session that matches no delivery **because deliveries carry
+  no session id** means the scope could not be applied, so the whole log is audited by `agent_type`
+  instead, loudly — **an empty scope is never a clean scope**, which is the false-clean this
+  mechanism exists to refuse. `--all` sweeps every delivery, which is what CI runs, and
+  `SKILLS_OFF=1` makes the audit a no-op because nothing was delivered to load.
 
 The saving is a **prediction, not a result**: declared as **H9** before it landed — roughly 1M tokens
 saved per 8-phase feature with zero unrecorded required loads — and settled in phase 9.

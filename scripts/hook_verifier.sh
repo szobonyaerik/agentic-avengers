@@ -124,9 +124,11 @@ fi
 SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
 if ! python3 "$SD/required_skills.py" audit ${SESSION_ID:+--session "$SESSION_ID"}; then
   fail "verifier:skills" \
-    "verifier: a required skill was delivered to a stage in this run and never recorded as loaded" \
-    "(named above). Load it and record it with scripts/required_skills.py record <agent-type> <skill>," \
-    "or re-run the stage — a stage that never loaded its rules did not run under them."
+    "verifier: a required skill was delivered to a stage in this run and never recorded as loaded." \
+    "Each finding above prints the EXACT command that clears it, carrying the spawn and session keys" \
+    "the audit matches on — a remedy missing one of those keys records a load the audit cannot see," \
+    "so copy the printed line rather than retyping it. Or re-run the stage: a stage that never loaded" \
+    "its rules did not run under them.${SESSION_ID:+ (this run: session $SESSION_ID)}"
 fi
 
 # Amendments owed re-verification NOW: every security-relevant one, always, plus any pending one on
