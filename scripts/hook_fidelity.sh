@@ -24,6 +24,14 @@ esac
 # fail to open the spec and fail CLOSED, blocking the turn over a path bug.
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
+# --- measurement (never a gate) -----------------------------------------------------------------
+# A spec write is the earliest moment a phase is observable, so it is where the phase record opens.
+# Every call below fails open by construction (scripts/metrics_sink.py) and is `|| true` besides:
+# a phase must never stop because a number went unrecorded. AVENGER_METRICS_SPEC_PATH tells
+# gate_runner which spec this call judges even when the target it is handed is a diff bundle.
+export AVENGER_METRICS_SPEC_PATH="$FILE"
+python3 "$SD/pipeline_metrics.py" phase-open "$FILE" >/dev/null 2>&1 || true
+
 # The gate must be able to outlive the call it wraps. Checked against the shipped hooks.json when
 # there is one; the opencode adapter has no hooks.json and is covered by the static assertion in
 # tests/test_gate_timeouts.py instead.
@@ -59,6 +67,13 @@ if [ "$cached" -eq 1 ]; then
   esac
 fi
 
+# The body reached this line, so it is not the one the cache already holds: a new round. Measured
+# here — its size and its requirement count — because a spec that grew 25k -> 51k across rounds it
+# was rewritten to satisfy a gate is the ratchet, and nothing recorded it while it was happening.
+# `record_spec_round` is idempotent by content, so this being one of several spec-write hooks
+# cannot double-count; it also fixes the round number the gate call below records as its attempt.
+python3 "$SD/pipeline_metrics.py" spec-round "$FILE" >/dev/null 2>&1 || true
+
 # --emit-json carries the gate's own `report` back in a form that cannot be lost: the previous code
 # read the report off stderr through a process substitution, which the hook could outrun, so a
 # rejection routinely arrived with no reasoning attached at all.
@@ -83,7 +98,10 @@ python3 "$SD/gate_runner.py" \
   --emit-json "$VJSON" \
   --print-verdict --target "$FILE" >"$VOUT" 2>"$GERR" &
 gate_pid=$!
-trap 'kill -TERM "$gate_pid" 2>/dev/null; cat "$GERR" >&2; echo "fidelity: HOOK KILLED by the harness (signal) while the gate was still running — this is NOT a gate verdict. The gate did not answer; the call was terminated." >&2; exit 2' TERM INT
+# The runner we are about to kill cannot record its own death, so the hook records it. This is the
+# one gate outcome only the caller can observe, and telling it apart from a model that answered
+# NO-GO is what a 120s hook around a 300s call cost a day of reading as a model size ceiling.
+trap 'kill -TERM "$gate_pid" 2>/dev/null; python3 "$SD/pipeline_metrics.py" gate-killed --stage fidelity --spec-path "$FILE" >/dev/null 2>&1 || true; cat "$GERR" >&2; echo "fidelity: HOOK KILLED by the harness (signal) while the gate was still running — this is NOT a gate verdict. The gate did not answer; the call was terminated." >&2; exit 2' TERM INT
 wait "$gate_pid"; rc=$?
 trap 'echo "fidelity: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2; exit 2' TERM INT
 VERDICT="$(cat "$VOUT")"

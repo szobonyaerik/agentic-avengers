@@ -105,6 +105,34 @@ Within that review set, flag as a `wrong/gamed test`:
   test covers.
 A gamed test is a `fail` even when the suite is green.
 
+## Record which stage found each defect
+
+`scripts/verifier_review.sh` already records the cross-family review's own findings as defects
+attributed to `verifier`, and `hook_mutation.sh` records what mutation found. **What no script can
+see is the rest of what you catch** — a Breaker counterexample, a bug found by driving the real path
+by hand, one found by reading the code outside any gate. That attribution is the single most valuable
+number the pipeline produces about itself (one phase set showed the running suite catching 3 of 15
+genuine defects) and it is **unrecoverable once the run is over**, so record it while you have it:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_metrics.py" defect \
+  --phase-ref docs/features/<feature>/phases/<n>-<slug> --id <finding-id> \
+  --summary "$(cat .lavish/<feature>-defect.md)" \
+  --found-by breaker --stage-reached implementation --severity correctness
+```
+
+Write the summary to a gitignored file first and read it inline as `"$(cat …)"`. That is not style:
+a summary is author-written free text, and under `--auto` the deny regex matches the whole Bash
+command string, so prose that merely *names* a denied command denies the command carrying it
+(`pipeline-conventions`, Hard rules).
+
+`--found-by` takes firstmate's fixed vocabulary — `spec-gate`, `review-gate`, `verifier`, `breaker`,
+`mutation`, `running-suite`, `probe`, `execution`, `measurement`, `human-review`, `ci`, `other` (which
+then needs `--found-by-note`). Add `--not-real` for a defect in a test, fixture or artifact: it cost
+real time and belongs in the record, but it must not inflate the count of genuine product defects.
+This is measurement, never a gate — the command exits 0 whatever happens, and a phase never waits on
+it.
+
 ## The verdict is a persisted artifact
 The verdict is not chat-only. Write it to disk at
 `docs/features/<feature>/phases/<n>-<slug>/verdict.json` (co-located with `handover.md`), one file per

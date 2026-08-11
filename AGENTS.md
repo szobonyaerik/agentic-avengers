@@ -138,6 +138,20 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `bypass_log.sh verifier <finding-id> <waived_by>` too. A value fully determined by a template,
    with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
    `skills/pipeline-conventions/SKILL.md`.
+11. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —
+   gate calls with their measured latency and failure `cause`, spec rounds and their byte growth,
+   the verification attempt count (not what each attempt changed — see
+   `skills/pipeline-conventions/SKILL.md`), tests before/after, which skills each stage loaded, and **which
+   stage found each defect** — are written by the stage that observes each fact, at the moment it
+   observes it, through `scripts/metrics_sink.py` into firstmate's `fm-pipeline-metrics.sh`. The
+   schema is theirs (`docs/pipeline-metrics.md`); this repo adds no key and keeps no second store.
+   **Measurement, never a gate**: every failure is swallowed and logged to `.avenger-metrics.log`,
+   and no metrics call can fail a phase. Emission attaches to the fact — inside `gate_runner.py`,
+   not once per caller — so a new gate is instrumented by existing. Record a defect no script can
+   see (Breaker, a probe, running the real path) with `scripts/pipeline_metrics.py defect`, whose
+   `--summary` follows rule 10. Off unless `fm-pipeline-metrics.sh` is on `PATH` or
+   `AVENGER_METRICS_CMD` names it, and an unconfigured run says so once. Full rule in
+   `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -205,6 +219,12 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
+| `AVENGER_METRICS_CMD` | looked up on `PATH` | path to firstmate's `fm-pipeline-metrics.sh`; without it a run records no metrics and says so once |
+| `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently |
+| `AVENGER_METRICS_PROJECT` | the git repository's name | the record's `project`, which scopes every firstmate lookup |
+| `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this` exceeds it — raise it and raise `hooks/hooks.json` with it |
+| `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
+| `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
 
 ## Maintaining this file
 

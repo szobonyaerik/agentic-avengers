@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -39,6 +40,38 @@ from gate_errors import GateError, classify_provider_failure  # noqa: E402
 from gate_timeouts import call_timeout  # noqa: E402
 from model_vendors import UnknownVendor, model_family  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
+
+# Every gate call in the pipeline passes through this file, so this is where a gate call gets
+# recorded — once, rather than once per caller. Measurement, never a gate: `record_gate_call`
+# swallows its own failures, and a runtime without the metrics modules simply records nothing.
+try:
+    from pipeline_metrics import record_gate_call
+except ImportError:  # pragma: no cover - vendored without the metrics modules
+    def record_gate_call(**_kwargs):
+        return False
+
+
+def deliver_then_record(**fields) -> None:
+    """Flush what this gate already said, THEN measure it.
+
+    What the ordering buys: the gate's ANSWER — the `--emit-json` artifact and the verdict on
+    stdout — is complete before any measurement runs, so a blocked writer can never truncate, delay
+    or corrupt the answer itself. Buffered streams are flushed here rather than at interpreter exit,
+    because an exit whose output has not reached the caller has not delivered anything.
+
+    What it does not buy: the calling hook blocks on this process exiting (`hook_fidelity.sh` waits
+    on the runner), so measurement time is still spent inside the hook's budget whatever order it
+    happened in. That is bounded, not removed, and the bound is asserted rather than trusted —
+    `gate_timeouts.py` checks every metrics process on a gate hook's path times
+    AVENGER_METRICS_TIMEOUT against HOOK_HEADROOM_S, and `tests/test_gate_timeouts.py` fails when a
+    per-call bound or a new emission point would eat it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 — a closed stream must not fail the gate
+            pass
+    record_gate_call(**fields)
 
 # Pull OPENROUTER_API_KEY / GATE_MODEL / AUTHOR_FAMILY from the project's .env when the environment
 # does not already define them. Shell callers get the same values via load_env.sh; this covers being
@@ -269,9 +302,19 @@ def main():
         print(f"{RUNNER_ABI} {self_digest()}")
         return
 
+    # Measured wall clock of the call, and the family we resolved for it — both are recorded on
+    # every outcome below. `started` covers the pre-call checks too, so a refusal that never reached
+    # a provider records the near-zero latency that says so.
+    started = time.monotonic()
+    target = args.target
+    family = None
+
+    def elapsed_ms():
+        return int((time.monotonic() - started) * 1000)
+
     try:
         # Cross-family invariant: a gate must not run on the author's family.
-        assert_cross_family(args.model, args.author_family, args.model_family)
+        family = assert_cross_family(args.model, args.author_family, args.model_family)
         if args.selftest:
             rubric = ('Return ONLY JSON {"verdict":"GO|REVIEW|NO-GO",'
                       '"report":"...","route_back":"..."}. Reply GO if the text says OK.')
@@ -279,7 +322,7 @@ def main():
         else:
             if not args.rubric:
                 raise GateError("config", "--rubric is required")
-            target = args.target or stdin_target()
+            target = target or stdin_target()
             if not target:
                 sys.exit(0)  # no artifact to judge (wrong tool/path) -> no objection
             try:
@@ -298,16 +341,28 @@ def main():
                 raw,
             )
     except GateError as e:  # any failure is a hard stop, and it says which failure
+        # The cause PR 1 gave it: a timeout kill, a 402 and an unreachable provider are three
+        # different numbers in the record, not one "it failed". Recorded after the stop is rendered.
         print(e.render(), file=sys.stderr)
+        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                            model_family=family, latency_ms=elapsed_ms(), cause=e.cause,
+                            detail=e.detail, provider=args.provider)
         sys.exit(2)
     except Exception as e:  # never fail open on an unexpected shape
         # `internal`, not `config`: this is the backstop for failures nothing above recognised, and
         # calling them configuration problems sends the operator to their .env for a bug in the gate.
         # Every path that CAN name itself raises GateError above; reaching here is itself a defect.
         print(GateError("internal", f"{type(e).__name__}: {e}").render(), file=sys.stderr)
+        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                            model_family=family, latency_ms=elapsed_ms(), cause="internal",
+                            detail=f"{type(e).__name__}: {e}", provider=args.provider)
         sys.exit(2)
 
     v = str(verdict.get("verdict", "")).upper()
+    # The latency is read HERE, where the call actually ended — not where the record is finally
+    # written below, which is after this gate has delivered its answer.
+    measured = dict(model=args.model, rubric=args.rubric, target=target, model_family=family,
+                    latency_ms=elapsed_ms(), verdict=v, provider=args.provider)
     if args.emit_json:
         # Written before any exit branch: a NO-GO verdict is exactly when the caller most needs the
         # findings. Failing to persist them is itself fail-closed.
@@ -317,6 +372,7 @@ def main():
         except OSError as e:
             print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
                   file=sys.stderr)
+            deliver_then_record(**measured)
             sys.exit(2)
     if args.print_verdict:
         # Hand the token to the caller (e.g. spec-review-auto branches GO/REVIEW vs NO-GO).
@@ -326,14 +382,17 @@ def main():
             print(verdict["report"], file=sys.stderr)
         if verdict.get("route_back"):
             print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
+        deliver_then_record(**measured)
         sys.exit(0)
     if v in VERDICT_OK:
         print(f"OK ({v})")
+        deliver_then_record(**measured)
         sys.exit(0)
     print(f"=== GATE: {v or 'FAIL'} ===", file=sys.stderr)
     print(verdict.get("report", "(no report)"), file=sys.stderr)
     if verdict.get("route_back"):
         print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
+    deliver_then_record(**measured)
     sys.exit(2)
 
 

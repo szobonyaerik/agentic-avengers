@@ -208,7 +208,8 @@ agentic-avengers/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
 │   ├── gate_runner_guard.sh   refuses a runner that cannot identify itself as the shipped one
 │   ├── gate_errors.py         the failure taxonomy: every gate failure names its own cause
-│   ├── gate_timeouts.py       asserts each hook's budget outlives the provider call inside it
+│   ├── gate_timeouts.py       asserts each hook's budget outlives the provider call inside it,
+│   │                          and the metrics writers that share its headroom
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + read path + cosmic-ray + break-glass)
@@ -219,6 +220,8 @@ agentic-avengers/
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
+│   ├── pipeline_metrics.py    the emission points: gate calls, spec rounds, defects, skill loads
+│   ├── metrics_sink.py        fail-open bridge to firstmate's per-phase metrics CLI (no schema here)
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md

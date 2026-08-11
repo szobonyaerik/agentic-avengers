@@ -53,6 +53,15 @@ derive_feature() {
 SLUG="${PHASE:-$(derive_phase "$FILE" || true)}"
 FEATURE="$(derive_feature "$FILE" || true)"
 
+# Measurement, never a gate. A handover being written is the phase landing, so this is where its
+# close, its wall clock and the suite it landed with are stamped — and it is stamped BEFORE the
+# suite runs below, because a phase this hook stops still spent every minute and every test it
+# spent, and those numbers are unrecoverable once the run is over. `set` overwrites, so a handover
+# rewritten after a route-back converges on the last one rather than accumulating.
+if [ "$TRIGGER" = "handover" ]; then
+  python3 "$SD/pipeline_metrics.py" phase-close "$FILE" >/dev/null 2>&1 || true
+fi
+
 # Layout: tests/<feature>/<n>-<slug>/... ; fall back to tests/<slug> for repos on the older layout.
 TESTPATH=""
 if [ -n "$FEATURE" ] && [ -n "$SLUG" ] && [ -d "tests/$FEATURE/$SLUG" ]; then

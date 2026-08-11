@@ -180,7 +180,10 @@ every stop carries a `cause=` from `scripts/gate_errors.py` and reproduces the p
 verbatim. Four properties keep that honest, each one a defect that used to fail toward "looks fine":
 a hook's `hooks.json` budget must exceed `GATE_CALL_TIMEOUT` plus headroom
 (`scripts/gate_timeouts.py`, asserted at runtime and in the suite — a 120s hook around a 300s call
-was killed before it could answer and read for a day as a model size ceiling); a timeout kills the
+was killed before it could answer and read for a day as a model size ceiling), and that headroom is
+checked against what **measurement** can spend inside the hook too — metrics processes on the hook's
+path × `AVENGER_METRICS_TIMEOUT`, derived from what the scripts spawn, since a blocked writer costs
+the full per-call bound once in every process; a timeout kills the
 child's whole **process group** and reports measured wall clock (`scripts/proc_group.py` — killing
 the direct child alone left workers billing for over an hour); a rejection emits its report and
 records the judged hash **with its verdict**, so an unchanged rejected body replays the rejection;
@@ -323,6 +326,50 @@ for keeping it. At `done` they are rendered as a lavish triage; whatever the hum
 next interactive run's **preflight sweep** finds it; that sweep is the only recovery path, because
 `done` is terminal and will never re-fire. `hook_autoapprove.sh` denies `gh`/`gh-axi` issue creation
 outright while auto is armed, so the no-auto-filing rule is enforced mechanically, not just written.
+
+### 6d. The pipeline measures itself as it runs — the record is firstmate's
+Both logs above are prose, and neither answers **"did the pipeline get better?"** — that was
+archaeology across commits and chat, so it was mostly not answered. It is answered now by a
+**per-phase metrics record firstmate owns**: schema, units, absence semantics and every writing
+command live in firstmate's `docs/pipeline-metrics.md` + `bin/fm-pipeline-metrics.sh`. **This repo
+owns no part of that schema** — `scripts/metrics_sink.py` shells out to that CLI so the producer
+contract (write during the run, keep every key, make repetition converge, add no key) is enforced by
+their code. No second store, no second format; a missing field is a change to *their* schema.
+
+Two properties outrank recording anything, both tested. **Emitted as the run happens** — each fact
+written by the stage that observes it, at the moment it observes it, so a phase that dies mid-run
+still leaves its numbers. **Writing metrics can never fail a phase** — no writer, an unwritable
+record, a refusal, a hang or a crash is swallowed, logged to `.avenger-metrics.log`, and reported as
+"not recorded"; every metrics CLI call in a hook exits 0. An unwritable record makes firstmate's CLI
+*block* rather than fail, so one timeout abandons the writer for that process: fail-open has to hold
+in wall clock, not just exit codes.
+
+**Emission attaches to the fact, never to the caller.** `record_gate_call` lives in
+`gate_runner.py` — the one point every gate call passes — and reads its stage off the rubric, so a
+new gate is instrumented by existing. `record_spec_round` is idempotent by **content** (it reuses the
+rebuildable gate cache), so any caller may report any spec write. A seeded skill requirement never
+overwrites an observed load, in either hook order. Points: gate calls + causes (`gate_runner.py`) ·
+a harness-killed gate (the hook's own signal trap, since the runner it killed cannot speak) · spec
+rounds, byte size and requirement count (`hook_fidelity.sh`) · the verification attempt **count**
+(`verifier_review.sh`) · tests before/after, counted the *same static way* at both ends
+(`hook_fidelity.sh`, `hook_verifier.sh`) · **which stage found each defect** (`verifier_review.sh`,
+`hook_mutation.sh`, and `pipeline_metrics.py defect` for stages no script sees) · which skills each
+stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
+load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
+defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
+inline prose. **Off unless `fm-pipeline-metrics.sh` is on `PATH` or `AVENGER_METRICS_CMD` names it**,
+and an unconfigured run says so once rather than recording nothing in silence; `AVENGER_METRICS_OFF=1`
+disables it. opencode records everything its adapter drives, minus skill loads (no read/spawn event).
+
+**One asked-for fact is deliberately not built, and this is where that is said.** "Verification
+attempts, **and what each one changed**" was asked for; only the attempt **count** is recorded.
+firstmate's schema has no field for the per-attempt delta and that schema is closed by design — a
+record that accepts arbitrary keys is not an authoritative answer to "did this get better", it is
+whatever its last writer left there. No declared hypothesis needs it either: H4 measures the bare
+`verification_attempts` count and predicts "3 or fewer", and `defects[]` already carries most of the
+analytical value through `found_by`, `real`, `stage_reached` and `severity`. The one thing genuinely
+missing is the attempt index. Deferred as **`fm-metrics-attempt-detail`**, which is firstmate's
+decision to make, not this repo's.
 
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode

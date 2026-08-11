@@ -188,6 +188,17 @@ EOF_MAPS
   printf '%s\n' "$SRC"
 } >"$BUNDLE"
 
+# --- measurement (never a gate) ------------------------------------------------------------------
+# One attempt is counted here, at the point the judge is actually about to be called — an argument
+# refusal or an over-limit set above is a caller bug, not a verification attempt. The phase dir is
+# exported because gate_runner is handed a temp BUNDLE and can derive nothing from it; the spec path
+# is unset for the opposite reason, so a value inherited from a spec hook cannot mis-attribute this
+# call to a spec. Both fail open: `|| true`, over a sink that swallows its own failures.
+unset AVENGER_METRICS_SPEC_PATH
+export AVENGER_METRICS_PHASE_DIR="$PHASE_DIR"
+AVENGER_METRICS_ATTEMPT="$(python3 "$SD/pipeline_metrics.py" verifier-attempt "$PHASE_DIR" 2>/dev/null || echo 1)"
+export AVENGER_METRICS_ATTEMPT
+
 # --- judge, cross-family -------------------------------------------------------------------------
 # gate_runner asserts family(MODEL) != AUTHOR_FAMILY and exits 2 if they match, so a misconfigured
 # model can't quietly turn this back into same-family self-review.
@@ -245,5 +256,11 @@ PY
 python3 "$SD/verifier_bundle_scope.py" finalize "$PHASE_DIR" "$OUT"
 scope_rc=$?
 [ "$scope_rc" -ne 0 ] && rc="$scope_rc"
+
+# Which stage found each defect is the single field the record cannot recover afterwards, so every
+# finding this review reached is attributed to the Verifier the moment it exists — after `finalize`,
+# so findings carried forward from a narrower bundle are attributed too. Measurement, never a gate:
+# the exit code below is the review's, untouched by whether this wrote anything.
+python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$OUT" >/dev/null 2>&1 || true
 
 exit $rc

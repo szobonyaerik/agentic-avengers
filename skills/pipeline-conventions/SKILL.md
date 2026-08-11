@@ -312,7 +312,12 @@ Three consequences worth stating outright:
     size ceiling in the gate model. `scripts/gate_timeouts.py` asserts
     `hook timeout >= GATE_CALL_TIMEOUT + headroom`, derives *which* hooks are gate hooks from what
     each one actually calls, and both the hooks and the suite check it. Raising `GATE_CALL_TIMEOUT`
-    without raising `hooks.json` is a loud stop.
+    without raising `hooks.json` is a loud stop. **Measurement spends that same headroom**, so the
+    same module asserts `metrics processes on the hook's path x AVENGER_METRICS_TIMEOUT <= headroom`
+    — the count derived from what the scripts spawn and import, because the sink's breaker is
+    per-process state and a blocked writer therefore costs the full per-call bound in each one.
+    Ordering (the gate answers, then records) keeps a hung writer from ever truncating the answer;
+    this bound is what keeps it from getting the hook killed.
   - **A timeout must stop the work, not just stop waiting.** `scripts/proc_group.py` runs the
     provider child in its own process group and signals the GROUP; killing only the direct child left
     its workers running and billing, with runs REPORTING 300s observed against 569s, 3818s and 4276s.
@@ -408,6 +413,87 @@ the spec's `binding:` set is the budget. Full procedure in `skills/self-improvem
 
 Test: "would this help someone building a *different* project with this pipeline?" → it is a
 pipeline observation. "Would it help someone building *this* project again?" → it is a lesson.
+
+## The pipeline measures itself as it runs
+
+Both logs above are prose. Neither answers **"did the pipeline get better?"** — that used to be
+answered by archaeology across commits, retros and chat, which is expensive enough that it was
+mostly not answered at all. It is answered now by a **per-phase metrics record that firstmate owns**:
+its schema, its units, its absence semantics and every command that writes it live in firstmate's
+`docs/pipeline-metrics.md` and `bin/fm-pipeline-metrics.sh`. **This repo owns no part of that
+schema.** `scripts/metrics_sink.py` shells out to that CLI so the producer contract — write during
+the run, keep every key present, make repetition converge, add no key — is enforced by their code
+rather than restated in ours. There is deliberately no second store and no second file format; a
+field the schema lacks is a change to firstmate's schema, never a key added to a record here.
+
+**Two properties outrank recording anything, and both are tested.**
+
+**Emitted as the run happens, never reconstructed at the end.** Each fact is written by the stage
+that observes it, at the moment it observes it, so a phase that dies mid-run still leaves its numbers
+behind. One phase died and was recovered three times; every recovery would have lost the lot under a
+write-at-the-end design.
+
+**Writing metrics can never fail a phase.** Every failure — no writer configured, an unwritable
+record, a refusal, a hang, a crash — is swallowed, written to `.avenger-metrics.log`, and reported as
+"not recorded". Every metrics CLI call in a hook exits 0 on an emission path. **Measurement, not a
+gate**: a metrics bug that blocked delivery would be a self-inflicted outage in the thing meant to
+make delivery cheaper. An unwritable record makes firstmate's CLI *block* rather than fail, so one
+timeout abandons the writer for the rest of that process — the fail-open property has to hold in wall
+clock, not only in exit codes.
+
+**Emission is attached to the fact, never to the caller.** `record_gate_call` lives inside
+`gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
+existing; it reads its own stage off the rubric it was handed. `record_spec_round` is idempotent by
+**content** — it reuses the rebuildable gate cache to remember which body it last counted — so any
+caller may report any spec write and the record converges instead of double-counting a round. A
+seeded skill requirement never overwrites an observed load, whichever order the two hooks run in.
+
+| Fact | Observed by | Why there |
+|---|---|---|
+| every gate call: model, family, **measured** latency, verdict, and on failure the `cause` | `gate_runner.py` | the single point every gate call passes through; §Gates' failure taxonomy is what it records |
+| a gate the harness **killed** mid-call | the hook's own signal trap | the runner it killed cannot report its own death — this is what tells a kill apart from a NO-GO |
+| spec rounds, each round's **size in bytes**, requirement count | `hook_fidelity.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
+| the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, at the point the judge is actually called | an argument refusal is a caller bug, not an attempt |
+| tests before and after | `hook_fidelity.sh` (first spec write) and `hook_verifier.sh` (handover) | counted **the same static way at both ends**, so the delta is a real delta and not two counting methods |
+| **which stage found each defect** | `verifier_review.sh`, `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
+| which skills each stage actually loaded | `hook_skill_load.sh`, `hook_ponytail.sh` | an instruction to load a skill is not a load |
+
+**One asked-for fact is deliberately not built.** "Verification attempts, **and what each one
+changed**" was asked for; the table above records the attempt **count** only, and that row says so
+rather than reading as a claim the code does not honour. firstmate's schema has no field for the
+per-attempt delta and that schema is closed by design — a record that accepts arbitrary keys is not
+an authoritative answer to "did this get better", it is whatever its last writer left there, so no
+key is added here and no sidecar store is invented to hold it. No declared hypothesis needs it: H4
+measures the bare `verification_attempts` count and predicts "3 or fewer". `defects[]` already
+carries most of the analytical value through `found_by`, `real`, `stage_reached` and `severity`; the
+one thing genuinely missing is the attempt index. Deferred as **`fm-metrics-attempt-detail`** — a
+schema change is firstmate's decision, not this pipeline's.
+
+**`found_by` is the field the record exists for.** Tracing one pipeline's defects to it showed the
+running suite caught 3 of 15 genuine defects while mutation, probes, review and direct execution
+caught the rest. The stages a script cannot observe record their own catches:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_metrics.py" defect \
+  --phase-ref docs/features/<f>/phases/<n>-<slug> --id D3 \
+  --summary "$(cat .lavish/<f>-defect.md)" \
+  --found-by breaker --stage-reached implementation --severity security
+```
+
+The `"$(cat …)"` form is not optional and not a style: a defect summary is author-written free text,
+and **prose belongs in a file the command reads** (§Hard rules) — under `--auto` the deny regex is
+matched against the whole Bash command string, so a summary that merely *names* `git push` denies the
+command carrying it. `--found-by` takes firstmate's fixed vocabulary (`spec-gate`, `review-gate`,
+`verifier`, `breaker`, `mutation`, `running-suite`, `probe`, `execution`, `measurement`,
+`human-review`, `ci`, `other`); `--not-real` marks a defect in a test, fixture or artifact, which
+costs real time but must not inflate the product-defect count.
+
+**Off unless a firstmate home is configured.** `fm-pipeline-metrics.sh` must be on `PATH` or named by
+`AVENGER_METRICS_CMD`; without it a run records nothing and **says so once**, because a measurement
+layer quietly doing nothing is the failure the record exists to remove. `AVENGER_METRICS_OFF=1`
+disables it silently. opencode's adapter drives the same `hook_*.sh`, so gate calls, spec rounds and
+phase boundaries are recorded there too; it has no subagent-start or read event, so skill loads are
+not.
 
 ## Agent tooling
 
