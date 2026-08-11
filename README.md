@@ -232,7 +232,8 @@ agentic-avengers/
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
 │   ├── spec_notes.py          the known-open list: notes that never block, read once by the implementer
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
-│   ├── verifier_precheck.py   the Verifier's bookkeeping, mechanically, on every commit
+│   ├── verifier_precheck.py   the Verifier's bookkeeping, mechanically, on every commit over what
+│   │                          the diff touches (whole phase at handover; everything under --full)
 │   ├── verifier_attempts.py   the 3-attempt cap on the verification loop, and the finding series
 │   ├── required_skills.py     which skills each stage requires — injected, and recorded as evidence
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)

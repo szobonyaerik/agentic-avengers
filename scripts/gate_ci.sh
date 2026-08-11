@@ -108,19 +108,27 @@ fi
 
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
-#      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs here on
-#      every commit instead of once per phase inside a model loop, which is also what stops the same
-#      defect being found twice, six attempts apart, in one phase.
+#      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY
+#      commit, which is what stops the same defect being found twice, six attempts apart, in one
+#      phase — and it is diff-scoped by default for the same reason the spec loop above is: you are
+#      responsible for what you change, so a repository full of pre-rule phases can upgrade instead
+#      of being held hostage by CI. --full audits everything.
+echo "• verifier pre-check: traceability, gate-stamp freshness, spec structure"
 if [ "$FULL" -eq 1 ]; then
-  echo "• verifier pre-check: traceability, gate-stamp freshness, spec structure"
   python3 "$SCRIPT_DIR/verifier_precheck.py" --all --root "$ROOT" || record_fail "verifier-precheck"
+else
+  python3 "$SCRIPT_DIR/verifier_precheck.py" --root "$ROOT" || record_fail "verifier-precheck"
 fi
 
-# 1bc) Required skills exist. A stage whose required skill file is missing does not get a lighter
-#      version of the rules; it gets none, and until now that failed silently.
+# 1bc) Required skills exist, and every skill a stage was POINTED AT was actually loaded. A stage
+#      whose required skill file is missing does not get a lighter version of the rules; it gets
+#      none, and until now that failed silently. The audit is the other half of pointer delivery:
+#      a pointer nothing checks is the instruction-with-no-mechanism the injection replaced.
 if [ "$FULL" -eq 1 ]; then
   echo "• required skills: every stage's required SKILL.md is present"
   python3 "$SCRIPT_DIR/required_skills.py" verify --root "$ROOT" || record_fail "required-skills"
+  echo "• required skills: every delivered skill has evidence of a load"
+  python3 "$SCRIPT_DIR/required_skills.py" audit || record_fail "required-skills:unloaded"
 fi
 
 # 1bb) The document read path — the artifacts obey their declared readers and caps, and no stage

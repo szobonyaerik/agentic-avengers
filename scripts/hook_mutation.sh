@@ -12,8 +12,8 @@
 # so a phase is judged on the code it actually changed, not the whole package.
 #
 # MUTATION_POLICY selects how much authority the verdict has (pipeline-conventions: "Gates"):
-#   off (DEFAULT)  - skipped entirely; no mutation tool runs anywhere. Most teams leave it here.
-#   advisory       - runs everything and reports the score and the missing cases, but never blocks.
+#   off            - skipped entirely; no mutation tool runs anywhere.
+#   advisory (DEFAULT) - runs everything and reports the score and the missing cases, never blocks.
 #   enforce        - below threshold or unscorable STOPS the phase.
 # Mutation is an EXTRA signal, not the pipeline's independence mechanism — independence is the
 # Verifier's test-quality review (agents/avenger-verifier.md). Only `enforce` fails closed.
@@ -79,6 +79,35 @@ trap cleanup EXIT
 # first, or every bypassed run leaks its work dir.
 bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 
+# A hook the harness kills leaves no verdict, no report and no cause — and the run reads that absence
+# as the gate having objected. Say so instead, exactly as scripts/hook_spec_gate.sh does. This
+# matters more now that the policy defaults to `advisory`: every internal failure path already exits
+# 0 under advisory, and a kill must not be the one that blocks a phase the gate never judged.
+on_kill() {
+  cleanup; trap - EXIT
+  if [ "$MUTATION_POLICY" = "advisory" ]; then
+    echo "mutation [advisory]: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2
+    echo "  The gate did not answer; advisory never blocks." >&2
+    exit 0
+  fi
+  echo "mutation: HOOK KILLED by the harness (signal) — this is NOT a gate verdict. The gate did not answer." >&2
+  exit 2
+}
+trap on_kill TERM INT
+
+# bash defers a trap until the running FOREGROUND command returns, so a long child must run in the
+# background and be waited on — otherwise the kill is reported only after the call it was killed for
+# has finished, which is the same defect the spec gate's run_pass exists to avoid. Every cosmic-ray
+# invocation here can outlive the hook's budget, so all of them go through this.
+run_child() {
+  "$@" >>"$TMP" 2>&1 &
+  local pid=$!
+  trap 'kill -TERM "'"$pid"'" 2>/dev/null; on_kill' TERM INT
+  wait "$pid"; local rc=$?
+  trap on_kill TERM INT
+  return "$rc"
+}
+
 # Every stopping condition funnels through here so `advisory` cannot be forgotten at one of them.
 # $1 = bypass tag, $2 = what went wrong (already printed in detail by the caller).
 stop_or_report() {
@@ -104,24 +133,24 @@ fi
 # already broken (a collection error, say), every mutant is killed and the score is a perfect 1.0.
 # A broken suite would otherwise score better than a real one. Verified: with an import error in the
 # suite, all 7 fixture mutants reported 'killed'. No kill means anything until the baseline is green.
-if ! cosmic-ray baseline "$SCOPED" >>"$TMP" 2>&1; then
+if ! run_child cosmic-ray baseline "$SCOPED"; then
   echo "mutation: baseline FAILED — the suite does not pass on unmutated code, so every mutant" >&2
   echo "would score as killed. Refusing to score (fail closed). Fix the suite first:" >&2
   tail -5 "$TMP" >&2
   stop_or_report "mutation:baseline-failed" "baseline failed, so no mutant result is meaningful"
 fi
 
-if ! cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+if ! run_child cosmic-ray init "$SCOPED" "$SESSION"; then
   echo "cosmic-ray init errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray init errored"
 fi
 # Diff-scope: mark every mutant outside the phase's diff as skipped. mutation_score.py excludes
 # skipped mutants from the denominator (cosmic-ray's own cr-rate would count them as kills).
-if [ -n "$FILTER_BASE" ] && ! cr-filter-git --config "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+if [ -n "$FILTER_BASE" ] && ! run_child cr-filter-git --config "$SCOPED" "$SESSION"; then
   echo "cr-filter-git errored (fail closed) — refusing to mutate unscoped:" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:filter-errored" "cr-filter-git errored, scope unknown"
 fi
-if ! cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+if ! run_child cosmic-ray exec "$SCOPED" "$SESSION"; then
   echo "cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray exec errored"
 fi

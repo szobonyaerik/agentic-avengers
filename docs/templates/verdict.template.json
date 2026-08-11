@@ -1,4 +1,10 @@
 {
+  "_comment": [
+    "`amendments` holds requirement-id references ONLY — [\"A1\", \"A2\"] — and nothing else. The",
+    "records themselves live in the phase's amendments.json; a verdict then reads 'verified at",
+    "attempt N, plus amendments A1..An'. It is the one schema extension since the schema was frozen,",
+    "made at the schema (skills/verifier-triage) rather than as a bespoke top-level key."
+  ],
   "feature": "<feature>",
   "phase": "<n>-<slug>",
   "readers": ["phase-handover @ per phase", "feature close @ once"],
@@ -11,11 +17,7 @@
       "archived_to": "verdict-attempt-1.json"
     }
   ],
-  "amendments": [
-    "A1 — ids only. The records live in the phase's amendments.json; a verdict then reads",
-    "'verified at attempt N, plus amendments A1..An'. The one schema extension since the schema",
-    "was frozen, made at the schema rather than as a bespoke key."
-  ],
+  "amendments": ["A1"],
   "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say>",
   "run": {
     "at": "YYYY-MM-DDThh:mm:ssZ",

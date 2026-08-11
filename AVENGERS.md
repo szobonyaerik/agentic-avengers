@@ -36,7 +36,7 @@ decisions: `pipeline-flow.png` (2026-07-28) and, the same day, a **convergence o
 | §1, §4B | Nothing anywhere bounds a spec's size or its requirement count | **12 requirements per spec** (`scripts/requirement_cap.py`, `SPEC_REQUIREMENT_MAX`), counted **before any model call**, as a **SPLIT trigger** — over the cap the spec divides into siblings under the same phase. **No gate ever rejects a spec for being large**: a rejection for size is one more thing to grow around |
 | §3, §4E | A change to a verified phase re-opens the phase | **Amendments** (`scripts/amendments.py`): a post-verification change names the requirement ids it touches and **only those re-verify**, carrying their own evidence. Batched at phase close; **security is never batched**. A verdict reads *verified at attempt N, plus amendments A1..An*. One measured phase spent verification rounds 3 through 8 on exactly this gap |
 | §3, §F | The Verifier is the phase's whole judgement, looping until clean | **Narrowed to three jobs** — coverage per `binding:`, reading a green suite for gamed tests, adversarial execution on secrets/resource lifetimes/concurrency invariants — because only 3 of its 46 measured findings were user-visible defects nothing else could find, and **12 (26%) were bookkeeping about its own stamps**, now `scripts/verifier_precheck.py`. The loop is **capped at 3 attempts** (`verifier_attempts.py`): **16 of 20 re-attempts were the Verifier routing back to itself** |
-| §3.2, §H | Agents are **told** to load the skills that carry their procedure | **Skills are injected, not requested.** `scripts/required_skills.py` is the table and `scripts/hook_skills.sh` injects on `SubagentStart`, recording every load to `.avenger-skill-loads.jsonl`. A required skill that is missing is a **loud blocker**, never a silent fallback — `docs/lessons/` shipped with a complete procedure and zero invocations under the old shape |
+| §3.2, §H | Agents are **told** to load the skills that carry their procedure | **Skills are delivered, not requested — pointer plus evidenced load.** `scripts/required_skills.py` is the table and `scripts/hook_skills.sh` delivers on `SubagentStart`, recording every delivery to `.avenger-skill-loads.jsonl`. Under `SKILL_INJECT_MAX_BYTES` (8192) the body is injected and the injection is the load; over it the stage gets a **pointer** and must record the load, which `required_skills.py audit` enforces at handover and in CI. A required skill that is missing is a **loud blocker**, never a silent fallback — `docs/lessons/` shipped with a complete procedure and zero invocations under the old shape |
 
 Deliberate differences from `klm-agentic-pipeline` are listed in `README.md` § *Relationship to
 `klm-agentic-pipeline`*, which also names the two whose status against the sibling is unconfirmed.
@@ -99,7 +99,7 @@ PLAN
                                                                  sequencing only, NO file-level code)
   spec-writer         → docs/features/<feat>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md
 
-QUALITY WALL (per spec, both gates)
+QUALITY WALL (per spec, both gates)         [REVISED — see §0.1, rows §3/§4C/§7 and §4C]
   1. Automated Fidelity Gate (gate_runner + prompts/fidelity-rubric.md, cross-family):
        NO-GO → route back to spec-writer ;  GO / REVIEW → proceed
   2. Human grill-me review (skills/grill-me + skills/spec-review-checklist):

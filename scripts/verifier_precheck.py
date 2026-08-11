@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Verifier's bookkeeping, done by a script instead of by a model, on every commit.
+"""The Verifier's bookkeeping, done by a script instead of by a model, on every commit, diff-scoped.
 
 A scout measured all 46 Verifier findings across 8 phases of one feature. **Twelve of them (26%)
 were bookkeeping** - about the pipeline's own gate stamps, traceability rows and spec headings. On
@@ -29,7 +29,22 @@ suite for gamed tests, and adversarial execution against secrets, resource lifet
 invariants stay with the Verifier: they are the three jobs no script can do, and they produced all
 three of its user-visible defects.
 
+**Scope: you are responsible for what you change.** Run with no target it checks the phases the
+current diff touches, which is what lets it run on *every* commit rather than only on `--full` - a
+check that runs once at the end is exactly the "nothing checked it continuously" this replaces.
+`--all` audits every phase in the repository, which is what CI's `--full` does. The distinction
+matters to a consumer repo upgrading to this version: a full audit would hard-fail its CI over
+locked, pre-rule phases nobody touched. It is the same rule as `scripts/doc_read_path.py` (whose
+`changed_paths()` this reuses rather than re-implementing), the verifier bundle, the spec re-gate
+cache and the mutation gate - and it behaves the same way at the edge: when git cannot say what
+changed, the scope is unknowable, so **nothing is enforced and the check says so out loud**. Falling
+back to enforcing everything is the hostage failure the scoping removes.
+
+The mode it ran in is always printed, because a silent fallback is how a check comes to mean
+something other than what its caller believes.
+
 Usage:
+    verifier_precheck.py [--root .]                        the phases the current diff touches
     verifier_precheck.py <phase-dir> [<phase-dir> ...]     exit 0 = clean, 1 = findings, 2 = error
     verifier_precheck.py --all [--root .]                  every phase under docs/features/
 """
@@ -47,10 +62,19 @@ FINDINGS = 1
 ERROR = 2
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
-#: A requirement declaration line, and the `binding:` it carries when it declares one on the same
-#: line - the shape `docs/templates/spec.template.md` emits.
-DECLARATION = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*)?(R\d+\.\d+\.\d+)\b(?P<rest>.*)$")
+# ONE declaration regex and ONE diff-scope mechanism, both imported rather than copied. This module
+# held its own copy of the declaration regex, and both copies went blind on table-formatted specs at
+# the same moment: the cap read `0/12` and this check reported zero ids owed a trace, so it passed
+# vacuously on the very spec it exists to hold. A second copy of a rule is the copy that drifts.
+from doc_read_path import changed_paths  # noqa: E402
+from requirement_cap import DECLARATION  # noqa: E402
+
+#: The `binding:` a declaration carries. Searched over the REST of the declaration line, so a table
+#: row's later cell (`| R1.1.1 | binding: none | … |`) reads exactly like an inline one. A row whose
+#: binding cannot be read is **owed a trace**, never exempt - an unreadable binding buys no more than
+#: a missing one does.
 BINDING = re.compile(r"binding:[ \t`]*([a-z0-9-]+)", re.IGNORECASE)
 ACCEPTANCE_HEADING = re.compile(r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE)
 
@@ -159,6 +183,24 @@ def phase_dirs(root: Path) -> list[Path]:
     return sorted(p.parent for p in Path(root).glob("docs/features/*/phases/*/specs") if p.is_dir())
 
 
+def changed_phase_dirs(root: Path) -> list[Path] | None:
+    """The phases the current diff touches, or None when git cannot say what changed.
+
+    None is not "nothing changed" and must never be read as one: the scope is unknowable, so the
+    caller enforces nothing and says so. Falling back to every phase would hold a repository hostage
+    to history it has not touched, which is the whole reason this is scoped.
+    """
+    scope = changed_paths(Path(root))
+    if scope is None:
+        return None
+    touched: list[Path] = []
+    for phase in phase_dirs(root):
+        resolved = phase.resolve()
+        if any(changed == resolved or resolved in changed.parents for changed in scope):
+            touched.append(phase)
+    return touched
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phases", nargs="*", type=Path)
@@ -166,12 +208,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", type=Path)
     args = parser.parse_args(argv)
 
-    targets = phase_dirs(args.root) if args.all else list(args.phases)
-    if not targets:
-        if args.all:
-            print("  (no phases with specs — nothing to pre-check)", file=sys.stderr)
+    if args.all:
+        targets, mode = phase_dirs(args.root), "--all: every phase under docs/features/"
+    elif args.phases:
+        targets, mode = list(args.phases), "the phase directories named on the command line"
+    else:
+        scoped = changed_phase_dirs(args.root)
+        if scoped is None:
+            print(
+                f"[verifier_precheck] git cannot say what changed under {args.root}, so the scope "
+                f"is unknowable and no phase is pre-checked. Run `--all` for a full audit.",
+                file=sys.stderr,
+            )
             return CLEAN
-        parser.error("give a phase directory, or --all")
+        targets, mode = scoped, "diff-scoped: the phases this diff touches"
+
+    print(f"  verifier pre-check scope — {mode} ({len(targets)} phase(s))", file=sys.stderr)
+    if not targets:
+        print("  (no phases with specs in scope — nothing to pre-check)", file=sys.stderr)
+        return CLEAN
 
     findings: list[str] = []
     for phase in targets:

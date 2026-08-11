@@ -9,16 +9,39 @@ to remove from everything else. `skills/ponytail` is the only one genuinely inje
 `docs/lessons/` shipped with a complete written procedure and **zero invocations** for the same
 reason: a directive in a skill reaches only the agents that load that skill.
 
-So a required skill is **injected, not requested**, and every injection is **recorded**:
+## Delivery: POINTER PLUS EVIDENCED LOAD, not blanket injection
 
-- `scripts/hook_skills.sh` reads this table on `SubagentStart` and injects each required skill's body
-  into the subagent's context. The agent does not have to remember, and cannot decline.
-- Each injection appends one line to `.avenger-skill-loads.jsonl` (gitignored scratch): the agent
-  type, the skill, its size, whether it was required, and whether it loaded. That file is the
-  evidence, and it is what makes "100% of required loads evidenced" a number rather than a hope.
-- **A required skill that is missing or unreadable is a LOUD BLOCKER**, not a silent fallback. The
-  hook says so in the injected context and records `loaded: false`. The one thing it must never do is
-  let the stage proceed believing it has rules it does not have.
+Injecting every required skill's whole body is one way to **guarantee** the load, and it was the
+first shape of this. It is also expensive in exactly the way the read path taught: every row of the
+table below requires `pipeline-conventions`, the largest file in `skills/`, and inlining it on every
+`avenger-*` spawn is the same order of cost the read-path work had just removed from `handover.md`.
+
+The `skill_loads` record this module already builds is a cheaper way to **detect** a failure to load,
+and a required skill with no recorded load is a loud blocker that stops the phase anyway.
+**Detection at roughly a million tokens saved per feature beats prevention at roughly a million
+spent, when both end the same way.** So delivery is decided by size:
+
+- **At or under `SKILL_INJECT_MAX_BYTES` (default 8192): injected in full.** For these the injection
+  IS the load, and it is recorded `loaded: true` at injection. Small enough that injecting costs less
+  than the risk.
+- **Over it: a POINTER, and a pointer is not a suggestion.** The stage is handed the skill's path,
+  size and one-line description, told the load is REQUIRED, and told the command that records it. A
+  pointer with no matching load recorded is a **blocking** audit failure at handover and in CI - a
+  bare pointer with nothing checking it would be the instruction-not-mechanism failure this exists to
+  fix, one layer up.
+
+The saving is a **PREDICTION, not an achievement**: declared as **H9** in the metrics ledger before
+this landed - roughly 1M tokens saved per 8-phase feature with zero unrecorded required loads -
+and settled in phase 9, not here.
+
+`.avenger-skill-loads.jsonl` (gitignored scratch) is the evidence, one JSON record per line:
+
+    {"at", "event": "delivery"|"load", "agent_type", "agent_id", "skill",
+     "required": true, "delivery": "inject"|"pointer", "loaded": bool, "bytes", "path"}
+
+**A required skill that is missing or unreadable is a LOUD BLOCKER**, not a silent fallback. The hook
+says so in the injected context and records `loaded: false`. The one thing it must never do is let
+the stage proceed believing it has rules it does not have.
 
 The table is keyed by an unanchored, case-insensitive regex over `agent_type`, so plugin-scoped names
 like `plan-build-verify:avenger-verifier` match. Order matters only for readability; the first
@@ -30,21 +53,35 @@ reach it.
 
 Usage:
     required_skills.py for <agent-type>          print the skill dirs that stage requires
-    required_skills.py table                     print the whole table
+    required_skills.py table                     print the whole table, with each skill's delivery
     required_skills.py verify [--root .]         every required skill exists and is readable
                                                  (exit 1 when one does not)
+    required_skills.py record <agent-type> <skill> [--agent-id ID] [--log PATH]
+                                                 evidence that a POINTER skill was actually loaded
+    required_skills.py audit [--log PATH]        exit 1 when a spawn was handed a pointer for a
+                                                 required skill and never recorded loading it
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 OK = 0
 MISSING = 1
 ERROR = 2
+
+#: At or under this, a required skill is injected whole; over it, it is a pointer the stage must load
+#: and record. 8192 bytes is the line at which injecting costs less than the risk of a missed load.
+DEFAULT_INJECT_MAX_BYTES = 8192
+
+INJECT = "inject"
+POINTER = "pointer"
 
 #: (agent_type pattern, required skill directory names). Every pipeline agent gets
 #: `pipeline-conventions` - it is the shared rulebook, and an agent that has not read it is an agent
@@ -88,6 +125,138 @@ def skill_path(root: Path, skill: str) -> Path:
     return Path(root) / "skills" / skill / "SKILL.md"
 
 
+def inject_max_bytes() -> int:
+    """The injection ceiling in force. A value that does not parse is a hard error, never a guess.
+
+    Same rule as the requirement cap and `GATE_CALL_TIMEOUT`: a budget believed rather than checked
+    is the defect. Guessing the default here would silently change every stage's delivery mode.
+    """
+    raw = os.environ.get("SKILL_INJECT_MAX_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_INJECT_MAX_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"SKILL_INJECT_MAX_BYTES={raw!r} is not a whole number of bytes. It decides whether a "
+            f"required skill is injected or pointed at, so it is not guessed."
+        ) from None
+    if value < 0:
+        raise ValueError(f"SKILL_INJECT_MAX_BYTES={raw!r} cannot be negative.")
+    return value
+
+
+def delivery_for(size: int, limit: int | None = None) -> str:
+    """`inject` for a body at or under the ceiling, `pointer` above it."""
+    return INJECT if size <= (inject_max_bytes() if limit is None else limit) else POINTER
+
+
+def load_record(
+    agent_type: str,
+    skill: str,
+    *,
+    event: str,
+    delivery: str,
+    loaded: bool,
+    size: int = 0,
+    path: str = "",
+    agent_id: str | None = None,
+) -> dict:
+    """One evidence line. The shape is shared by the hook and by `record`, so audit reads one shape."""
+    return {
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "event": event,
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+        "skill": skill,
+        "required": True,
+        "delivery": delivery,
+        "loaded": loaded,
+        "bytes": size,
+        "path": path,
+    }
+
+
+def default_log() -> Path:
+    """Where the evidence goes. The hook and `record` must agree, so the rule lives here."""
+    configured = os.environ.get("SKILL_LOAD_LOG", "").strip()
+    if configured:
+        return Path(configured)
+    root = os.environ.get("CLAUDE_PROJECT_DIR", "").strip() or "."
+    return Path(root) / ".avenger-skill-loads.jsonl"
+
+
+def append_record(log: Path, record: dict) -> None:
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def read_records(log: Path) -> list[dict]:
+    """Every evidence line. A line nobody can parse is an ERROR, never a line quietly skipped."""
+    records: list[dict] = []
+    for number, line in enumerate(log.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except ValueError as exc:
+            raise ValueError(f"{log}:{number} is not readable JSON ({exc})") from None
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{log}:{number} is not a record object")
+        records.append(parsed)
+    return records
+
+
+def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
+    """(one line per required skill with no evidence of a load, the key the match was made on).
+
+    Two things are a gap, and they are the same gap wearing different clothes:
+
+      * a **pointer** handed to a spawn with no matching `load` record - the stage was told to load a
+        required skill and there is no evidence it did;
+      * an **injection** recorded `loaded: false` - the file was missing or unreadable, so the stage
+        ran with no rules rather than lighter ones.
+
+    Matching is as precise as the payload allows: on the spawn's own `agent_id` when the delivery
+    record carries one, and on `agent_type` when it does not. Which key was used is RETURNED and said
+    out loud, because an audit that silently matches more loosely than it claims is the same defect
+    class as everything else here. Records written before this shape existed carry no `event` or
+    `delivery`; they are read as injected deliveries, so an old log cannot fail an audit it predates.
+    """
+    loaded: set[tuple[str | None, str]] = set()
+    for record in records:
+        if record.get("event") == "load":
+            loaded.add((record.get("agent_id"), record.get("skill")))
+            loaded.add((None, record.get("skill")))
+
+    gaps: list[str] = []
+    keys: set[str] = set()
+    for record in records:
+        if record.get("event", "delivery") != "delivery" or not record.get("required"):
+            continue
+        skill, agent = record.get("skill"), record.get("agent_type", "?")
+        agent_id = record.get("agent_id")
+        if record.get("delivery", INJECT) == POINTER:
+            keys.add("agent_id" if agent_id else "agent_type")
+            key = (agent_id, skill) if agent_id else (None, skill)
+            if key not in loaded:
+                gaps.append(
+                    f"{agent} was handed a POINTER to skills/{skill} and never recorded loading it. "
+                    f"A required skill with no evidence of a load is a stage running on whatever the "
+                    f"model already believed."
+                )
+        elif not record.get("loaded"):
+            gaps.append(
+                f"{agent} required skills/{skill} and it was missing or unreadable at spawn "
+                f"(loaded: false). An absent required skill is not a lighter version of the rules."
+            )
+    key_used = "agent_id" if keys == {"agent_id"} else ("agent_type" if keys else "n/a")
+    if len(keys) > 1:
+        key_used = "agent_id where the payload carried one, agent_type otherwise"
+    return gaps, key_used
+
+
 def missing(root: Path) -> list[tuple[str, str]]:
     """(agent pattern, skill) for every required skill that is absent or unreadable."""
     out: list[tuple[str, str]] = []
@@ -107,18 +276,81 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="action", required=True)
     p_for = sub.add_parser("for")
     p_for.add_argument("agent_type")
-    sub.add_parser("table")
+    p_table = sub.add_parser("table")
+    p_table.add_argument("--root", default=Path(__file__).resolve().parent.parent, type=Path)
     p_verify = sub.add_parser("verify")
     p_verify.add_argument("--root", default=Path(__file__).resolve().parent.parent, type=Path)
+    p_record = sub.add_parser("record")
+    p_record.add_argument("agent_type")
+    p_record.add_argument("skill")
+    p_record.add_argument("--agent-id", default=None)
+    p_record.add_argument("--log", default=None, type=Path)
+    p_audit = sub.add_parser("audit")
+    p_audit.add_argument("--log", default=None, type=Path)
     args = parser.parse_args(argv)
 
     if args.action == "for":
         print("\n".join(required_for(args.agent_type)))
         return OK
     if args.action == "table":
+        try:
+            limit = inject_max_bytes()
+        except ValueError as exc:
+            print(f"[required_skills] {exc}", file=sys.stderr)
+            return ERROR
         for pattern, skills in REQUIRED:
-            print(f"{pattern}\t{','.join(skills)}")
+            annotated = []
+            for skill in skills:
+                path = skill_path(args.root, skill)
+                size = path.stat().st_size if path.is_file() else 0
+                annotated.append(f"{skill}:{delivery_for(size, limit)}")
+            print(f"{pattern}\t{','.join(annotated)}")
         return OK
+    if args.action == "record":
+        # A pointer is only as good as the evidence that it was followed, so this is the other half
+        # of the pointer delivery — not an optional courtesy.
+        log = args.log or default_log()
+        try:
+            append_record(
+                log,
+                load_record(
+                    args.agent_type, args.skill, event="load", delivery=POINTER,
+                    loaded=True, agent_id=args.agent_id,
+                ),
+            )
+        except OSError as exc:
+            print(f"[required_skills] cannot record the load to {log}: {exc}", file=sys.stderr)
+            return ERROR
+        print(f"recorded: {args.agent_type} loaded skills/{args.skill}", file=sys.stderr)
+        return OK
+    if args.action == "audit":
+        log = args.log or default_log()
+        if not log.is_file():
+            # Nothing was ever delivered here, so there is nothing to have missed. Said out loud
+            # rather than passing invisibly, the same rule as an absent subprocess-check root.
+            print(f"  (no skill-load evidence at {log} — no spawns recorded)", file=sys.stderr)
+            return OK
+        try:
+            records = read_records(log)
+        except (OSError, ValueError) as exc:
+            print(f"[required_skills] {exc}", file=sys.stderr)
+            return ERROR
+        gaps, key_used = audit_gaps(records)
+        if not gaps:
+            print(
+                f"  required skills: every delivered skill has evidence of a load "
+                f"({len(records)} record(s), matched on {key_used})",
+                file=sys.stderr,
+            )
+            return OK
+        print(
+            f"required_skills: a required skill was delivered and never loaded (matched on "
+            f"{key_used}):",
+            file=sys.stderr,
+        )
+        for gap in gaps:
+            print(f"  ✗ {gap}", file=sys.stderr)
+        return MISSING
 
     gaps = missing(args.root)
     if not gaps:

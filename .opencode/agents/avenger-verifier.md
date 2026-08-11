@@ -61,10 +61,12 @@ So you keep exactly three jobs, and the fourth is gone:
    credential leaks. Do not skip it on a green suite — a green suite is exactly the state it exists
    to disbelieve.
 
-**Bookkeeping is no longer yours.** `scripts/verifier_precheck.py` decides it mechanically, on every
-commit, from `scripts/hook_verifier.sh` and CI: untraced requirement ids, stale gate stamps, a
-missing `## Acceptance criteria` heading. **Do not raise those as findings** and do not spend an
-attempt on them — run the script, and if it fails, say so and let it be fixed mechanically:
+**Bookkeeping is no longer yours.** `scripts/verifier_precheck.py` decides it mechanically: untraced
+requirement ids, stale gate stamps, a missing `## Acceptance criteria` heading. It runs on **every
+commit over the phases that commit touches**, from `gate_ci.sh`; over **the whole phase** at handover
+from `scripts/hook_verifier.sh`; and over **everything** under `gate_ci.sh --full` in CI. **Do not
+raise those as findings** and do not spend an attempt on them — run the script for your phase, and if
+it fails, say so and let it be fixed mechanically:
 
 ```bash
 python3 scripts/verifier_precheck.py <phase-dir>

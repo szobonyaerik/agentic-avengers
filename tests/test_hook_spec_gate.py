@@ -214,6 +214,20 @@ def test_an_over_cap_spec_is_told_to_split_before_any_paid_call(project: Path) -
     assert calls(project) == [], "the cap must be decided before the gate is paid for"
 
 
+def test_a_spec_the_cap_cannot_count_is_not_told_to_split(project: Path) -> None:
+    """Exit 1 is OVER the cap; exit 2 is "the count could not be decided". Collapsing the two sent
+    the writer to SPLIT a document nobody could count — the same distinction the subprocess branch
+    already draws: a file it cannot read is a file it cannot clear."""
+    prose = "The system must do X (R1.1.1) and then Y (R1.1.2).\n"
+    spec = write_spec(project, requirements=prose)
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 2
+    assert "could not count this spec" in result.stderr
+    assert "NOT a split trigger" in result.stderr
+    assert "SPLIT this spec" not in result.stderr
+    assert calls(project) == [], "a count that failed must not be paid for either"
+
+
 def test_a_spec_at_the_cap_still_reaches_the_gate(project: Path) -> None:
     at_cap = "".join(f"- R1.1.{i} — `binding: e2e` — behavior {i}\n" for i in range(1, 13))
     spec = write_spec(project, requirements=at_cap)

@@ -24,8 +24,9 @@ carries `fidelity_verdict` and no `spec_gate:` line. Rather than migrating files
 rewrite bodies the gate cache is keyed on), the old stamp is *derived* here, once:
 
     blocked   <- fidelity_verdict: NO-GO
-    approved  <- fidelity_verdict present and not NO-GO
-    pending   <- anything else, including a spec that carries neither
+    approved  <- fidelity_verdict: GO | REVIEW | PASS
+    pending   <- anything else: `fidelity_verdict: pending`, a value nobody can read, and a spec that
+                 carries neither stamp
 
 The bias is the same as everywhere else in the resolver: when a stamp is missing or unreadable, the
 spec is **pending**, because the cost of re-gating is one call and the cost of skipping is an

@@ -235,11 +235,16 @@ Three consequences worth stating outright:
     gate stamps, traceability rows and spec headings — 45% on the worst phase, where **attempts 2 and
     5 produced nothing but bookkeeping**, roughly 70 minutes and ~410k tokens for four
     stamp-freshness observations. Every one was mechanically decidable. `scripts/verifier_precheck.py`
-    now decides them on every commit, from `scripts/hook_verifier.sh` and CI, for no tokens: every
-    requirement id appears in some `test-mapping.md` row for its phase (`binding: none` exempt by
-    construction), the gate stamp is fresh for every spec, and every spec still has its
-    `## Acceptance criteria` heading. **A defect that recurred twice, six attempts apart, in one
-    phase, because nothing checked it continuously.**
+    now decides them for no tokens: every requirement id appears in some `test-mapping.md` row for
+    its phase (`binding: none` exempt by construction), the gate stamp is fresh for every spec, and
+    every spec still has its `## Acceptance criteria` heading. **A defect that recurred twice, six
+    attempts apart, in one phase, because nothing checked it continuously** — so it runs on **every
+    commit**, and **diff-scoped**, the same "you are responsible for what you change" rule as the
+    verifier bundle, the spec re-gate cache and the mutation gate: the phases the commit touches from
+    `gate_ci.sh`, the **whole phase** at handover from `scripts/hook_verifier.sh`, and everything
+    under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer repo's CI over
+    locked phases nobody touched; when git cannot say what changed, nothing is enforced and the check
+    says so out loud rather than falling back to enforcing everything.
   - **The loop is capped at 3 attempts, and route-backs are bundled.** **16 of 20 re-attempts were
     the Verifier routing back to itself.** One phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 —
     a gate disclosing a subset of what it could already see, one expensive round at a time.
@@ -356,12 +361,32 @@ invocations** for exactly this reason: a directive in a skill reaches only the a
 skill.
 
 `scripts/required_skills.py` is the one table of which skills each stage requires, and
-`scripts/hook_skills.sh` **injects** them on `SubagentStart`. Every injection appends a record to
-`.avenger-skill-loads.jsonl` (gitignored) — stage, skill, size, required, loaded — which is what
-makes "every required load evidenced" a number rather than a hope. **A required skill that is missing
-or unreadable is a loud BLOCKER in the injected context**, recorded `loaded: false`: a required skill
-that is absent is not a lighter version of the rules, it is no rules. `SKILLS_OFF=1` disables it, and
-everything else fails closed and injects nothing.
+`scripts/hook_skills.sh` **delivers** them on `SubagentStart`. Every delivery appends a record to
+`.avenger-skill-loads.jsonl` (gitignored) — stage, agent id, skill, size, required, delivery, loaded —
+which is what makes "every required load evidenced" a number rather than a hope.
+
+**Delivery is pointer plus evidenced load, decided by size** (`SKILL_INJECT_MAX_BYTES`, default
+**8192**). Injecting every body guarantees the load and costs the same order as the reads the read-path
+work had just removed — every row of the table requires `pipeline-conventions`, the largest file in
+`skills/`, on every `avenger-*` spawn. The evidence record is a cheaper way to **detect** a failure
+to load, and a required skill with no recorded load blocks the phase anyway, so **detection beats
+prevention when both end the same way**:
+
+- **At or under the ceiling → injected whole.** For these the injection *is* the load, recorded
+  `loaded: true` at injection.
+- **Over it → a POINTER**: path, size, one-line description, and the command that records the load
+  (`required_skills.py record <agent-type> <skill>`). **A pointer is not a suggestion** —
+  `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`),
+  and a pointer with no matching load **fails the phase**, naming the stage and the skill. A pointer
+  nothing checks would be the instruction-with-no-mechanism this whole section removes.
+
+The saving is a **prediction, not a result**: declared as **H9** before it landed — roughly 1M tokens
+saved per 8-phase feature with zero unrecorded required loads — and settled in phase 9.
+
+**A required skill that is missing or unreadable is a loud BLOCKER in the injected context**, recorded
+`loaded: false`: a required skill that is absent is not a lighter version of the rules, it is no
+rules. `SKILLS_OFF=1` disables it, and everything else fails closed and delivers nothing — an
+unreadable payload, an agent this pipeline does not own, a broken table, an unparseable ceiling.
 
 Reach is scoped per skill, the same way `hook_ponytail.sh` excludes the Verifier and `hook_lessons.sh`
 does not: a skill that fights a stage's job must not reach it.

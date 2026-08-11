@@ -21,9 +21,25 @@ number at which one spec still reads as one increment.
 
 ## How requirements are counted
 
-A **declaration** is a line whose first token is a requirement id (`R<n>.<k>.<m>`), which is the
-shape `docs/templates/spec.template.md` emits under `## Requirements`. Counting is over **distinct
-ids**, so the same id restated under `## Acceptance criteria` is not counted twice.
+A **declaration** is a line whose first content is a requirement id (`R<n>.<k>.<m>`), reached through
+an optional markdown table pipe, list marker and/or bold. All four of these are one declaration:
+
+    - R1.1.1 — `binding: e2e` — …
+    **R1.1.1** — …
+    R1.1.1 — …
+    | R1.1.1 | binding: e2e | … |
+
+The table row is not a hypothetical: a spec that laid 19 requirements out as a markdown table - the
+format this pipeline already uses for `test-mapping.md` - counted **zero**, printed
+`requirements: 0/12`, and the cap, the only counterweight to spec growth in the whole pipeline, never
+fired. The observe pass is forbidden from raising size, so no model caught it either. A guard that
+cannot fire is the defect class this overhaul exists to remove, so `DECLARATION` is **one regex,
+owned here**, imported by `verifier_precheck.py` rather than copied into it - the copy is what went
+blind in two places at once.
+
+Counting is over **distinct ids**, so the same id restated under `## Acceptance criteria` is not
+counted twice, and an id merely mentioned mid-sentence ("covers R1.1.1, R1.1.4") is not a
+declaration.
 
 When the spec has a `## Requirements` heading the count is taken from that section - the authored
 set, not every mention. When it does not, the whole body is scanned instead: a spec that keeps its
@@ -31,8 +47,13 @@ requirements somewhere else still gets counted, so the cap cannot be evaded by m
 The mode used is always printed, because a silent fallback is how a check comes to mean something
 other than what its caller believes.
 
+**A count of zero over text that plainly contains requirement ids is not a count of zero.** It is a
+layout this parser cannot read, and reporting it as WITHIN is the same silent-pass failure a fifth
+layout would reproduce. So it is an ERROR that names what it saw, never a pass.
+
 Usage:
-    requirement_cap.py <spec.md> [--max N]     exit 0 = at or under, 1 = over (split), 2 = unreadable
+    requirement_cap.py <spec.md> [--max N]     exit 0 = at or under, 1 = over (split),
+                                               2 = the count could not be decided
     requirement_cap.py <spec.md> --count       print the count alone and exit 0
 """
 
@@ -54,10 +75,16 @@ DEFAULT_MAX = 12
 #: A requirement id: phase, spec, requirement.
 REQUIREMENT_ID = re.compile(r"R\d+\.\d+\.\d+")
 
-#: A DECLARATION - a line whose first content is a requirement id, optionally inside a list marker
-#: and/or bold. `- R1.1.2 — binding: e2e — …` and `**R1.1.2**` both count; a line that merely mentions
-#: an id mid-sentence ("covers R1.1.1, R1.1.4") does not.
-DECLARATION = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*)?(R\d+\.\d+\.\d+)\b")
+#: A DECLARATION - a line whose first content is a requirement id, reached through an optional
+#: markdown table pipe, list marker and/or bold, in that order. `- R1.1.2 — binding: e2e — …`,
+#: `**R1.1.2**` and `| R1.1.2 | binding: e2e | … |` all count; a line that merely mentions an id
+#: mid-sentence ("covers R1.1.1, R1.1.4") does not. `rest` is the remainder of the line, which is
+#: where `verifier_precheck.py` reads the `binding:` - including from a later table cell.
+#:
+#: This is the ONE declaration regex. verifier_precheck.py imports it; it used to hold its own copy,
+#: and both went blind on table-formatted specs at the same moment, which is what a second copy is
+#: for.
+DECLARATION = re.compile(r"^[ \t]*(?:\|[ \t]*)?(?:[-*+][ \t]+)?(?:\*\*)?(R\d+\.\d+\.\d+)\b(?P<rest>.*)$")
 
 REQUIREMENTS_HEADING = re.compile(r"^##+[ \t]*Requirements\b.*$", re.IGNORECASE | re.MULTILINE)
 NEXT_HEADING = re.compile(r"^##+[ \t]+", re.MULTILINE)
@@ -86,6 +113,33 @@ def declared_ids(text: str) -> tuple[list[str], str]:
         if match and match.group(1) not in seen:
             seen.append(match.group(1))
     return seen, scope
+
+
+def unreadable_layout(text: str) -> str | None:
+    """Why the count cannot be trusted, or None when it can.
+
+    Requirement ids present in the counted scope but **not one of them recognised as a declaration**
+    means the parser cannot see this spec's requirement set. Reporting that as `0/12` is how the cap
+    silently stopped existing for table-formatted specs, and widening the regex fixes the layout that
+    was found rather than the class. This is the floor: the check says it cannot count, and fails
+    closed, instead of passing something it never read.
+    """
+    section = requirements_section(text)
+    scope = section if section is not None else text
+    if not REQUIREMENT_ID.search(scope):
+        return None
+    ids, _ = declared_ids(text)
+    if ids:
+        return None
+    sample = next(
+        (line.strip() for line in scope.splitlines() if REQUIREMENT_ID.search(line)), ""
+    )
+    return (
+        "requirement ids appear in this spec but none of them is DECLARED in a shape this check can "
+        "read, so the count would be 0 and the cap would never fire. Declare each requirement id as "
+        "the first content of its own line, list item or table row.\n"
+        f"  First unrecognised line: {sample[:200]}"
+    )
 
 
 def cap() -> int:
@@ -142,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
         limit = args.max if args.max is not None else cap()
     except ValueError as exc:
         print(f"[requirement_cap] {exc}", file=sys.stderr)
+        return ERROR
+
+    blind = unreadable_layout(text)
+    if blind is not None:
+        print(f"[requirement_cap] {args.spec}: {blind}", file=sys.stderr)
         return ERROR
 
     ids, scope = declared_ids(text)

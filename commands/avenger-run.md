@@ -173,6 +173,12 @@ This is a starting allocation, not a ceiling: raise a stage's effort when *that 
 routing back, and say in the retrospective that you did — a stage whose effort had to be raised is
 evidence about the stage, not about the run.
 
+The companion instruction to this table — *remove explicit self-verification scaffolding where the
+model already verifies unprompted* — **found nothing to remove**. No agent, skill, command or prompt
+in this repository carries that scaffolding, so that half of the change is a **no-op**, not a
+completed removal. It is recorded here rather than claimed as done: a removal nobody made is how a PR
+body stops being evidence.
+
 ## 3. Stop for the plan
 
 After `plan.md` is written, **stop and show the user the phase breakdown** — goals, order, and what

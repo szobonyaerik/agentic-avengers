@@ -110,6 +110,18 @@ if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
     "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
 fi
 
+# Required skills that were POINTED AT and never recorded as loaded. A pointer is the cheap half of
+# delivery — it saves injecting a large skill body on every spawn — and this audit is the other half:
+# without it a pointer is exactly the "load skills/tdd before you start" instruction-with-no-mechanism
+# that the injection was introduced to replace. A phase does not close over an unrecorded required
+# load. Fail closed; the script names the stage and the skill.
+if ! python3 "$SD/required_skills.py" audit; then
+  fail "verifier:skills" \
+    "verifier: a required skill was delivered to a stage in this run and never recorded as loaded" \
+    "(named above). Load it and record it with scripts/required_skills.py record <agent-type> <skill>," \
+    "or re-run the stage — a stage that never loaded its rules did not run under them."
+fi
+
 # Amendments owed re-verification NOW: every security-relevant one, always, plus any pending one on
 # a phase whose verdict already passes. Batching is a cost optimisation and it does not apply to a
 # credential already exposed.

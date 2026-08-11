@@ -86,10 +86,23 @@ fi
 # --- 2. Mechanical: the requirement cap, a SPLIT trigger (no model, always) ----------------------
 # Deliberately before the model call, and deliberately not a gate verdict. The gate rubrics are told
 # never to reject a spec for being large; size is decided here, and the remedy is a split.
-if ! python3 "$SD/requirement_cap.py" "$FILE"; then
-  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-gate-requirement-cap"
-  echo "  route_back: avenger-spec-writer, to SPLIT this spec — not to shorten it." >&2
-  exit 2
+python3 "$SD/requirement_cap.py" "$FILE"; cap_rc=$?
+if [ "$cap_rc" -ne 0 ]; then
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    exec "$SD/bypass_log.sh" "spec-gate-requirement-cap"
+  elif [ "$cap_rc" -eq 2 ]; then
+    # Exit 1 is OVER the cap; exit 2 is "the count could not be decided" — an unreadable file, an
+    # unparseable ceiling, or a requirement layout this check cannot see. Collapsing the two sent the
+    # writer to SPLIT a document nobody could count, which is the same distinction the subprocess
+    # branch above already draws: a file it cannot read is a file it cannot clear.
+    echo "spec-gate: the requirement cap could not count this spec (cause named above)." >&2
+    echo "  This is NOT a split trigger and no model has judged it — the count itself failed, so" >&2
+    echo "  this fails closed. Fix what it named, then write the spec again." >&2
+    exit 2
+  else
+    echo "  route_back: avenger-spec-writer, to SPLIT this spec — not to shorten it." >&2
+    exit 2
+  fi
 fi
 
 # --- 3. Preconditions for the model half --------------------------------------------------------

@@ -133,8 +133,9 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • Mutation runs by default in ADVISORY mode: it reports the score and its survivors and
         never blocks. MUTATION_POLICY=enforce blocks; MUTATION_POLICY=off runs nothing.
       • Its BOOKKEEPING is a script, not a finding: scripts/verifier_precheck.py decides untraced
-        ids, stale gate stamps and missing headings on every commit. 26% of this stage's measured
-        findings used to be that class.
+        ids, stale gate stamps and missing headings on every commit, over the phases that commit
+        touches — the whole phase at handover, and everything under `gate_ci.sh --full`. 26% of this
+        stage's measured findings used to be that class.
       • The loop is CAPPED at 3 attempts (scripts/verifier_attempts.py). At the cap: carry the
         remainder as known-open in handover.md, waive it, or escalate.
 

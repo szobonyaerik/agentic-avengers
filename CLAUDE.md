@@ -183,11 +183,15 @@ resource lifetimes and concurrency invariants**.
 **Its bookkeeping is now a script.** **12 of 46 (26%)** were about the pipeline's own gate stamps,
 traceability rows and spec headings — 45% on the worst phase, where **attempts 2 and 5 produced
 nothing else**, ~70 minutes and ~410k tokens for four stamp-freshness observations. All of it was
-mechanically decidable. `scripts/verifier_precheck.py` decides it on every commit from
-`hook_verifier.sh` and CI, for zero tokens: every requirement id appears in some `test-mapping.md`
-row for its phase (`binding: none` exempt by construction), the gate stamp is fresh for every spec,
-and every spec still has its `## Acceptance criteria` heading. That defect recurred **twice, six
-attempts apart, in one phase**, because nothing checked it continuously.
+mechanically decidable. `scripts/verifier_precheck.py` decides it for zero tokens: every requirement
+id appears in some `test-mapping.md` row for its phase (`binding: none` exempt by construction), the
+gate stamp is fresh for every spec, and every spec still has its `## Acceptance criteria` heading.
+That defect recurred **twice, six attempts apart, in one phase**, because nothing checked it
+continuously — so it runs on **every commit**, and, like every other check here, **diff-scoped**: the
+phases that commit touches from `gate_ci.sh`, the whole phase at handover from `hook_verifier.sh`,
+and everything under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer
+repo's CI over locked phases nobody touched, which is the hostage failure the scoping removes; when
+git cannot say what changed, nothing is enforced and the check says so out loud.
 
 **Verification is capped at 3 attempts per phase, and route-backs are bundled.** **16 of 20
 re-attempts were the Verifier routing back to itself**, and one phase's new-finding series was
@@ -221,18 +225,31 @@ Both are enforced, not asked for: `hook_verifier.sh` and `gate_ci.sh --full` run
 An amendment with no requirement ids is refused — the naming **is** the re-verify scope — and a
 corrupt ledger is an error, never an empty one.
 
-### 4e. Skills are injected, not requested
+### 4e. Skills are delivered, not requested — pointer plus evidenced load
 The pipeline delegates core behaviour to 13 skills and used to delegate by *asking*: "Load
 `skills/tdd` before you start" is an instruction with no mechanism. Nothing checked, nothing
 recorded, and a stage that skipped one fell back silently. `docs/lessons/` shipped with a complete
 written procedure and **zero invocations** for the same reason.
 
 `scripts/required_skills.py` is the one table of what each stage requires;
-`scripts/hook_skills.sh` **injects** them on `SubagentStart` and appends one record per skill to
-`.avenger-skill-loads.jsonl` (gitignored) — stage, skill, size, required, loaded. **A required skill
-that is missing or unreadable is a loud BLOCKER** in the injected context, recorded `loaded: false`:
-an absent required skill is not a lighter version of the rules, it is no rules. `SKILLS_OFF=1` kills
-it; everything else fails closed and injects nothing.
+`scripts/hook_skills.sh` **delivers** them on `SubagentStart` and appends one record per skill to
+`.avenger-skill-loads.jsonl` (gitignored) — stage, agent id, skill, size, required, delivery, loaded.
+
+**Delivery is decided by size** (`SKILL_INJECT_MAX_BYTES`, default **8192**). Injecting every body is
+one way to *guarantee* a load, and it costs the same order as the reads the read-path work had just
+removed — every row of the table requires `pipeline-conventions`, the largest file in `skills/`, on
+every `avenger-*` spawn. The evidence record already being written is a cheaper way to *detect* a
+missed load, and a required skill with no recorded load blocks the phase anyway: **detection beats
+prevention when both end the same way.** At or under the ceiling a skill is **injected whole** and the
+injection *is* the load; over it the stage gets a **pointer** — path, size, description, and the
+`required_skills.py record` command. **A pointer is not a suggestion**: `required_skills.py audit`
+runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`) and **fails the phase** on a
+pointer with no matching load. The saving is a **prediction (H9), not a result** — roughly 1M tokens
+per 8-phase feature with zero unrecorded loads, settled in phase 9.
+
+**A required skill that is missing or unreadable is a loud BLOCKER** in the injected context, recorded
+`loaded: false`: an absent required skill is not a lighter version of the rules, it is no rules.
+`SKILLS_OFF=1` kills it; everything else fails closed and delivers nothing.
 
 ### 4a. Tiered binding decides what gets a test; tests are integration-level by default
 Every requirement declares a **`binding:`** — `e2e` (an end user can observe it → carried by a

@@ -74,10 +74,17 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    any pending amendment on a phase whose verdict already passes. Enforced by `hook_verifier.sh` and
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
-3d. **Skills are injected, not requested.** `scripts/required_skills.py` is the table;
-   `scripts/hook_skills.sh` injects each stage's required skills on `SubagentStart` and records every
-   injection to `.avenger-skill-loads.jsonl`. A required skill that is missing is a **loud blocker**
-   in the injected context, never a silent fallback. `SKILLS_OFF=1` disables it.
+3d. **Skills are delivered, not requested — pointer plus evidenced load.**
+   `scripts/required_skills.py` is the table; `scripts/hook_skills.sh` delivers each stage's required
+   skills on `SubagentStart` and records every delivery to `.avenger-skill-loads.jsonl`. Delivery is
+   decided by size (`SKILL_INJECT_MAX_BYTES`, default 8192): at or under it the body is **injected**
+   and the injection is the load; over it the stage gets a **pointer** plus the
+   `required_skills.py record` command. Injecting every body guarantees the load at the same order of
+   cost the read-path work just removed, while the evidence record detects a missed one for nothing —
+   **detection beats prevention when both end the same way**. A pointer is not a suggestion:
+   `required_skills.py audit` runs at handover and in CI and fails the phase on a pointer with no
+   matching load. The saving is a **prediction (H9)**, not a result. A required skill that is missing
+   is a **loud blocker** in the injected context, never a silent fallback. `SKILLS_OFF=1` disables it.
 
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
@@ -86,7 +93,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    per `binding:`, reading a green suite for gamed tests, and adversarial execution on secrets,
    resource lifetimes and concurrency invariants — because 26% of its measured findings were
    bookkeeping about its own stamps, which `scripts/verifier_precheck.py` now decides mechanically on
-   every commit. **Verification is capped at 3 attempts per phase** (`verifier_attempts.py`): 16 of
+   every commit, diff-scoped to the phases that commit touches (the whole phase at handover, and
+   everything under `gate_ci.sh --full`). **Verification is capped at 3 attempts per phase** (`verifier_attempts.py`): 16 of
    20 measured re-attempts were the Verifier routing back to itself. At the cap, carry the remainder
    as known-open, waive it, or escalate. Because the code's author wrote its judge, the
    **tests get read** over a bounded review set — tests mapped to the phase ∪ test files it changed,

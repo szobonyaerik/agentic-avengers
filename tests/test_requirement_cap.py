@@ -20,6 +20,7 @@ from requirement_cap import (  # noqa: E402
     declared_ids,
     main,
     split_message,
+    unreadable_layout,
 )
 
 HEAD = "---\nfeature: demo\nspec_gate: pending\n---\n\n# Spec\n\n"
@@ -77,6 +78,54 @@ def test_a_spec_with_no_requirements_heading_is_counted_over_the_whole_body() ->
 def test_bold_declarations_count() -> None:
     ids, _ = declared_ids(HEAD + "## Requirements\n**R1.1.1** — a thing\n")
     assert ids == ["R1.1.1"]
+
+
+# ── the layout that made the cap stop existing ───────────────────────────────
+
+
+def table(n: int) -> str:
+    """The layout that counted ZERO: 19 requirements as a markdown table, `requirements: 0/12`,
+    WITHIN, and the pipeline's only counterweight to spec growth never fired."""
+    return (
+        "## Requirements\n\n| id | binding | behaviour |\n|---|---|---|\n"
+        + "".join(f"| R1.1.{i} | binding: e2e | behavior {i} |\n" for i in range(1, n + 1))
+    )
+
+
+def test_a_markdown_table_row_is_a_declaration() -> None:
+    ids, scope = declared_ids(HEAD + table(3))
+    assert ids == ["R1.1.1", "R1.1.2", "R1.1.3"]
+    assert scope == "requirements-section"
+
+
+def test_a_bold_id_inside_a_table_cell_is_a_declaration() -> None:
+    ids, _ = declared_ids(HEAD + "## Requirements\n| **R1.1.1** | binding: e2e |\n")
+    assert ids == ["R1.1.1"]
+
+
+def test_a_table_formatted_spec_over_the_cap_is_told_to_split(tmp_path: Path) -> None:
+    """The whole point: a guard that cannot fire is worse than no guard, because it reports WITHIN."""
+    assert main([str(spec(tmp_path, table(12)))]) == 0
+    assert main([str(spec(tmp_path, table(19)))]) == 1
+
+
+def test_a_separator_row_is_not_a_declaration() -> None:
+    ids, _ = declared_ids(HEAD + "## Requirements\n| id | binding |\n|---|---|\n")
+    assert ids == []
+
+
+def test_ids_present_but_none_declared_is_an_error_not_a_count_of_zero(tmp_path: Path) -> None:
+    """The floor. Widening the regex fixes the layout that was found; this fixes the class — a count
+    of zero over text plainly full of requirement ids is a layout nobody read, not a small spec."""
+    prose = "## Requirements\n\nThe system must do X (R1.1.1) and then Y (R1.1.2).\n"
+    assert unreadable_layout(HEAD + prose) is not None
+    assert main([str(spec(tmp_path, prose))]) == 2
+
+
+def test_a_spec_with_no_requirement_ids_at_all_is_still_a_clean_zero(tmp_path: Path) -> None:
+    """There is nothing to be blind to, so the floor must not fire."""
+    assert unreadable_layout(HEAD + "## Requirements\n\nTBD.\n") is None
+    assert main([str(spec(tmp_path, "## Requirements\n\nTBD.\n"))]) == 0
 
 
 # ── the remedy is a split, never a rejection ─────────────────────────────────
