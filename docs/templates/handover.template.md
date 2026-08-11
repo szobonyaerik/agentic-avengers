@@ -38,7 +38,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immedia
 ## Gate record
 - Verifier: pass | pass (bypassed) | fail
 - Test-quality review: clean | findings routed; scope: targeted | expanded
-- Mutation: n/a (off) | <score> (policy: <enforce|advisory>)
+- Mutation: n/a (off) | <score> (policy <enforce|advisory>)
 - Bypasses: none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
 
 ## Artifacts
