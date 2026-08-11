@@ -120,14 +120,14 @@ else
   python3 "$SCRIPT_DIR/verifier_precheck.py" --root "$ROOT" || record_fail "verifier-precheck"
 fi
 
-# 1bc) Required skills exist, and every skill a stage was POINTED AT was actually loaded. A stage
-#      whose required skill file is missing does not get a lighter version of the rules; it gets
-#      none, and until now that failed silently. The audit is the other half of pointer delivery:
-#      a pointer nothing checks is the instruction-with-no-mechanism the injection replaced.
+# 1bc) Required skills exist, and every skill a stage was owed was actually observed being loaded. A
+#      stage whose required skill file is missing does not get a lighter version of the rules; it
+#      gets none, and until now that failed silently. The audit is the other half of pointer
+#      delivery: a pointer nothing checks is the instruction-with-no-mechanism it replaced.
 if [ "$FULL" -eq 1 ]; then
   echo "• required skills: every stage's required SKILL.md is present"
   python3 "$SCRIPT_DIR/required_skills.py" verify --root "$ROOT" || record_fail "required-skills"
-  echo "• required skills: every delivered skill has evidence of a load"
+  echo "• required skills: every required skill has an observed load"
   python3 "$SCRIPT_DIR/required_skills.py" audit --all || record_fail "required-skills:unloaded"
 fi
 

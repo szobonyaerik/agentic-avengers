@@ -391,9 +391,9 @@ and follow its triage procedure. In short:
 
 1. **Final sweep** — re-read every phase's `verdict.json` and `amendments.json`,
    `gate-overrides.log` and the specs' `spec_gate` stamps, and append anything the run revealed that
-   you did not log live. Include `.avenger-skill-loads.jsonl` if it exists: a required skill that
-   recorded `loaded: false` is a pipeline installation defect and the retrospective is where it gets
-   filed.
+   you did not log live. Include `python3 scripts/required_skills.py audit --all`: a required skill
+   with no observed load is a pipeline installation or delivery defect, and the retrospective is
+   where it gets filed.
 2. **Render a lavish triage artifact** (its `input` playbook) with one card per observation — kind,
    evidence paths, and the change it implies — then `lavish-axi` it and `poll`.
 3. **The user selects.** Selecting nothing is a valid, complete triage.

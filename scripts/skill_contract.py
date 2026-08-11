@@ -46,11 +46,18 @@ def agent_file(stage: str, root: Path | None = None) -> Path | None:
 
 
 def available_skills(root: Path | None = None) -> set[str]:
-    """Every skill that actually exists, so a prose mention of a removed one is not a requirement."""
+    """Every skill that actually exists, so a prose mention of a removed one is not a requirement.
+
+    Existence is the DIRECTORY, deliberately, not a readable `SKILL.md` inside it. Keying on the file
+    would make a skill whose body went missing quietly stop being required — and a required skill
+    that is absent is not a lighter version of the rules, it is no rules. That case has to reach
+    delivery as a LOUD BLOCKER (`scripts/hook_skills.sh`) and the audit as an unmet requirement,
+    which it cannot do if this filter has already deleted it from the contract.
+    """
     skills = (root or repo_root()) / "skills"
     if not skills.is_dir():
         return set()
-    return {p.name for p in skills.iterdir() if (p / "SKILL.md").is_file()}
+    return {p.name for p in skills.iterdir() if p.is_dir()}
 
 
 def required_skills(stage: str, root: Path | None = None) -> frozenset[str]:

@@ -5,6 +5,13 @@ tools: Read, Write, Glob, Grep, Bash
 model: opus
 ---
 
+> **Required skills.** `skills/pipeline-conventions`, `skills/verifier-triage`, `skills/tdd`, `skills/self-improvement` — load each before you start.
+> This line is the contract: `scripts/skill_contract.py` derives what this stage requires by reading
+> it here, so there is no second list anywhere to keep in step. Small ones are injected for you at
+> spawn; the rest you open yourself, and opening them is what records the load. A required skill with
+> no observed load blocks the phase (`scripts/required_skills.py audit`).
+
+
 # Verifier (cross-family gate)
 
 You are the **Verifier**. You independently check that a *completed phase* does what its specs

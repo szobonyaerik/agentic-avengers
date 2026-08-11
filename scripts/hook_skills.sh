@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SubagentStart hook: DELIVER the skills a stage requires, and record that it got them.
+# SubagentStart hook: DELIVER the skills a stage requires, and record what it actually got.
 #
 # The pipeline delegates its core behaviour to thirteen skills and, until now, delegated by asking:
 # "Load `skills/tdd` before you start" is an instruction, not a mechanism. Nothing checked and
@@ -7,28 +7,40 @@
 # was the only one genuinely injected — and `docs/lessons/` shipped with a complete written procedure
 # and zero invocations, for exactly this reason.
 #
-# Delivery is POINTER PLUS EVIDENCED LOAD, decided by size (scripts/required_skills.py owns both the
-# table and the ceiling):
+# WHICH skills is DERIVED from the stage's own `agents/<stage>.md` (scripts/skill_contract.py, via
+# scripts/required_skills.py). There is no table here and none there: a second statement of a fact
+# the agent definitions already carry is what every promise-versus-enforcement gap turned out to be.
+# Minus what another SubagentStart hook already owns (`DELIVERED_ELSEWHERE`) — delivering `ponytail`
+# here too would cost twice and would put the minimalism persona back after `PONYTAIL_OFF=1`.
 #
-#   <= SKILL_INJECT_MAX_BYTES (8192)  the whole body is injected. The injection IS the load.
-#   >  SKILL_INJECT_MAX_BYTES         a POINTER: path, size, description, and the command that
-#                                     records the load. Injecting every body was the same order of
-#                                     cost the read-path work had just removed. Injection GUARANTEES
-#                                     a load; the evidence record DETECTS a missing one, and a
-#                                     required skill with no recorded load blocks the phase anyway —
-#                                     so detection at ~1M tokens saved per feature beats prevention
-#                                     at ~1M spent. That saving is a PREDICTION (H9), not a result.
+# Delivery is POINTER PLUS EVIDENCED LOAD, decided by size:
 #
-# A pointer is not a suggestion: `required_skills.py audit` runs at handover (scripts/hook_verifier.sh)
-# and in CI (gate_ci.sh --full), and a pointer with no matching `record` fails it.
+#   <= SKILL_INJECT_MAX_BYTES (8192)  the whole body is injected. The injection IS the load, so it is
+#                                     RECORDED as an observed load here, with the evidence naming
+#                                     injection — an injected skill is never read, so without this it
+#                                     would seed required-and-unobserved and never flip, and the
+#                                     audit would report a false gap on precisely the skills whose
+#                                     load is guaranteed.
+#   >  SKILL_INJECT_MAX_BYTES         a POINTER: path, size and description. Injecting every body was
+#                                     the same order of cost the read-path work had just removed.
+#                                     Injection GUARANTEES a load; the observation hook DETECTS a
+#                                     missing one, and a required skill with no observed load blocks
+#                                     the phase anyway — so detection at ~1M tokens saved per feature
+#                                     beats prevention at ~1M spent. That saving is a PREDICTION
+#                                     (H9), not a result.
+#
+# The pointer does not ask the stage to report anything. Reading the file IS the record
+# (scripts/hook_skill_load.sh observes the Read/Skill call), and a pointer that told the agent to run
+# a command afterwards would be the instruction-with-no-mechanism this whole mechanism replaces, one
+# layer up. A pointer is still not a suggestion: `required_skills.py audit` runs at handover
+# (scripts/hook_verifier.sh) and in CI (gate_ci.sh --full), and an unobserved required load fails it.
 #
 # A required skill that is missing or unreadable is a LOUD BLOCKER in the injected context and is
 # recorded `loaded: false`. Everything else fails CLOSED and injects nothing: an unreadable payload,
-# an agent this pipeline does not own, a broken table, an unparseable ceiling.
+# an agent this pipeline does not own, an unparseable ceiling.
 #
 #   SKILLS_OFF=1             disable delivery entirely.
 #   SKILL_INJECT_MAX_BYTES   the inject-vs-pointer ceiling (default 8192).
-#   SKILL_LOAD_LOG           where the evidence goes (default $CLAUDE_PROJECT_DIR/.avenger-skill-loads.jsonl)
 set -uo pipefail
 
 [ "${SKILLS_OFF:-0}" = "1" ] && exit 0
@@ -36,26 +48,24 @@ set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SD/load_env.sh"
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SD/.." && pwd)}"
-LOG="${SKILL_LOAD_LOG:-${CLAUDE_PROJECT_DIR:-$ROOT}/.avenger-skill-loads.jsonl}"
 
 PAYLOAD="$(cat)"
 
-python3 - "$ROOT" "$LOG" "$PAYLOAD" <<'PY'
+python3 - "$ROOT" "$PAYLOAD" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
-root, log_path, raw = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+root, raw = Path(sys.argv[1]), sys.argv[2]
 sys.path.insert(0, str(root / "scripts"))
 
 try:
     from required_skills import (
-        INJECT, POINTER, append_record, delivery_for, inject_max_bytes, load_record,
-        required_for, skill_path,
+        INJECT, delivery_for, inject_max_bytes, skill_path, to_deliver,
     )
 except ImportError:
-    sys.exit(0)  # fail closed: no table, no delivery
+    sys.exit(0)  # fail closed: no contract, no delivery
 
 try:
     payload = json.loads(raw.lstrip("﻿"))
@@ -63,26 +73,7 @@ try:
 except (ValueError, AttributeError):
     sys.exit(0)  # fail closed: unreadable payload injects nothing
 
-# Two DIFFERENT ids, kept apart the way scripts/hook_activity.sh keeps them, so the record degrades
-# instead of the hook guessing:
-#
-#   agent_id   — SPAWN-scoped, and only ever a spawn-scoped key. `session_id` was in this chain and
-#                is not one: every delivery in a run would have shared it, so one spawn's recorded
-#                load would have cleared every other spawn's pointer while the audit reported spawn
-#                precision. With no spawn id, no agent_id is recorded and the audit matches on
-#                agent_type — degrading honestly and saying so beats guessing.
-#   session_id — RUN-scoped, and used only to scope WHICH RUN an audit covers.
-def _payload_id(*names):
-    for key in names:
-        value = str(payload.get(key) or "").strip()
-        if value:
-            return value
-    return None
-
-agent_id = _payload_id("agent_id", "subagent_id") if isinstance(payload, dict) else None
-session_id = _payload_id("session_id") if isinstance(payload, dict) else None
-
-skills = required_for(agent_type)
+skills = to_deliver(agent_type, root)
 if not skills:
     sys.exit(0)
 
@@ -91,9 +82,31 @@ try:
 except ValueError:
     sys.exit(0)  # fail closed: a ceiling nobody can read decides nothing
 
+# Measurement, never a gate, and never able to stop a stage starting: the whole emission is optional
+# and every failure inside it is swallowed. A runtime vendored without the metrics modules delivers
+# skills exactly as before and records nothing.
+try:
+    import pipeline_metrics as metrics
+
+    phase = metrics.current_phase()
+except Exception:  # noqa: BLE001
+    metrics, phase = None, None
+
+
+def observed(skill: str, evidence: str, loaded: bool) -> None:
+    if metrics is None or phase is None:
+        return
+    try:
+        metrics.record_skill_load(
+            phase, stage=agent_type, skill=skill, evidence=evidence, loaded=loaded
+        )
+    except Exception:  # noqa: BLE001 — a number nobody could write never stops a spawn
+        pass
+
+
 DESCRIPTION = re.compile(r"^description:[ \t]*(.+)$", re.MULTILINE)
 
-sections, pointers, missing, records = [], [], [], []
+sections, pointers, missing = [], [], []
 injected, pointed = [], []
 
 for skill in skills:
@@ -102,51 +115,34 @@ for skill in skills:
         raw_body = path.read_text(encoding="utf-8")
     except OSError:
         raw_body = ""
-    described = DESCRIPTION.search(raw_body.split("\n---", 1)[0] if raw_body.startswith("---") else "")
+    described = DESCRIPTION.search(
+        raw_body.split("\n---", 1)[0] if raw_body.startswith("---") else ""
+    )
     body = re.sub(r"\A---.*?\n---\s*", "", raw_body, flags=re.DOTALL).strip()
     if not body:
         missing.append(skill)
-        records.append(load_record(agent_type, skill, event="delivery", delivery=INJECT,
-                                   loaded=False, path=str(path), agent_id=agent_id,
-                                   session_id=session_id))
+        observed(skill, "", loaded=False)
         continue
 
-    mode = delivery_for(len(body), limit)
-    if mode == INJECT:
-        # For an injected skill the injection IS the load, so it is recorded loaded here.
+    if delivery_for(len(body), limit) == INJECT:
+        # For an injected skill the injection IS the load, so it is recorded observed here. The
+        # evidence names injection, because "how do we know" is the only thing this record answers.
         sections.append(f"### skills/{skill}\n\n{body}")
         injected.append(skill)
-        records.append(load_record(agent_type, skill, event="delivery", delivery=INJECT,
-                                   loaded=True, size=len(body), path=str(path), agent_id=agent_id,
-                                   session_id=session_id))
+        observed(skill, f"SubagentStart hook_skills.sh: injected {len(body)} bytes", loaded=True)
         continue
 
-    record_cmd = (
-        f"python3 {root / 'scripts' / 'required_skills.py'} record {agent_type} {skill} "
-        f"--log {log_path}"
-        + (f" --agent-id {agent_id}" if agent_id else "")
-        + (f" --session-id {session_id}" if session_id else "")
-    )
+    # No command to run: reading the file is what gets recorded. A pointer that asked the agent to
+    # report its own load would prove nothing, which is the failure this mechanism exists to fix.
     pointers.append("\n".join([
         f"### skills/{skill} — REQUIRED, {len(body)} bytes, load it yourself",
         f"    {described.group(1).strip() if described else '(no description in its frontmatter)'}",
         f"    Path: {path}",
-        "    READ THIS FILE BEFORE YOU START. It is required, not suggested: it is too large to",
-        "    inject on every spawn, which is the only reason you are being pointed at it. Then",
-        "    record the load, which is what makes the requirement a mechanism rather than a request:",
-        f"      {record_cmd}",
+        "    READ THIS FILE BEFORE YOU START (the Read tool, or the Skill tool). It is required, not",
+        "    suggested: it is too large to inject on every spawn, which is the only reason you are",
+        "    being pointed at it rather than handed it. Opening it is what records the load.",
     ]))
     pointed.append(skill)
-    records.append(load_record(agent_type, skill, event="delivery", delivery=POINTER,
-                               loaded=False, size=len(body), path=str(path), agent_id=agent_id,
-                               session_id=session_id))
-
-# The evidence, best-effort: losing a log line must never stop a stage starting.
-try:
-    for record in records:
-        append_record(log_path, record)
-except OSError:
-    pass
 
 header = [
     "REQUIRED SKILLS FOR THIS STAGE — delivered, not requested.",
@@ -157,8 +153,9 @@ header = [
     f"Injected in full (nothing to open): {', '.join(injected) or '(none)'}",
     f"Pointed at, and REQUIRED to load: {', '.join(pointed) or '(none)'}",
     "",
-    "A required skill you were pointed at and did not record loading BLOCKS THE PHASE: the audit",
-    "runs at handover and in CI (`required_skills.py audit`). Load it, then record it.",
+    "A required skill you were pointed at and did not load BLOCKS THE PHASE: the audit runs at",
+    "handover and in CI (`required_skills.py audit`) and reads what was actually observed, not what",
+    "anyone reported. Open it and the record takes care of itself.",
 ]
 if missing:
     header += [

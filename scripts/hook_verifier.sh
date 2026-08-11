@@ -110,25 +110,21 @@ if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
     "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
 fi
 
-# Required skills that were POINTED AT and never recorded as loaded. A pointer is the cheap half of
+# Required skills a stage was owed and was never observed loading. A pointer is the cheap half of
 # delivery — it saves injecting a large skill body on every spawn — and this audit is the other half:
 # without it a pointer is exactly the "load skills/tdd before you start" instruction-with-no-mechanism
-# that the injection was introduced to replace. A phase does not close over an unrecorded required
+# that the delivery was introduced to replace. A phase does not close over an unobserved required
 # load. Fail closed; the script names the stage and the skill.
 #
-# SCOPED TO THIS RUN. The evidence log is one append-only file per repository, so an unscoped audit
-# would let a pointer nobody recorded in phase 1 block phase 8 — and a different feature besides. The
-# same "you are responsible for what you change" rule as verifier_precheck above; with no session id
-# in the payload the run is unknowable and the audit enforces nothing rather than everything, and
-# says so. `gate_ci.sh --full` still sweeps the whole log.
-SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-if ! python3 "$SD/required_skills.py" audit ${SESSION_ID:+--session "$SESSION_ID"}; then
+# SCOPED TO THE PHASE IN FLIGHT, and it needs no session id to be: the evidence lives in the
+# per-phase metrics record and `hook_skill_load.sh` writes nothing when no phase is in flight, so a
+# pointer delivered in phase 1 cannot block phase 8 by construction. Same "you are responsible for
+# what you change" rule as verifier_precheck above. `gate_ci.sh --full` sweeps every phase.
+if ! python3 "$SD/required_skills.py" audit; then
   fail "verifier:skills" \
-    "verifier: a required skill was delivered to a stage in this run and never recorded as loaded." \
-    "Each finding above prints the EXACT command that clears it, carrying the spawn and session keys" \
-    "the audit matches on — a remedy missing one of those keys records a load the audit cannot see," \
-    "so copy the printed line rather than retyping it. Or re-run the stage: a stage that never loaded" \
-    "its rules did not run under them.${SESSION_ID:+ (this run: session $SESSION_ID)}"
+    "verifier: a stage in this phase required a skill and no load of it was ever observed." \
+    "Open the named SKILL.md in that stage — reading it is what records the load — or re-run the" \
+    "stage: a stage that never loaded its rules did not run under them."
 fi
 
 # Amendments owed re-verification NOW: every security-relevant one, always, plus any pending one on

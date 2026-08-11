@@ -235,8 +235,10 @@ agentic-avengers/
 │   ├── verifier_precheck.py   the Verifier's bookkeeping, mechanically, on every commit over what
 │   │                          the diff touches (whole phase at handover; everything under --full)
 │   ├── verifier_attempts.py   the 3-attempt cap on the verification loop, and the finding series
-│   ├── required_skills.py     which skills each stage requires — small ones injected whole, large
-│   │                          ones a pointer (SKILL_INJECT_MAX_BYTES) whose load `audit` demands
+│   ├── required_skills.py     delivery + the blocking audit; WHICH skills is derived from each
+│   │                          agent's own definition (skill_contract.py). Small ones injected
+│   │                          whole, large ones a pointer (SKILL_INJECT_MAX_BYTES); `audit`
+│   │                          fails a phase on a required skill with no OBSERVED load
 │   │                          evidence of, scoped to the run (`--all` sweeps every delivery)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
 │   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,

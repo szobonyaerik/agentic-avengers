@@ -75,19 +75,21 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
-   `scripts/required_skills.py` is the table; `scripts/hook_skills.sh` delivers each stage's required
-   skills on `SubagentStart` and records every delivery to `.avenger-skill-loads.jsonl`. Delivery is
-   decided by size (`SKILL_INJECT_MAX_BYTES`, default 8192): at or under it the body is **injected**
-   and the injection is the load; over it the stage gets a **pointer** plus the
-   `required_skills.py record` command. Injecting every body guarantees the load at the same order of
-   cost the read-path work just removed, while the evidence record detects a missed one for nothing —
-   **detection beats prevention when both end the same way**. A pointer is not a suggestion:
-   `required_skills.py audit` runs at handover and in CI and fails the phase on a pointer with no
-   matching load, matched on the spawn's own id where the record carries one and on `agent_type`
-   where it does not, always within one run. The handover audit is scoped to the current run
-   (`--session`) so one repository-wide log cannot let phase 1 block phase 8; `--all` sweeps
-   everything in CI. The saving is a **prediction (H9)**, not a result. A required skill that is missing
-   is a **loud blocker** in the injected context, never a silent fallback. `SKILLS_OFF=1` disables it.
+   What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
+   restated in a table — a second statement of a fact is what every promise-versus-enforcement gap
+   here turned out to be. The load is **observed**, not self-reported: `hook_skill_load.sh` seeds the
+   contract at `SubagentStart` and flips an entry on a real `Read`/`Skill`, into the per-phase metrics
+   record's `skill_loads[]`. `hook_skills.sh` delivers by size (`SKILL_INJECT_MAX_BYTES`, default
+   8192): at or under it the body is **injected** and the injection is **recorded as the load**; over
+   it the stage gets a **pointer**, and opening the file is what records it. Injecting every body
+   guarantees the load at the same order of cost the read-path work just removed, while observation
+   detects a missed one for nothing — **detection beats prevention when both end the same way**. A
+   pointer is not a suggestion: `required_skills.py audit` runs at handover and in CI and fails the
+   phase on a required skill with no observed load, keyed `<stage>:<skill>` so one stage's load is no
+   evidence about another. It needs no session id: the evidence is per-phase by construction, so
+   phase 1 cannot block phase 8; `--all` sweeps every phase in CI. The saving is a **prediction
+   (H9)**, not a result. A required skill that is missing is a **loud blocker** in the injected
+   context, never a silent fallback. `SKILLS_OFF=1` disables it.
 
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
@@ -250,7 +252,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
 | `GATE_TRIAGE_MODEL` | `deepseek/deepseek-chat` | the spec gate's cheaper triage pass; must not be the author's family |
 | `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
-| `SKILL_LOAD_LOG` | `.avenger-skill-loads.jsonl` | where required-skill injections are recorded |
+| `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |

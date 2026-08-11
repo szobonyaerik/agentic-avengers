@@ -350,7 +350,7 @@ it owes, so an unnamed one narrows verification to nothing while claiming to hav
 corrupt ledger is an error, never an empty one: reading it as "no amendments" would silently drop a
 pending security re-verification.
 
-## Skills are injected, not requested
+## Skills are delivered, not requested — and the load is observed
 
 The pipeline delegates its core behaviour to thirteen skills, and it used to delegate by **asking**:
 every implementer prompt said "Load `skills/tdd` before you start". That is an instruction, not a
@@ -360,40 +360,48 @@ from everything else. `docs/lessons/` shipped with a complete written procedure 
 invocations** for exactly this reason: a directive in a skill reaches only the agents that load that
 skill.
 
-`scripts/required_skills.py` is the one table of which skills each stage requires, and
-`scripts/hook_skills.sh` **delivers** them on `SubagentStart`. Every delivery appends a record to
-`.avenger-skill-loads.jsonl` (gitignored) — stage, agent id, skill, size, required, delivery, loaded —
-which is what makes "every required load evidenced" a number rather than a hope.
+**WHICH skills a stage requires is DERIVED from its own `agents/<stage>.md`.** Every agent declares
+them in one `Required skills` line and `scripts/skill_contract.py` reads them out of it. There is no
+table anywhere: a hand-maintained list was a second statement of a fact the definitions already
+carry, and a second statement of a fact is precisely the promise-versus-enforcement gap this section
+removes. **Adding `skills/<name>` to an agent is enough to make it required.** A skill's *directory*
+is what makes a reference real, never a readable `SKILL.md` inside it — keying on the file would make
+a skill whose body went missing quietly stop being required, which is the silent fallback the loud
+blocker below exists to replace.
+
+**The load is OBSERVED, never self-reported.** `scripts/hook_skill_load.sh` seeds each stage's
+contract at `SubagentStart` as required-and-not-yet-observed and flips an entry on a real
+`Read`/`Skill` of `skills/<name>/SKILL.md`. Entries are keyed `<stage>:<skill>` in the per-phase
+metrics record's `skill_loads[]`, so the requirement and its answer are one row, and a seed never
+overwrites an observed load whichever order the hooks run in. There is **no second evidence file**,
+and nothing anywhere asks an agent to report its own compliance: a path that needed the agent to run
+a command to prove a load would be the instruction-with-no-mechanism this section removes, one layer
+up.
 
 **Delivery is pointer plus evidenced load, decided by size** (`SKILL_INJECT_MAX_BYTES`, default
-**8192**). Injecting every body guarantees the load and costs the same order as the reads the read-path
-work had just removed — every row of the table requires `pipeline-conventions`, the largest file in
-`skills/`, on every `avenger-*` spawn. The evidence record is a cheaper way to **detect** a failure
-to load, and a required skill with no recorded load blocks the phase anyway, so **detection beats
-prevention when both end the same way**:
+**8192**), by `scripts/hook_skills.sh` on `SubagentStart`. Injecting every body guarantees the load
+and costs the same order as the reads the read-path work had just removed — every stage requires
+`pipeline-conventions`, the largest file in `skills/`, on every `avenger-*` spawn. Observation is a
+cheaper way to **detect** a failure to load, and a required skill with no observed load blocks the
+phase anyway, so **detection beats prevention when both end the same way**:
 
-- **At or under the ceiling → injected whole.** For these the injection *is* the load, recorded
-  `loaded: true` at injection.
-- **Over it → a POINTER**: path, size, one-line description, and the command that records the load
-  (`required_skills.py record <agent-type> <skill> [--agent-id …] [--session-id …]`). **Every key the
-  audit matches on has to be in that command**, or the printed remedy cannot clear the gate that
-  printed it and the only ways out are `GATE_BYPASS` and editing the log by hand — so the pointer and
-  every route-back print the exact invocation rather than the shape of one. **A pointer is not a
-  suggestion** — `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI
-  (`gate_ci.sh --full`), and a pointer with no matching load **fails the phase**, naming the stage,
-  the skill and the keys it looked for. A pointer nothing checks would be the
-  instruction-with-no-mechanism this whole section removes. It matches on the **spawn's own id** when
-  the record carries one and on `agent_type` when it does not, and always within one run: a load by
-  the Verifier says nothing about whether the implementer loaded it, and neither does a load in a
-  different run. The handover audit is **scoped to the current run** (`--session`), because the
-  evidence log is one append-only file per repository and an unscoped audit would let a pointer
-  nobody recorded in phase 1 block phase 8 — the same you-are-responsible-for-what-you-change rule as
-  everywhere else here. Its edges are all stated out loud: no session id at all means the run is
-  unknowable and nothing is enforced; a session that matches no delivery **because deliveries carry
-  no session id** means the scope could not be applied, so the whole log is audited by `agent_type`
-  instead, loudly — **an empty scope is never a clean scope**, which is the false-clean this
-  mechanism exists to refuse. `--all` sweeps every delivery, which is what CI runs, and
-  `SKILLS_OFF=1` makes the audit a no-op because nothing was delivered to load.
+- **At or under the ceiling → injected whole**, and the injection is **recorded as an observed load**
+  with the evidence naming injection. An injected skill is never read, so without that record it
+  would seed required-and-unobserved and never flip — and the audit would report a false gap on
+  precisely the skills whose load is *guaranteed*.
+- **Over it → a POINTER**: path, size and one-line description, and nothing to run afterwards.
+  Opening the file is what records the load. **A pointer is not a suggestion** —
+  `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`),
+  and a required skill with no observed load **fails the phase**, naming the stage and the skill.
+  Keyed `<stage>:<skill>`, so a load by the Verifier says nothing about whether the implementer
+  loaded it.
+
+**The audit needs no session id to be scoped.** The evidence is per-phase by construction —
+`hook_skill_load.sh` records nothing when no phase is in flight — so a pointer delivered in phase 1
+cannot block phase 8, with no run-scoping machinery at all. The handover audit reads the phase in
+flight; `--all` sweeps every phase, which is what CI runs. `SKILLS_OFF=1` makes the audit a no-op
+because nothing was delivered to load, and a run with no metrics writer observed nothing and says so
+rather than passing invisibly.
 
 The saving is a **prediction, not a result**: declared as **H9** before it landed — roughly 1M tokens
 saved per 8-phase feature with zero unrecorded required loads — and settled in phase 9.
@@ -401,10 +409,13 @@ saved per 8-phase feature with zero unrecorded required loads — and settled in
 **A required skill that is missing or unreadable is a loud BLOCKER in the injected context**, recorded
 `loaded: false`: a required skill that is absent is not a lighter version of the rules, it is no
 rules. `SKILLS_OFF=1` disables it, and everything else fails closed and delivers nothing — an
-unreadable payload, an agent this pipeline does not own, a broken table, an unparseable ceiling.
+unreadable payload, an agent this pipeline does not own, an unparseable ceiling.
 
-Reach is scoped per skill, the same way `hook_ponytail.sh` excludes the Verifier and `hook_lessons.sh`
-does not: a skill that fights a stage's job must not reach it.
+`skills/ponytail` is delivered by `hook_ponytail.sh` alone, which records its own load. Delivering it
+here too would cost twice and would put the minimalism persona back after `PONYTAIL_OFF=1` — an off
+switch that switches nothing off. Reach is scoped per skill for the same reason `hook_ponytail.sh`
+excludes the Verifier and `hook_lessons.sh` does not: a skill that fights a stage's job must not
+reach it.
 
 ## Hard rules
 

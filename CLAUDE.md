@@ -231,25 +231,37 @@ The pipeline delegates core behaviour to 13 skills and used to delegate by *aski
 recorded, and a stage that skipped one fell back silently. `docs/lessons/` shipped with a complete
 written procedure and **zero invocations** for the same reason.
 
-`scripts/required_skills.py` is the one table of what each stage requires;
-`scripts/hook_skills.sh` **delivers** them on `SubagentStart` and appends one record per skill to
-`.avenger-skill-loads.jsonl` (gitignored) — stage, agent id, skill, size, required, delivery, loaded.
+**What each stage requires is DERIVED from its own `agents/<stage>.md`** — every agent declares its
+skills in one `Required skills` line and `scripts/skill_contract.py` reads them out of it. There is
+no table: a hand-maintained list here was a second statement of a fact the definitions already carry,
+and a second statement of a fact is exactly the promise-versus-enforcement gap this item exists to
+close. Adding `skills/<name>` to an agent is enough to make it required.
 
-**Delivery is decided by size** (`SKILL_INJECT_MAX_BYTES`, default **8192**). Injecting every body is
-one way to *guarantee* a load, and it costs the same order as the reads the read-path work had just
-removed — every row of the table requires `pipeline-conventions`, the largest file in `skills/`, on
-every `avenger-*` spawn. The evidence record already being written is a cheaper way to *detect* a
-missed load, and a required skill with no recorded load blocks the phase anyway: **detection beats
-prevention when both end the same way.** At or under the ceiling a skill is **injected whole** and the
-injection *is* the load; over it the stage gets a **pointer** — path, size, description, and the
-`required_skills.py record` command. **A pointer is not a suggestion**: `required_skills.py audit`
-runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`) and **fails the phase** on a
-pointer with no matching load. It matches on the spawn's own id where the record carries one and on
-`agent_type` where it does not, **always within one run** — a load by one stage is no evidence about
-another, and neither is a load in another run — and the handover audit is **scoped to the current
-run**, since one append-only log per repository would otherwise let phase 1 block phase 8. No session
-id means the run is unknowable, so nothing is enforced and it says so; `--all` sweeps everything. The saving is a **prediction (H9), not a result** — roughly 1M tokens
-per 8-phase feature with zero unrecorded loads, settled in phase 9.
+**The load is OBSERVED, never self-reported.** `scripts/hook_skill_load.sh` seeds each stage's
+contract at `SubagentStart` and flips an entry on a real `Read`/`Skill` of `skills/<name>/SKILL.md`,
+into the per-phase metrics record's `skill_loads[]` — there is deliberately no second evidence file.
+A path that needed the agent to *run a command* to prove it had loaded a skill would be the
+instruction-with-no-mechanism this item exists to fix, one layer up, so no such command exists.
+
+**Delivery is decided by size** (`SKILL_INJECT_MAX_BYTES`, default **8192**), by
+`scripts/hook_skills.sh` on `SubagentStart`. Injecting every body is one way to *guarantee* a load,
+and it costs the same order as the reads the read-path work had just removed — every stage requires
+`pipeline-conventions`, the largest file in `skills/`, on every `avenger-*` spawn. Observation is a
+cheaper way to *detect* a missed load, and a required skill with no observed load blocks the phase
+anyway: **detection beats prevention when both end the same way.** At or under the ceiling a skill is
+**injected whole**, and the injection is **recorded as the load** — an injected skill is never read,
+so without that record the audit would report a false gap on precisely the skills whose load is
+guaranteed. Over it the stage gets a **pointer** — path, size, description — and *opening the file*
+is what records it. `skills/ponytail` is delivered by `hook_ponytail.sh` alone, which records its own
+load; delivering it twice would cost twice and would put the persona back after `PONYTAIL_OFF=1`.
+
+**A pointer is not a suggestion**: `required_skills.py audit` runs at handover (`hook_verifier.sh`)
+and in CI (`gate_ci.sh --full`) and **fails the phase** on a required skill with no observed load.
+Every entry is keyed `<stage>:<skill>`, so the Verifier reading the rulebook is no evidence about the
+implementer. It needs **no session id to be scoped**: the evidence is per-phase by construction, so a
+pointer delivered in phase 1 cannot block phase 8 — `--all` sweeps every phase under `--full`. The
+saving is a **prediction (H9), not a result** — roughly 1M tokens per 8-phase feature with zero
+unrecorded loads, settled in phase 9.
 
 **A required skill that is missing or unreadable is a loud BLOCKER** in the injected context, recorded
 `loaded: false`: an absent required skill is not a lighter version of the rules, it is no rules.
