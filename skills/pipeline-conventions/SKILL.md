@@ -476,7 +476,7 @@ caught the rest. The stages a script cannot observe record their own catches:
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_metrics.py" defect \
   --phase-ref docs/features/<f>/phases/<n>-<slug> --id D3 \
-  --summary "$(cat .avenger-auto/defect.txt)" \
+  --summary "$(cat .lavish/<f>-defect.md)" \
   --found-by breaker --stage-reached implementation --severity security
 ```
 

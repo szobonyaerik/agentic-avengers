@@ -117,7 +117,7 @@ genuine defects) and it is **unrecoverable once the run is over**, so record it 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_metrics.py" defect \
   --phase-ref docs/features/<feature>/phases/<n>-<slug> --id <finding-id> \
-  --summary "$(cat .avenger-auto/defect.txt)" \
+  --summary "$(cat .lavish/<feature>-defect.md)" \
   --found-by breaker --stage-reached implementation --severity correctness
 ```
 

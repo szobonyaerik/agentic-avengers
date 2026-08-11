@@ -222,7 +222,8 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `AVENGER_METRICS_CMD` | looked up on `PATH` | path to firstmate's `fm-pipeline-metrics.sh`; without it a run records no metrics and says so once |
 | `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently |
 | `AVENGER_METRICS_PROJECT` | the git repository's name | the record's `project`, which scopes every firstmate lookup |
-| `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process |
+| `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this` exceeds it — raise it and raise `hooks/hooks.json` with it |
+| `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
 | `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
 
 ## Maintaining this file

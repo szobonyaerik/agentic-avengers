@@ -16,7 +16,7 @@ systems already agree on. The division of labour:
 | layer | owns | speaks |
 |---|---|---|
 | **you (captain)** | intent, merges, `ask-user` findings | firstmate only |
-| **firstmate** | dispatch, supervision, teardown, backlog | `bin/fm-*` + tmux |
+| **firstmate** | dispatch, supervision, teardown, backlog, **the per-phase metrics record** | `bin/fm-*` + tmux |
 | **crewmate** | one task in one treehouse worktree | its harness (claude/opencode) |
 | **avenger pipeline** | plan → build → verify inside that worktree | `/avenger-run --auto` |
 | **no-mistakes** | lint, docs, push, PR, CI at feature close | its own daemon worktree |
@@ -26,6 +26,12 @@ Two rules to respect at the boundary:
   NO-GO. That halt surfaces as the crewmate going quiet with the halt in its transcript —
   firstmate's stale/wake cycle will escalate it to you. `--ship-yes` pre-consents per run;
   deliberately not the default.
+- The layering runs upward too: the pipeline **writes** firstmate's per-phase metrics record as each
+  phase runs, through `scripts/metrics_sink.py` → `bin/fm-pipeline-metrics.sh`. Emission is off
+  unless that CLI is on the crewmate's `PATH` (or named by `AVENGER_METRICS_CMD`), and a run without
+  it says so once and records nothing — it never fails a phase. Full rule in
+  `skills/pipeline-conventions` ("The pipeline measures itself as it runs"); the schema is
+  firstmate's `docs/pipeline-metrics.md`.
 - Firstmate hard rule: crewmates never address you directly. Typing into a crewmate window (the
   tavern's ⚔ Focus button) is **authoritative captain intervention** — allowed, visible, and
   reconciled at the next supervision review. Prefer steering through the first mate.
