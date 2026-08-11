@@ -50,8 +50,9 @@ always said on stderr rather than passing invisibly.
 **A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
 passed by this gate before and is not a finding — one spec drew REVIEW, REVIEW, then a NO-GO naming
 requirements the same model had approved twice, unchanged. `scripts/spec_gate_cache.py` keeps the
-body each gate judged; the hook hands the reviewer a `## CHANGES SINCE APPROVAL` diff, and with no
-kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
+body each gate last **approved** — a rejection records its hash, its verdict and its report but never
+replaces that reference, since rejected text is not approved text; the hook hands the reviewer a
+`## CHANGES SINCE APPROVAL` diff, and with no kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
 set, Scope, Interfaces / contracts, `work_kind`, or any `binding:`, and when the Verifier routed the
 phase back with a **coverage gap** — there the question is what the spec failed to require, and
 unchanged text is exactly where to look; a first gate is always full.

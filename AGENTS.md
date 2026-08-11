@@ -29,8 +29,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `SUBPROC_CHECK_PATHS` points it at the real root when a project's tests are not at `tests/`; an
    absent root is CLEAN but reported on stderr, never a silent pass.
    **A spec already approved and implemented is re-gated on its changes only**; unchanged text was
-   passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body each gate judged
-   and the hook supplies a `## CHANGES SINCE APPROVAL` diff; with none kept, the whole spec is gated.
+   passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body each gate last
+   **approved** (a rejection records its hash, verdict and report, never that reference body) and the
+   hook supplies a `## CHANGES SINCE APPROVAL` diff; with none kept, the whole spec is gated.
    A full re-gate is still owed when the requirement set, Scope, Interfaces / contracts, `work_kind`
    or a `binding:` changed, and when the Verifier routed the phase back with a **coverage gap** —
    there the question is what the spec failed to require, so unchanged text is where to look. A

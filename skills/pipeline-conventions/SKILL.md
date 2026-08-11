@@ -110,7 +110,10 @@ Three consequences worth stating outright:
     naming requirements the gate itself had approved twice, unchanged — a verdict is a **sample from
     a distribution**, not a fact about the artifact, and variance in a gate that fails closed is far
     more expensive than variance in one that fails open. `scripts/spec_gate_cache.py` keeps the body
-    each gate last judged and `scripts/hook_spec_review.sh` hands the reviewer a
+    each gate last **approved** — a rejection records its hash, its verdict and its report, but does
+    not replace that body: it is the reference the next re-gate diffs against under
+    `## PREVIOUSLY APPROVED`, and overwriting it would show the author changes-since-rejection while
+    telling them they were changes-since-approval. `scripts/hook_spec_review.sh` hands the reviewer a
     `## CHANGES SINCE APPROVAL` diff; with no kept body the whole spec is gated, the safe direction.
     A **full** re-gate is still owed when the diff changes the requirement set, Scope, Interfaces /
     contracts, `work_kind`, or any `binding:` — and a **first** gate is always full.
@@ -235,7 +238,9 @@ Three consequences worth stating outright:
 - **Gates fail closed** — and a gate that fails **says which failure it was**. Every stop carries a
   `cause=` from `scripts/gate_errors.py` (`timeout` · `provider-payment-required` ·
   `provider-unreachable` · `provider-not-found` · `provider-error` · `no-verdict` · `cross-family` ·
-  `unknown-vendor` · `runner-untrusted` · `config` · `io`) and reproduces the provider's own words
+  `unknown-vendor` · `runner-untrusted` · `config` · `io` · `internal` — the last being the backstop
+  for a failure nothing above recognised, which is a defect in the gate itself and not something for
+  the operator to fix in their `.env`; `CAUSES` in that module is the list) and reproduces the provider's own words
   verbatim. A timeout kill, an HTTP 402 out-of-credit reply and an unreachable provider used to be
   one indistinguishable line, and the 402 was found only by probing the provider by hand — a day
   spent reading an infrastructure failure as a model failure. The classifier is a heuristic over
@@ -257,7 +262,12 @@ Three consequences worth stating outright:
   - **A rejection carries its reasoning and leaves a record.** Only GO/REVIEW used to stamp, so a
     NO-GO left no trace of which text was refused and dropped the gate's own `report`. The hash is
     now recorded **with its verdict** on every verdict (`<gate>_gated_verdict`), so an unchanged
-    rejected body replays its rejection instead of skipping past it as "unchanged".
+    rejected body replays its rejection instead of skipping past it as "unchanged". A replayed
+    rejection blocks the turn exactly like a fresh one, so it **honours `GATE_BYPASS` exactly like a
+    fresh one** — ignoring it there made an override a one-shot, and a bypass silently dropped breaks
+    "never silent" as much as one silently taken. The kept **body**, though, is only ever the last
+    approved one (above): a rejection records its hash, verdict and report and leaves that reference
+    alone.
   - **The runner is not trusted by path.** `scripts/gate_runner_guard.sh` makes it identify itself
     and match its own digest before any gate uses it; `GATE_RUNNER_SHA256` pins it exactly. A
     scaffold that printed a bare `GO` having checked nothing once sat on a temp path and was believed.

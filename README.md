@@ -206,7 +206,7 @@ agentic-avengers/
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
-│   ├── spec_gate_cache.py     body + verdict each gate last reached, so a re-gate stays in the diff
+│   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
