@@ -378,7 +378,16 @@ prevention when both end the same way**:
   (`required_skills.py record <agent-type> <skill>`). **A pointer is not a suggestion** —
   `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`),
   and a pointer with no matching load **fails the phase**, naming the stage and the skill. A pointer
-  nothing checks would be the instruction-with-no-mechanism this whole section removes.
+  nothing checks would be the instruction-with-no-mechanism this whole section removes. It matches on
+  the **spawn's own id** when the record carries one and on `agent_type` when it does not, and always
+  within one run: a load by the Verifier says nothing about whether the implementer loaded it, and
+  neither does a load in a different run. The handover audit is **scoped to the current run**
+  (`--session`), because the evidence log is one append-only file per repository and an unscoped
+  audit would let a pointer nobody recorded in phase 1 block phase 8 — the same
+  you-are-responsible-for-what-you-change rule as everywhere else here, with the same edge: no
+  session id means the run is unknowable, so nothing is enforced and it says so. `--all` sweeps every
+  delivery, which is what CI runs, and `SKILLS_OFF=1` makes the audit a no-op because nothing was
+  delivered to load.
 
 The saving is a **prediction, not a result**: declared as **H9** before it landed — roughly 1M tokens
 saved per 8-phase feature with zero unrecorded required loads — and settled in phase 9.

@@ -63,15 +63,24 @@ try:
 except (ValueError, AttributeError):
     sys.exit(0)  # fail closed: unreadable payload injects nothing
 
-# The audit matches as precisely as the payload allows, so take the spawn's own id when it carries
-# one under any of the names a runtime might use, and fall back to the agent type when it does not.
-agent_id = None
-if isinstance(payload, dict):
-    for key in ("agent_id", "subagent_id", "session_id", "id"):
+# Two DIFFERENT ids, kept apart the way scripts/hook_activity.sh keeps them, so the record degrades
+# instead of the hook guessing:
+#
+#   agent_id   — SPAWN-scoped, and only ever a spawn-scoped key. `session_id` was in this chain and
+#                is not one: every delivery in a run would have shared it, so one spawn's recorded
+#                load would have cleared every other spawn's pointer while the audit reported spawn
+#                precision. With no spawn id, no agent_id is recorded and the audit matches on
+#                agent_type — degrading honestly and saying so beats guessing.
+#   session_id — RUN-scoped, and used only to scope WHICH RUN an audit covers.
+def _payload_id(*names):
+    for key in names:
         value = str(payload.get(key) or "").strip()
         if value:
-            agent_id = value
-            break
+            return value
+    return None
+
+agent_id = _payload_id("agent_id", "subagent_id") if isinstance(payload, dict) else None
+session_id = _payload_id("session_id") if isinstance(payload, dict) else None
 
 skills = required_for(agent_type)
 if not skills:
@@ -98,7 +107,8 @@ for skill in skills:
     if not body:
         missing.append(skill)
         records.append(load_record(agent_type, skill, event="delivery", delivery=INJECT,
-                                   loaded=False, path=str(path), agent_id=agent_id))
+                                   loaded=False, path=str(path), agent_id=agent_id,
+                                   session_id=session_id))
         continue
 
     mode = delivery_for(len(body), limit)
@@ -107,12 +117,15 @@ for skill in skills:
         sections.append(f"### skills/{skill}\n\n{body}")
         injected.append(skill)
         records.append(load_record(agent_type, skill, event="delivery", delivery=INJECT,
-                                   loaded=True, size=len(body), path=str(path), agent_id=agent_id))
+                                   loaded=True, size=len(body), path=str(path), agent_id=agent_id,
+                                   session_id=session_id))
         continue
 
     record_cmd = (
         f"python3 {root / 'scripts' / 'required_skills.py'} record {agent_type} {skill} "
-        f"--log {log_path}" + (f" --agent-id {agent_id}" if agent_id else "")
+        f"--log {log_path}"
+        + (f" --agent-id {agent_id}" if agent_id else "")
+        + (f" --session-id {session_id}" if session_id else "")
     )
     pointers.append("\n".join([
         f"### skills/{skill} — REQUIRED, {len(body)} bytes, load it yourself",
@@ -125,7 +138,8 @@ for skill in skills:
     ]))
     pointed.append(skill)
     records.append(load_record(agent_type, skill, event="delivery", delivery=POINTER,
-                               loaded=False, size=len(body), path=str(path), agent_id=agent_id))
+                               loaded=False, size=len(body), path=str(path), agent_id=agent_id,
+                               session_id=session_id))
 
 # The evidence, best-effort: losing a log line must never stop a stage starting.
 try:

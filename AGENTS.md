@@ -83,7 +83,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    cost the read-path work just removed, while the evidence record detects a missed one for nothing —
    **detection beats prevention when both end the same way**. A pointer is not a suggestion:
    `required_skills.py audit` runs at handover and in CI and fails the phase on a pointer with no
-   matching load. The saving is a **prediction (H9)**, not a result. A required skill that is missing
+   matching load, matched on the spawn's own id where the record carries one and on `agent_type`
+   where it does not, always within one run. The handover audit is scoped to the current run
+   (`--session`) so one repository-wide log cannot let phase 1 block phase 8; `--all` sweeps
+   everything in CI. The saving is a **prediction (H9)**, not a result. A required skill that is missing
    is a **loud blocker** in the injected context, never a silent fallback. `SKILLS_OFF=1` disables it.
 
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical

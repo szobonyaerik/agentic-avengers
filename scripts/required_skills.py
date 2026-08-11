@@ -36,8 +36,11 @@ and settled in phase 9, not here.
 
 `.avenger-skill-loads.jsonl` (gitignored scratch) is the evidence, one JSON record per line:
 
-    {"at", "event": "delivery"|"load", "agent_type", "agent_id", "skill",
+    {"at", "event": "delivery"|"load", "agent_type", "agent_id", "session_id", "skill",
      "required": true, "delivery": "inject"|"pointer", "loaded": bool, "bytes", "path"}
+
+`agent_id` is a SPAWN id and identifies who owes a load; `session_id` is a RUN id and scopes which
+run an audit covers. They are separate fields and neither substitutes for the other.
 
 **A required skill that is missing or unreadable is a LOUD BLOCKER**, not a silent fallback. The hook
 says so in the injected context and records `loaded: false`. The one thing it must never do is let
@@ -56,10 +59,12 @@ Usage:
     required_skills.py table                     print the whole table, with each skill's delivery
     required_skills.py verify [--root .]         every required skill exists and is readable
                                                  (exit 1 when one does not)
-    required_skills.py record <agent-type> <skill> [--agent-id ID] [--log PATH]
+    required_skills.py record <agent-type> <skill> [--agent-id ID] [--session-id ID] [--log PATH]
                                                  evidence that a POINTER skill was actually loaded
-    required_skills.py audit [--log PATH]        exit 1 when a spawn was handed a pointer for a
-                                                 required skill and never recorded loading it
+    required_skills.py audit --session <id>      exit 1 when a spawn in THAT RUN was handed a
+                                                 pointer for a required skill and never recorded
+                                                 loading it
+    required_skills.py audit --all               the same over every delivery ever recorded
 """
 
 from __future__ import annotations
@@ -161,13 +166,22 @@ def load_record(
     size: int = 0,
     path: str = "",
     agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> dict:
-    """One evidence line. The shape is shared by the hook and by `record`, so audit reads one shape."""
+    """One evidence line. The shape is shared by the hook and by `record`, so audit reads one shape.
+
+    `agent_id` is a SPAWN id and `session_id` is a RUN id, kept apart on purpose - the same
+    separation `scripts/hook_activity.sh` keeps, for the same reason. A session id substituted for a
+    spawn id would make every delivery in one run share a key, which is precisely the looseness
+    `audit_gaps` refuses. The spawn key identifies WHO owes the load; the session key scopes WHICH
+    RUN is being audited.
+    """
     return {
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "event": event,
         "agent_type": agent_type,
         "agent_id": agent_id,
+        "session_id": session_id,
         "skill": skill,
         "required": True,
         "delivery": delivery,
@@ -218,17 +232,44 @@ def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
       * an **injection** recorded `loaded: false` - the file was missing or unreadable, so the stage
         ran with no rules rather than lighter ones.
 
-    Matching is as precise as the payload allows: on the spawn's own `agent_id` when the delivery
-    record carries one, and on `agent_type` when it does not. Which key was used is RETURNED and said
-    out loud, because an audit that silently matches more loosely than it claims is the same defect
-    class as everything else here. Records written before this shape existed carry no `event` or
-    `delivery`; they are read as injected deliveries, so an old log cannot fail an audit it predates.
+    Matching is as precise as the record allows, and **no looser**:
+
+      * a delivery carrying an `agent_id` is cleared only by a load recorded against **that same
+        spawn id**;
+      * a delivery with no spawn id is cleared only by a load recorded against **the same
+        `agent_type`**. It is not enough that somebody, somewhere, loaded that skill: the Verifier
+        loading `pipeline-conventions` says nothing about whether the implementer did.
+      * every key also carries the delivery's `session_id`, so a load in one run cannot clear a
+        pointer left unrecorded in another. Without it `--all` reproduced the same looseness one
+        level up: across runs instead of across stages.
+      * a load record carrying neither id nor type cannot be attributed at all, so it clears any
+        delivery of that skill in its own run. Nothing this pipeline writes produces one - `record`
+        requires an agent type - so it exists only for a hand-written line, and it is the single
+        deliberately loose case rather than an accidental one.
+
+    That distinction is the whole check. Keying the id-less case on the skill alone made ONE recorded
+    load clear EVERY stage's pointer for it, while the return value still said `agent_type`: an audit
+    reporting coverage it did not have, which is the exact defect class the pointer design exists not
+    to reproduce - and this audit is what settles H9, so a hypothesis would have been settled by an
+    instrument that never ran. Which key was used is RETURNED and printed for the same reason.
+
+    Records written before this shape existed carry no `event` or `delivery`; they are read as
+    injected deliveries, so an old log cannot fail an audit it predates.
     """
-    loaded: set[tuple[str | None, str]] = set()
+    loaded_by_id: set[tuple[str | None, str, str]] = set()
+    loaded_by_type: set[tuple[str | None, str, str]] = set()
+    loaded_unattributed: set[tuple[str | None, str]] = set()
     for record in records:
-        if record.get("event") == "load":
-            loaded.add((record.get("agent_id"), record.get("skill")))
-            loaded.add((None, record.get("skill")))
+        if record.get("event") != "load":
+            continue
+        skill, run = record.get("skill"), record.get("session_id")
+        agent_id, agent_type = record.get("agent_id"), record.get("agent_type")
+        if agent_id:
+            loaded_by_id.add((run, agent_id, skill))
+        if agent_type:
+            loaded_by_type.add((run, agent_type, skill))
+        if not agent_id and not agent_type:
+            loaded_unattributed.add((run, skill))
 
     gaps: list[str] = []
     keys: set[str] = set()
@@ -236,11 +277,15 @@ def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
         if record.get("event", "delivery") != "delivery" or not record.get("required"):
             continue
         skill, agent = record.get("skill"), record.get("agent_type", "?")
-        agent_id = record.get("agent_id")
+        agent_id, run = record.get("agent_id"), record.get("session_id")
         if record.get("delivery", INJECT) == POINTER:
-            keys.add("agent_id" if agent_id else "agent_type")
-            key = (agent_id, skill) if agent_id else (None, skill)
-            if key not in loaded:
+            if agent_id:
+                keys.add("agent_id")
+                cleared = (run, agent_id, skill) in loaded_by_id
+            else:
+                keys.add("agent_type")
+                cleared = (run, record.get("agent_type"), skill) in loaded_by_type
+            if not cleared and (run, skill) not in loaded_unattributed:
                 gaps.append(
                     f"{agent} was handed a POINTER to skills/{skill} and never recorded loading it. "
                     f"A required skill with no evidence of a load is a stage running on whatever the "
@@ -251,9 +296,12 @@ def audit_gaps(records: list[dict]) -> tuple[list[str], str]:
                 f"{agent} required skills/{skill} and it was missing or unreadable at spawn "
                 f"(loaded: false). An absent required skill is not a lighter version of the rules."
             )
-    key_used = "agent_id" if keys == {"agent_id"} else ("agent_type" if keys else "n/a")
-    if len(keys) > 1:
-        key_used = "agent_id where the payload carried one, agent_type otherwise"
+    if not keys:
+        key_used = "n/a"
+    elif len(keys) > 1:
+        key_used = "agent_id where the delivery carried one, agent_type otherwise"
+    else:
+        key_used = next(iter(keys))
     return gaps, key_used
 
 
@@ -284,8 +332,11 @@ def main(argv: list[str] | None = None) -> int:
     p_record.add_argument("agent_type")
     p_record.add_argument("skill")
     p_record.add_argument("--agent-id", default=None)
+    p_record.add_argument("--session-id", default=None)
     p_record.add_argument("--log", default=None, type=Path)
     p_audit = sub.add_parser("audit")
+    p_audit.add_argument("--session", default=None, help="audit this run's deliveries only")
+    p_audit.add_argument("--all", action="store_true", help="every delivery ever recorded")
     p_audit.add_argument("--log", default=None, type=Path)
     args = parser.parse_args(argv)
 
@@ -315,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
                 log,
                 load_record(
                     args.agent_type, args.skill, event="load", delivery=POINTER,
-                    loaded=True, agent_id=args.agent_id,
+                    loaded=True, agent_id=args.agent_id, session_id=args.session_id,
                 ),
             )
         except OSError as exc:
@@ -324,6 +375,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"recorded: {args.agent_type} loaded skills/{args.skill}", file=sys.stderr)
         return OK
     if args.action == "audit":
+        if os.environ.get("SKILLS_OFF", "").strip() == "1":
+            # Delivery is off, so nothing was ever handed to a stage to load. Auditing the residue of
+            # earlier runs would block a phase for a mechanism the operator switched off.
+            print("  (skill delivery is off, SKILLS_OFF=1 — nothing to audit)", file=sys.stderr)
+            return OK
         log = args.log or default_log()
         if not log.is_file():
             # Nothing was ever delivered here, so there is nothing to have missed. Said out loud
@@ -335,17 +391,37 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             print(f"[required_skills] {exc}", file=sys.stderr)
             return ERROR
-        gaps, key_used = audit_gaps(records)
+
+        # SCOPE: you are responsible for what you change. The log is one append-only file per
+        # repository, covering every feature and every run, so auditing all of it at a phase handover
+        # lets a pointer nobody recorded in phase 1 block phase 8 — and a different feature besides.
+        # The same rule as `verifier_precheck.py` and `doc_read_path.py`, and the same edge: when the
+        # scope cannot be established, NOTHING is enforced and the check says so, rather than falling
+        # back to enforcing everything.
+        if args.all:
+            scoped, mode = records, "--all: every delivery ever recorded"
+        elif args.session:
+            scoped = [r for r in records if r.get("session_id") == args.session]
+            mode = f"this run only (session {args.session})"
+        else:
+            print(
+                "[required_skills] no --session given, so which run's deliveries to audit is "
+                "unknowable and none is enforced. Pass --session <id>, or --all for a full sweep.",
+                file=sys.stderr,
+            )
+            return OK
+
+        gaps, key_used = audit_gaps(scoped)
         if not gaps:
             print(
-                f"  required skills: every delivered skill has evidence of a load "
-                f"({len(records)} record(s), matched on {key_used})",
+                f"  required skills: every delivered skill has evidence of a load — {mode}, "
+                f"{len(scoped)} record(s), matched on {key_used}",
                 file=sys.stderr,
             )
             return OK
         print(
-            f"required_skills: a required skill was delivered and never loaded (matched on "
-            f"{key_used}):",
+            f"required_skills: a required skill was delivered and never loaded — {mode}, matched on "
+            f"{key_used}:",
             file=sys.stderr,
         )
         for gap in gaps:

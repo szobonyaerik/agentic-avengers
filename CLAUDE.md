@@ -244,7 +244,11 @@ prevention when both end the same way.** At or under the ceiling a skill is **in
 injection *is* the load; over it the stage gets a **pointer** — path, size, description, and the
 `required_skills.py record` command. **A pointer is not a suggestion**: `required_skills.py audit`
 runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`) and **fails the phase** on a
-pointer with no matching load. The saving is a **prediction (H9), not a result** — roughly 1M tokens
+pointer with no matching load. It matches on the spawn's own id where the record carries one and on
+`agent_type` where it does not, **always within one run** — a load by one stage is no evidence about
+another, and neither is a load in another run — and the handover audit is **scoped to the current
+run**, since one append-only log per repository would otherwise let phase 1 block phase 8. No session
+id means the run is unknowable, so nothing is enforced and it says so; `--all` sweeps everything. The saving is a **prediction (H9), not a result** — roughly 1M tokens
 per 8-phase feature with zero unrecorded loads, settled in phase 9.
 
 **A required skill that is missing or unreadable is a loud BLOCKER** in the injected context, recorded

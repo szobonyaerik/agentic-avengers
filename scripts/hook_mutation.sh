@@ -99,10 +99,37 @@ trap on_kill TERM INT
 # background and be waited on — otherwise the kill is reported only after the call it was killed for
 # has finished, which is the same defect the spec gate's run_pass exists to avoid. Every cosmic-ray
 # invocation here can outlive the hook's budget, so all of them go through this.
+#
+# The child is launched into its OWN SESSION and killed by PROCESS GROUP. `cosmic-ray exec` is a CLI
+# that spawns workers which run the test suite, and signalling the direct child alone leaves those
+# workers running — the exact leak scripts/proc_group.py was written for, where a reported 300s
+# timeout was measured against 569s, 3818s and 4276s of real activity. That module is NOT reused here
+# because it owns the whole call lifecycle (it captures output, applies its own timeout and returns a
+# ChildResult), while this hook must stream into $TMP and die on a signal delivered from outside by a
+# bash trap. So only its primitive is applied — same session-per-child, same SIGTERM, grace, SIGKILL
+# order, same TERM_GRACE_S — and this comment is the statement that a second, narrower use of the
+# pipeline's own primitive lives here.
+TERM_GRACE_S=5
+
+kill_child_group() {
+  local pgid="$1"
+  [ -n "$pgid" ] || return 0
+  kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
+  local waited=0
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  # Unconditional, as in proc_group.py: a group whose leader exited still has members, so "the child
+  # is gone" is never evidence that the work stopped.
+  kill -KILL "-$pgid" 2>/dev/null || true
+}
+
 run_child() {
-  "$@" >>"$TMP" 2>&1 &
+  # os.setsid() then exec: the backgrounded pid IS the new session and group leader, so `kill -<pid>`
+  # reaches every worker it spawns. `setsid(1)` is not on macOS, which is why this is done in python.
+  python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" >>"$TMP" 2>&1 &
   local pid=$!
-  trap 'kill -TERM "'"$pid"'" 2>/dev/null; on_kill' TERM INT
+  trap 'kill_child_group "'"$pid"'"; on_kill' TERM INT
   wait "$pid"; local rc=$?
   trap on_kill TERM INT
   return "$rc"

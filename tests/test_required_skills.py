@@ -227,9 +227,9 @@ def test_a_pointer_with_no_recorded_load_fails_the_audit(plugin: Path, tmp_path:
     )
     log = tmp_path / "loads.jsonl"
     run_hook(plugin, "avenger-backend-architect", log)
-    assert main(["audit", "--log", str(log)]) == 1
+    assert main(["audit", "--all", "--log", str(log)]) == 1
     assert main(["record", "avenger-backend-architect", "tdd", "--log", str(log)]) == 0
-    assert main(["audit", "--log", str(log)]) == 0
+    assert main(["audit", "--all", "--log", str(log)]) == 0
 
 
 def test_the_audit_matches_on_the_agent_id_when_the_payload_carries_one(
@@ -242,12 +242,12 @@ def test_the_audit_matches_on_the_agent_id_when_the_payload_carries_one(
     )
     log = tmp_path / "loads.jsonl"
     run_hook(plugin, "avenger-backend-architect", log, agent_id="spawn-7")
-    assert main(["audit", "--log", str(log)]) == 1
+    assert main(["audit", "--all", "--log", str(log)]) == 1
     # A load recorded against a DIFFERENT spawn does not clear this one.
     main(["record", "avenger-backend-architect", "tdd", "--agent-id", "spawn-9", "--log", str(log)])
-    assert main(["audit", "--log", str(log)]) == 1
+    assert main(["audit", "--all", "--log", str(log)]) == 1
     main(["record", "avenger-backend-architect", "tdd", "--agent-id", "spawn-7", "--log", str(log)])
-    assert main(["audit", "--log", str(log)]) == 0
+    assert main(["audit", "--all", "--log", str(log)]) == 0
     assert "agent_id" in capsys.readouterr().err
 
 
@@ -255,7 +255,51 @@ def test_an_injected_skill_needs_no_separate_load_record(plugin: Path, tmp_path:
     """For an injected skill the injection IS the load — demanding a second record would be theatre."""
     log = tmp_path / "loads.jsonl"
     run_hook(plugin, "avenger-backend-architect", log)
-    assert main(["audit", "--log", str(log)]) == 0
+    assert main(["audit", "--all", "--log", str(log)]) == 0
+
+
+def test_one_stages_load_does_not_clear_another_stages_pointer() -> None:
+    """The audit is the whole mechanism that justified dropping full injection, and it settles H9.
+    Keyed on the skill alone it detected "nobody loaded X" while reporting "this stage did not load
+    X" — coverage it did not have, settling a hypothesis with an instrument that never ran."""
+    records = [
+        {"event": "delivery", "agent_type": "avenger-verifier",
+         "skill": "pipeline-conventions", "required": True, "delivery": "pointer"},
+        {"event": "delivery", "agent_type": "avenger-backend-architect",
+         "skill": "pipeline-conventions", "required": True, "delivery": "pointer"},
+        {"event": "load", "agent_type": "avenger-verifier", "skill": "pipeline-conventions"},
+    ]
+    gaps, key = audit_gaps(records)
+    assert len(gaps) == 1, "the implementer was pointed at it and never loaded it"
+    assert "avenger-backend-architect" in gaps[0]
+    assert "avenger-verifier" not in gaps[0], "the verifier did load it"
+    assert key == "agent_type"
+
+
+def test_a_load_by_another_spawn_does_not_clear_this_spawns_pointer() -> None:
+    records = [
+        {"event": "delivery", "agent_type": "avenger-backend-architect", "agent_id": "spawn-b",
+         "skill": "tdd", "required": True, "delivery": "pointer"},
+        {"event": "load", "agent_type": "avenger-backend-architect", "agent_id": "spawn-a",
+         "skill": "tdd"},
+    ]
+    gaps, key = audit_gaps(records)
+    assert len(gaps) == 1 and key == "agent_id"
+
+
+def test_the_reported_key_names_both_when_both_were_used() -> None:
+    """An audit that says one thing and matches another is the defect, whichever way it leans."""
+    records = [
+        {"event": "delivery", "agent_type": "a", "agent_id": "s1", "skill": "tdd",
+         "required": True, "delivery": "pointer"},
+        {"event": "delivery", "agent_type": "b", "skill": "tdd", "required": True,
+         "delivery": "pointer"},
+        {"event": "load", "agent_type": "a", "agent_id": "s1", "skill": "tdd"},
+        {"event": "load", "agent_type": "b", "skill": "tdd"},
+    ]
+    gaps, key = audit_gaps(records)
+    assert gaps == []
+    assert key == "agent_id where the delivery carried one, agent_type otherwise"
 
 
 def test_a_required_skill_that_never_loaded_fails_the_audit() -> None:
@@ -274,6 +318,73 @@ def test_a_log_written_before_this_shape_existed_cannot_fail_an_audit() -> None:
     assert gaps == [] and key == "n/a"
 
 
+def test_a_session_id_is_never_used_as_a_spawn_id(plugin: Path, tmp_path: Path) -> None:
+    """A session id is RUN-scoped. Substituting it for a spawn id would make every delivery in one
+    run share a key, so one spawn's load would clear every other spawn's pointer."""
+    (plugin / "skills" / "tdd" / "SKILL.md").write_text(
+        "---\nname: tdd\ndescription: d\n---\n\n" + "x" * 9000
+    )
+    log = tmp_path / "loads.jsonl"
+    subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps({"agent_type": "avenger-backend-architect", "session_id": "run-1"}),
+        capture_output=True, text=True, check=False,
+        env={"PATH": os.environ["PATH"], "HOME": str(plugin),
+             "CLAUDE_PLUGIN_ROOT": str(plugin), "CLAUDE_PROJECT_DIR": str(plugin),
+             "SKILL_LOAD_LOG": str(log)},
+    )
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert all(r["agent_id"] is None for r in records), "a session id is not a spawn id"
+    assert all(r["session_id"] == "run-1" for r in records), "it is kept as the run correlator"
+    gaps, key = audit_gaps(records)
+    assert key == "agent_type" and len(gaps) == 1
+
+
+def test_the_audit_is_scoped_to_one_run(tmp_path: Path) -> None:
+    """An unscoped audit lets a pointer nobody recorded in phase 1 block phase 8, and a different
+    feature besides — the same hostage failure diff-scoping removes everywhere else here."""
+    log = tmp_path / "loads.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in [
+        {"event": "delivery", "agent_type": "avenger-verifier", "session_id": "old-run",
+         "skill": "tdd", "required": True, "delivery": "pointer"},
+        {"event": "delivery", "agent_type": "avenger-verifier", "session_id": "this-run",
+         "skill": "tdd", "required": True, "delivery": "pointer"},
+        {"event": "load", "agent_type": "avenger-verifier", "session_id": "this-run",
+         "skill": "tdd"},
+    ]) + "\n")
+    assert main(["audit", "--session", "this-run", "--log", str(log)]) == 0
+    assert main(["audit", "--session", "old-run", "--log", str(log)]) == 1
+    assert main(["audit", "--all", "--log", str(log)]) == 1, "--full still sweeps everything"
+
+
+def test_an_unscoped_audit_enforces_nothing_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = tmp_path / "loads.jsonl"
+    log.write_text(json.dumps(
+        {"event": "delivery", "agent_type": "avenger-verifier", "skill": "tdd",
+         "required": True, "delivery": "pointer"}
+    ) + "\n")
+    assert main(["audit", "--log", str(log)]) == 0
+    assert "unknowable" in capsys.readouterr().err
+
+
+def test_the_audit_honours_the_off_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Delivery off means nothing was handed to a stage; auditing earlier residue would block a
+    phase for a mechanism the operator switched off."""
+    log = tmp_path / "loads.jsonl"
+    log.write_text(json.dumps(
+        {"event": "delivery", "agent_type": "avenger-verifier", "session_id": "r", "skill": "tdd",
+         "required": True, "delivery": "pointer"}
+    ) + "\n")
+    assert main(["audit", "--session", "r", "--log", str(log)]) == 1
+    monkeypatch.setenv("SKILLS_OFF", "1")
+    assert main(["audit", "--session", "r", "--log", str(log)]) == 0
+    assert "SKILLS_OFF=1" in capsys.readouterr().err
+
+
 def test_no_evidence_file_is_clean_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -286,7 +397,7 @@ def test_no_evidence_file_is_clean_and_says_so(
 def test_a_corrupt_evidence_line_is_an_error_never_a_silent_skip(tmp_path: Path) -> None:
     log = tmp_path / "loads.jsonl"
     log.write_text('{"skill": "tdd"}\nnot json at all\n')
-    assert main(["audit", "--log", str(log)]) == 2
+    assert main(["audit", "--all", "--log", str(log)]) == 2
 
 
 def test_an_unparseable_ceiling_delivers_nothing(plugin: Path, tmp_path: Path) -> None:

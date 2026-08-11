@@ -115,7 +115,14 @@ fi
 # without it a pointer is exactly the "load skills/tdd before you start" instruction-with-no-mechanism
 # that the injection was introduced to replace. A phase does not close over an unrecorded required
 # load. Fail closed; the script names the stage and the skill.
-if ! python3 "$SD/required_skills.py" audit; then
+#
+# SCOPED TO THIS RUN. The evidence log is one append-only file per repository, so an unscoped audit
+# would let a pointer nobody recorded in phase 1 block phase 8 — and a different feature besides. The
+# same "you are responsible for what you change" rule as verifier_precheck above; with no session id
+# in the payload the run is unknowable and the audit enforces nothing rather than everything, and
+# says so. `gate_ci.sh --full` still sweeps the whole log.
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+if ! python3 "$SD/required_skills.py" audit ${SESSION_ID:+--session "$SESSION_ID"}; then
   fail "verifier:skills" \
     "verifier: a required skill was delivered to a stage in this run and never recorded as loaded" \
     "(named above). Load it and record it with scripts/required_skills.py record <agent-type> <skill>," \

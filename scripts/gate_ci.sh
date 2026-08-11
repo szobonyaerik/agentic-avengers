@@ -128,7 +128,7 @@ if [ "$FULL" -eq 1 ]; then
   echo "• required skills: every stage's required SKILL.md is present"
   python3 "$SCRIPT_DIR/required_skills.py" verify --root "$ROOT" || record_fail "required-skills"
   echo "• required skills: every delivered skill has evidence of a load"
-  python3 "$SCRIPT_DIR/required_skills.py" audit || record_fail "required-skills:unloaded"
+  python3 "$SCRIPT_DIR/required_skills.py" audit --all || record_fail "required-skills:unloaded"
 fi
 
 # 1bb) The document read path — the artifacts obey their declared readers and caps, and no stage
