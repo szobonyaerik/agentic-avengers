@@ -112,7 +112,7 @@ created: <date>
 status: green
 next: <next-phase-slug | e2e | ship>
 verdict: pass | pass (bypassed) | fail
-mutation: n/a (off) | <score> (policy: advisory|enforce)
+mutation: n/a (off) | <score> (policy advisory|enforce)
 readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
 ---
 ## Phase <phase> — contract card

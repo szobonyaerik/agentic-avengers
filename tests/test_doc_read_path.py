@@ -267,6 +267,28 @@ CHAR_CAP_RE = re.compile(
     CAP_VERB + r"(?<![\d,])(\d{3,6})[- ](?:char|chars|characters)\b", re.IGNORECASE
 )
 
+# The same cap is also stated in KB prose, and the byte pattern above cannot see any of it — six
+# shipped files said "6 KB" and would have gone silently stale on a change to the constant, which is
+# the exact failure the derived list exists to end. KB needs a tighter anchor than bytes do: these
+# documents are full of KB MEASUREMENTS that are legitimately different numbers ("31 KB", "272 KB",
+# "990 KB", "37 KB averages", "at 34 KB each", "53.6 KB"), and a check that flagged those would be
+# noise — noise gets deleted rather than heeded. So a KB figure counts only when it is presented AS
+# this cap, in one of the three ways the shipped files present it:
+#   1. behind a cap verb          — "capped at 6 KB"
+#   2. in front of a cap noun     — "the 6 KB cap", "the 6 KB contract card"
+#   3. opening a sentence with it — "At 6 KB it is affordable to read all of them."
+# Branch 3 is case-SENSITIVE on purpose: sentence-initial "At 6 KB" states the cap, while mid-sentence
+# "at 34 KB each" reports a measurement.
+KB_NUM = r"(?<![\d,.])(\d{1,4}(?:\.\d+)?)\s?KB\b"
+KB_CAP_RE = re.compile(
+    "|".join((
+        CAP_VERB + KB_NUM,
+        KB_NUM + r"\s+(?:cap\b|contract card\b)",
+        r"(?-i:At)\s" + KB_NUM,
+    )),
+    re.IGNORECASE,
+)
+
 
 def doc_surface() -> list[Path]:
     """Every tracked prose file that could state a cap."""
@@ -276,9 +298,10 @@ def doc_surface() -> list[Path]:
     return [p for p in found if p.is_file()]
 
 
-def stated_caps(pattern: re.Pattern[str]) -> list[tuple[Path, int]]:
+def stated_caps(pattern: re.Pattern[str]) -> list[tuple[Path, float]]:
+    """Every stated cap on the doc surface, as (file, number). One group per pattern branch."""
     return [
-        (path, int(m.group(1)))
+        (path, float(next(g for g in m.groups() if g is not None)))
         for path in doc_surface()
         for m in pattern.finditer(path.read_text(encoding="utf-8"))
     ]
@@ -301,6 +324,45 @@ def test_every_document_stating_a_char_cap_states_the_real_one() -> None:
         f"these documents state a character cap that is not "
         f"VERDICT_REPORT_MAX_CHARS={VERDICT_REPORT_MAX_CHARS}: {wrong}"
     )
+
+
+def test_every_document_stating_the_cap_in_kb_states_the_real_one() -> None:
+    expected_kb = HANDOVER_MAX_BYTES / 1024
+    wrong = [(str(p.relative_to(REPO)), n) for p, n in stated_caps(KB_CAP_RE) if n != expected_kb]
+    assert not wrong, (
+        f"these documents state the handover cap in KB, and it is not "
+        f"HANDOVER_MAX_BYTES={HANDOVER_MAX_BYTES} ({expected_kb} KB): {wrong}. Prose that states the "
+        f"cap in KB drifts exactly as silently as a byte literal does."
+    )
+
+
+def test_the_kb_scan_reaches_every_file_that_states_the_cap_in_prose() -> None:
+    """The KB claims are phrased three different ways; a scan that finds only one phrasing is the bug."""
+    covered = {str(p.relative_to(REPO)) for p, _ in stated_caps(KB_CAP_RE)}
+    assert {
+        "commands/spec-review.md",
+        "agents/avenger-spec-writer.md",
+        "skills/e2e-author/SKILL.md",
+        "skills/phase-handover/SKILL.md",
+        "docs/AUTOMATE.md",
+        "docs/templates/handover-archive.template.md",
+    } <= covered, f"the KB scan no longer reaches every file stating the cap in prose: {sorted(covered)}"
+
+
+def test_the_kb_scan_does_not_flag_measurements() -> None:
+    """A drift check that cries wolf gets deleted. KB figures that report a SIZE are not caps."""
+    measured = {
+        "handover.md held 272 KB and cost",
+        "writers produced 37 KB averages",
+        "prior phases' cards; at 34 KB each that was",
+        "a well-organised 30 KB document that no one will read",
+        "prose across 53.6 KB of Open Items",
+        "`task-analysis.md` is 31 KB and trivial",
+        "one measured feature carried 285 KB",
+        "130 KB of which 83 KB (64%) was superseded",
+    }
+    flagged = [text for text in measured if KB_CAP_RE.search(text)]
+    assert not flagged, f"these are measurements, not statements of the cap: {flagged}"
 
 
 def test_the_documents_required_to_state_a_cap_still_do() -> None:

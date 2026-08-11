@@ -7,7 +7,7 @@ created: YYYY-MM-DD
 status: green
 next: <next-phase-slug | e2e | ship>
 verdict: pass | pass (bypassed) | fail   <!-- from verdict.json in this phase dir -->
-mutation: n/a (off) | <score> (policy: <enforce|advisory>)
+mutation: n/a (off) | <score> (policy <enforce|advisory>)
 readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
 ---
 

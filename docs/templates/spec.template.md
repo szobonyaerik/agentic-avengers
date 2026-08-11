@@ -4,8 +4,8 @@ phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 depends_on: []
 work_kind: greenfield    # <!-- greenfield | migration | refactor — the implementer's tdd mode.
-                              CARRIED HERE, not looked up in task-analysis.md: a stage that fires per
-                              spec must never open a second document for one field. -->
+                         #      CARRIED HERE, not looked up in task-analysis.md: a stage that fires
+                         #      per spec must never open a second document for one field. -->
 status: draft
 review_status: pending   # <!-- only the human reviewer sets this to 'approved', after grill-me -->
 criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase -->
