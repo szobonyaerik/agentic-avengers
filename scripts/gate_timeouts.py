@@ -17,6 +17,15 @@ The relation that must hold, for every hook that can reach `gate_runner.py`:
 The headroom is not padding: the hook also loads env, checks the gate cache, assembles a diff
 bundle, stamps frontmatter and writes the cache, all outside the call it wraps.
 
+Metrics emission spends that same headroom, so it is asserted here rather than described somewhere:
+
+    metrics processes on the hook's path  x  AVENGER_METRICS_TIMEOUT  <=  HOOK_HEADROOM_S
+
+An unwritable record makes firstmate's CLI BLOCK rather than fail, and the sink's breaker is
+per-process state, so each process on a hook's path can pay the full per-call bound once. The
+process count is DERIVED the same way gate hooks are — from what the scripts actually spawn and
+import — so a fourth emission point added to a hook moves this number by itself.
+
 Which hooks are gate hooks is DERIVED, not listed: this walks the `$SD/…`, `$SCRIPT_DIR/…` and
 `${CLAUDE_PLUGIN_ROOT}/scripts/…` references out of each hook script and follows them, so a hook
 that starts calling the gate tomorrow is covered without anyone remembering to add it here. That
@@ -38,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import metrics_sink  # noqa: E402
 from gate_errors import GateError  # noqa: E402
 
 #: Seconds the provider call gets, and the value `gate_runner.py` passes to the child runner.
@@ -99,6 +109,22 @@ REFERENCE = re.compile(
 #: A hook command names its script the same way.
 HOOK_SCRIPT = re.compile(r"/scripts/([A-Za-z0-9_.-]+\.(?:py|sh))")
 
+#: The metrics CLI. Every process running it is counted at its spawn site below, so the module
+#: itself is never counted a second time for the emission code it obviously contains.
+METRICS_CLI = "pipeline_metrics.py"
+
+#: How a shipped script spawns that CLI — pinned to the same three reference forms as `REFERENCE`,
+#: for the same reason: a spawn this cannot see is a process whose timeout goes uncounted.
+METRICS_SPAWN = re.compile(
+    r"(?:\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts|\$SD|\$SCRIPT_DIR)/" + METRICS_CLI.replace(".", r"\.")
+)
+
+#: A process that records in-process instead of spawning the CLI imports the metrics module AND
+#: calls one of its `record_*` entry points. Both are required: `gate_timeouts.py` imports the sink
+#: to read its budget and records nothing, and counting it would inflate every hook on the path.
+METRICS_MODULE = re.compile(r"\b(?:from|import)\s+(?:pipeline_metrics|metrics_sink)\b")
+METRICS_RECORD = re.compile(r"\brecord_[a-z][a-z_]*\(")
+
 
 def required_hook_timeout(call_s: int | None = None) -> int:
     """The smallest hooks.json timeout that can outlive the call it wraps."""
@@ -130,6 +156,40 @@ def reaches_gate_runner(script: Path, scripts_dir: Path, seen: set[str] | None =
     )
 
 
+def metrics_processes(script: Path, scripts_dir: Path, seen: set[str] | None = None) -> int:
+    """How many separate processes on `script`'s path can each pay the metrics timeout once.
+
+    Derived, never listed. The sink's breaker is per-process state, so a blocked writer costs one
+    full `AVENGER_METRICS_TIMEOUT` in every process that touches it — three on the fidelity path
+    today (phase-open, spec-round, and the gate runner's own recording), and whatever a future
+    emission point adds, without anyone remembering to update a number here.
+    """
+    seen = set() if seen is None else seen
+    if script.name in seen or not script.is_file():
+        return 0
+    seen.add(script.name)
+    try:
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    count = len(METRICS_SPAWN.findall(text))
+    if (
+        script.name != METRICS_CLI
+        and METRICS_MODULE.search(text)
+        and METRICS_RECORD.search(text)
+    ):
+        count += 1
+    return count + sum(
+        metrics_processes(scripts_dir / ref, scripts_dir, seen)
+        for ref in sorted(references(script))
+    )
+
+
+def metrics_worst_case_s(script: Path, scripts_dir: Path) -> int:
+    """The most wall clock measurement can add to one invocation of `script`."""
+    return metrics_processes(script, scripts_dir) * metrics_sink.timeout()
+
+
 def gate_hooks(hooks_json: Path, scripts_dir: Path) -> list[tuple[str, str, int]]:
     """(event, script name, timeout) for every hook entry that can reach the gate runner."""
     config = json.loads(hooks_json.read_text(encoding="utf-8"))
@@ -147,17 +207,36 @@ def gate_hooks(hooks_json: Path, scripts_dir: Path) -> list[tuple[str, str, int]
 
 
 def violations(hooks_json: Path, scripts_dir: Path, call_s: int | None = None) -> list[str]:
-    """Every gate hook whose harness budget cannot outlive the provider call inside it."""
+    """Every gate hook whose harness budget cannot outlive what runs inside it.
+
+    Two ways to lose the same way: a budget that cannot outlive the provider call, and measurement
+    eating the headroom that call leaves. Both end with the harness killing a hook that then reports
+    nothing at all, which is the absence a run reads as a rejection.
+    """
     need = required_hook_timeout(call_s)
     inner = call_timeout() if call_s is None else call_s
+    per_call = metrics_sink.timeout()
     out = []
-    for event, name, timeout in gate_hooks(hooks_json, scripts_dir):
-        if timeout < need:
+    for event, name, hook_timeout in gate_hooks(hooks_json, scripts_dir):
+        if hook_timeout < need:
             out.append(
-                f"{event}/{name}: hooks.json timeout is {timeout}s but the provider call inside it "
-                f"is given {inner}s — the harness kills the hook {inner - timeout}s before the gate "
-                f"can answer, and a killed hook reports nothing at all. Needs >= {need}s "
-                f"({inner}s call + {HOOK_HEADROOM_S}s headroom)."
+                f"INVERTED TIMEOUT — {event}/{name}: hooks.json timeout is {hook_timeout}s but the "
+                f"provider call inside it is given {inner}s — the harness kills the hook "
+                f"{inner - hook_timeout}s before the gate can answer, and a killed hook reports "
+                f"nothing at all. Needs >= {need}s ({inner}s call + {HOOK_HEADROOM_S}s headroom)."
+            )
+        processes = metrics_processes(scripts_dir / name, scripts_dir)
+        worst = processes * per_call
+        if worst > HOOK_HEADROOM_S:
+            out.append(
+                f"HEADROOM EXHAUSTED — {event}/{name}: measurement can add up to {worst}s inside "
+                f"this hook ({processes} metrics processes x {per_call}s "
+                f"AVENGER_METRICS_TIMEOUT, one per process because the sink's breaker is "
+                f"per-process), but the hook budget carries only {HOOK_HEADROOM_S}s of headroom "
+                f"over the {inner}s call. A hung writer would get the hook killed and the gate "
+                f"would report nothing. Lower AVENGER_METRICS_TIMEOUT to <= "
+                f"{HOOK_HEADROOM_S // processes}s, remove an emission point from this hook's path, "
+                f"or raise HOOK_HEADROOM_S and every hooks.json budget with it."
             )
     return out
 
@@ -186,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         print(exc.render(), file=sys.stderr)
         return 2
     for line in found:
-        print(f"[gate_timeouts] INVERTED TIMEOUT — {line}", file=sys.stderr)
+        print(f"[gate_timeouts] {line}", file=sys.stderr)
     return 2 if found else 0
 
 

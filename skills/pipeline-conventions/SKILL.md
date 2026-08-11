@@ -312,7 +312,12 @@ Three consequences worth stating outright:
     size ceiling in the gate model. `scripts/gate_timeouts.py` asserts
     `hook timeout >= GATE_CALL_TIMEOUT + headroom`, derives *which* hooks are gate hooks from what
     each one actually calls, and both the hooks and the suite check it. Raising `GATE_CALL_TIMEOUT`
-    without raising `hooks.json` is a loud stop.
+    without raising `hooks.json` is a loud stop. **Measurement spends that same headroom**, so the
+    same module asserts `metrics processes on the hook's path x AVENGER_METRICS_TIMEOUT <= headroom`
+    — the count derived from what the scripts spawn and import, because the sink's breaker is
+    per-process state and a blocked writer therefore costs the full per-call bound in each one.
+    Ordering (the gate answers, then records) keeps a hung writer from ever truncating the answer;
+    this bound is what keeps it from getting the hook killed.
   - **A timeout must stop the work, not just stop waiting.** `scripts/proc_group.py` runs the
     provider child in its own process group and signals the GROUP; killing only the direct child left
     its workers running and billing, with runs REPORTING 300s observed against 569s, 3818s and 4276s.

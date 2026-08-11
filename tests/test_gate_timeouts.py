@@ -22,9 +22,12 @@ from gate_errors import GateError  # noqa: E402
 from gate_timeouts import (  # noqa: E402
     DEFAULT_CALL_TIMEOUT_S,
     HOOK_HEADROOM_S,
+    METRICS_SPAWN,
     call_timeout,
     gate_hooks,
     main,
+    metrics_processes,
+    metrics_worst_case_s,
     reaches_gate_runner,
     references,
     required_hook_timeout,
@@ -158,6 +161,76 @@ def test_verify_stops_on_a_bad_budget_rather_than_checking_against_the_default(
 def test_an_unset_budget_is_still_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GATE_CALL_TIMEOUT", raising=False)
     assert call_timeout() == DEFAULT_CALL_TIMEOUT_S
+
+
+# ── measurement spends the same headroom, so it is checked against it ────────
+
+
+def test_measurement_fits_inside_the_headroom_it_spends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unwritable record makes firstmate's CLI block rather than fail, and the sink's breaker is
+    per-process, so every process on a hook's path can pay the per-call bound once. The hook budget
+    has to outlive the provider call PLUS all of that."""
+    monkeypatch.delenv("AVENGER_METRICS_TIMEOUT", raising=False)
+    for _, name, _ in gate_hooks(HOOKS_JSON, SCRIPTS):
+        assert metrics_worst_case_s(SCRIPTS / name, SCRIPTS) <= HOOK_HEADROOM_S, name
+
+
+def test_the_fidelity_path_counts_every_process_that_can_pay_the_timeout() -> None:
+    """The worst case today: phase-open, spec-round, the kill trap's own record — and the gate
+    runner, which records in-process rather than by spawning the CLI."""
+    hook = SCRIPTS / "hook_fidelity.sh"
+    spawned = len(METRICS_SPAWN.findall(hook.read_text(encoding="utf-8")))
+
+    assert spawned >= 3
+    assert metrics_processes(hook, SCRIPTS) == spawned + 1
+
+
+def test_a_new_emission_point_moves_the_count_by_itself(tmp_path: Path) -> None:
+    """Derived, not listed — the same guarantee as the gate-hook walk. A number typed in here would
+    stay right until the first hook that added a fact, which is the only time it matters."""
+    hook = tmp_path / "hook_x.sh"
+    hook.write_text('#!/usr/bin/env bash\npython3 "$SD/gate_runner.py"\n', encoding="utf-8")
+    before = metrics_processes(hook, SCRIPTS)
+
+    hook.write_text(
+        '#!/usr/bin/env bash\npython3 "$SD/gate_runner.py"\n'
+        'python3 "$SD/pipeline_metrics.py" phase-open "$FILE"\n',
+        encoding="utf-8",
+    )
+
+    assert before == 1
+    assert metrics_processes(hook, SCRIPTS) == before + 1
+
+
+def test_a_module_that_reads_the_budget_but_records_nothing_is_not_counted() -> None:
+    """`gate_timeouts.py` imports the sink to read its bound. Counting an import rather than an
+    emission would inflate every hook that checks its own timeouts."""
+    assert metrics_processes(SCRIPTS / "gate_timeouts.py", SCRIPTS) == 0
+
+
+def test_a_metrics_budget_that_eats_the_headroom_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-call bound stays configurable — raising it past what the headroom carries is loud
+    rather than a hook killed mid-gate with nothing to show for it."""
+    monkeypatch.setenv("AVENGER_METRICS_TIMEOUT", "60")
+
+    found = violations(HOOKS_JSON, SCRIPTS)
+
+    assert any("HEADROOM EXHAUSTED" in line and "hook_fidelity.sh" in line for line in found)
+    assert all("60s AVENGER_METRICS_TIMEOUT" in line
+               for line in found if "HEADROOM EXHAUSTED" in line)
+
+
+def test_verify_fails_when_measurement_would_eat_the_hook_budget(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AVENGER_METRICS_TIMEOUT", "60")
+
+    assert main(["verify", str(HOOKS_JSON)]) == 2
+    assert "HEADROOM EXHAUSTED" in capsys.readouterr().err
 
 
 def test_a_sound_pair_reports_nothing(tmp_path: Path) -> None:

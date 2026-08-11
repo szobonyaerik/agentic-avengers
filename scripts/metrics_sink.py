@@ -111,7 +111,13 @@ def enabled() -> bool:
     return False
 
 
-def _timeout() -> int:
+def timeout() -> int:
+    """Whole seconds any single CLI call may take. Public because it is a budget others spend.
+
+    `gate_timeouts.py` checks the worst-case metrics wall clock of a gate hook against that hook's
+    headroom, and it has to check the bound that is actually in effect rather than a second copy of
+    this resolution.
+    """
     try:
         return max(1, int(os.environ.get("AVENGER_METRICS_TIMEOUT") or DEFAULT_TIMEOUT))
     except ValueError:
@@ -132,11 +138,11 @@ def run(*args: str) -> tuple[int, str, str] | None:
             [command, *args],
             capture_output=True,
             text=True,
-            timeout=_timeout(),
+            timeout=timeout(),
             check=False,
         )
     except subprocess.TimeoutExpired:
-        _stop_writing(f"timed out after {_timeout()}s on `{' '.join(args[:3])}`")
+        _stop_writing(f"timed out after {timeout()}s on `{' '.join(args[:3])}`")
         return None
     except Exception as exc:  # noqa: BLE001 — measurement never propagates a failure
         _stop_writing(f"could not run {command}: {type(exc).__name__}: {exc}")
@@ -164,7 +170,7 @@ def project() -> str | None:
     try:
         proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
             ["git", "-C", str(_project_dir()), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=_timeout(), check=False,
+            capture_output=True, text=True, timeout=timeout(), check=False,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             return Path(proc.stdout.strip()).name

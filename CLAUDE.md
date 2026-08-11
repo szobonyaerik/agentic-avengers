@@ -180,7 +180,10 @@ every stop carries a `cause=` from `scripts/gate_errors.py` and reproduces the p
 verbatim. Four properties keep that honest, each one a defect that used to fail toward "looks fine":
 a hook's `hooks.json` budget must exceed `GATE_CALL_TIMEOUT` plus headroom
 (`scripts/gate_timeouts.py`, asserted at runtime and in the suite — a 120s hook around a 300s call
-was killed before it could answer and read for a day as a model size ceiling); a timeout kills the
+was killed before it could answer and read for a day as a model size ceiling), and that headroom is
+checked against what **measurement** can spend inside the hook too — metrics processes on the hook's
+path × `AVENGER_METRICS_TIMEOUT`, derived from what the scripts spawn, since a blocked writer costs
+the full per-call bound once in every process; a timeout kills the
 child's whole **process group** and reports measured wall clock (`scripts/proc_group.py` — killing
 the direct child alone left workers billing for over an hour); a rejection emits its report and
 records the judged hash **with its verdict**, so an unchanged rejected body replays the rejection;

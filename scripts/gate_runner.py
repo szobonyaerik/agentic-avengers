@@ -54,12 +54,17 @@ except ImportError:  # pragma: no cover - vendored without the metrics modules
 def deliver_then_record(**fields) -> None:
     """Flush what this gate already said, THEN measure it.
 
-    The gate's answer is the product; the record of it is an observation. A blocked metrics writer
-    costs a full AVENGER_METRICS_TIMEOUT per process, and a hook's budget is the call timeout plus a
-    fixed headroom (`gate_timeouts.py`) — so measuring ahead of the answer lets a hung writer push a
-    near-budget gate past the harness's limit and turn measurement into the thing that failed the
-    phase. Buffered streams are flushed first: an exit that has not reached the caller has not
-    delivered anything.
+    What the ordering buys: the gate's ANSWER — the `--emit-json` artifact and the verdict on
+    stdout — is complete before any measurement runs, so a blocked writer can never truncate, delay
+    or corrupt the answer itself. Buffered streams are flushed here rather than at interpreter exit,
+    because an exit whose output has not reached the caller has not delivered anything.
+
+    What it does not buy: the calling hook blocks on this process exiting (`hook_fidelity.sh` waits
+    on the runner), so measurement time is still spent inside the hook's budget whatever order it
+    happened in. That is bounded, not removed, and the bound is asserted rather than trusted —
+    `gate_timeouts.py` checks every metrics process on a gate hook's path times
+    AVENGER_METRICS_TIMEOUT against HOOK_HEADROOM_S, and `tests/test_gate_timeouts.py` fails when a
+    per-call bound or a new emission point would eat it.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
