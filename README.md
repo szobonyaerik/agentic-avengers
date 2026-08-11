@@ -211,8 +211,10 @@ agentic-avengers/
 │   ├── gate_timeouts.py       asserts each hook's budget outlives the provider call inside it
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
-│   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
+│   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + read path + cosmic-ray + break-glass)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
+│   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
+│   │                          diff-scoped; and `--sources`, so a removed read cannot come back)
 │   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
@@ -284,7 +286,7 @@ Drive agents with `@avenger-task-analyst "…"`, etc. (see `AGENTS.md`).
 
 **Into another repo** — with update detection:
 ```text
-scripts/install.sh /path/to/project           # vendor opencode + git floor + scripts (writes .avengers/manifest)
+scripts/install.sh /path/to/project           # vendor opencode + git floor + scripts + docs/templates (writes .avengers/manifest)
 scripts/install.sh /path/to/project --check    # report what a re-install WOULD change
 scripts/install.sh /path/to/project --prune    # apply + remove upstream-deleted (unmodified) files
 cd /path/to/project && pre-commit install
