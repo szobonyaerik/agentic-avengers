@@ -95,7 +95,10 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 
 ```text
 1. @avenger-task-analyst "add a health endpoint that reports uptime and version"
-      -> docs/features/health-endpoint/task-analysis.md   (sets work_kind: greenfield)
+      -> docs/features/health-endpoint/task-analysis.md   (the feature's work_kind: greenfield)
+      • Read ONCE, by the solution-architect. Each spec then carries its own work_kind in
+        frontmatter, so no per-spec stage ever opens this file (skills/pipeline-conventions:
+        The document read path).
 2. @avenger-solution-architect        -> overview.md
 3. @avenger-implementation-planner    -> plan.md   (phases, each with candidate specs <n>.<k>)
 4. @avenger-spec-writer               -> phases/1-endpoint/specs/1.1-health/spec.md
@@ -130,6 +133,9 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • Mutation only if MUTATION_POLICY is advisory|enforce (default off).
 
 8. @avenger-handover 1-endpoint
+      • Writes the phase's CONTRACT CARD, handover.md — binding contracts, decisions, artifact
+        links, next phase, hard-capped at 6144 bytes and checked. Everything else goes to
+        handover-archive.md beside it, which no stage reads. Nothing is deleted.
       • Mirrors the verdict + any waived findings into handover.md. The hook checks verdict.json is
         present and passing; it never calls a model.
 

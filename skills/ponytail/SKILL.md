@@ -67,8 +67,11 @@ every paragraph defending a simplification is complexity smuggled back in as pro
 Pattern: `[code] → skipped: [X], add when [Y].`
 
 This rule is about **chat prose only**. The pipeline artifacts you are required to write
-(`spec.md`, `test-mapping.md`, `implementation-report.md`, `handover.md`) are explicitly requested
-output — write them in full, to their template, every time.
+(`spec.md`, `test-mapping.md`, `test-evidence.md`, `implementation-report.md`, `handover.md`,
+`handover-archive.md`) are explicitly requested output — write them to their template every time.
+"In full" means *to the template*, not *at length*: `handover.md` is a contract card with a hard
+6144-byte cap and the archive beside it is where the record goes. Neither the cap nor the archive is
+a ladder rung — do not "minimise" an artifact out of existence, and do not pad one to fill its cap.
 
 ## When NOT to be lazy
 

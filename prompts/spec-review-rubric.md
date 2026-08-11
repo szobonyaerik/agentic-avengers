@@ -5,7 +5,8 @@ equivalent of a human grill-me review; it must hold the same bar.
 
 ## Input format
 The target may be a bare spec, or a bundle with these markers:
-- "## CONTEXT (reference only)" — the feature overview and/or a prior phase's handover. Background only; do NOT gate it.
+- "## CONTEXT (reference only)" — the overview's `## Contracts and Decisions` header and/or the
+  immediately prior phase's contract card (`handover.md`). Background only; do NOT gate it.
 - "## PREVIOUSLY APPROVED (reference only)" — the body of this same spec as it stood when it last
   passed this gate. Background only; do NOT gate it. Its presence means this is a RE-GATE.
 - "## SPEC UNDER REVIEW" — the phase spec to evaluate.
@@ -62,7 +63,8 @@ Universal:
 5. **Edge cases** — boundaries, duplicates, empty/oversized input, unauthorized paths are specified.
 6. **No internal contradiction** — requirements and acceptance criteria don't conflict.
 7. **Overview + cross-phase coherence** — nothing contradicts the overview's interfaces/decisions, and
-   nothing redefines or re-claims a contract a prior phase's handover marked delivered.
+   nothing redefines or re-claims a contract the immediately prior phase's contract card lists as
+   binding.
 8. **Goal alignment** — the spec serves the stated feature goal.
 
 Migration specs (`work_kind: migration`) additionally:

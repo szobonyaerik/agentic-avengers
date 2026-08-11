@@ -55,7 +55,8 @@ test, a negative case or a seam, and never argues a requirement out of the spec.
 
 **Load `skills/tdd` before you start.** It carries the whole procedure: what a good test is, the
 seam rule, the three anti-patterns the Verifier will read your tests for, and the mode selection from
-`work_kind` in `task-analysis.md`:
+**`work_kind` in the spec's own frontmatter** — the spec you are already reading, never a second
+document opened for one field:
 
 | `work_kind` | Mode | Loop |
 |---|---|---|
@@ -72,6 +73,13 @@ requirement gets a test of its own at all — see the table in `skills/tdd`. If 
 Write the mapping into **that spec's** `test-mapping.md`
 (`docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/test-mapping.md`); tests live at
 `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`.
+
+**`test-mapping.md` is the table and nothing else** — requirement id, test names, `level`, one
+sentence of why. Mutation evidence, route-back history, build order, deviations from the spec and any
+disclosed unmapped tests go in **`test-evidence.md`** in the same directory, which is opened **on
+route-back only**. Nothing is deleted; the sidecar is committed. The mapping is re-bundled to the
+cross-family reviewer on every verifier attempt and the sidecar is not — the rule and the measured
+cost are in `skills/tdd` and `skills/pipeline-conventions` § *The document read path*.
 
 ## Implementation Workflow (per spec)
 

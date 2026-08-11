@@ -31,7 +31,8 @@ the phase level unless the *feature's stated goal* is about that error path.
 - `docs/features/<feature>/overview.md` — the feature goal and the user-visible outcome. This is the
   source you trace to.
 - `docs/features/<feature>/plan.md` — the phase list, to see what the assembled system now spans.
-- Each phase's `handover.md` — what was actually delivered.
+- Each phase's `handover.md` **contract card** — what was actually delivered. The card is the whole
+  file (capped at 6 KB); its archive is off the read path and you do not need it.
 
 ## Procedure
 
@@ -84,6 +85,7 @@ feature: <feature>
 stage: e2e-author
 model: <model>
 created: <date>
+readers: feature close @ once
 links: [overview.md]
 ---
 | test | goal (from overview.md) | boundary |

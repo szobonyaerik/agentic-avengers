@@ -66,7 +66,10 @@ it missed, never delete or downgrade one it raised. Record the scope you chose (
 `test_quality`; a `pass` that records no completed review is rejected by both the hook and CI.
 
 ### Build the review set (deterministic, token-bounded)
-1. Read the phase specs, acceptance criteria, and every `test-mapping.md` once.
+1. Read the phase specs, acceptance criteria, and every `test-mapping.md` **table** once. The
+   `test-evidence.md` beside each mapping is **not** part of this pass — open it only when you are
+   routing a finding back or checking a fix to one, which is the moment its mutation evidence and
+   route-back history are worth their tokens.
 2. Build the review set as the union of:
   - every test authored or ported for the phase and named in `test-mapping.md`; and
   - every test file changed by the phase, even if the mapping omitted it. Use the repository diff
@@ -107,6 +110,27 @@ The verdict is not chat-only. Write it to disk at
 `docs/features/<feature>/phases/<n>-<slug>/verdict.json` (co-located with `handover.md`), one file per
 phase. It is both your output *and* the input the next verifier run reads back. See
 `docs/templates/verdict.template.json` for the shape.
+
+### It is read twice per phase, so it stays small in two specific ways
+`verdict.json` is opened by phase-handover and again at feature close, and it is the highest-rework
+artifact class the pipeline produces. Two rules keep it from growing without anyone deciding to:
+
+- **A superseded attempt is archived, not nested.** When a re-run supersedes a previous attempt,
+  write that previous attempt to `verdict-attempt-<n>.json` beside the verdict and keep only its
+  `attempt` number and a one-line outcome in the live file. Do **not** nest a `previous_attempts[]`
+  archive inside it: one measured phase's verdict was 130 KB of which **83 KB (64%) was superseded
+  attempts**, re-read in full every time anything opened the current one. The archive files carry
+  `"readers": []` — nothing is instructed to read them, and nothing is deleted.
+- **`report` is capped at 1500 characters.** It is free prose, and its job is the *headline
+  judgement plus anything the structured fields cannot say* — a disagreement you are recording
+  rather than acting on, an ambiguity, a scope note. It is not a place to narrate `tests`,
+  `coverage`, `findings` or `test_quality` a second time in sentences; every consumer of this file
+  reads the structured fields. One measured phase's `report` was 12,991 characters.
+- **The schema is frozen.** Add a finding, not a bespoke top-level key. One feature's verdicts grew
+  `judgement_w29`, `judgement_synchronisation_audit`, `judgement_with_for_update` and
+  `locked_file_audit` — four keys no reader knew to look for, which is the same as not recording
+  them. If something genuinely has no home in the schema, it is a `finding` or it is a line in
+  `report`.
 
 Each finding is **self-contained** — it carries the fix instruction for the routed agent and its own
 break-glass waiver — so an engineer can waive a single finding without touching the whole gate. The
@@ -167,6 +191,11 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
 {
   "feature": "<feature>",
   "phase": "<n>-<slug>",
+  "readers": ["phase-handover @ per phase", "feature close @ once"],
+  "attempt": 1,
+  "superseded_attempts": [ { "attempt": 1, "verdict": "fail", "outcome": "<one line>",
+                             "archived_to": "verdict-attempt-1.json" } ],
+  "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say",
   "run": { "at": "YYYY-MM-DDThh:mm:ssZ", "verifier_family": "<B>", "implementer_family": "<A>",
            "cross_family_ok": true },
   "tests": { "total": 0, "passed": 0, "failed": 0 },

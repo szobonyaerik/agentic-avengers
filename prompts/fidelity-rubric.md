@@ -4,7 +4,8 @@ spec proves otherwise.
 
 ## Input format
 The target may be a bare spec, or a bundle with two markers:
-- "## CONTEXT (reference only)" — the feature overview and/or the previous phase's handover. Background only; do NOT gate it.
+- "## CONTEXT (reference only)" — the overview's `## Contracts and Decisions` header and/or the
+  immediately prior phase's contract card (`handover.md`). Background only; do NOT gate it.
 - "## SPEC UNDER REVIEW" — the phase spec to evaluate.
 If the markers are present, evaluate ONLY the content under "## SPEC UNDER REVIEW". If they are absent,
 treat the entire input as the spec under review.
@@ -25,14 +26,14 @@ Score each dimension and cite specific evidence (quote or reference the part of 
 5. Ambiguity       — is any requirement vague enough that two engineers would build it differently?
 6. Goal alignment  — does the spec actually serve the stated feature goal?
 7. Cross-phase coherence — (only when CONTEXT is present) does the spec contradict decisions,
-   interfaces, or constraints from the overview? Does it redefine/break a contract the previous
-   phase's handover marked as delivered? Does it re-claim scope a prior phase completed?
+   interfaces, or constraints from the overview? Does it redefine/break a contract the immediately
+   prior phase's contract card lists as binding? Does it re-claim scope a prior phase completed?
 
 Decide one verdict:
 - "GO"      — every dimension is adequate; no blocking gap. (route_back: "")
 - "REVIEW"  — only minor, localized gaps that a targeted edit fixes. (route_back: "Spec Writer")
   - Cross-phase contradictions: always REVIEW (not GO, not NO-GO unless combined with internal gaps).
-    Cite the specific conflicting item — the overview section, handover contract, or prior-phase scope.
+    Cite the specific conflicting item — the overview section, the card's binding contract, or prior-phase scope.
 - "NO-GO"   — a fundamental gap: a missing requirement, an untestable criterion, a contradiction,
               or an unhandled critical edge case. (route_back: "Spec Writer")
 

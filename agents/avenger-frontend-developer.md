@@ -25,7 +25,8 @@ negative case or a seam, and never argues a requirement out of the spec. On any 
 
 **Load `skills/tdd` before you start.** You write both the tests and the code; the skill carries the
 procedure, the seam rule, the three anti-patterns the Verifier reads your tests for, and the mode
-selection from `work_kind` in `task-analysis.md` (greenfield red→green · migration parity-first ·
+selection from **`work_kind` in the spec's own frontmatter** — the spec you are already reading,
+never a second document opened for one field (greenfield red→green · migration parity-first ·
 refactor baseline-first).
 
 For UI, the seam is the **rendered component driven through user-visible behavior** — React Testing
@@ -45,6 +46,10 @@ journey cannot see the failure.
 Record each test in **that spec's** `test-mapping.md`
 (`docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/test-mapping.md`); tests live at
 `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`.
+
+**`test-mapping.md` is the table and nothing else.** Mutation evidence, route-back history, build
+order, deviations from the spec and any disclosed unmapped tests go in **`test-evidence.md`** beside
+it, opened **on route-back only**. Nothing is deleted; the sidecar is committed. See `skills/tdd`.
 
 ## Tech Stack
 

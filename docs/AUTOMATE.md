@@ -57,8 +57,13 @@ Route-backs it must honor (all already emitted by the gates):
 - **Never weakens a locked test.** The implementer owns `tests/` until the Verifier passes the phase;
   after that the suite is locked and only additions demanded by a gate are allowed.
 - **Never bypasses a gate** except with an explicit `GATE_BYPASS="reason"` (logged, visible).
-- Respects `work_kind` (greenfield | migration | refactor) for the implementer's test mode;
+- Respects `work_kind` (greenfield | migration | refactor) for the implementer's test mode. It is
+  in **the spec's own frontmatter**; no stage opens a second document for it.
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.
+- **Reads only what the read path gives each stage** (`skills/pipeline-conventions`: *The document
+  read path*) — the 6 KB contract card rather than a whole handover, the `## Contracts and Decisions`
+  header rather than a whole overview, the mapping table rather than its evidence sidecar.
+  `scripts/doc_read_path.py check --sources` enforces it and CI runs the same check.
 - **Whether a requirement gets a test is its `binding:`** (`e2e` → a shared journey · `integration` →
   its own test · `none` → none), and coverage is judged per `binding:`, never per id
   (`skills/pipeline-conventions`). Whatever does get one is **integration-level by default**; a

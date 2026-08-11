@@ -1,6 +1,17 @@
 {
   "feature": "<feature>",
   "phase": "<n>-<slug>",
+  "readers": ["phase-handover @ per phase", "feature close @ once"],
+  "attempt": 1,
+  "superseded_attempts": [
+    {
+      "attempt": 1,
+      "verdict": "fail",
+      "outcome": "<one line — the attempt itself is archived, never nested here>",
+      "archived_to": "verdict-attempt-1.json"
+    }
+  ],
+  "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say>",
   "run": {
     "at": "YYYY-MM-DDThh:mm:ssZ",
     "verifier_family": "<B>",

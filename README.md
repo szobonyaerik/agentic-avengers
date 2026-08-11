@@ -42,7 +42,7 @@ the reason through `scripts/bypass_reason.sh` so it stays one parseable record. 
 ```mermaid
 flowchart TD
     start(["New task"]) --> ta["task-analyst"]
-    ta -.-> taA[/"task-analysis.md · sets work_kind"/]
+    ta -.-> taA[/"task-analysis.md · read once, by solution-architect"/]
     ta --> sa["solution-architect"]
     sa -.-> saA[/"overview.md"/]
     sa --> ip["implementation-planner"]
@@ -56,7 +56,7 @@ flowchart TD
         fg -->|"GO / REVIEW"| sr{"spec approved?<br/>subprocess cost check + grill-me + checklist<br/>re-gate = diff only"}
         sr -->|"rework"| sw
         sr -->|"approved"| impl["backend / frontend implementer<br/>writes tests + code · test-first · skills-tdd"]
-        impl -.-> implA[/"tests + src + test-mapping.md"/]
+        impl -.-> implA[/"tests + src + test-mapping.md (the table) + test-evidence.md (route-back only)"/]
         impl -->|"next spec"| sw
     end
 
@@ -70,13 +70,15 @@ flowchart TD
     mut --> brk["breaker<br/>optional · critical paths"]
     brk -->|"counterexample"| impl
     brk --> ho["handover"]
-    ho -.-> hoA[/"handover.md + PROJECT_STATE"/]
+    ho -.-> hoA[/"handover.md · contract card, capped at 6144 bytes · rest → handover-archive.md · PROJECT_STATE"/]
     ho --> done(["phase done — next phase / shipped"])
 ```
 
 ```
 PLAN
-  task-analyst        -> docs/features/<feat>/task-analysis.md   (scope via grill-me; sets work_kind)
+  task-analyst        -> docs/features/<feat>/task-analysis.md   (scope via grill-me; feature default
+                         work_kind. READ ONCE, by solution-architect — each spec then carries its own
+                         work_kind in frontmatter, so no per-spec stage opens this file)
   solution-architect  -> docs/features/<feat>/overview.md
   implementation-planner -> docs/features/<feat>/plan.md         (phases; each = 1+ candidate specs <n>.<k>)
 
@@ -94,7 +96,8 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
     Those two gates are also what pre-agrees the SEAMS the tests will be written at.
 
   backend/frontend implementer -> tests/<feat>/<n>-<slug>/<n>.<k>-<subslug>/ + src/
-                 + that spec's test-mapping.md
+                 + that spec's test-mapping.md (the TABLE) and test-evidence.md
+                   (mutation evidence, route-back history, build order — read on route-back only)
                  skills/tdd, mode by work_kind:
                    greenfield -> red -> green, one vertical slice at a time
                    migration  -> parity-first; the EXISTING suite is the contract
@@ -112,7 +115,10 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
   mutation (optional; MUTATION_POLICY off by default | advisory | enforce)
                  an extra signal, NOT the independence mechanism
   breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
-  handover -> .../phases/<n>-<slug>/handover.md   (mirrors the verdict + any waived findings)
+  handover -> .../phases/<n>-<slug>/handover.md   CONTRACT CARD, hard cap 6144 bytes
+                 binding contracts + decisions + artifact links + next phase; mirrors the verdict
+                 and any waived findings. Everything else -> handover-archive.md, which NO stage
+                 reads. Checked by scripts/doc_read_path.py, not merely asked for.
 
 FEATURE CLOSE (once, after the final phase is green)
   implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
@@ -193,7 +199,8 @@ agentic-avengers/
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
-├── docs/templates/        spec / plan / overview / task-analysis / handover / verdict templates
+├── docs/templates/        spec / plan / overview / task-analysis / handover (+ archive) /
+│                          test-mapping / test-evidence / verdict templates
 ├── docs/rubrics/          overview + plan rubrics
 ├── docs/lessons/          committed, team-shared lessons log (see the self-improvement skill)
 ├── cosmic-ray.toml        mutation base config (the gate diff-scopes a copy per phase)
@@ -204,8 +211,10 @@ agentic-avengers/
 │   ├── gate_timeouts.py       asserts each hook's budget outlives the provider call inside it
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
-│   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
+│   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + read path + cosmic-ray + break-glass)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
+│   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
+│   │                          diff-scoped; and `--sources`, so a removed read cannot come back)
 │   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
@@ -277,7 +286,7 @@ Drive agents with `@avenger-task-analyst "…"`, etc. (see `AGENTS.md`).
 
 **Into another repo** — with update detection:
 ```text
-scripts/install.sh /path/to/project           # vendor opencode + git floor + scripts (writes .avengers/manifest)
+scripts/install.sh /path/to/project           # vendor opencode + git floor + scripts + docs/templates (writes .avengers/manifest)
 scripts/install.sh /path/to/project --check    # report what a re-install WOULD change
 scripts/install.sh /path/to/project --prune    # apply + remove upstream-deleted (unmodified) files
 cd /path/to/project && pre-commit install

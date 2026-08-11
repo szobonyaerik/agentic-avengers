@@ -49,8 +49,10 @@ review, verification — reads for **correctness**, and none of the three below 
       do not take the word.
 
 ## Coherence
-- [ ] The spec does not contradict `overview.md` (architecture, interfaces, decisions).
-- [ ] The spec does not contradict a contract a prior phase's `handover.md` marked delivered.
+- [ ] The spec does not contradict `overview.md`'s `## Contracts and Decisions` header (the stable
+      section that carries the interfaces, decisions and invariants a spec can contradict).
+- [ ] The spec does not contradict a contract on the **immediately prior phase's contract card**
+      (`handover.md`, the *Binding contracts* table).
 - [ ] The spec honors "Notes for the Spec Writer" in `plan.md`.
 
 ## Human summaries

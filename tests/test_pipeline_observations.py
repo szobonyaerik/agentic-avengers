@@ -66,6 +66,20 @@ def test_append_creates_the_file_with_pending_triage(tmp_path: Path) -> None:
     assert "fidelity NO-GO x3" in body
 
 
+def test_the_log_declares_who_reads_it(tmp_path: Path) -> None:
+    """The read path requires it of every document, and the check that enforces it is mechanical:
+    a log created without `readers:` fails the Stop hook on the run's very first observation."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    from doc_read_path import READ_PATH, declared_readers  # noqa: PLC0415
+
+    append_observation(tmp_path, "demo", kind="success", note="the gate caught a real one")
+    body = (tmp_path / "docs" / "features" / "demo" / OBSERVATIONS_FILENAME).read_text()
+    declared = declared_readers(body)
+    assert declared is not None
+    for reader in READ_PATH["pipeline-observations.md"]["readers"]:
+        assert reader in declared
+
+
 def test_append_twice_keeps_both_observations(tmp_path: Path) -> None:
     feature_dir(tmp_path, "demo")
     append_observation(tmp_path, "demo", kind="gate-friction", note="first")

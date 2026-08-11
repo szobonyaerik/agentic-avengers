@@ -3,6 +3,7 @@ feature: <feature>
 type: implementation-plan
 status: draft
 created: YYYY-MM-DD
+readers: avenger-spec-writer @ per spec; phase-handover @ per phase (the next phase's entry only)
 ---
 
 # Implementation Plan: <Feature>
