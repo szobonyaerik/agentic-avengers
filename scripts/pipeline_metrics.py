@@ -280,6 +280,11 @@ def record_spec_round(spec_path: str) -> int | None:
     shipped rebuildable gate cache under its own key, so calling this on every spec write records
     one round per genuinely changed body. Losing that cache costs one duplicated round, which is
     why it is a cache and not an artifact.
+
+    A body is remembered as counted only once the record actually took it. A refused write that
+    still cached its body would make the next call believe the round was already there, and that
+    round would be missing from `bytes_by_round` forever — a hole in the one growth series this
+    measures. Returns None when nothing was recorded, so the next write retries the round.
     """
     try:
         path = Path(spec_path)
@@ -299,13 +304,14 @@ def record_spec_round(spec_path: str) -> int | None:
             return len(rounds)   # this exact body is already one of the rounds above
 
         rounds.append(len(body.encode("utf-8")))
-        sink.add(
+        if not sink.add(
             phase,
             "specs",
             id=spec,
             requirements=len(set(REQUIREMENT_ID.findall(body))),
             bytes_by_round=rounds,
-        )
+        ):
+            return None
         sink.set_fields(phase, spec_rounds=_spec_rounds(sink.show(phase)))
         keep(path, "metrics", body)
         return len(rounds)
@@ -415,10 +421,14 @@ def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
 
 # --- defects: which stage found each one ---------------------------------------------------------
 
-#: The Verifier's finding kinds, mapped onto what the defect actually is. A gamed test and a
-#: coverage gap are defects in the TEST SET — real cost, but they must not inflate the count of
-#: genuine product defects, which is the number `found_by` exists to split.
-VERIFIER_KIND_REAL = {"code issue": True, "wrong/gamed test": False, "coverage gap": False}
+#: The Verifier's finding kinds — the vocabulary `prompts/verifier-review.md` and
+#: `skills/verifier-triage` actually emit — mapped onto what the defect actually is. A gamed test and
+#: a coverage gap are defects in the TEST SET — real cost, but they must not inflate the count of
+#: genuine product defects, which is the number `found_by` exists to split. `tests/` asserts these
+#: keys against the schema in `prompts/verifier-review.md`, so a change to the verifier's vocabulary
+#: moves this map instead of silently invalidating it: an unmatched kind falls back to `real=True`
+#: and every finding would count as a product defect.
+VERIFIER_KIND_REAL = {"code": True, "gamed-test": False, "coverage-gap": False}
 
 
 def record_defect(
@@ -470,7 +480,9 @@ def record_verifier_findings(phase_dir: str, verdict_path: str) -> int:
         if record_defect(
             phase,
             identifier=f"verifier-{identifier}",
-            summary=str(finding.get("detail") or finding.get("target") or kind or identifier),
+            summary=str(
+                finding.get("instruction") or finding.get("target") or kind or identifier
+            ),
             found_by="verifier",
             real=VERIFIER_KIND_REAL.get(kind, True),
             stage_reached="implementation",

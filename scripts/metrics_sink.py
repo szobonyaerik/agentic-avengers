@@ -25,7 +25,7 @@ Environment:
     AVENGER_METRICS_OFF=1    disable emission entirely (still fail-open, just silent)
     AVENGER_METRICS_PROJECT  the record's `project`; else the git repository's name
     AVENGER_METRICS_LOG      diagnostics path (default `<project>/.avenger-metrics.log`)
-    AVENGER_METRICS_TIMEOUT  seconds allowed per CLI call (default 20)
+    AVENGER_METRICS_TIMEOUT  seconds allowed per CLI call (default 10)
 
 Emission is OFF when the CLI is not resolvable, because agentic-avengers ships standalone and most
 repositories have no firstmate home. That absence is logged once per process rather than passed over

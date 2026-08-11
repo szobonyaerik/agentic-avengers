@@ -140,7 +140,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `skills/pipeline-conventions/SKILL.md`.
 11. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —
    gate calls with their measured latency and failure `cause`, spec rounds and their byte growth,
-   verification attempts, tests before/after, which skills each stage actually loaded, and **which
+   the verification attempt count (not what each attempt changed — see
+   `skills/pipeline-conventions/SKILL.md`), tests before/after, which skills each stage loaded, and **which
    stage found each defect** — are written by the stage that observes each fact, at the moment it
    observes it, through `scripts/metrics_sink.py` into firstmate's `fm-pipeline-metrics.sh`. The
    schema is theirs (`docs/pipeline-metrics.md`); this repo adds no key and keeps no second store.

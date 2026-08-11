@@ -347,7 +347,7 @@ new gate is instrumented by existing. `record_spec_round` is idempotent by **con
 rebuildable gate cache), so any caller may report any spec write. A seeded skill requirement never
 overwrites an observed load, in either hook order. Points: gate calls + causes (`gate_runner.py`) ·
 a harness-killed gate (the hook's own signal trap, since the runner it killed cannot speak) · spec
-rounds, byte size and requirement count (`hook_fidelity.sh`) · verification attempts
+rounds, byte size and requirement count (`hook_fidelity.sh`) · the verification attempt **count**
 (`verifier_review.sh`) · tests before/after, counted the *same static way* at both ends
 (`hook_fidelity.sh`, `hook_verifier.sh`) · **which stage found each defect** (`verifier_review.sh`,
 `hook_mutation.sh`, and `pipeline_metrics.py defect` for stages no script sees) · which skills each
@@ -357,6 +357,16 @@ defect summary is author-written free text, so it follows §6 — `--summary "$(
 inline prose. **Off unless `fm-pipeline-metrics.sh` is on `PATH` or `AVENGER_METRICS_CMD` names it**,
 and an unconfigured run says so once rather than recording nothing in silence; `AVENGER_METRICS_OFF=1`
 disables it. opencode records everything its adapter drives, minus skill loads (no read/spawn event).
+
+**One asked-for fact is deliberately not built, and this is where that is said.** "Verification
+attempts, **and what each one changed**" was asked for; only the attempt **count** is recorded.
+firstmate's schema has no field for the per-attempt delta and that schema is closed by design — a
+record that accepts arbitrary keys is not an authoritative answer to "did this get better", it is
+whatever its last writer left there. No declared hypothesis needs it either: H4 measures the bare
+`verification_attempts` count and predicts "3 or fewer", and `defects[]` already carries most of the
+analytical value through `found_by`, `real`, `stage_reached` and `severity`. The one thing genuinely
+missing is the attempt index. Deferred as **`fm-metrics-attempt-detail`**, which is firstmate's
+decision to make, not this repo's.
 
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode

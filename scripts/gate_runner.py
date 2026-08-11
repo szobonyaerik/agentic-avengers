@@ -50,6 +50,24 @@ except ImportError:  # pragma: no cover - vendored without the metrics modules
     def record_gate_call(**_kwargs):
         return False
 
+
+def deliver_then_record(**fields) -> None:
+    """Flush what this gate already said, THEN measure it.
+
+    The gate's answer is the product; the record of it is an observation. A blocked metrics writer
+    costs a full AVENGER_METRICS_TIMEOUT per process, and a hook's budget is the call timeout plus a
+    fixed headroom (`gate_timeouts.py`) — so measuring ahead of the answer lets a hung writer push a
+    near-budget gate past the harness's limit and turn measurement into the thing that failed the
+    phase. Buffered streams are flushed first: an exit that has not reached the caller has not
+    delivered anything.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 — a closed stream must not fail the gate
+            pass
+    record_gate_call(**fields)
+
 # Pull OPENROUTER_API_KEY / GATE_MODEL / AUTHOR_FAMILY from the project's .env when the environment
 # does not already define them. Shell callers get the same values via load_env.sh; this covers being
 # invoked directly. The real environment always wins, so a CI secret is never shadowed.
@@ -318,26 +336,28 @@ def main():
                 raw,
             )
     except GateError as e:  # any failure is a hard stop, and it says which failure
-        # Recorded before the exit, with the cause PR 1 gave it: a timeout kill, a 402 and an
-        # unreachable provider are three different numbers in the record, not one "it failed".
-        record_gate_call(model=args.model, rubric=args.rubric, target=target,
-                         model_family=family, latency_ms=elapsed_ms(), cause=e.cause,
-                         detail=e.detail, provider=args.provider)
+        # The cause PR 1 gave it: a timeout kill, a 402 and an unreachable provider are three
+        # different numbers in the record, not one "it failed". Recorded after the stop is rendered.
         print(e.render(), file=sys.stderr)
+        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                            model_family=family, latency_ms=elapsed_ms(), cause=e.cause,
+                            detail=e.detail, provider=args.provider)
         sys.exit(2)
     except Exception as e:  # never fail open on an unexpected shape
         # `internal`, not `config`: this is the backstop for failures nothing above recognised, and
         # calling them configuration problems sends the operator to their .env for a bug in the gate.
         # Every path that CAN name itself raises GateError above; reaching here is itself a defect.
-        record_gate_call(model=args.model, rubric=args.rubric, target=target,
-                         model_family=family, latency_ms=elapsed_ms(), cause="internal",
-                         detail=f"{type(e).__name__}: {e}", provider=args.provider)
         print(GateError("internal", f"{type(e).__name__}: {e}").render(), file=sys.stderr)
+        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                            model_family=family, latency_ms=elapsed_ms(), cause="internal",
+                            detail=f"{type(e).__name__}: {e}", provider=args.provider)
         sys.exit(2)
 
     v = str(verdict.get("verdict", "")).upper()
-    record_gate_call(model=args.model, rubric=args.rubric, target=target, model_family=family,
-                     latency_ms=elapsed_ms(), verdict=v, provider=args.provider)
+    # The latency is read HERE, where the call actually ended — not where the record is finally
+    # written below, which is after this gate has delivered its answer.
+    measured = dict(model=args.model, rubric=args.rubric, target=target, model_family=family,
+                    latency_ms=elapsed_ms(), verdict=v, provider=args.provider)
     if args.emit_json:
         # Written before any exit branch: a NO-GO verdict is exactly when the caller most needs the
         # findings. Failing to persist them is itself fail-closed.
@@ -347,6 +367,7 @@ def main():
         except OSError as e:
             print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
                   file=sys.stderr)
+            deliver_then_record(**measured)
             sys.exit(2)
     if args.print_verdict:
         # Hand the token to the caller (e.g. spec-review-auto branches GO/REVIEW vs NO-GO).
@@ -356,14 +377,17 @@ def main():
             print(verdict["report"], file=sys.stderr)
         if verdict.get("route_back"):
             print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
+        deliver_then_record(**measured)
         sys.exit(0)
     if v in VERDICT_OK:
         print(f"OK ({v})")
+        deliver_then_record(**measured)
         sys.exit(0)
     print(f"=== GATE: {v or 'FAIL'} ===", file=sys.stderr)
     print(verdict.get("report", "(no report)"), file=sys.stderr)
     if verdict.get("route_back"):
         print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
+    deliver_then_record(**measured)
     sys.exit(2)
 
 

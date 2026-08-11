@@ -70,6 +70,13 @@ json.dump(
 PY
 )"
 
+# Delivered FIRST, before anything is measured. The hook's product is the injection; the measurement
+# below is an observation of it and must never sit on its critical path. A blocked metrics writer
+# costs a full AVENGER_METRICS_TIMEOUT, and this hook's whole hooks.json budget is 10s — measuring
+# first would let the harness kill the hook before the implementer ever received the ladder, and
+# would record a load that was never delivered. Fail-open holds in wall clock, not just exit codes.
+printf '%s' "$INJECTION"
+
 # This hook does not tell an implementer to load the ladder — it puts the ladder's own text in their
 # context, so an injection that happened IS the positive evidence the metrics record demands, and it
 # is the only evidence available for a skill nobody is asked to read. Recorded only when something
@@ -81,7 +88,5 @@ if [ -n "$INJECTION" ]; then
     --evidence "SubagentStart hook_ponytail.sh injected skills/ponytail/SKILL.md" \
     >/dev/null 2>&1 || true
 fi
-
-printf '%s' "$INJECTION"
 
 exit 0

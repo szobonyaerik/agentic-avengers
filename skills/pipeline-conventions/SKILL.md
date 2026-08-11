@@ -448,10 +448,21 @@ seeded skill requirement never overwrites an observed load, whichever order the 
 | every gate call: model, family, **measured** latency, verdict, and on failure the `cause` | `gate_runner.py` | the single point every gate call passes through; §Gates' failure taxonomy is what it records |
 | a gate the harness **killed** mid-call | the hook's own signal trap | the runner it killed cannot report its own death — this is what tells a kill apart from a NO-GO |
 | spec rounds, each round's **size in bytes**, requirement count | `hook_fidelity.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
-| verification attempts | `verifier_review.sh`, at the point the judge is actually called | an argument refusal is a caller bug, not an attempt |
+| the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, at the point the judge is actually called | an argument refusal is a caller bug, not an attempt |
 | tests before and after | `hook_fidelity.sh` (first spec write) and `hook_verifier.sh` (handover) | counted **the same static way at both ends**, so the delta is a real delta and not two counting methods |
 | **which stage found each defect** | `verifier_review.sh`, `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
 | which skills each stage actually loaded | `hook_skill_load.sh`, `hook_ponytail.sh` | an instruction to load a skill is not a load |
+
+**One asked-for fact is deliberately not built.** "Verification attempts, **and what each one
+changed**" was asked for; the table above records the attempt **count** only, and that row says so
+rather than reading as a claim the code does not honour. firstmate's schema has no field for the
+per-attempt delta and that schema is closed by design — a record that accepts arbitrary keys is not
+an authoritative answer to "did this get better", it is whatever its last writer left there, so no
+key is added here and no sidecar store is invented to hold it. No declared hypothesis needs it: H4
+measures the bare `verification_attempts` count and predicts "3 or fewer". `defects[]` already
+carries most of the analytical value through `found_by`, `real`, `stage_reached` and `severity`; the
+one thing genuinely missing is the attempt index. Deferred as **`fm-metrics-attempt-detail`** — a
+schema change is firstmate's decision, not this pipeline's.
 
 **`found_by` is the field the record exists for.** Tracing one pipeline's defects to it showed the
 running suite caught 3 of 15 genuine defects while mutation, probes, review and direct execution

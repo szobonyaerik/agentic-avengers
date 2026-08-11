@@ -19,6 +19,7 @@ firstmate's own schema, which is a claim the double cannot make.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -174,6 +175,28 @@ def test_a_frontmatterless_file_records_nothing(stub_sink):  # noqa: F811
     assert metrics.record_spec_round(str(spec)) is None
 
 
+def test_a_round_the_record_refused_is_retried_not_swallowed(stub_sink, monkeypatch):  # noqa: F811
+    """A body is remembered as counted only once the record took it.
+
+    Caching a body the writer refused would make the next call believe the round was already there,
+    and that round would be missing from `bytes_by_round` forever — a hole in the one growth series
+    this exists to expose.
+    """
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    metrics.record_spec_round(str(spec))
+
+    spec.write_text("---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8")
+    monkeypatch.setenv("DOUBLE_REFUSE", "add")
+    assert metrics.record_spec_round(str(spec)) is None
+
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    assert metrics.record_spec_round(str(spec)) == 2
+
+    rounds = stored(store, "08")["specs"][0]["bytes_by_round"]
+    assert len(rounds) == 2 and rounds[1] > rounds[0]
+
+
 # --- gate calls ------------------------------------------------------------------------------------
 
 
@@ -286,22 +309,50 @@ def test_opening_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
 # --- which stage found each defect -------------------------------------------------------------------
 
 
+def declared_finding_kinds() -> set[str]:
+    """The finding vocabulary the cross-family reader is actually told to emit."""
+    prompt = (ROOT / "prompts" / "verifier-review.md").read_text(encoding="utf-8")
+    match = re.search(r'"kind"\s*:\s*"([a-z|-]+)"', prompt)
+    assert match, "prompts/verifier-review.md no longer declares a `kind` vocabulary"
+    return set(match.group(1).split("|"))
+
+
+def test_every_finding_kind_the_verifier_emits_has_a_recorded_meaning():
+    """Keyed on the emitted vocabulary, not on prose triage labels.
+
+    An unmatched kind falls back to `real=True`, so a map keyed on words the reader never emits
+    records every gamed test and every coverage gap as a genuine product defect — destroying the
+    split `found_by` exists for. This asserts against the schema in the prompt itself, so changing
+    the verifier's vocabulary moves the map instead of silently invalidating it.
+    """
+    assert set(metrics.VERIFIER_KIND_REAL) == declared_finding_kinds()
+
+
 def test_verifier_findings_become_defects_attributed_to_the_verifier(stub_sink):  # noqa: F811
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
     verdict = phase_dir / ".verifier-review.json"
-    verdict.write_text(json.dumps({"findings": [
-        {"id": "aaa", "kind": "code issue", "detail": "off-by-one in the token window"},
-        {"id": "bbb", "kind": "wrong/gamed test", "detail": "asserts the mock"},
+    # The shape `verifier_review.sh` actually hands over: the verdict.json findings of
+    # skills/verifier-triage, kinds and all.
+    verdict.write_text(json.dumps({"verdict": "NO-GO", "route_back": "Implementer", "findings": [
+        {"id": "aaa", "kind": "code", "spec_id": "R8.1.1", "target": "src/token.py",
+         "severity": "blocker", "instruction": "off-by-one in the token window"},
+        {"id": "bbb", "kind": "gamed-test", "spec_id": "R8.1.2",
+         "target": "tests/demo/8-auth/8.1-sub/test_token.py", "severity": "major",
+         "instruction": "test_window asserts the mock; assert through the public seam"},
+        {"id": "ccc", "kind": "coverage-gap", "spec_id": "R8.1.3", "target": "R8.1.3",
+         "severity": "blocker", "instruction": "no test exercises an expired token"},
     ]}), encoding="utf-8")
 
-    assert metrics.record_verifier_findings(str(phase_dir), str(verdict)) == 2
+    assert metrics.record_verifier_findings(str(phase_dir), str(verdict)) == 3
 
     defects = {d["id"]: d for d in stored(store, "08")["defects"]}
     assert defects["verifier-aaa"]["found_by"] == "verifier"
     assert defects["verifier-aaa"]["real"] is True
+    assert "off-by-one" in defects["verifier-aaa"]["summary"]   # the finding text, not its target
     assert defects["verifier-bbb"]["real"] is False   # a defect in the tests, not in the product
+    assert defects["verifier-ccc"]["real"] is False
 
 
 def test_mutation_records_what_it_found_without_inventing_identities(stub_sink):  # noqa: F811
@@ -410,20 +461,27 @@ PROVIDERS = {
 }
 
 
-def run_gate(project: Path, spec: Path, provider: str) -> subprocess.CompletedProcess:
-    """The real runner, with `opencode` stubbed on PATH — no model is called."""
+def run_gate(project: Path, spec: Path, provider: str, stdout=None) -> subprocess.CompletedProcess:
+    """The real runner, with `opencode` stubbed on PATH — no model is called.
+
+    `stdout` sends the gate's own output to a file instead of a pipe, which is how the ordering
+    between what the gate says and what it then measures can be observed at all.
+    """
     binary = project / "bin" / "opencode"
     binary.parent.mkdir(exist_ok=True)
     binary.write_text(PROVIDERS[provider], encoding="utf-8")
     binary.chmod(0o755)
     rubric = project / "fidelity-rubric.md"
     rubric.write_text("Return JSON with a verdict.", encoding="utf-8")
+    streams = ({"capture_output": True} if stdout is None
+               else {"stdout": stdout, "stderr": subprocess.DEVNULL})
     return subprocess.run(  # noqa: S603
         [sys.executable, str(ROOT / "scripts" / "gate_runner.py"),
          "--rubric", str(rubric), "--target", str(spec), "--author-family", "anthropic",
          "--model", "deepseek/deepseek-chat"],
-        capture_output=True, text=True, check=False,
+        text=True, check=False,
         env={**os.environ, "PATH": f"{binary.parent}:{os.environ['PATH']}", "HOME": str(project)},
+        **streams,
     )
 
 
@@ -460,6 +518,28 @@ def test_a_gate_call_that_cannot_be_recorded_still_returns_its_verdict(stub_sink
     result = run_gate(project, spec, "good")
 
     assert result.returncode == 0 and result.stdout.strip() == "OK (GO)"
+
+
+def test_the_gate_answers_before_it_measures_itself(stub_sink, monkeypatch, tmp_path):  # noqa: F811
+    """Delivery first, measurement second — the same invariant, in wall clock rather than exit code.
+
+    A blocked writer costs a full metrics timeout per process, and a hook's budget is the call
+    timeout plus a fixed headroom. Measuring ahead of the answer lets a hung writer push a
+    near-budget gate past the harness's limit, so the thing that failed the phase is the
+    measurement. Both the gate's stdout and the writer's own trace land in one file here, so the
+    order they happened in is the order of its lines.
+    """
+    project, _, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    ordered = tmp_path / "ordered.log"
+    monkeypatch.setenv("DOUBLE_LOG", str(ordered))
+
+    with open(ordered, "w", encoding="utf-8") as fh:
+        assert run_gate(project, spec, "good", stdout=fh).returncode == 0
+
+    lines = ordered.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "OK (GO)"
+    assert any("gate_calls" in line for line in lines[1:])
 
 
 # --- the records this emits validate against firstmate's own schema -------------------------------------

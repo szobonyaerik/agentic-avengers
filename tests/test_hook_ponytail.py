@@ -124,6 +124,46 @@ def test_frontmatter_is_stripped() -> None:
     assert not context.lstrip().startswith("---")
 
 
+def test_the_ladder_is_delivered_before_the_load_is_measured(tmp_path: Path) -> None:
+    """The hook's product is the injection; recording it is an observation of it.
+
+    A blocked metrics writer costs a full metrics timeout, and this hook's whole hooks.json budget
+    is 10s — measuring first lets the harness kill the hook before the implementer ever receives the
+    ladder, and records a load that was never delivered. The injection and the writer's own trace
+    land in one file here, so the order they happened in is the order of its bytes.
+    """
+    marker = tmp_path / "ordered.log"
+    project = tmp_path / "project"
+    (project / "docs/features/demo/phases/8-auth").mkdir(parents=True)
+    writer = tmp_path / "fm-pipeline-metrics.sh"
+    writer.write_text('#!/bin/sh\nprintf "WRITER\\n" >> "$MARKER"\nexit 0\n', encoding="utf-8")
+    writer.chmod(0o755)
+
+    with open(marker, "w", encoding="utf-8") as fh:
+        result = subprocess.run(
+            ["bash", str(HOOK)],
+            input=json.dumps({"agent_type": "avenger-backend-architect"}),
+            stdout=fh,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env={
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "CLAUDE_PLUGIN_ROOT": str(ROOT),
+                "CLAUDE_PROJECT_DIR": str(project),
+                "AVENGER_METRICS_CMD": str(writer),
+                "AVENGER_METRICS_LOG": str(tmp_path / "diagnostics.log"),
+                "MARKER": str(marker),
+            },
+            check=False,
+        )
+    assert result.returncode == 0
+
+    content = marker.read_text(encoding="utf-8")
+    assert content.startswith("{")                      # the injection went out first
+    assert "WRITER" in content                          # and the load was still recorded
+    assert content.index("WRITER") > content.index("additionalContext")
+
+
 def test_injected_body_keeps_the_test_carve_out() -> None:
     """The carve-out is why this skill is safe to inject at all — it must survive stripping."""
     context = injected_context(
