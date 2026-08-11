@@ -76,7 +76,7 @@ deleted to fix this; the read directives changed.
 |---|---|---|
 | `task-analysis.md` | the Solution Architect, **once, at feature start** | whole |
 | `overview.md` | planner + Spec Writer whole; **spec-review reads the `## Contracts and Decisions` header only** | whole / header |
-| `plan.md` | the Spec Writer, per spec | whole |
+| `plan.md` | the Spec Writer, per spec; phase-handover, per phase (the next phase's entry only) | whole |
 | `spec.md` | its own gates and its own implementer; the verifier bundle, changed specs only | whole |
 | `test-mapping.md` | the Verifier, per phase | **the table** |
 | `test-evidence.md` | **on route-back only** | whole |
@@ -84,6 +84,8 @@ deleted to fix this; the read directives changed.
 | `verdict-attempt-<n>.json` | **nobody** — archive | — |
 | `handover.md` | the Spec Writer (prior cards), spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
 | `handover-archive.md` | **nobody** — archive | — |
+| `pipeline-observations.md` | the retrospective triage, once at feature close; the preflight sweep, frontmatter only | whole |
+| `e2e-mapping.md` | feature close, once | whole |
 
 Four rules follow from it, and each one is enforced rather than requested:
 

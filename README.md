@@ -56,7 +56,7 @@ flowchart TD
         fg -->|"GO / REVIEW"| sr{"spec approved?<br/>subprocess cost check + grill-me + checklist<br/>re-gate = diff only"}
         sr -->|"rework"| sw
         sr -->|"approved"| impl["backend / frontend implementer<br/>writes tests + code · test-first · skills-tdd"]
-        impl -.-> implA[/"tests + src + test-mapping.md"/]
+        impl -.-> implA[/"tests + src + test-mapping.md (the table) + test-evidence.md (route-back only)"/]
         impl -->|"next spec"| sw
     end
 
@@ -70,7 +70,7 @@ flowchart TD
     mut --> brk["breaker<br/>optional · critical paths"]
     brk -->|"counterexample"| impl
     brk --> ho["handover"]
-    ho -.-> hoA[/"handover.md + PROJECT_STATE"/]
+    ho -.-> hoA[/"handover.md · contract card, capped at 6144 bytes · rest → handover-archive.md · PROJECT_STATE"/]
     ho --> done(["phase done — next phase / shipped"])
 ```
 
