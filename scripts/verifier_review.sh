@@ -28,6 +28,7 @@
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
+. "$SD/gate_runner_guard.sh"
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$SD/.." && pwd)}"
 cd "$ROOT" || exit 2
 
@@ -59,6 +60,10 @@ if [ "$#" -eq 0 ]; then
   echo "zero tests is not a clean review; it is no review." >&2
   exit 2
 fi
+
+# The judgement is only worth what the runner is. Refuse one that cannot identify itself as the
+# shipped gate runner — a scaffold that prints GO is indistinguishable from a real pass here.
+require_gate_runner "$SD/gate_runner.py" || exit 2
 
 MODEL="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}"
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
@@ -101,27 +106,76 @@ if [ "${#SRC}" -gt "$LIMIT" ]; then
   exit 2
 fi
 
+# --- scope: which specs this run reviews, and which carry forward -------------------------------
+# The bundle used to re-send every spec and every mapping on every attempt; one measured ~832k
+# tokens. A spec byte-identical to what the last COMPLETED review saw carries its verdict and its
+# findings forward instead (scripts/verifier_bundle_scope.py). No state, or VERIFIER_SCOPE=full, or
+# nothing unchanged -> the full bundle, exactly as before. Carried findings are merged back in after
+# the review and an open one still forces NO-GO, so this shrinks the prompt, never the bar.
+# `--tsv` so no inline parser stands between the plan and the bundle: an earlier version unpacked
+# the JSON with a `python3 -c` whose quoting was wrong, and the carried list came back EMPTY without
+# failing anything — the notice just vanished and the bundle looked fine.
+PLAN="$(python3 "$SD/verifier_bundle_scope.py" plan "$PHASE_DIR" --tsv)"; plan_rc=$?
+if [ "$plan_rc" -ne 0 ]; then
+  echo "verifier-review: could not compute the bundle scope (exit $plan_rc) — fail closed." >&2
+  echo "  Scoping the bundle is not optional: an unscoped guess is either a review of the wrong" >&2
+  echo "  specs or a silent full re-send. Fix the error above, or set VERIFIER_SCOPE=full." >&2
+  exit 2
+fi
+SCOPED_SPECS="$(printf '%s\n' "$PLAN" | awk -F'\t' '$1=="REVIEW"{print $2}')"
+CARRIED_SPECS="$(printf '%s\n' "$PLAN" | awk -F'\t' '$1=="CARRY"{printf "%s\t%s\t%s\n", $2, $3, $4}')"
+if [ -z "$SCOPED_SPECS" ] && [ -z "$CARRIED_SPECS" ] && [ -d "$PHASE_DIR/specs" ]; then
+  echo "verifier-review: the phase has a specs/ directory but the scope came back empty — fail closed." >&2
+  exit 2
+fi
+
 # --- assemble the bundle -----------------------------------------------------------------------
 {
   printf '=== PHASE ===\n%s\n\n' "$PHASE_DIR"
 
+  if [ -n "$CARRIED_SPECS" ]; then
+    printf '=== SPECS CARRIED FORWARD (already reviewed, unchanged since — out of scope here) ===\n'
+    printf 'These specs are byte-identical to what the previous completed review of this phase saw.\n'
+    printf 'Their verdicts and findings are carried forward automatically and merged into the result\n'
+    printf 'of this run, so they are deliberately not included below. Treat what follows as the\n'
+    printf 'COMPLETE set you were asked to review; nothing was withheld from it or shortened.\n'
+    printf '%s\n' "$CARRIED_SPECS" | while IFS="$(printf '\t')" read -r s v n; do
+      printf -- '  %s: previous verdict %s, %s finding(s) carried\n' "$s" "$v" "$n"
+    done
+    printf '\n'
+  fi
+
   printf '=== SPEC REQUIREMENTS & ACCEPTANCE CRITERIA ===\n'
   found_spec=0
-  for spec in "$PHASE_DIR"/specs/*/spec.md; do
+  # `while read`, not `for $VAR`: word-splitting an unquoted list silently drops half a path that
+  # contains a space, and the bundle would be short one spec without saying so.
+  while IFS= read -r spec_dir; do
+    [ -n "$spec_dir" ] || continue
+    spec="$spec_dir/spec.md"
     [ -f "$spec" ] || continue
     found_spec=1
     printf -- '--- %s ---\n' "$spec"; cat "$spec"; printf '\n'
-  done
-  [ "$found_spec" -eq 1 ] || printf '(no spec.md found under %s/specs — report this)\n' "$PHASE_DIR"
+  done <<EOF_SPECS
+$SCOPED_SPECS
+EOF_SPECS
+  if [ "$found_spec" -ne 1 ] && [ -z "$CARRIED_SPECS" ]; then
+    printf '(no spec.md found under %s/specs — report this)\n' "$PHASE_DIR"
+  fi
 
   printf '\n=== TEST MAPPINGS ===\n'
   found_map=0
-  for m in "$PHASE_DIR"/specs/*/test-mapping.md; do
+  while IFS= read -r spec_dir; do
+    [ -n "$spec_dir" ] || continue
+    m="$spec_dir/test-mapping.md"
     [ -f "$m" ] || continue
     found_map=1
     printf -- '--- %s ---\n' "$m"; cat "$m"; printf '\n'
-  done
-  [ "$found_map" -eq 1 ] || printf '(no test-mapping.md found — every requirement is untraced; report it)\n'
+  done <<EOF_MAPS
+$SCOPED_SPECS
+EOF_MAPS
+  if [ "$found_map" -ne 1 ] && [ -z "$CARRIED_SPECS" ]; then
+    printf '(no test-mapping.md found — every requirement is untraced; report it)\n'
+  fi
 
   printf '\n=== TEST RUN ===\n'
   if [ -n "${TEST_RESULT_FILE:-}" ] && [ -f "$TEST_RESULT_FILE" ]; then
@@ -182,5 +236,14 @@ with open(path, "w", encoding="utf-8") as fh:
 n = len(v.get("findings") or [])
 print(f"verifier-review: {v.get('verdict', '?')} — {n} finding(s) -> {path}", file=sys.stderr)
 PY
+
+# --- carry forward, and record what this run establishes ------------------------------------------
+# Merges the findings of every carried spec back into $OUT, names the carried specs in the verdict
+# artifact and on stderr, and records the fingerprints the next run scopes against. An open carried
+# finding holds the phase even when this run's narrower review said GO — the scope shrinks the
+# prompt, not the bar.
+python3 "$SD/verifier_bundle_scope.py" finalize "$PHASE_DIR" "$OUT"
+scope_rc=$?
+[ "$scope_rc" -ne 0 ] && rc="$scope_rc"
 
 exit $rc

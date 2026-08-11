@@ -52,7 +52,9 @@ is the same vendor and the same blind spots. Hand the set to:
 scripts/verifier_review.sh <phase-dir> <review-set-file>...
 ```
 
-which bundles the specs, the mappings, the test run and the sources, judges them on
+which bundles the specs (only those changed since the last completed review — the rest are named as
+carried forward and their findings merged back; `skills/pipeline-conventions`), their mappings, the
+test run and the sources, judges them on
 `$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`) via `gate_runner.py`, and writes
 `<phase-dir>/.verifier-review.json` with findings already carrying deterministic ids. `gate_runner`
 refuses a same-family model. It also refuses **before** the model call when the review set exceeds

@@ -30,10 +30,30 @@ and re-gated well before the phase's commit, so there is no committed predecesso
 The kept bodies are a rebuildable cache, not an artifact: losing one costs a full re-gate, which is
 the safe direction. `.avenger-gate-cache/` is gitignored for that reason.
 
+**The hash is recorded WITH ITS VERDICT.** Only GO and REVIEW used to stamp, so a NO-GO left no
+trace of having been reached: the spec kept whatever hash it had, and the rejection existed only as
+one line of stderr that the run had already scrolled past. An unexplained rejection either stalls
+the phase or triggers blind rewriting — one 25k spec reached 51k that way. `<gate>_gated_verdict`
+now sits next to `<gate>_gated_hash` in the frontmatter, so `check` can say what the stored verdict
+WAS rather than assuming a stored hash meant a pass. A stamp with no recorded verdict predates this
+and is read as GO, which is what stamping used to mean.
+
+The verdict lives in the frontmatter, not in the cache, on purpose: the cache is rebuildable scratch
+and losing it must not turn a recorded NO-GO into an assumed pass. The gate's *report* is kept in the
+cache alongside the body — losing that only costs a less informative replay.
+
+A rejection records its hash, its verdict and its report, but does NOT replace the kept **body**.
+That body is the reference the next re-gate diffs against under the heading "PREVIOUSLY APPROVED",
+and rejected text is not approved text: overwriting it would show the author changes-since-rejection
+while telling them they were changes-since-approval.
+
 Usage:
-    spec_gate_cache.py check <spec.md> <gate>      exit 0 = needs gating, 1 = unchanged since last run
-    spec_gate_cache.py stamp <spec.md> <gate>      record the current body hash + body for that gate
+    spec_gate_cache.py check <spec.md> <gate>      exit 0 = needs gating, 1 = unchanged (prints the
+                                                   stored verdict on stdout)
+    spec_gate_cache.py stamp <spec.md> <gate> [verdict] [report-file]
+                                                   record the current body hash + verdict + body
     spec_gate_cache.py previous <spec.md> <gate>   print the body that gate last judged (1 = none kept)
+    spec_gate_cache.py report <spec.md> <gate>     print the report that gate last emitted (1 = none)
     spec_gate_cache.py body <spec.md>              print the current body, for diffing against it
 """
 
@@ -51,7 +71,14 @@ ERROR = 2
 
 GATES = ("fidelity", "review")
 
-ACTIONS = ("check", "stamp", "previous", "body")
+ACTIONS = ("check", "stamp", "previous", "body", "report")
+
+#: What a stamp that recorded no verdict meant. Before verdicts were recorded, only GO and REVIEW
+#: stamped at all, so a bare hash is a pass — stated once here rather than inferred at each caller.
+LEGACY_VERDICT = "GO"
+
+#: Verdicts that make the judged body the new reference for "what this gate last approved".
+PASSING = {"GO", "REVIEW", "PASS"}
 
 CACHE_DIR = ".avenger-gate-cache"
 
@@ -63,6 +90,11 @@ def hash_line(gate: str) -> re.Pattern[str]:
     return re.compile(
         rf"^{gate}_gated_hash:[ \t]*([0-9a-f]{{64}})[ \t]*$", re.MULTILINE
     )
+
+
+def verdict_line(gate: str) -> re.Pattern[str]:
+    """Matcher for the verdict recorded alongside that gate's hash."""
+    return re.compile(rf"^{gate}_gated_verdict:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
 
 
 def split_spec(text: str) -> tuple[str, str]:
@@ -91,15 +123,30 @@ def needs_gating(text: str, gate: str) -> bool:
     return previous is None or previous != body_hash(body)
 
 
-def stamp(text: str, gate: str) -> str:
-    """Return the spec with `<gate>_gated_hash` set to the current body hash (added or replaced)."""
+def stored_verdict(frontmatter: str, gate: str) -> str:
+    """The verdict recorded with that gate's hash, or the legacy meaning of a bare hash."""
+    match = verdict_line(gate).search(frontmatter)
+    return match.group(1).strip().upper() if match else LEGACY_VERDICT
+
+
+def _set_line(frontmatter: str, pattern: re.Pattern[str], line: str) -> str:
+    """Replace one frontmatter line, or append it when the key is not there yet."""
+    if pattern.search(frontmatter):
+        return pattern.sub(line, frontmatter)
+    return frontmatter.rstrip("\n") + f"\n{line}\n"
+
+
+def stamp(text: str, gate: str, verdict: str = LEGACY_VERDICT) -> str:
+    """Return the spec with this gate's hash AND the verdict it was reached with, recorded.
+
+    Both keys move together: a hash without its verdict is what let a NO-GO leave no trace, and a
+    verdict without its hash could not be tied to the text it judged.
+    """
     frontmatter, body = split_spec(text)
     digest = body_hash(body)
-    line = f"{gate}_gated_hash: {digest}"
-    if hash_line(gate).search(frontmatter):
-        frontmatter = hash_line(gate).sub(line, frontmatter)
-    else:
-        frontmatter = frontmatter.rstrip("\n") + f"\n{line}\n"
+    token = (verdict or LEGACY_VERDICT).strip().upper()
+    frontmatter = _set_line(frontmatter, hash_line(gate), f"{gate}_gated_hash: {digest}")
+    frontmatter = _set_line(frontmatter, verdict_line(gate), f"{gate}_gated_verdict: {token}")
     return f"---\n{frontmatter}---\n{body}"
 
 
@@ -108,14 +155,15 @@ def cache_root() -> Path:
     return Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
 
 
-def cache_path(spec: Path, gate: str) -> Path:
-    """The kept-body file for one spec and gate.
+def cache_path(spec: Path, gate: str, kind: str = "md") -> Path:
+    """The kept-body (`md`) or kept-report (`report`) file for one spec and gate.
 
     Keyed by a digest of the resolved spec path so sibling specs never collide and the layout stays
     flat — the cache is scratch, and nothing reads it by browsing.
     """
     key = hashlib.sha256(str(spec.resolve()).encode("utf-8")).hexdigest()[:16]
-    return cache_root() / CACHE_DIR / gate / f"{key}.md"
+    suffix = "md" if kind == "md" else "report.md"
+    return cache_root() / CACHE_DIR / gate / f"{key}.{suffix}"
 
 
 def normalized(body: str) -> str:
@@ -130,9 +178,9 @@ def normalized(body: str) -> str:
     return body.rstrip("\n") + "\n"
 
 
-def keep(spec: Path, gate: str, body: str) -> None:
-    """Store the body a gate just judged. Best-effort: a cache miss only costs a full re-gate."""
-    target = cache_path(spec, gate)
+def keep(spec: Path, gate: str, body: str, kind: str = "md") -> None:
+    """Store what a gate just judged (or said). Best-effort: a miss only costs a fuller re-gate."""
+    target = cache_path(spec, gate, kind)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(normalized(body), encoding="utf-8")
@@ -140,10 +188,10 @@ def keep(spec: Path, gate: str, body: str) -> None:
         print(f"[spec_gate_cache] could not keep {target}: {exc}", file=sys.stderr)
 
 
-def previous(spec: Path, gate: str) -> str | None:
-    """The body that gate last judged, or None when nothing was kept."""
+def previous(spec: Path, gate: str, kind: str = "md") -> str | None:
+    """The body (or report) that gate last produced, or None when nothing was kept."""
     try:
-        return normalized(cache_path(spec, gate).read_text(encoding="utf-8"))
+        return normalized(cache_path(spec, gate, kind).read_text(encoding="utf-8"))
     except OSError:
         return None
 
@@ -156,19 +204,23 @@ def main(argv: list[str] | None = None) -> int:
         return ERROR
 
     # `body` is gate-agnostic — it reads the spec, not a gate's record of it.
+    # `stamp` takes an optional verdict and an optional file holding that verdict's report.
     wanted = 2 if args[0] == "body" else 3
-    if len(args) != wanted or (wanted == 3 and args[2] not in GATES):
+    ok_len = len(args) in ((wanted, wanted + 1, wanted + 2) if args[0] == "stamp" else (wanted,))
+    if not ok_len or (wanted == 3 and args[2] not in GATES):
         print(__doc__, file=sys.stderr)
         return ERROR
 
     action, path = args[0], Path(args[1])
     gate = args[2] if wanted == 3 else ""
+    verdict = args[3] if action == "stamp" and len(args) > 3 else LEGACY_VERDICT
+    report_file = args[4] if action == "stamp" and len(args) > 4 else ""
 
-    if action == "previous":
-        body = previous(path, gate)
-        if body is None:
-            return UNCHANGED  # nothing kept -> the caller gates the whole spec
-        sys.stdout.write(body)
+    if action in ("previous", "report"):
+        kept = previous(path, gate, "md" if action == "previous" else "report")
+        if kept is None:
+            return UNCHANGED  # nothing kept -> the caller gates the whole spec / has no report
+        sys.stdout.write(kept)
         return NEEDS_GATING
 
     try:
@@ -182,9 +234,26 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(normalized(split_spec(text)[1]))
             return NEEDS_GATING
         if action == "check":
-            return NEEDS_GATING if needs_gating(text, gate) else UNCHANGED
-        path.write_text(stamp(text, gate), encoding="utf-8")
-        keep(path, gate, split_spec(text)[1])
+            if needs_gating(text, gate):
+                return NEEDS_GATING
+            # Unchanged: hand the caller the verdict this body already earned, so a recorded NO-GO
+            # is replayed rather than skipped past. Silence here would be a fail-open.
+            print(stored_verdict(split_spec(text)[0], gate))
+            return UNCHANGED
+        path.write_text(stamp(text, gate, verdict), encoding="utf-8")
+        # The kept BODY is the reference the next re-gate diffs against, under the heading
+        # "PREVIOUSLY APPROVED". A rejection is not an approval, so it records its hash and its
+        # verdict but leaves that reference alone: overwriting it would label the rejected text as
+        # approved, and the author would be shown changes-since-rejection while being told they were
+        # changes-since-approval. With nothing kept at all, the whole spec is gated — safe either way.
+        if (verdict or LEGACY_VERDICT).strip().upper() in PASSING:
+            keep(path, gate, split_spec(text)[1])
+        if report_file:
+            try:
+                keep(path, gate, Path(report_file).read_text(encoding="utf-8"), "report")
+            except OSError as exc:
+                print(f"[spec_gate_cache] could not read report {report_file}: {exc}",
+                      file=sys.stderr)
         return NEEDS_GATING
     except ValueError as exc:
         # No frontmatter -> cannot reason about it -> gate it. `body` has nothing to hand back, so

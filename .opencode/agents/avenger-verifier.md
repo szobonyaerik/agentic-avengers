@@ -60,11 +60,18 @@ non-JSON, same-family), the phase **does not pass**.
       ```bash
       scripts/verifier_review.sh docs/features/<feat>/phases/<n>-<slug> <review-set-file>...
       ```
-      It bundles the phase's specs, every `test-mapping.md`, the test-run result and the review-set
-      sources, judges them on `$VERIFIER_GATE_MODEL`, and writes
+      It bundles the phase's specs and their `test-mapping.md`, the test-run result and the
+      review-set sources, judges them on `$VERIFIER_GATE_MODEL`, and writes
       `<phase-dir>/.verifier-review.json` — the verdict plus `findings[]`, each already carrying a
       deterministic `id`. Exit 0 = GO, 2 = NO-GO or fail-closed. Passing no files is refused: a review
       of zero tests is not a clean review.
+
+      On a re-attempt the bundle carries **only the specs whose text changed** since the last
+      completed review; the rest are named in it as carried forward and their findings merged back
+      into `.verifier-review.json`, so an open carried finding still forces NO-GO
+      (`scripts/verifier_bundle_scope.py`; rule in `skills/pipeline-conventions`). Your review set is
+      unaffected — you still compute it over the whole phase, and `VERIFIER_SCOPE=full` sends every
+      spec again if the scoping itself is in doubt.
 
    c. **Fold its findings into your verdict** verbatim, and record the scope you chose
       (`test_quality.scope`: the files, and any expansion reason). A gamed or wrong test is a **fail

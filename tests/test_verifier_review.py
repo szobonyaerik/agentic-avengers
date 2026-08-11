@@ -11,12 +11,15 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "verifier_review.sh"
+
+sys.path.insert(0, str(ROOT / "scripts"))
 
 #: A stand-in for the `opencode` CLI: captures the prompt it was handed and answers with a verdict
 #: substantive enough to clear the post-call check, so the bundle itself can be asserted on.
@@ -242,3 +245,89 @@ def test_the_whole_review_set_reaches_the_model_intact(tmp_path: Path) -> None:
 
     assert "assert compute() == 15" in prompt
     assert "assert other() == 3" in prompt
+
+
+# ── bundle scope: what the model is actually sent on a re-run ───────────────────────────────────
+# The bundle used to re-send every spec and every mapping on every attempt; one measured ~832k
+# tokens, and one phase had to be split into four chunks to fit a context at all. These assert
+# against the PROMPT the stub captured, because "the scope shrank" is only true if the text left.
+
+
+def two_spec_phase(tmp_path: Path) -> Path:
+    """A phase with two specs, so one can change while the other does not."""
+    phase_dir = tmp_path / "phases" / "8-demo"
+    for name, req in (("8.0-alpha", "R8.0.1 alpha requirement"), ("8.1-beta", "R8.1.1 beta requirement")):
+        spec = phase_dir / "specs" / name
+        spec.mkdir(parents=True)
+        (spec / "spec.md").write_text(f"---\nfeature: demo\n---\n\n- {req}\n")
+        (spec / "test-mapping.md").write_text(f"| test | req |\n|---|---|\n| test_a | {req[:6]} |\n")
+    return phase_dir
+
+
+def test_the_first_run_sends_every_spec(tmp_path: Path) -> None:
+    phase_dir = two_spec_phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert True\n")
+
+    proc, prompt = run_with_stub_model(phase_dir, [src], tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "alpha requirement" in prompt
+    assert "beta requirement" in prompt
+
+
+def test_a_re_run_does_not_re_send_an_unchanged_spec(tmp_path: Path) -> None:
+    """The defect, measured where it costs: attempt two paid for attempt one all over again."""
+    phase_dir = two_spec_phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert True\n")
+    run_with_stub_model(phase_dir, [src], tmp_path)
+
+    changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
+    changed.write_text(changed.read_text() + "\n- R8.1.2 beta addition\n")
+
+    proc, prompt = run_with_stub_model(phase_dir, [src], tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "beta addition" in prompt, "the changed spec must still be reviewed"
+    assert "alpha requirement" not in prompt, "the unchanged spec was re-sent anyway"
+
+
+def test_a_carried_spec_is_named_in_the_bundle_and_on_stderr(tmp_path: Path) -> None:
+    """A scoped review whose scope is invisible cannot be audited, and the model cannot know what
+    it is NOT being asked about."""
+    phase_dir = two_spec_phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert True\n")
+    run_with_stub_model(phase_dir, [src], tmp_path)
+
+    changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
+    changed.write_text(changed.read_text() + "\n- R8.1.2 beta addition\n")
+
+    proc, prompt = run_with_stub_model(phase_dir, [src], tmp_path)
+
+    assert "CARRIED FORWARD" in prompt
+    assert "8.0-alpha" in prompt
+    assert "carried forward" in proc.stderr
+
+
+def test_the_carried_notice_uses_none_of_the_words_that_fail_the_substance_check(
+    tmp_path: Path,
+) -> None:
+    """`verifier_review_check.py` fails closed on a report that calls itself partial or truncated.
+    Telling the model some specs are out of scope must not put those words in front of it — a model
+    that echoes the bundle's own phrasing would fail a review it actually completed."""
+    phase_dir = two_spec_phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert True\n")
+    run_with_stub_model(phase_dir, [src], tmp_path)
+    changed = phase_dir / "specs" / "8.1-beta" / "spec.md"
+    changed.write_text(changed.read_text() + "\n- R8.1.2 beta addition\n")
+
+    _, prompt = run_with_stub_model(phase_dir, [src], tmp_path)
+
+    from verifier_review_check import PARTIAL_MARKERS
+
+    notice = prompt.split("=== SPECS CARRIED FORWARD")[1].split("=== SPEC REQUIREMENTS")[0].lower()
+    assert not [m for m in PARTIAL_MARKERS if m in notice]
+    assert "complete set you were asked to review" in notice

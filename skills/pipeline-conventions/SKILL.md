@@ -110,7 +110,10 @@ Three consequences worth stating outright:
     naming requirements the gate itself had approved twice, unchanged — a verdict is a **sample from
     a distribution**, not a fact about the artifact, and variance in a gate that fails closed is far
     more expensive than variance in one that fails open. `scripts/spec_gate_cache.py` keeps the body
-    each gate last judged and `scripts/hook_spec_review.sh` hands the reviewer a
+    each gate last **approved** — a rejection records its hash, its verdict and its report, but does
+    not replace that body: it is the reference the next re-gate diffs against under
+    `## PREVIOUSLY APPROVED`, and overwriting it would show the author changes-since-rejection while
+    telling them they were changes-since-approval. `scripts/hook_spec_review.sh` hands the reviewer a
     `## CHANGES SINCE APPROVAL` diff; with no kept body the whole spec is gated, the safe direction.
     A **full** re-gate is still owed when the diff changes the requirement set, Scope, Interfaces /
     contracts, `work_kind`, or any `binding:` — and a **first** gate is always full.
@@ -120,6 +123,21 @@ Three consequences worth stating outright:
   independence check). It expands only on explicit criticality or evidence, then passes or routes
   back. Fail closed — a green suite with no completed review is an *unreviewed* phase, not a pass. It
   persists `verdict.json`. **On pass, the phase's tests lock.**
+  - **The bundle is scoped to the specs that changed.** It used to re-send every `spec.md` and every
+    `test-mapping.md` on every attempt — one measured ~832k tokens, and one phase had to be split
+    into four chunks to fit a context at all. The diff-only rule above covers spec *re-gates* and
+    never reached this bundle. `scripts/verifier_bundle_scope.py` sends only the specs whose text
+    changed since the last completed review, names the rest in the bundle as carried forward, and
+    merges their findings back into this run's verdict — **an open carried finding still forces
+    NO-GO**, so the scope shrinks the prompt, never the bar. **A spec that still holds an OPEN
+    finding is never carried**, however unchanged its text is: a `gamed test` finding is fixed in a
+    TEST file, so `spec.md` and `test-mapping.md` never change, and a spec that is never re-bundled
+    is a finding that is never regenerated — one that used to hold the phase at NO-GO forever with
+    no way out but deleting the state file. It goes back to the cross-family reader instead, and
+    clears or reappears on its own evidence; the token saving is given up only on the specs actually
+    under repair, which is exactly where economising is wrong. No state, a lost state file, nothing
+    changed, or `VERIFIER_SCOPE=full` sends the whole phase; the safe direction costs tokens, not
+    coverage.
 - **Mutation gate (optional)** — off by default and most teams leave it off. Only when a project sets
   `MUTATION_POLICY` to `enforce`/`advisory` does the Verifier run it; otherwise no mutation tool runs
   anywhere. It is **not** the independence mechanism — the Verifier's test-quality review is.
@@ -217,7 +235,47 @@ Three consequences worth stating outright:
     its own format.
   - **Not covered:** a command merely *printed* for the user to run — nothing executes it. The test
     throughout is whether an agent chose the words **and** a shell will see them.
-- **Gates fail closed.**
+- **Gates fail closed** — and a gate that fails **says which failure it was**. Every stop carries a
+  `cause=` from `scripts/gate_errors.py` (`timeout` · `provider-payment-required` ·
+  `provider-unreachable` · `provider-not-found` · `provider-error` · `no-verdict` · `cross-family` ·
+  `unknown-vendor` · `runner-untrusted` · `config` · `io` · `internal` — the last being the backstop
+  for a failure nothing above recognised, which is a defect in the gate itself and not something for
+  the operator to fix in their `.env`; `CAUSES` in that module is the list) and reproduces the provider's own words
+  verbatim. A timeout kill, an HTTP 402 out-of-credit reply and an unreachable provider used to be
+  one indistinguishable line, and the 402 was found only by probing the provider by hand — a day
+  spent reading an infrastructure failure as a model failure. The classifier is a heuristic over
+  vendor error strings; `provider-error` is its honest answer, and the verbatim text is the appeal.
+- **Four properties keep a stop honest, and each one failed toward "looks fine" before it existed.**
+  - **The hook must outlive the call it wraps.** `hooks.json` gave the gate hooks 120s while the
+    provider call inside them got 300s, so the harness killed the hook 180s before the gate could
+    answer — and a killed hook leaves no verdict, no report and no cause, which the run read as an
+    objection. It split cleanly by duration (106s passed, 143s "failed") and was read for a day as a
+    size ceiling in the gate model. `scripts/gate_timeouts.py` asserts
+    `hook timeout >= GATE_CALL_TIMEOUT + headroom`, derives *which* hooks are gate hooks from what
+    each one actually calls, and both the hooks and the suite check it. Raising `GATE_CALL_TIMEOUT`
+    without raising `hooks.json` is a loud stop.
+  - **A timeout must stop the work, not just stop waiting.** `scripts/proc_group.py` runs the
+    provider child in its own process group and signals the GROUP; killing only the direct child left
+    its workers running and billing, with runs REPORTING 300s observed against 569s, 3818s and 4276s.
+    The reported duration is measured wall clock, never the configured constant. Being killed
+    ourselves tears the group down too.
+  - **A rejection carries its reasoning and leaves a record.** Only GO/REVIEW used to stamp, so a
+    NO-GO left no trace of which text was refused and dropped the gate's own `report`. The hash is
+    now recorded **with its verdict** on every verdict (`<gate>_gated_verdict`), so an unchanged
+    rejected body replays its rejection instead of skipping past it as "unchanged". A replayed
+    rejection blocks the turn exactly like a fresh one, so it **honours `GATE_BYPASS` exactly like a
+    fresh one** — ignoring it there made an override a one-shot, and a bypass silently dropped breaks
+    "never silent" as much as one silently taken. The kept **body**, though, is only ever the last
+    approved one (above): a rejection records its hash, verdict and report and leaves that reference
+    alone.
+  - **The runner is not trusted by path.** `scripts/gate_runner_guard.sh` makes it identify itself
+    and match its own digest before any gate uses it; `GATE_RUNNER_SHA256` pins it exactly. A
+    scaffold that printed a bare `GO` having checked nothing once sat on a temp path and was believed.
+- **One vendor table.** `scripts/model_vendors.py` is the only place a model id becomes a family, and
+  an unrecognised vendor is a **loud refusal**, not a guess. The old table knew seven vendors and
+  returned the raw model id for the rest, so `glm-5.1` and `glm-5.2` — one vendor — read as two
+  different families. False independence is indistinguishable from real independence. Declare an
+  unlisted vendor with `GATE_MODEL_FAMILY`, or add it to the table.
 - **Break-glass bypass** is allowed but recorded — whole-gate via `GATE_BYPASS`, per-finding via
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
   `gate-overrides.log`, and visible on the PR. The reason is author-written prose, so under `--auto`

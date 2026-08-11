@@ -20,6 +20,11 @@ __pycache__/
 # (scripts/spec_gate_cache.py). Rebuildable — a lost entry costs one full re-gate, the safe direction.
 .avenger-gate-cache/
 
+# verifier bundle scope: per-phase fingerprints of the specs the last completed review saw, so the
+# next attempt only re-sends what changed (scripts/verifier_bundle_scope.py). Rebuildable — losing
+# one costs a full bundle, the safe direction.
+**/.verifier-bundle-state.json
+
 # note: gate-overrides.log is intentionally NOT ignored — break-glass must stay visible/auditable.
 .avenger-auto
 .env

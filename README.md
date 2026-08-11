@@ -199,9 +199,15 @@ agentic-avengers/
 ├── cosmic-ray.toml        mutation base config (the gate diff-scopes a copy per phase)
 ├── scripts/
 │   ├── gate_runner.py         cross-family verdict caller (opencode | openrouter), family-asserted
+│   ├── gate_runner_guard.sh   refuses a runner that cannot identify itself as the shipped one
+│   ├── gate_errors.py         the failure taxonomy: every gate failure names its own cause
+│   ├── gate_timeouts.py       asserts each hook's budget outlives the provider call inside it
+│   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
+│   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + cosmic-ray + break-glass)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
-│   ├── spec_gate_cache.py     body each gate last judged, so a re-gate can be scoped to the diff
+│   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
+│   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── bypass_log.sh          break-glass logger for hooks

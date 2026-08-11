@@ -27,8 +27,8 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_fidelity.sh\"", "timeout": 120 },
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_spec_review.sh\"", "timeout": 120 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_fidelity.sh\"", "timeout": 420 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_spec_review.sh\"", "timeout": 420 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_verifier.sh\"", "timeout": 180 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_mutation.sh\"", "timeout": 600 }
         ]

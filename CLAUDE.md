@@ -50,8 +50,9 @@ always said on stderr rather than passing invisibly.
 **A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
 passed by this gate before and is not a finding — one spec drew REVIEW, REVIEW, then a NO-GO naming
 requirements the same model had approved twice, unchanged. `scripts/spec_gate_cache.py` keeps the
-body each gate judged; the hook hands the reviewer a `## CHANGES SINCE APPROVAL` diff, and with no
-kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
+body each gate last **approved** — a rejection records its hash, its verdict and its report but never
+replaces that reference, since rejected text is not approved text; the hook hands the reviewer a
+`## CHANGES SINCE APPROVAL` diff, and with no kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
 set, Scope, Interfaces / contracts, `work_kind`, or any `binding:`, and when the Verifier routed the
 phase back with a **coverage gap** — there the question is what the spec failed to require, and
 unchanged text is exactly where to look; a first gate is always full.
@@ -75,6 +76,16 @@ referenced helpers; expand only on evidence). `avenger-verifier` picks that set 
 Anthropic, so the agent cannot be its own cross-family check. It routes `wrong/gamed test` and
 `coverage gap` back alongside `code issue`. That review is the pipeline's independence; it is not
 optional, and it fails closed.
+
+**Its bundle is scoped to the specs the diff touches.** It used to re-send every `spec.md` and every
+`test-mapping.md` on every attempt (~832k tokens measured; one phase needed four chunks to fit at
+all) — the diff-only rule above covers spec *re-gates*, not this bundle.
+`scripts/verifier_bundle_scope.py` sends only changed specs, names the rest as carried forward, and
+merges their findings back, so an **open carried finding still forces NO-GO**. **A spec holding an
+open finding is never carried** — a `gamed test` finding is fixed in a TEST file, so no spec text
+changes, and a spec never re-bundled is a finding never regenerated, which wedged the phase at NO-GO
+forever; it goes back to the reader and clears or reappears on its own. No state, nothing changed, or
+`VERIFIER_SCOPE=full` sends the whole phase — cheaper is never the safe direction here.
 
 Three test modes by `work_kind`, all inside `skills/tdd`: **greenfield** (red → green per vertical
 slice) · **migration** (parity-first — the *existing suite is the contract*, run it rather than
@@ -120,7 +131,18 @@ Phases are built in dependency/risk order, one at a time, fully through build-an
 
 ### 6. Gates
 Gates run on a fresh **cross-family** model (family ≠ author) and **fail closed** — a gate that can't
-reach a verdict (missing key, provider down, non-JSON, same-family) stops. **Break-glass**
+reach a verdict (missing key, provider down, non-JSON, same-family) stops, **and it names which**:
+every stop carries a `cause=` from `scripts/gate_errors.py` and reproduces the provider's own words
+verbatim. Four properties keep that honest, each one a defect that used to fail toward "looks fine":
+a hook's `hooks.json` budget must exceed `GATE_CALL_TIMEOUT` plus headroom
+(`scripts/gate_timeouts.py`, asserted at runtime and in the suite — a 120s hook around a 300s call
+was killed before it could answer and read for a day as a model size ceiling); a timeout kills the
+child's whole **process group** and reports measured wall clock (`scripts/proc_group.py` — killing
+the direct child alone left workers billing for over an hour); a rejection emits its report and
+records the judged hash **with its verdict**, so an unchanged rejected body replays the rejection;
+and the runner must identify itself (`scripts/gate_runner_guard.sh`, `GATE_RUNNER_SHA256`) rather
+than being trusted by path. `scripts/model_vendors.py` is the one vendor table and an unknown vendor
+is a loud refusal — `glm-5.1` and `glm-5.2` used to read as different families. **Break-glass**
 (`GATE_BYPASS="reason"`) is logged to `gate-overrides.log`, shown visibly, and recorded in
 `handover.md` — never silent.
 
