@@ -94,8 +94,13 @@ fi
 #      matters over time: the cost this guards against came back one caller at a time last time, so
 #      the check is attached to the invariant (scripts/doc_read_path.py owns the table) rather than
 #      to any single command.
+#      The artifact half is diff-scoped by default and audits everything under --full, the same way
+#      this script already switches between the staged diff and a full scan for specs. --sources is
+#      always full: a re-acquired read is a defect wherever it was added.
 echo "• read path: docs/features artifacts + canonical stage instructions"
-if ! python3 "$SCRIPT_DIR/doc_read_path.py" check --sources "$ROOT"; then
+READ_PATH_ARGS="check --sources"
+[ "$FULL" -eq 1 ] && READ_PATH_ARGS="check --sources --all"
+if ! python3 "$SCRIPT_DIR/doc_read_path.py" $READ_PATH_ARGS "$ROOT"; then
   record_fail "read-path"
 fi
 

@@ -49,6 +49,8 @@ def _header(feature: str) -> str:
         "stage: pipeline-retrospective\n"
         f"created: {created}\n"
         "triage: pending\n"
+        # Every pipeline document declares who reads it (scripts/doc_read_path.py owns the table).
+        "readers: retrospective triage @ once, at feature close; preflight sweep @ frontmatter only\n"
         "links: [verdict.json, gate-overrides.log]\n"
         "---\n\n"
         "# Pipeline observations\n\n"

@@ -25,14 +25,32 @@ Two checks keep the declaration true rather than aspirational:
                    `handover-archive.md`, fails here rather than being discovered by the next
                    measurement.
 
+The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
+one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
+you change** - the same rule `scripts/verifier_bundle_scope.py` (the verifier bundle),
+`scripts/spec_gate_cache.py` (spec re-gates) and the mutation gate (`cr-filter-git`) already run on.
+The fifth mechanism in one system does not get to invent a different one, and unlike a
+grandfathering list or a marker file it needs no maintenance and cannot rot as new artifact kinds
+appear. It is also what lets a repository upgrade: history it has not touched is visible without
+holding it hostage. `check --all` audits everything; `check --sources` is unaffected and stays full.
+When git cannot answer - not a repository, git missing, a command that fails - the scope is
+unknowable, so nothing is enforced and that is said out loud. Falling back to enforcing everything
+would reinstate exactly the hostage failure the scoping removes.
+
 Fails closed: an unreadable file is exit 2, never a silent clean pass.
+
+Every entry carries `emitted_by`: the canonical source that tells the writer to emit `readers:`.
+Declaring a reader in this table is not the same as instructing anyone to write it down, and three
+document classes shipped with the first because nothing owned the second.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 # --- the table -----------------------------------------------------------------------------------
@@ -45,6 +63,7 @@ VERDICT_REPORT_MAX_CHARS = 1500  # the verdict's free-prose `report` cap (F5).
 READ_PATH: dict[str, dict] = {
     "task-analysis.md": {
         "written_by": "avenger-task-analyst",
+        "emitted_by": "docs/templates/task-analysis.template.md",
         "readers": ["avenger-solution-architect @ once, at feature start"],
         "extent": "whole",
         # It left the PER-SPEC path: `work_kind` now rides in the spec's own frontmatter.
@@ -56,6 +75,7 @@ READ_PATH: dict[str, dict] = {
     },
     "overview.md": {
         "written_by": "avenger-solution-architect",
+        "emitted_by": "docs/templates/overview.template.md",
         "readers": [
             "avenger-implementation-planner @ once",
             "avenger-spec-writer @ per spec (whole)",
@@ -66,11 +86,13 @@ READ_PATH: dict[str, dict] = {
     },
     "plan.md": {
         "written_by": "avenger-implementation-planner",
+        "emitted_by": "docs/templates/plan.template.md",
         "readers": ["avenger-spec-writer @ per spec", "phase-handover @ per phase (next phase only)"],
         "extent": "whole",
     },
     "spec.md": {
         "written_by": "avenger-spec-writer",
+        "emitted_by": "docs/templates/spec.template.md",
         "readers": [
             "fidelity gate @ on write",
             "spec-review @ per spec",
@@ -82,11 +104,13 @@ READ_PATH: dict[str, dict] = {
     },
     "test-mapping.md": {
         "written_by": "implementer",
+        "emitted_by": "docs/templates/test-mapping.template.md",
         "readers": ["avenger-verifier @ per phase", "verifier bundle @ per phase, changed specs only"],
         "extent": "table",
     },
     "test-evidence.md": {
         "written_by": "implementer",
+        "emitted_by": "docs/templates/test-evidence.template.md",
         "readers": ["implementer @ on route-back only", "avenger-verifier @ on route-back only"],
         "extent": "whole",
         "named_only_by": {
@@ -104,12 +128,15 @@ READ_PATH: dict[str, dict] = {
     },
     "verdict.json": {
         "written_by": "avenger-verifier",
+        "emitted_by": "docs/templates/verdict.template.json",
         "readers": ["phase-handover @ per phase", "feature close @ once"],
         "extent": "whole",
         "report_max_chars": VERDICT_REPORT_MAX_CHARS,
     },
     "verdict-attempt-<n>.json": {
         "written_by": "avenger-verifier",
+        # An archived copy of the verdict body, so it carries the verdict's own declaration.
+        "emitted_by": "docs/templates/verdict.template.json",
         "readers": [],
         "extent": "none",
         "archive_of": "verdict.json",
@@ -122,6 +149,7 @@ READ_PATH: dict[str, dict] = {
     },
     "handover.md": {
         "written_by": "phase-handover",
+        "emitted_by": "docs/templates/handover.template.md",
         "readers": [
             "avenger-spec-writer @ per spec, prior phases' cards",
             "spec-review @ per spec, the immediately prior phase's card",
@@ -132,6 +160,7 @@ READ_PATH: dict[str, dict] = {
     },
     "handover-archive.md": {
         "written_by": "phase-handover",
+        "emitted_by": "docs/templates/handover-archive.template.md",
         "readers": [],
         "extent": "none",
         "archive_of": "handover.md",
@@ -147,11 +176,13 @@ READ_PATH: dict[str, dict] = {
     },
     "pipeline-observations.md": {
         "written_by": "orchestrator",
+        "emitted_by": "scripts/pipeline_observations.py",
         "readers": ["retrospective triage @ once, at feature close", "preflight sweep @ frontmatter only"],
         "extent": "whole",
     },
     "e2e-mapping.md": {
         "written_by": "implementer (e2e-author)",
+        "emitted_by": "skills/e2e-author/SKILL.md",
         "readers": ["feature close @ once"],
         "extent": "whole",
     },
@@ -205,7 +236,115 @@ def spec_for(filename: str) -> dict | None:
 
 # --- check: the artifacts on disk ----------------------------------------------------------------
 
-def check_artifacts(root: Path) -> list[str]:
+#: What an unenforced artifact is counted as, in the one stderr line the scan prints.
+UNENFORCED_LABELS = {
+    "cap": "over the handover cap",
+    "readers": "with no `readers:`",
+    "report": "over the report cap",
+    "unparseable": "unparseable",
+}
+
+
+def _git(root: Path, *args: str) -> list[str] | None:
+    """git's answer as lines, or None when it has none - no repo, no git, a command that failed."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=str(root), capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def changed_paths(root: Path) -> set[Path] | None:
+    """Absolute paths the current diff touches, or None when the scope is unknowable.
+
+    The union of what is modified against HEAD, what is staged, and what is untracked - so an
+    artifact written this session is in scope from the moment it exists, before any commit.
+    """
+    toplevel = _git(root, "rev-parse", "--show-toplevel")
+    if not toplevel:
+        return None
+    base = Path(toplevel[0])
+    changed: set[Path] = set()
+    for args in (
+        ("diff", "--name-only", "HEAD"),
+        ("diff", "--cached", "--name-only", "--diff-filter=ACM"),
+        ("ls-files", "--others", "--exclude-standard"),
+    ):
+        lines = _git(root, *args)
+        if lines is None:
+            return None
+        changed.update((base / line).resolve() for line in lines)
+    return changed
+
+
+def _artifact_problems(path: Path, spec: dict) -> list[tuple[str, str]]:
+    """Every way one artifact breaks the read path, as (category, message)."""
+    problems: list[tuple[str, str]] = []
+
+    cap = spec.get("max_bytes")
+    if cap is not None:
+        size = path.stat().st_size
+        if size > cap:
+            problems.append((
+                "cap",
+                f"{path}: {size} bytes over the {cap}-byte cap. This is a contract card, not a "
+                f"record — move the narrative to handover-archive.md beside it, which no stage "
+                f"is instructed to read.",
+            ))
+
+    expected = spec["readers"] or [f"none (archive of {spec.get('archive_of')})"]
+    missing_readers = (
+        "readers",
+        f"{path}: does not declare `readers:`. Every pipeline document states who reads it and "
+        f"when, in its own frontmatter — a document no stage reads does not get written, and an "
+        f"archive says `none` rather than staying silent. Expected: {'; '.join(expected)}",
+    )
+
+    if path.suffix == ".md":
+        if declared_readers(_read(path)) is None:
+            problems.append(missing_readers)
+    elif path.suffix == ".json":
+        # JSON has no frontmatter, so the same declaration is a top-level `readers` key. The
+        # rule is about the document, not about YAML.
+        try:
+            payload = json.loads(_read(path))
+        except json.JSONDecodeError as exc:
+            problems.append(("unparseable", f"{path}: not parseable JSON ({exc}) — fail closed"))
+            return problems
+        if not isinstance(payload, dict) or "readers" not in payload:
+            problems.append(missing_readers)
+        report = payload.get("report") if isinstance(payload, dict) else None
+        cap_chars = spec.get("report_max_chars")
+        if cap_chars and isinstance(report, str) and len(report) > cap_chars:
+            problems.append((
+                "report",
+                f"{path}: `report` is {len(report)} chars, over the {cap_chars}-char cap. It "
+                f"carries the headline judgement and what the structured fields cannot say — "
+                f"not a prose retelling of tests, coverage and findings.",
+            ))
+    return problems
+
+
+def _report_unenforced(count: int, breakdown: Counter) -> None:
+    """Say how much history predates the rule. Visibility without coercion: never an exit code."""
+    if not count:
+        return
+    parts = ", ".join(
+        f"{n} {UNENFORCED_LABELS.get(category, category)}"
+        for category, n in sorted(breakdown.items())
+    )
+    print(
+        f"[doc_read_path] {count} pre-existing artifact(s) predate this rule and are not enforced: "
+        f"{parts} - they are checked when you next change them.",
+        file=sys.stderr,
+    )
+
+
+def check_artifacts(root: Path, *, enforce_all: bool = False) -> list[str]:
     features = root / "docs" / "features"
     if not features.is_dir():
         # An absent tree scans nothing. That is CLEAN, but it is said out loud rather than passing
@@ -213,7 +352,20 @@ def check_artifacts(root: Path) -> list[str]:
         print(f"[doc_read_path] no {features} — nothing to check", file=sys.stderr)
         return []
 
+    scope: set[Path] | None = None
+    if not enforce_all:
+        scope = changed_paths(root)
+        if scope is None:
+            print(
+                f"[doc_read_path] git cannot say what changed under {root}, so the scope is "
+                f"unknowable and no artifact is enforced. Run `check --all` for a full audit.",
+                file=sys.stderr,
+            )
+            return []
+
     problems: list[str] = []
+    unenforced = 0
+    breakdown: Counter = Counter()
     for path in sorted(features.rglob("*")):
         if not path.is_file():
             continue
@@ -221,44 +373,16 @@ def check_artifacts(root: Path) -> list[str]:
         if spec is None:
             continue
 
-        cap = spec.get("max_bytes")
-        if cap is not None:
-            size = path.stat().st_size
-            if size > cap:
-                problems.append(
-                    f"{path}: {size} bytes over the {cap}-byte cap. This is a contract card, not a "
-                    f"record — move the narrative to handover-archive.md beside it, which no stage "
-                    f"is instructed to read."
-                )
+        found = _artifact_problems(path, spec)
+        if not found:
+            continue
+        if enforce_all or path.resolve() in scope:
+            problems.extend(message for _, message in found)
+        else:
+            unenforced += 1
+            breakdown.update({category for category, _ in found})
 
-        expected = spec["readers"] or [f"none (archive of {spec.get('archive_of')})"]
-        missing_readers = (
-            f"{path}: does not declare `readers:`. Every pipeline document states who reads it and "
-            f"when, in its own frontmatter — a document no stage reads does not get written, and an "
-            f"archive says `none` rather than staying silent. Expected: {'; '.join(expected)}"
-        )
-
-        if path.suffix == ".md":
-            if declared_readers(_read(path)) is None:
-                problems.append(missing_readers)
-        elif path.suffix == ".json":
-            # JSON has no frontmatter, so the same declaration is a top-level `readers` key. The
-            # rule is about the document, not about YAML.
-            try:
-                payload = json.loads(_read(path))
-            except json.JSONDecodeError as exc:
-                problems.append(f"{path}: not parseable JSON ({exc}) — fail closed")
-                continue
-            if not isinstance(payload, dict) or "readers" not in payload:
-                problems.append(missing_readers)
-            report = payload.get("report") if isinstance(payload, dict) else None
-            cap_chars = spec.get("report_max_chars")
-            if cap_chars and isinstance(report, str) and len(report) > cap_chars:
-                problems.append(
-                    f"{path}: `report` is {len(report)} chars, over the {cap_chars}-char cap. It "
-                    f"carries the headline judgement and what the structured fields cannot say — "
-                    f"not a prose retelling of tests, coverage and findings."
-                )
+    _report_unenforced(unenforced, breakdown)
     return problems
 
 
@@ -309,6 +433,12 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("root", nargs="?", default=".", help="repository root (default: .)")
     check.add_argument("--sources", action="store_true", help="also check the canonical stage instructions")
     check.add_argument("--sources-only", action="store_true", help="check only the stage instructions")
+    check.add_argument(
+        "--all",
+        action="store_true",
+        dest="enforce_all",
+        help="enforce every artifact, not only the ones the current diff touches (full audit)",
+    )
 
     sub.add_parser("table", help="print the read path as a markdown table")
 
@@ -320,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     problems: list[str] = []
     if not args.sources_only:
-        problems += check_artifacts(root)
+        problems += check_artifacts(root, enforce_all=args.enforce_all)
     if args.sources or args.sources_only:
         problems += check_sources(root)
 

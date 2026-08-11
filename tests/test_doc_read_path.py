@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from doc_read_path import (  # noqa: E402
     HANDOVER_MAX_BYTES,
+    READ_PATH,
     VERDICT_REPORT_MAX_CHARS,
     check_artifacts,
     check_sources,
@@ -32,6 +33,15 @@ from doc_read_path import (  # noqa: E402
 )
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def audit(root: Path) -> list[str]:
+    """Every artifact, whatever the diff touched - what `check --all` does.
+
+    The default is diff-scoped and answers to git, so the cases below that are about the RULE pass
+    --all; the scoping itself is pinned against real repositories in test_doc_read_path_scope.py.
+    """
+    return check_artifacts(root, enforce_all=True)
 
 CARD_READERS = "avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card"
 
@@ -52,12 +62,12 @@ def write_card(root: Path, body: str, readers: str = CARD_READERS) -> Path:
 
 def test_a_card_within_the_cap_is_clean(tmp_path: Path) -> None:
     write_card(tmp_path, "delivered the receiver; phase 2 reads delivery_id.")
-    assert check_artifacts(tmp_path) == []
+    assert audit(tmp_path) == []
 
 
 def test_a_card_over_the_cap_is_a_violation(tmp_path: Path) -> None:
     write_card(tmp_path, "x" * (HANDOVER_MAX_BYTES + 1))
-    problems = check_artifacts(tmp_path)
+    problems = audit(tmp_path)
     assert len(problems) == 1
     assert "over the" in problems[0] and "cap" in problems[0]
     # It names the relocation, not a deletion — nothing leaves disk.
@@ -67,21 +77,21 @@ def test_a_card_over_the_cap_is_a_violation(tmp_path: Path) -> None:
 def test_the_cap_is_bytes_not_lines(tmp_path: Path) -> None:
     """A 5-line summary of very long lines is still over budget — the bill is bytes read."""
     write_card(tmp_path, "\n".join(["y" * 2000] * 5))
-    assert check_artifacts(tmp_path)
+    assert audit(tmp_path)
 
 
 # --- the readers declaration ---------------------------------------------------------------------
 
 def test_a_document_that_declares_no_reader_is_a_violation(tmp_path: Path) -> None:
     (phase_dir(tmp_path) / "handover.md").write_text("---\nfeature: demo\n---\nshort\n")
-    problems = check_artifacts(tmp_path)
+    problems = audit(tmp_path)
     assert len(problems) == 1
     assert "readers:" in problems[0]
 
 
 def test_a_document_with_no_frontmatter_at_all_is_a_violation(tmp_path: Path) -> None:
     (phase_dir(tmp_path) / "handover.md").write_text("# Phase 1\n\nshort\n")
-    assert check_artifacts(tmp_path)
+    assert audit(tmp_path)
 
 
 def test_an_archive_declares_none_and_is_accepted(tmp_path: Path) -> None:
@@ -89,7 +99,7 @@ def test_an_archive_declares_none_and_is_accepted(tmp_path: Path) -> None:
     (phase_dir(tmp_path) / "handover-archive.md").write_text(
         "---\nfeature: demo\nreaders: none (archive of handover.md)\n---\n" + "z" * 40000
     )
-    assert check_artifacts(tmp_path) == []
+    assert audit(tmp_path) == []
 
 
 def test_an_archive_is_not_capped(tmp_path: Path) -> None:
@@ -98,7 +108,7 @@ def test_an_archive_is_not_capped(tmp_path: Path) -> None:
     (phase_dir(tmp_path) / "handover-archive.md").write_text(
         "---\nreaders: none (archive of handover.md)\n---\n" + "z" * (HANDOVER_MAX_BYTES * 10)
     )
-    assert check_artifacts(tmp_path) == []
+    assert audit(tmp_path) == []
 
 
 def test_declared_readers_reads_only_frontmatter() -> None:
@@ -117,29 +127,29 @@ def verdict(root: Path, payload: dict, name: str = "verdict.json") -> Path:
 
 def test_a_verdict_declares_readers_as_a_top_level_key(tmp_path: Path) -> None:
     verdict(tmp_path, {"verdict": "pass"})
-    problems = check_artifacts(tmp_path)
+    problems = audit(tmp_path)
     assert len(problems) == 1 and "readers" in problems[0]
 
     verdict(tmp_path, {"verdict": "pass", "readers": ["phase-handover @ per phase"]})
-    assert check_artifacts(tmp_path) == []
+    assert audit(tmp_path) == []
 
 
 def test_a_verdict_report_over_the_cap_is_a_violation(tmp_path: Path) -> None:
     verdict(tmp_path, {"readers": [], "report": "p" * (VERDICT_REPORT_MAX_CHARS + 1)})
-    problems = check_artifacts(tmp_path)
+    problems = audit(tmp_path)
     assert len(problems) == 1 and "report" in problems[0]
 
 
 def test_a_verdict_report_within_the_cap_is_clean(tmp_path: Path) -> None:
     verdict(tmp_path, {"readers": [], "report": "p" * VERDICT_REPORT_MAX_CHARS})
-    assert check_artifacts(tmp_path) == []
+    assert audit(tmp_path) == []
 
 
 def test_an_archived_attempt_is_matched_by_its_numbered_name(tmp_path: Path) -> None:
     assert spec_for("verdict-attempt-3.json") is not None
     assert spec_for("verdict-attempt-3.json")["archive_of"] == "verdict.json"
     verdict(tmp_path, {"report": "x" * 99999}, name="verdict-attempt-1.json")
-    problems = check_artifacts(tmp_path)
+    problems = audit(tmp_path)
     # Missing `readers` is a violation; the report cap is NOT applied to the archive, which nothing
     # reads. Relocating prose is the whole mechanism — capping it there would delete it instead.
     assert len(problems) == 1 and "readers" in problems[0]
@@ -147,7 +157,7 @@ def test_an_archived_attempt_is_matched_by_its_numbered_name(tmp_path: Path) -> 
 
 def test_unparseable_json_fails_closed(tmp_path: Path) -> None:
     (phase_dir(tmp_path) / "verdict.json").write_text("{not json")
-    problems = check_artifacts(tmp_path)
+    problems = audit(tmp_path)
     assert len(problems) == 1 and "fail closed" in problems[0]
 
 
@@ -216,9 +226,9 @@ def test_table_lists_every_document_and_marks_the_archives() -> None:
 
 def test_cli_returns_one_on_a_violation_and_zero_when_clean(tmp_path: Path) -> None:
     write_card(tmp_path, "x" * (HANDOVER_MAX_BYTES + 1))
-    assert main(["check", str(tmp_path)]) == 1
+    assert main(["check", "--all", str(tmp_path)]) == 1
     write_card(tmp_path, "short")
-    assert main(["check", str(tmp_path)]) == 0
+    assert main(["check", "--all", str(tmp_path)]) == 0
     assert main(["table"]) == 0
 
 
@@ -245,3 +255,35 @@ def test_every_document_stating_the_report_cap_states_the_real_one() -> None:
     for rel in ("skills/verifier-triage/SKILL.md", "agents/avenger-verifier.md", "CLAUDE.md"):
         text = (REPO / rel).read_text(encoding="utf-8")
         assert str(VERDICT_REPORT_MAX_CHARS) in text, f"{rel} names the report cap but not its value"
+
+
+# --- the declaration has an owner ------------------------------------------------------------------
+# The class of bug pinned here: the table declares who reads a document, and nothing tells that
+# document's WRITER to say so. Three classes shipped that way — pipeline-observations.md,
+# e2e-mapping.md and test-mapping.md — each an artifact that fails the check above when authored
+# exactly as the pipeline instructs. A fourth goes red here instead of reaching a reviewer.
+
+READERS_TOKENS = ("readers:", '"readers"')
+
+
+def test_every_document_names_the_source_that_makes_its_writer_declare_readers() -> None:
+    for name, spec in READ_PATH.items():
+        emitter = spec.get("emitted_by")
+        assert emitter, f"{name} declares its readers in the table but names no source that emits them"
+        path = REPO / emitter
+        assert path.is_file(), f"{name} names a missing emitter: {emitter}"
+        text = path.read_text(encoding="utf-8")
+        assert any(token in text for token in READERS_TOKENS), (
+            f"{emitter} is where {name}'s writer is told to declare `readers:`, and it never says "
+            f"so — a document written exactly as instructed would fail check_artifacts"
+        )
+
+
+def test_every_shipped_markdown_template_declares_readers_in_its_own_frontmatter() -> None:
+    """A template that mentions `readers:` only in prose teaches a document that fails the check."""
+    for name, spec in READ_PATH.items():
+        emitter = spec.get("emitted_by", "")
+        if not (emitter.startswith("docs/templates/") and emitter.endswith(".md")):
+            continue
+        text = (REPO / emitter).read_text(encoding="utf-8")
+        assert declared_readers(text), f"{emitter} ({name}) carries no `readers:` in its frontmatter"

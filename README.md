@@ -200,7 +200,7 @@ agentic-avengers/
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
 ├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
 ├── docs/templates/        spec / plan / overview / task-analysis / handover (+ archive) /
-│                          test-evidence / verdict templates
+│                          test-mapping / test-evidence / verdict templates
 ├── docs/rubrics/          overview + plan rubrics
 ├── docs/lessons/          committed, team-shared lessons log (see the self-improvement skill)
 ├── cosmic-ray.toml        mutation base config (the gate diff-scopes a copy per phase)

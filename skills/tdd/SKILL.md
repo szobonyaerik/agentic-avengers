@@ -76,7 +76,23 @@ cross-family reviewer on every verifier attempt, so a phase pays for it once per
 measured feature had **59.3% of its test-mappings as prose outside any table** — 285 KB — riding
 along on every one of those attempts. `test-evidence.md` is opened **on route-back only**, by the
 implementer fixing the finding and by the Verifier checking it, which is exactly when that prose is
-worth its tokens. Give it frontmatter that says so:
+worth its tokens.
+
+**Both halves declare who reads them, in their own frontmatter** — that is the rule that stops the
+cost coming back (`skills/pipeline-conventions` § *The document read path*), and a check enforces it,
+so a mapping written without it fails the gate. Templates: `docs/templates/test-mapping.template.md`
+and `docs/templates/test-evidence.template.md`.
+
+```markdown
+---
+feature: <feature>
+phase: <n>-<slug>
+spec: <n>.<k>-<subslug>
+stage: test-mapping
+readers: avenger-verifier @ per phase; verifier bundle @ changed specs only
+---
+| requirement id(s) | test name(s) | level | why |
+```
 
 ```markdown
 ---

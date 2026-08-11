@@ -50,7 +50,16 @@ deleted; the read directives changed.**
 - **Every document declares `readers:`. A document no stage reads does not get written.** This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
   `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
-  removed read. **Change the directive at the table, never one caller at a time.**
+  removed read. **Change the directive at the table, never one caller at a time.** Every entry also
+  names the template or stage instruction that makes its writer emit the line: declaring a reader is
+  not the same as instructing anyone to write it down, and three artifact classes shipped with the
+  first and not the second.
+- **The artifact half of `check` is diff-scoped** — it enforces what the current diff touches and
+  *counts* the rest on stderr without blocking, the same "you are responsible for what you change"
+  rule as the verifier bundle, the spec re-gate cache and the mutation gate. That is what lets a
+  repository full of pre-rule artifacts upgrade. `check --all` audits everything (CI's `--full`);
+  when git cannot say what changed, nothing is enforced and the check says so out loud rather than
+  falling back to enforcing everything.
 
 `docs/lessons/` is untouched and stays at full price — under 2% of the bill, 16 of 18 entries cited
 elsewhere, one drove test design across three phases. It is not where economising belongs.

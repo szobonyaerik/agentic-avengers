@@ -91,7 +91,14 @@ Four rules follow from it, and each one is enforced rather than requested:
   **A document no stage reads does not get written**, and an archive says so explicitly
   (`readers: none (archive of handover.md)`). This is the rule that stops the recurrence: a new
   artifact class that nobody can name a reader for is caught while it is being invented, not by the
-  next cost measurement. `doc_read_path.py check` fails a document that declares none.
+  next cost measurement. `doc_read_path.py check` fails a document that declares none, and the
+  template each writer works from carries the line, so a document authored as instructed passes.
+  **That check is diff-scoped**: it enforces the artifacts the current diff touches and *counts* the
+  rest on stderr without blocking, which is the same "you are responsible for what you change" rule
+  the verifier bundle, the spec re-gate cache and the mutation gate already run on — and what lets a
+  repository already full of pre-rule artifacts upgrade without rewriting its history first.
+  `check --all` audits everything (CI's `--full`); when git cannot say what changed, nothing is
+  enforced and the check says so rather than falling back to enforcing everything.
 - **Never send a reader to another document for a single field.** Every scalar a downstream stage
   needs rides in the frontmatter of the document that stage is already reading — `work_kind`,
   `criticality`, `binding` counts. This is what took `task-analysis.md` off the per-spec path.

@@ -25,7 +25,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `## Contracts and Decisions` header only, `test-mapping.md` is the table (evidence in
    `test-evidence.md`, read on route-back), and a verified phase's specs leave the read path in
    favour of its card. `scripts/doc_read_path.py` is the table and the check; `check --sources` is
-   what stops a removed read coming back one caller at a time. `docs/lessons/` is untouched.
+   what stops a removed read coming back one caller at a time, and the artifact half is **diff-scoped**
+   (it enforces what you changed and only counts the rest, `--all` for a full audit).
+   `docs/lessons/` is untouched.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **Composed quality wall (per spec).** Automated Fidelity Gate on spec write (sets `fidelity_verdict`;

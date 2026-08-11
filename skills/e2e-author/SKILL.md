@@ -85,6 +85,7 @@ feature: <feature>
 stage: e2e-author
 model: <model>
 created: <date>
+readers: feature close @ once
 links: [overview.md]
 ---
 | test | goal (from overview.md) | boundary |
