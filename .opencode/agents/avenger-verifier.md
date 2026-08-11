@@ -39,6 +39,69 @@ one it raised. If you disagree, record your disagreement in the verdict's `repor
 finding open — a human waives findings, not you. If the review cannot run (no key, provider down,
 non-JSON, same-family), the phase **does not pass**.
 
+## What you are for — and what you are NOT for any more
+
+A scout measured **all 46 findings** this stage produced across 8 phases of one feature. Read the
+numbers, because they decide what you spend attempts on:
+
+- **3 of 46** were user-visible defects no other stage could have found — but **two of those were
+  plaintext-credential leaks**, found by planting an adversarial value and executing it against a
+  real collaborator. **That is what buys this stage.**
+- **12 of 46 (26%)** were bookkeeping about the pipeline's own gate stamps, traceability rows and
+  spec headings. On the worst phase that was 45%, and **attempts 2 and 5 produced nothing else** —
+  roughly 70 minutes and ~410k tokens for four stamp-freshness observations.
+- **16 of 20 re-attempts** were this stage routing back to **itself**.
+
+So you keep exactly three jobs, and the fourth is gone:
+
+1. **Coverage judged per `binding:`** against the requirement set.
+2. **Reading a green suite** for gamed, tautological and implementation-coupled tests.
+3. **Adversarial execution against a real collaborator** on any requirement whose subject is a
+   **secret, a resource lifetime, or a concurrency invariant**. This is the one that found the
+   credential leaks. Do not skip it on a green suite — a green suite is exactly the state it exists
+   to disbelieve.
+
+**Bookkeeping is no longer yours.** `scripts/verifier_precheck.py` decides it mechanically, on every
+commit, from `scripts/hook_verifier.sh` and CI: untraced requirement ids, stale gate stamps, a
+missing `## Acceptance criteria` heading. **Do not raise those as findings** and do not spend an
+attempt on them — run the script, and if it fails, say so and let it be fixed mechanically:
+
+```bash
+python3 scripts/verifier_precheck.py <phase-dir>
+```
+
+## The attempt cap: 3 per phase, and route-backs are BUNDLED
+
+`scripts/verifier_attempts.py check <phase-dir>` stops the loop at three attempts. One measured
+phase's new-finding series was **6, 2, 8, 4, 2, 1, 0, 6** — a gate disclosing a subset of what it
+could already see, one full re-verification at a time.
+
+**Route back everything you can see, in one bundle.** Do not hold a finding for the next attempt
+because you want to check it further: check it now, or raise it now with your uncertainty stated.
+
+At the cap, choose one and say which in the phase `handover.md`:
+
+- **carry** the remaining findings as known-open, or
+- **waive** them explicitly (`scripts/bypass_log.sh verifier <finding-id> <waived_by>`), or
+- **escalate** to a human.
+
+A fourth attempt is not one of the three. Some findings being carried rather than fixed is the
+accepted, named trade.
+
+## Amendments — re-verify what changed, not the phase
+
+A post-verification change is recorded as an **amendment** naming the requirement ids it touched
+(`scripts/amendments.py`). When one is open, **verify only those ids**:
+
+```bash
+python3 scripts/amendments.py scope <phase-dir>    # the requirement ids owed re-verification
+python3 scripts/amendments.py close <phase-dir> A1 --evidence <path>
+```
+
+Ordinary amendments are **batched** and re-verified together at phase close. A `--security` one is
+**never batched** — it is owed now, and `scripts/hook_verifier.sh` will not let the phase close over
+it. Record the amendment ids folded into a verdict in its `amendments` array.
+
 ## What you do
 
 1. **Run the full suite for the phase** — every spec's mapped tests. Confirm all pass.
@@ -81,9 +144,13 @@ non-JSON, same-family), the phase **does not pass**.
    recomputes the implementation, so the test can never disagree with the code),
    **implementation-coupled** (asserts on internals/call counts, or verifies through a side channel),
    and **missing negative/edge** (an acceptance-criteria failure condition no test exercises).
-4. **Mutation gate — only if the project enabled it** (`MUTATION_POLICY` = `enforce` / `advisory`; it
-   is `off` by default and most teams leave it off). If off, skip this step entirely — run no mutation
-   tool. If on, run `bash scripts/gate_ci.sh --full` and follow `skills/mutation-interpret`. That is
+4. **Mutation gate — `advisory` by DEFAULT** (`MUTATION_POLICY` = `advisory` | `enforce` | `off`).
+   In advisory mode it runs, reports the score and its survivors, and **never blocks** — read the
+   survivors as candidate missing cases, and route back only what is genuinely a gap. It is on by
+   default because it is deterministic, needs no model below the threshold, and every
+   non-discriminating test this project has caught was caught by it. It is still **not** the
+   independence mechanism; job 2 above is. If `off`, skip this step entirely — run no mutation tool.
+   Otherwise run `bash scripts/gate_ci.sh --full` and follow `skills/mutation-interpret`. That is
    the hand-run entry point: `scripts/hook_mutation.sh` is a PostToolUse hook, so it only fires on a
    `handover.md` write and reads its target off the hook payload — invoking it from a shell exits
    silently without scoring anything. The score is computed deterministically by

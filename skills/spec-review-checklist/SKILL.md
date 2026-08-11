@@ -33,7 +33,7 @@ defensible "yes".
 > journey tells you which journey broke, not which line. Accept that; it is what the granularity cost.
 
 ## Cost and blast radius
-The pipeline has no other stage that can see these. Every later stage — fidelity, cross-family
+The pipeline has no other stage that can see these. Every later stage — the spec gate, cross-family
 review, verification — reads for **correctness**, and none of the three below is incorrect.
 
 - [ ] **Does any test this requirement implies spawn a subprocess, or does its runtime scale with the
@@ -90,7 +90,7 @@ artifact — and variance in a gate that fails closed costs far more than varian
 open. Re-reading settled text just re-rolls the dice on work that is already built.
 
 Mechanically: `scripts/spec_gate_cache.py` keeps the body each gate last judged, and
-`scripts/hook_spec_review.sh` hands the automated reviewer a bundle — the approved body as
+`scripts/hook_spec_gate.sh` hands the gate a bundle — the approved body as
 reference, the current spec, and a `## CHANGES SINCE APPROVAL` diff. When no kept body is available
 the bundle is not built and the whole spec is gated, which is the safe direction.
 

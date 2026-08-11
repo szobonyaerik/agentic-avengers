@@ -22,7 +22,8 @@ tree, resolving dependencies between decisions one by one.
 - **task-analyst** loads it to remove scope/requirement ambiguity *before* the brief is written.
 - **The spec-review gate** loads it so the human reviewer is *interrogated* about the spec — one
   question at a time, against `spec-review-checklist` — instead of passively approving. The reviewer
-  only sets `review_status: approved` after they can answer for every decision. For a reviewer new to
+  only sets `review_status: approved` after they can answer for every decision. The machine gate ran
+  on write and is a separate question. For a reviewer new to
   the system, being grilled is what turns review from a rubber stamp into a real gate.
 
 ## Spec-review framing

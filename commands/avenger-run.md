@@ -142,8 +142,8 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `solution-architect` | `plan-build-verify:avenger-solution-architect` |
 | `implementation-planner` | `plan-build-verify:avenger-implementation-planner` → **then stop, see §3** |
 | `spec-writer` | `plan-build-verify:avenger-spec-writer` for the named phase/spec |
-| `fidelity-gate` | The gate runs automatically on the spec write. Re-read the spec; if `fidelity_verdict` is still absent, the hook did not fire — report that and stop rather than proceeding ungated |
-| `spec-review` | `/plan-build-verify:spec-review <spec_path>` (add `--auto` when running unattended) |
+| `spec-gate` | The gate runs automatically on the spec write. Re-read the spec; if `spec_gate` is still `pending`, the hook did not fire — report that and stop rather than proceeding ungated |
+| `spec-review` | `/plan-build-verify:spec-review <spec_path>` (add `--auto` when running unattended) — the **human** sign-off; the machine gate already ran on write |
 | `implementer` | `plan-build-verify:avenger-backend-architect`, or `avenger-frontend-developer` when the spec is UI. It writes tests **and** code, test-first |
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
@@ -151,6 +151,27 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `done` | **Ship gate (§4a), retrospective triage (§4b), the second feature-close commit (§5), then** report and stop |
 
 `--from <stage>` overrides the first iteration only; afterwards the resolver drives.
+
+### Effort per stage
+
+Pass `effort` when you spawn a subagent, matched to the work rather than left at the session
+default. Reasoning effort is the largest lever on cost that does not change what any gate checks,
+and spending `high` on a mechanical stage buys nothing measurable.
+
+| Stage | effort | why |
+|---|---|---|
+| `avenger-handover` | `low` | it summarises artifacts that already exist into a 6 KB card |
+| `avenger-task-analyst` | `low` | it restructures a brief; the judgement is downstream |
+| `avenger-spec-writer` | `medium` | accuracy holds here, and the gate reads what it writes |
+| `avenger-solution-architect`, `avenger-implementation-planner` | `medium` | shape decisions, reviewed at the plan stop |
+| `avenger-backend-architect`, `avenger-frontend-developer` | `medium` | a red → green loop with a suite as its oracle |
+| `avenger-verifier` | `high` | it is the independence, and it reads a green suite for tests that lie |
+| `avenger-breaker` | `high` | it found a credential leak by constructing an input nothing else would |
+| `avenger-bug-hunter` | `high` | diagnosis with no oracle |
+
+This is a starting allocation, not a ceiling: raise a stage's effort when *that stage* has been
+routing back, and say in the retrospective that you did — a stage whose effort had to be raised is
+evidence about the stage, not about the run.
 
 ## 3. Stop for the plan
 
@@ -187,10 +208,12 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 ## 4. After the Verifier passes a phase
 
 1. **Breaker** — only if the resolver reports `criticality: critical` for the phase. Invoke
-   `plan-build-verify:avenger-breaker`. A counterexample routes back to the implementer to **add** a
-   test (the suite is locked; additions only).
-2. **Mutation** — do nothing unless `MUTATION_POLICY` is `advisory` or `enforce`. It is off by default
-   and is not the independence mechanism.
+   `plan-build-verify:avenger-breaker` at `effort: high`. A counterexample routes back to the
+   implementer to **add** a test (the suite is locked; additions only). **It is never folded into
+   verification**: it found phase 8's credential leaks by constructing inputs, which is a different
+   instrument from reading a test set.
+2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
+   Read survivors as candidate missing cases. It is still not the independence mechanism.
 3. Then `handover`.
 4. **Phase review gate (`no-mistakes`, review-only)** — see §4c. Runs after the handover commit.
 
@@ -360,8 +383,11 @@ branch the pipeline still owns splits it from the pipeline head and strands the 
 Runs **after** §4a so it can include what the ship gate found. Load `skills/pipeline-retrospective`
 and follow its triage procedure. In short:
 
-1. **Final sweep** — re-read every phase's `verdict.json`, `gate-overrides.log` and the specs'
-   `fidelity_verdict` stamps, and append anything the run revealed that you did not log live.
+1. **Final sweep** — re-read every phase's `verdict.json` and `amendments.json`,
+   `gate-overrides.log` and the specs' `spec_gate` stamps, and append anything the run revealed that
+   you did not log live. Include `.avenger-skill-loads.jsonl` if it exists: a required skill that
+   recorded `loaded: false` is a pipeline installation defect and the retrospective is where it gets
+   filed.
 2. **Render a lavish triage artifact** (its `input` playbook) with one card per observation — kind,
    evidence paths, and the change it implies — then `lavish-axi` it and `poll`.
 3. **The user selects.** Selecting nothing is a valid, complete triage.
@@ -448,10 +474,28 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - A stage that fails gets **2 retries** (3 attempts total). Then halt and print: the stage, the
   artifact, the gate verdict, and the `route_back` reason. Everything stays on disk — the user fixes
   and re-invokes to resume.
+- **Verification is capped at 3 attempts per phase**, and the cap is on the *loop*, not the phase.
+  16 of 20 re-attempts measured across one feature were the Verifier routing back to itself, and one
+  phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 — a gate disclosing a subset of what it could
+  already see, one full re-verification at a time. `scripts/verifier_attempts.py check <phase-dir>`
+  reports where a phase stands and prints the series. At the cap the remaining findings are
+  **carried as known-open in `handover.md`, waived explicitly, or escalated** — a fourth attempt is
+  not one of the three, and some findings being carried rather than fixed is the accepted trade.
+- **A post-verification change is an AMENDMENT, not a new round.** When a verified phase must
+  change, record what it touches and re-verify only that:
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/amendments.py" open <phase-dir> \
+    --requirements R8.2.30,R8.2.31 --reason-file .lavish/<feature>-amendment.md [--security]
+  ```
+  Write the reason with the `Write` tool and pass the path — it is author prose, and under `--auto`
+  prose on a command line is denied by content. Ordinary amendments **batch** and re-verify together
+  at phase close; a `--security` one is **owed immediately** and `scripts/hook_verifier.sh` will not
+  let the phase close over it. This is what rounds 3 through 8 of one measured phase were: a pipeline
+  with no way to say "only this changed".
 - **Mutation is tighter**: if the same phase bounces twice on survivors, stop immediately. Either the
   requirement sits below the seam (→ spec-writer) or the threshold is wrong for this codebase (→ ask
   the user). Do not let the implementer farm narrow tests to chase mutants.
-- Route-backs to honour: fidelity/spec-review NO-GO → spec-writer, then re-gate — and once a spec has
+- Route-backs to honour: a blocked spec gate → spec-writer, then re-gate — and once a spec has
   been implemented that re-gate covers its **diff only**, except for the cases
   `skills/spec-review-checklist` still owes a full pass (a changed requirement set, Scope,
   Interfaces / contracts, `work_kind` or `binding:`, and a Verifier **coverage-gap** route-back, where

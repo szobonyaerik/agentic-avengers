@@ -2,8 +2,11 @@
 """Resolve which pipeline stage a feature owes next, from the artifacts on disk.
 
 `/avenger-run` is resumable across a `/clear`, a compaction, or a closed laptop. Resume must not be a
-model guess, so the artifact tree is the state: spec frontmatter stamps (`fidelity_verdict`,
-`review_status`, `status`) and the Verifier's `verdict.json` say exactly how far a feature got.
+model guess, so the artifact tree is the state: spec frontmatter stamps (`spec_gate`, `review_status`,
+`status`) and the Verifier's `verdict.json` say exactly how far a feature got.
+
+`spec_gate` is read through `scripts/spec_gate_state.py`, never parsed here — that module is the one
+place the machine gate's status is decided, including how a legacy `fidelity_verdict` stamp reads.
 
 The bias here is to under-report progress. When a stamp is missing or unreadable the stage that owns
 it is reported as still owing work, because the cost of re-running a stage is a wasted call, while
@@ -20,6 +23,11 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import amendments  # noqa: E402
+import spec_gate_state  # noqa: E402
 
 FEATURE_ORDER: tuple[tuple[str, str], ...] = (
     ("task-analysis.md", "task-analyst"),
@@ -116,20 +124,22 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
         "criticality": fields.get("criticality", "standard"),
     }
 
-    fidelity = fields.get("fidelity_verdict", "")
-    if not fidelity:
+    gate = spec_gate_state.status(fields)
+    if gate == spec_gate_state.PENDING:
         return State(
-            stage="fidelity-gate",
-            reason=f"{spec.name} carries no fidelity_verdict",
+            stage="spec-gate",
+            reason=f"{spec.name} has not been through the spec gate",
             **common,
         )
-    if fidelity.upper() == "NO-GO":
+    if gate == spec_gate_state.BLOCKED:
         return State(
             stage="spec-writer",
-            reason=f"{spec.name} fidelity_verdict is NO-GO",
+            reason=f"{spec.name} was blocked by the spec gate",
             **common,
         )
 
+    # The human sign-off is a separate question from the machine gate, and it is the only thing
+    # `review_status` still means. Under SPEC_REVIEW_MODE=auto the gate stamps it itself.
     if fields.get("review_status") != "approved":
         return State(
             stage="spec-review", reason=f"{spec.name} is not approved", **common
@@ -190,6 +200,24 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         return State(
             stage="verifier",
             reason=f"phase {phase.name} has no passing verdict",
+            **common,
+        )
+
+    # A verdict is a claim about code. An amendment says that code has since changed and names the
+    # requirement ids it touched, so a passing verdict standing over one is the pipeline asserting
+    # something it has not checked. Only the amended requirements re-verify — that is the whole
+    # point of the record — but the phase does owe the Verifier a pass over them.
+    try:
+        owed = amendments.due(phase)
+    except amendments.AmendmentError:
+        owed = [{"id": "?"}]  # an unreadable ledger is owed work, never silently none
+    if owed:
+        return State(
+            stage="verifier",
+            reason=(
+                f"phase {phase.name} has {len(owed)} amendment(s) owed re-verification "
+                f"({', '.join(str(a.get('id')) for a in owed)}); only their requirement ids re-verify"
+            ),
             **common,
         )
 

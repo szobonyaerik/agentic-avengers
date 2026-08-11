@@ -6,7 +6,11 @@
 # in-chat on a cross-family model, reads the phase's tests for the anti-patterns in skills/tdd, and
 # persists docs/features/<f>/phases/<n>-<slug>/verdict.json. Model-based gates run in chat; mechanical
 # gates run in hooks and CI, which only check the committed artifacts. (pipeline-conventions: "Where
-# the models run".) The one exception in this repo is the Fidelity Gate, which is a model hook.
+# the models run".) The one exception in this repo is the spec gate, which is a model hook.
+#
+# This hook also runs the Verifier's MECHANICAL pre-check (scripts/verifier_precheck.py) and the
+# amendment obligation (scripts/amendments.py due), because both are decidable without a model and
+# 26% of everything the Verifier raised across one measured feature was that class.
 #
 # Why not on every src/ edit: the implementer runs a red -> green loop, so red IS an expected state
 # throughout a build. Firing per edit stopped the agent to route a failure back to itself.
@@ -93,8 +97,31 @@ fi
 
 [ "$TRIGGER" = "handover" ] || exit 0
 
+PHASE_DIR="$(dirname "$FILE")"
+
+# The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
+# untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
+# is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
+# script can do: coverage judged per `binding:`, reading a green suite for gamed tests, and
+# adversarial execution against secrets, resource lifetimes and concurrency invariants.
+if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
+  fail "verifier:precheck" \
+    "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
+    "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
+fi
+
+# Amendments owed re-verification NOW: every security-relevant one, always, plus any pending one on
+# a phase whose verdict already passes. Batching is a cost optimisation and it does not apply to a
+# credential already exposed.
+if ! python3 "$SD/amendments.py" due "$PHASE_DIR"; then
+  fail "verifier:amendments" \
+    "verifier: this phase has amendments owed re-verification (named above). Re-verify the" \
+    "requirement ids they name — not the whole phase — then close each with" \
+    "scripts/amendments.py close <phase-dir> <A-id> --evidence <path>."
+fi
+
 # Handover: the Verifier agent must already have run and left a passing verdict.
-VERDICT="$(dirname "$FILE")/verdict.json"
+VERDICT="$PHASE_DIR/verdict.json"
 if [ ! -f "$VERDICT" ]; then
   fail "verifier:no-verdict" \
     "verifier: no verdict.json next to $FILE." \
@@ -128,6 +155,10 @@ case "$V" in
     fi
     exit 0 ;;
   fail)
+    # At the attempt cap this says so first: 80% of re-attempts measured across one feature were the
+    # Verifier routing back to itself, and the remedy at the cap is to carry, waive or escalate —
+    # never a fourth attempt.
+    python3 "$SD/verifier_attempts.py" check "$PHASE_DIR" || true
     fail "verifier" "verifier: verdict.json is 'fail' — route back per its findings:" \
       "$(jq -r '.routed[]? | "  - \(.to): \(.reason) (\(.spec_id // "-")) finding \(.finding_id)"' "$VERDICT" 2>/dev/null)" ;;
   *)

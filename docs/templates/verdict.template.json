@@ -11,6 +11,11 @@
       "archived_to": "verdict-attempt-1.json"
     }
   ],
+  "amendments": [
+    "A1 — ids only. The records live in the phase's amendments.json; a verdict then reads",
+    "'verified at attempt N, plus amendments A1..An'. The one schema extension since the schema",
+    "was frozen, made at the schema rather than as a bespoke key."
+  ],
   "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say>",
   "run": {
     "at": "YYYY-MM-DDThh:mm:ssZ",

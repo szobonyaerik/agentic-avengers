@@ -24,7 +24,7 @@ phase: {phase}
 spec: {spec}
 status: {status}
 review_status: {review_status}
-fidelity_verdict: {fidelity}
+spec_gate: {spec_gate}
 criticality: {criticality}
 ---
 
@@ -48,7 +48,7 @@ def write_spec(
     *,
     status: str = "draft",
     review_status: str = "pending",
-    fidelity: str = "GO",
+    spec_gate: str = "approved",
     criticality: str = "standard",
 ) -> Path:
     """Create one spec under its phase, with gate stamps in the frontmatter."""
@@ -61,7 +61,7 @@ def write_spec(
             spec=spec,
             status=status,
             review_status=review_status,
-            fidelity=fidelity,
+            spec_gate=spec_gate,
             criticality=criticality,
         )
     )
@@ -113,20 +113,20 @@ def test_phase_dir_without_specs_goes_to_spec_writer(tmp_path: Path) -> None:
     assert state.phase == "1-core"
 
 
-def test_no_go_fidelity_routes_back_to_spec_writer(tmp_path: Path) -> None:
+def test_a_blocked_spec_routes_back_to_spec_writer(tmp_path: Path) -> None:
     feature = planned(tmp_path)
-    write_spec(feature, "1-core", "1.1-a", fidelity="NO-GO", review_status="approved")
+    write_spec(feature, "1-core", "1.1-a", spec_gate="blocked", review_status="approved")
     state = next_stage(tmp_path, "demo")
     assert state.stage == "spec-writer"
     assert state.spec == "1.1-a"
-    assert "NO-GO" in state.reason
+    assert "blocked" in state.reason
 
 
-def test_ungated_spec_waits_for_the_fidelity_gate(tmp_path: Path) -> None:
+def test_ungated_spec_waits_for_the_spec_gate(tmp_path: Path) -> None:
     feature = planned(tmp_path)
     spec = write_spec(feature, "1-core", "1.1-a")
-    spec.write_text(spec.read_text().replace("fidelity_verdict: GO\n", ""))
-    assert next_stage(tmp_path, "demo").stage == "fidelity-gate"
+    spec.write_text(spec.read_text().replace("spec_gate: approved\n", ""))
+    assert next_stage(tmp_path, "demo").stage == "spec-gate"
 
 
 def test_unapproved_spec_goes_to_spec_review(tmp_path: Path) -> None:

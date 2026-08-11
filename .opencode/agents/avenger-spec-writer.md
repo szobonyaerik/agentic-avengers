@@ -50,9 +50,9 @@ depends_on: [<prior spec ids, e.g. 1.1, 1.2>]
 work_kind: greenfield | migration | refactor   # the implementer's test mode — carried HERE
 criticality: standard | critical
 status: draft
+spec_gate: pending            # set to approved|blocked by THE spec gate (scripts/hook_spec_gate.sh)
 review_status: pending        # flipped to `approved` only by /spec-review (human grill-me)
-fidelity_verdict: pending     # set to GO|REVIEW|NO-GO by the automated Fidelity Gate
-readers: fidelity gate @ on write; spec-review @ per spec; implementer @ once; verifier bundle @ changed specs only
+readers: spec gate @ on write; implementer @ once; verifier bundle @ changed specs only
 ---
 
 # <Spec title>
@@ -70,6 +70,7 @@ important boundary. Explain any unavoidable domain or technical term inline in o
 What this spec delivers — and explicitly what it does NOT (deferred to a later spec/phase).
 
 ## Requirements
+**At most 12.** Above that the spec SPLITS into siblings under the same phase — see the cap below.
 Each requirement has a stable id R<n>.<k>.<m> so tests can trace to it.
 Each is ONE behavior observable at a seam — a caller-visible outcome, not an internal step.
 Each declares a `binding:` that decides whether, and where, it is verified.
@@ -109,22 +110,49 @@ Every requirement carries a stable id; the implementer maps each test to exactly
 spec's** `test-mapping.md`, at
 `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/test-mapping.md`.
 
-## The composed quality wall — do NOT hand off early
+## The quality wall — one machine gate, one human
 
-Each spec passes through **two** gates before the implementer may touch it:
-1. **Automated Fidelity Gate** — fires on spec write, sets `fidelity_verdict`. `NO-GO` routes back to you.
-2. **Spec-review** — `/spec-review <spec>` (HITL grill-me) or `/spec-review <spec> --auto` /
-   `SPEC_REVIEW_MODE=auto` (automated cross-family reviewer); on success it sets `review_status: approved`.
+There used to be two model gates here, asking overlapping questions of your spec at the same moment;
+one spec passed one and failed the other on byte-identical text. There is now **one**:
 
-**A spec reaches the implementer only when `fidelity_verdict != NO-GO` AND `review_status: approved`.**
-Until both hold, do not hand off — implementation does not start. (The tests lock later, when the
-Verifier passes the phase: `pipeline-conventions`: *locked-after-verify*.)
+1. **The spec gate** — fires on spec write (`scripts/hook_spec_gate.sh`), sets
+   `spec_gate: approved | blocked`. `blocked` routes back to you.
+2. **Human spec review** — `/spec-review <spec>` (HITL grill-me); on success it sets
+   `review_status: approved`. Under `SPEC_REVIEW_MODE=auto` the gate carries this too, because
+   nobody is there.
+
+**A spec reaches the implementer only when `spec_gate: approved` AND `review_status: approved`.**
+Until both hold, do not hand off. (The tests lock later, when the Verifier passes the phase:
+`pipeline-conventions`: *locked-after-verify*.)
+
+### What can and cannot block you
+
+**Exactly four things block**, and nothing else: a **missing requirement**, an internal
+**contradiction**, an **untestable criterion**, an **unhandled critical edge case**. Everything else
+the gate notices is a **note** — recorded in `spec-notes.md` beside your spec, read once by the
+implementer, and **blocking nothing**. A note is not a lesser rejection and does not escalate next
+round.
+
+**Answer a block by fixing the named defect, not by writing more.** The gate this replaced said
+"when unsure, choose NO-GO", and the measured result was one spec growing 25k -> 51k characters
+across four rejected rounds. If a block does not name something an implementer cannot proceed past,
+say so rather than padding the spec.
+
+### The requirement cap: 12, and the remedy is a SPLIT
+
+`scripts/requirement_cap.py` counts your declared requirement ids **before any model sees the spec**.
+Over 12 (`SPEC_REQUIREMENT_MAX`), the spec **splits** into siblings `<n>.<k>` under the same phase —
+each independently gated, implemented and traced, with requirement ids moving to the spec they
+belong to. Split on the seam the requirements already group around.
+
+**No gate will ever reject your spec for being large**, and none will ask you to shorten it. Size is
+settled here, mechanically, and a rejection for size would just be one more thing to grow around.
 
 ## Guidelines
 
 - **Self-contained and independently testable**: Each spec must be implementable and gated without reading other specs. Reference the overview; don't restate it.
 - **Carry every scalar a downstream stage needs in this spec's own frontmatter** — `work_kind`,
-  `criticality`, `review_status`, `fidelity_verdict`, and the `readers:` line. **Never send a reader
+  `criticality`, `review_status`, `spec_gate`, and the `readers:` line. **Never send a reader
   to another document for a single field.** A stage that fires per spec pays the whole document's
   cost for one enum, every time; `pipeline-conventions` § *The document read path* has the measured
   case and is the rule.
@@ -132,6 +160,12 @@ Verifier passes the phase: `pipeline-conventions`: *locked-after-verify*.)
   frontmatter. A document no stage reads does not get written.
 - **Concrete**: Include actual file paths, function signatures, data types — no hand-waving.
 - **Stable requirement IDs**: Every requirement gets an id `R<n>.<k>.<m>` (e.g. `R1.1.1`, `R1.1.2`). These IDs are the contract — the implementer traces each test to one in `test-mapping.md`.
+- **Realistic example values.** Where you pin an example for an **external identifier** — an id from
+  another system, an account number, a token, a chat or user id — pin one with the shape a real
+  deployment actually produces, and say so in `Interfaces / contracts`. A security control once
+  shipped non-functional behind **1,009 passing tests** because every fixture used ids an order of
+  magnitude smaller than the real ones: the column was `int32`, real supergroup ids are not, and no
+  test could see it. The implementer builds fixtures from what you write down here.
 - **Tiered binding — the rule that decides how big the suite gets.** Every requirement declares
   `binding: e2e | integration | none`.
   - `e2e` — an end user can observe it. It is carried by a **journey** shared with the other `e2e`
@@ -146,8 +180,8 @@ Verifier passes the phase: `pipeline-conventions`: *locked-after-verify*.)
   4.87 lines of test per line of source, and no stage anywhere pushed back. Default to `e2e`. Reach
   for `integration` when you can name the failure an e2e is blind to, and prefer `none` over inventing
   a test for a property CI already fails on.
-- **Cost is yours to control, because no later stage can see it.** Fidelity, cross-family review and
-  verification all read for correctness; none of them can see that a test spawns a subprocess or that
+- **Cost is yours to control, because no later stage can see it.** The spec gate's observe pass,
+  the cross-family review and verification all read for correctness; none of them can see that a test spawns a subprocess or that
   its runtime scales with the suite. Do not write a requirement whose only verification is shelling
   out. If one is unavoidable, say so in the spec and justify it in a sentence.
 - **"Additive" is a claim you must check.** A new constraint on an existing interface that rejects a
@@ -174,5 +208,6 @@ Verifier passes the phase: `pipeline-conventions`: *locked-after-verify*.)
 - You do NOT write tests (that's the implementer's job).
 - You do NOT change the plan's architecture decisions.
 - You do NOT combine multiple specs into one file.
-- You do NOT hand off to the implementer before `review_status: approved` and `fidelity_verdict != NO-GO`.
+- You do NOT hand off to the implementer before `review_status: approved` and `spec_gate: approved`.
+- You do NOT answer a blocked spec with more prose. Fix the named defect, or split the spec.
 - You do NOT restate the full architecture from `overview.md` — reference it instead.

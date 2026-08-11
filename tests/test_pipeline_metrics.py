@@ -54,6 +54,22 @@ def test_every_gate_failure_cause_maps_to_a_recorded_outcome():
     assert set(metrics.CAUSE_MAP) == set(gate_errors.CAUSES)
 
 
+def test_every_shipped_rubric_names_the_stage_that_judges_against_it():
+    """The same exhaustiveness, for stages rather than causes.
+
+    Without it a rubric lands with its calls recorded under a name derived from its filename, which
+    is silently plausible and silently wrong — and the two spec-gate passes are the case that
+    matters: collapsing observe and triage into one stage would hide how many observations became
+    blockers, which is the number the whole redesign is judged by.
+    """
+    shipped = {p.name for p in (ROOT / "prompts").glob("*.md")} - {"project-setup.md"}
+
+    assert set(metrics.RUBRIC_STAGE) == shipped
+    assert metrics.RUBRIC_STAGE["spec-gate-observe.md"] != metrics.RUBRIC_STAGE[
+        "spec-gate-triage.md"
+    ]
+
+
 @pytest.mark.parametrize(
     ("cause", "expected"),
     [
@@ -92,7 +108,8 @@ def test_a_path_with_no_phase_resolves_to_none():
 
 
 def test_the_stage_is_read_off_the_rubric_it_judges_against():
-    assert metrics.stage_from_rubric("prompts/fidelity-rubric.md") == "fidelity"
+    assert metrics.stage_from_rubric("prompts/spec-gate-observe.md") == "spec-gate-observe"
+    assert metrics.stage_from_rubric("prompts/spec-gate-triage.md") == "spec-gate-triage"
     assert metrics.stage_from_rubric("prompts/verifier-review.md") == "verifier"
     assert metrics.stage_from_rubric(None) == "unknown"
 
@@ -206,13 +223,13 @@ def test_a_gate_call_records_its_model_latency_and_verdict(stub_sink):  # noqa: 
 
     metrics.record_gate_call(
         model="deepseek/deepseek-chat", model_family="deepseek",
-        rubric="prompts/fidelity-rubric.md", target=str(spec),
+        rubric="prompts/spec-gate-observe.md", target=str(spec),
         latency_ms=106_000, verdict="GO", provider="opencode",
     )
 
     call = stored(store, "08")["gate_calls"][0]
-    assert call["id"] == "8.1-a1-fidelity"
-    assert call["stage"] == "fidelity" and call["spec"] == "8.1"
+    assert call["id"] == "8.1-a1-spec-gate-observe"
+    assert call["stage"] == "spec-gate-observe" and call["spec"] == "8.1"
     assert call["model_family"] == "deepseek" and call["latency_ms"] == 106_000
     assert call["verdict"] == "GO" and call["failure_cause"] is None
 
@@ -222,7 +239,7 @@ def test_a_killed_gate_is_not_a_verdict(stub_sink):  # noqa: F811
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
     metrics.record_gate_call(
-        model="m", rubric="prompts/fidelity-rubric.md", target=str(spec),
+        model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
         latency_ms=143_000, cause="timeout", detail="killed after 143.0s", provider="opencode",
     )
 
@@ -235,16 +252,16 @@ def test_a_second_round_is_a_second_gate_call_not_an_overwrite(stub_sink):  # no
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     metrics.record_spec_round(str(spec))
-    metrics.record_gate_call(model="m", rubric="prompts/fidelity-rubric.md", target=str(spec),
+    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
                              latency_ms=1, verdict="NO-GO")
 
     spec.write_text("---\nfeature: demo\n---\n- R8.1.1 rewritten\n", encoding="utf-8")
     metrics.record_spec_round(str(spec))
-    metrics.record_gate_call(model="m", rubric="prompts/fidelity-rubric.md", target=str(spec),
+    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
                              latency_ms=2, verdict="GO")
 
     calls = stored(store, "08")["gate_calls"]
-    assert [c["id"] for c in calls] == ["8.1-a1-fidelity", "8.1-a2-fidelity"]
+    assert [c["id"] for c in calls] == ["8.1-a1-spec-gate-observe", "8.1-a2-spec-gate-observe"]
 
 
 def test_a_call_outside_any_phase_records_nothing(stub_sink):  # noqa: F811
@@ -252,16 +269,86 @@ def test_a_call_outside_any_phase_records_nothing(stub_sink):  # noqa: F811
 
 
 def test_the_spec_path_wins_over_a_temp_bundle_target(stub_sink, monkeypatch):  # noqa: F811
-    """spec-review judges a diff bundle in /tmp; only the caller knows which spec that is."""
+    """The spec gate judges a diff bundle in /tmp; only the caller knows which spec that is."""
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.3", "- R8.3.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(spec))
 
-    metrics.record_gate_call(model="m", rubric="prompts/spec-review-rubric.md",
+    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-triage.md",
                              target="/tmp/bundle.XXXX", latency_ms=5, verdict="GO")
 
     call = stored(store, "08")["gate_calls"][0]
-    assert call["spec"] == "8.3" and call["stage"] == "spec-review"
+    assert call["spec"] == "8.3" and call["stage"] == "spec-gate-triage"
+
+
+def test_a_stage_with_no_rubric_to_read_still_names_itself(stub_sink):  # noqa: F811
+    """The kill trap and the decide step have no rubric. `unknown` would merge them with each other
+    and with every other rubric-less call, which is the one thing the stage field must not do — the
+    spec gate makes two calls and "which of them was killed" is the whole reason the record exists."""
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    metrics.record_gate_call(model="m", rubric=None, stage="spec-gate-triage", target=str(spec),
+                             cause=metrics.HOOK_KILLED, detail="killed mid-call")
+
+    call = stored(store, "08")["gate_calls"][0]
+    assert call["stage"] == "spec-gate-triage"
+    assert call["verdict"] == "killed" and call["failure_cause"] == "killed-by-harness"
+
+
+def test_a_pass_that_reaches_no_verdict_is_not_recorded_as_a_rejection(stub_sink):  # noqa: F811
+    """The observe pass answers with `observations` and is told it cannot block. An empty verdict
+    would be recorded NO-GO — a rejection it never issued, on every single spec write."""
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
+                             latency_ms=7, verdict=metrics.NO_VERDICT)
+
+    assert stored(store, "08")["gate_calls"][0]["verdict"] != "NO-GO"
+
+
+def test_the_filters_own_arithmetic_is_in_the_ledger(stub_sink, monkeypatch):  # noqa: F811
+    """The number this redesign is judged by. A filter that blocks everything and a filter that
+    blocks nothing must be distinguishable without reading a transcript."""
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(spec))
+
+    metrics.record_triage_decision(spec_path=str(spec), observations=9, blocking=2, notes=7,
+                                   approved=False)
+
+    call = stored(store, "08")["gate_calls"][0]
+    assert call["stage"] == metrics.TRIAGE_DECIDE_STAGE and call["verdict"] == "NO-GO"
+    assert "observations=9 blocking=2 notes=7" in call["note"]
+
+
+def test_the_decide_step_records_from_where_the_verdict_is_derived(stub_sink, monkeypatch):  # noqa: F811
+    """Through the real CLI the hook runs, not through the function directly: the emission has to
+    survive being reached by `spec_gate_triage.py decide`, which is where the counts exist."""
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.2", "- R8.2.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(spec))
+    observations = spec.parent / "obs.json"
+    classifications = spec.parent / "cls.json"
+    observations.write_text(json.dumps({"observations": [
+        {"id": "o1", "statement": "one"}, {"id": "o2", "statement": "two"},
+    ]}), encoding="utf-8")
+    classifications.write_text(json.dumps({"classifications": [
+        {"id": "o1", "category": "note", "why": "fine"},
+        {"id": "o2", "category": "contradiction", "why": "cannot both hold"},
+    ]}), encoding="utf-8")
+
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, str(ROOT / "scripts" / "spec_gate_triage.py"),
+         "decide", str(observations), str(classifications)],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert done.returncode == 1  # BLOCKED, and the decision still reached stdout first
+    assert json.loads(done.stdout)["verdict"] == "BLOCKED"
+    call = stored(store, "08")["gate_calls"][0]
+    assert "observations=2 blocking=1 notes=1" in call["note"]
 
 
 # --- verification attempts, suite size, phase boundaries --------------------------------------------
@@ -429,7 +516,7 @@ def test_the_cli_exits_zero_when_the_record_cannot_be_written(stub_sink, monkeyp
 
     for args in (
         ("spec-round", str(spec)),
-        ("gate-killed", "--stage", "fidelity", "--spec-path", str(spec)),
+        ("gate-killed", "--stage", "spec-gate-observe", "--spec-path", str(spec)),
         ("verifier-attempt", str(spec.parents[2])),
         ("phase-open", str(spec)),
         ("phase-close", str(spec)),
@@ -471,7 +558,7 @@ def run_gate(project: Path, spec: Path, provider: str, stdout=None) -> subproces
     binary.parent.mkdir(exist_ok=True)
     binary.write_text(PROVIDERS[provider], encoding="utf-8")
     binary.chmod(0o755)
-    rubric = project / "fidelity-rubric.md"
+    rubric = project / "spec-gate-observe.md"
     rubric.write_text("Return JSON with a verdict.", encoding="utf-8")
     streams = ({"capture_output": True} if stdout is None
                else {"stdout": stdout, "stderr": subprocess.DEVNULL})
@@ -492,7 +579,7 @@ def test_the_runner_records_the_call_it_just_made(stub_sink):  # noqa: F811
     assert run_gate(project, spec, "good").returncode == 0
 
     call = stored(store, "08")["gate_calls"][0]
-    assert call["stage"] == "fidelity" and call["spec"] == "8.1"
+    assert call["stage"] == "spec-gate-observe" and call["spec"] == "8.1"
     assert call["model"] == "deepseek/deepseek-chat" and call["model_family"] == "deepseek"
     assert call["verdict"] == "GO" and call["failure_cause"] is None
     assert isinstance(call["latency_ms"], int) and call["latency_ms"] >= 0
@@ -556,10 +643,10 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     metrics.record_phase_open(phase_dir)
     metrics.record_spec_round(str(spec))
     metrics.record_gate_call(model="deepseek/deepseek-chat", model_family="deepseek",
-                             rubric="prompts/fidelity-rubric.md", target=str(spec),
+                             rubric="prompts/spec-gate-observe.md", target=str(spec),
                              latency_ms=106_000, verdict="GO", provider="opencode")
     metrics.record_gate_call(model="deepseek/deepseek-chat", model_family="deepseek",
-                             rubric="prompts/spec-review-rubric.md", target=str(spec),
+                             rubric="prompts/spec-gate-triage.md", target=str(spec),
                              latency_ms=143_000, cause="timeout", detail="killed",
                              provider="opencode")
     metrics.open_verification_attempt(phase_dir)

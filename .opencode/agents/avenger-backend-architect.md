@@ -44,7 +44,7 @@ invent one and bury it in an implementation.
 
 You receive **one approved spec** at
 `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`. It reaches you only when
-`fidelity_verdict != NO-GO` **and** `review_status: approved`. Your job is red → green, for that spec
+`spec_gate: approved` **and** `review_status: approved`. Your job is red → green, for that spec
 only — you write both halves.
 
 **`skills/ponytail` is injected into you automatically** by the `SubagentStart` hook — the minimalism
@@ -82,6 +82,13 @@ cross-family reviewer on every verifier attempt and the sidecar is not — the r
 cost are in `skills/tdd` and `skills/pipeline-conventions` § *The document read path*.
 
 ## Implementation Workflow (per spec)
+
+   **Read `spec-notes.md` beside it, if one exists.** It is the spec gate's **known-open list**:
+   observations it recorded and deliberately did **not** block on. They are context, not
+   requirements — the spec's `## Requirements` section is the contract. Use your judgement, and do
+   not add a test, a requirement or a behavior because a note mentioned it: notes never block, and
+   treating one as an obligation is how the ratchet this gate replaced comes back through the side
+   door.
 
 1. **Read the spec end-to-end.** Enumerate its `R<n>.<k>.<m>` requirements and the seam each one is
    observable at. That list is your slice queue.

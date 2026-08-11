@@ -28,7 +28,7 @@ proceed, or follow `route_back` and retry the failed stage. One call replaces th
 ### Flow it drives
 ```
 task-analyst → solution-architect → implementation-planner → spec-writer
-  → (fidelity gate auto) → (spec-review auto)                      # per spec
+  → (the spec gate: observe → triage → decide, auto)              # per spec
   → per phase, per spec: backend/frontend-architect (tests + code, test-first)
   → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
                        LOCKS the suite)  → handover
@@ -38,7 +38,7 @@ task-analyst → solution-architect → implementation-planner → spec-writer
 The ship gate runs **before** the triage on purpose: a defect it catches that no avengers gate
 covers is the most valuable thing the retrospective can record about the pipeline.
 Route-backs it must honor (all already emitted by the gates):
-- fidelity/spec-review **NO-GO** → back to `avenger-spec-writer`, then re-gate — scoped to the spec's
+- the spec gate **blocked** → back to `avenger-spec-writer`, then re-gate — scoped to the spec's
   diff once it has been implemented (`commands/avenger-run.md` §6 names the cases that still owe a
   full pass).
 - verifier code failure → back to `avenger-backend-architect`.
@@ -81,7 +81,7 @@ So the orchestrator is **`commands/avenger-run.md`**, which turns the main sessi
 orchestrator. It is not the "static list of stages" this file previously dismissed: it branches on
 gate verdicts and retries, because the routing lives in the command body and the *position* comes from
 `scripts/pipeline_state.py` — a deterministic resolver that reads spec frontmatter stamps
-(`fidelity_verdict`, `review_status`, `status`) and `verdict.json` and returns the one stage the
+(`spec_gate`, `review_status`, `status`), `verdict.json` and `amendments.json`, and returns the one stage the
 feature owes next. Artifacts are the state, so a run resumes across `/clear`, compaction, or a new
 session.
 

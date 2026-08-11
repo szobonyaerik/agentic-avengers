@@ -9,8 +9,34 @@ How the Verifier turns "the phase isn't fully green" into a routed, structured v
 fixing anything itself.
 
 ## Pre-flight
+
 Confirm your model family ≠ the implementer's family. If equal → emit `fail` with reason
 `same-family-verification` and stop.
+
+Then run the **mechanical pre-check**, which owns what used to be a quarter of this stage's output:
+
+```bash
+python3 scripts/verifier_precheck.py <phase-dir>
+python3 scripts/amendments.py due <phase-dir>       # security amendments are never batched
+python3 scripts/verifier_attempts.py check <phase-dir>
+```
+
+**Bookkeeping is not a finding any more.** Twelve of 46 findings measured across 8 phases (26%, and
+45% on the worst) were about gate stamps, traceability rows and spec headings — two whole attempts
+produced nothing else, at roughly 70 minutes and ~410k tokens for four stamp-freshness observations.
+All of it was mechanically decidable, and `verifier_precheck.py` decides it on every commit. If it
+reports something, say so and let it be fixed mechanically; do **not** turn it into a `verdict.json`
+finding and do not spend an attempt on it.
+
+**Three attempts, and route-backs are bundled.** 16 of 20 re-attempts were this stage routing back
+to itself. Raise everything you can see in one pass, with your uncertainty stated, rather than
+holding a finding for the next attempt. At the cap: carry the remainder as known-open in
+`handover.md`, waive them explicitly, or escalate — a fourth attempt is not one of the three.
+
+**An open amendment scopes the re-verification.** `amendments.py scope <phase-dir>` prints the
+requirement ids a post-verification change touched; verify **those**, not the phase. Record the
+amendment ids you folded in as `amendments` in the verdict, and close each with
+`amendments.py close <phase-dir> <A-id> --evidence <path>`.
 
 ## Triage each non-green *or gamed* result
 Because the implementer authors its own tests, you triage two kinds of problem: tests that don't pass,
@@ -103,6 +129,11 @@ Within that review set, flag as a `wrong/gamed test`:
   side channel instead of the public interface.
 - **Missing negative/edge** — a requirement whose acceptance criteria name a failure condition that no
   test covers.
+- **Unrealistically-shaped external identifiers** — a fixture whose values for an external system's
+  identifiers have a shape no real deployment produces. 1,009 passing tests used ids an order of
+  magnitude smaller than the real ones, against an `int32` column, and a credential-refusal path
+  raised before it could fire: the control shipped non-functional behind a green suite, and the
+  defect was found by the delivery gate driving a real value, not by any of those tests.
 A gamed test is a `fail` even when the suite is green.
 
 ## Record which stage found each defect
@@ -154,7 +185,11 @@ artifact class the pipeline produces. Two rules keep it from growing without any
   rather than acting on, an ambiguity, a scope note. It is not a place to narrate `tests`,
   `coverage`, `findings` or `test_quality` a second time in sentences; every consumer of this file
   reads the structured fields. One measured phase's `report` was 12,991 characters.
-- **The schema is frozen.** Add a finding, not a bespoke top-level key. One feature's verdicts grew
+- **The schema is frozen.** Add a finding, not a bespoke top-level key. `amendments` is the one
+  extension since it was frozen, and it was made **here, at the schema**, which is the sanctioned way
+  and the only one: it is an array of amendment **ids** — the records themselves live in
+  `amendments.json`, so the verdict gains one short line rather than a nested ledger. A verdict then
+  reads *verified at attempt N, plus amendments A1..An*. One feature's verdicts grew
   `judgement_w29`, `judgement_synchronisation_audit`, `judgement_with_for_update` and
   `locked_file_audit` — four keys no reader knew to look for, which is the same as not recording
   them. If something genuinely has no home in the schema, it is a `finding` or it is a line in
@@ -223,6 +258,7 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
   "attempt": 1,
   "superseded_attempts": [ { "attempt": 1, "verdict": "fail", "outcome": "<one line>",
                              "archived_to": "verdict-attempt-1.json" } ],
+  "amendments": ["A1", "A2"],
   "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say",
   "run": { "at": "YYYY-MM-DDThh:mm:ssZ", "verifier_family": "<B>", "implementer_family": "<A>",
            "cross_family_ok": true },

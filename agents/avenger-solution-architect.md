@@ -90,7 +90,7 @@ The major pieces this feature introduces or changes, each with a one-line respon
 The path through the system from entry to output (short ordered list or prose).
 
 ## Key decisions & trade-offs
-Each decision: the choice, why it wins, and what it costs. (The fidelity gate checks phase specs
+Each decision: the choice, why it wins, and what it costs. (The spec gate checks phase specs
 against these — be explicit.)
 
 ## Interfaces & contracts

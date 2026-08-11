@@ -157,6 +157,15 @@ See [tests.md](tests.md) for good/bad examples and [mocking.md](mocking.md) for 
 - **Tautological** — the assertion recomputes the expected value the way the code does
   (`assert add(a, b) == a + b`, a hand-derived snapshot, a constant asserted equal to itself), so it
   passes by construction and can never disagree with the code. Expected values must be independent.
+- **Unrealistically-shaped external identifiers** — a fixture whose ids for an *external* system (a
+  chat or user id from another platform, an account number, a token, a key) have a shape no real
+  deployment produces. **1,009 tests passed** against Telegram ids around 970 million while real
+  supergroup ids are an order of magnitude larger and the column was `int32`; a `/setkey` refusal
+  raised `DataError: value out of int32 range` before it could fire, so the pasted credential stayed
+  visible in the group. Every one of those tests was green and none could see it. Where a spec pins
+  an example for an external identifier, use **that** shape; where it does not, use a value a real
+  deployment produces — at the magnitude, length and character set the real thing has — and prefer a
+  named constant in the fixture over a literal, so the shape has one place to be corrected.
 - **Horizontal slicing** — writing all tests first, then all implementation. Bulk tests verify
   *imagined* behavior; they go insensitive to real changes and lock you into test structure before you
   understand the implementation. Work in **vertical slices** — one test → one implementation → repeat.

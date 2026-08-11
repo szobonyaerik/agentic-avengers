@@ -32,14 +32,22 @@ whole review set.
    the public interface). The tell: it would break on a pure refactor that changed no behavior.
 3. **Missing negative/edge** — a requirement whose acceptance criteria name a failure or edge
    condition that no test in the bundle exercises.
-4. **Coverage gap** — judged against the requirement's `binding:`, never against the bare id:
+4. **Unrealistically-shaped external identifiers** — a fixture whose values for an *external*
+   system's identifiers (a chat or user id from another platform, an account number, a token, a key)
+   have a shape no real deployment produces: too small, too short, the wrong character set. This is a
+   `gamed-test` finding, not a style note. A measured case: **1,009 passing tests** used ids around
+   970 million where the real ones are an order of magnitude larger, the column was `int32`, and a
+   credential-refusal path raised before it could fire — the control shipped non-functional behind a
+   green suite. Judge the shape against what the spec's `Interfaces / contracts` pins, or against
+   what the external system actually emits when the spec pins nothing.
+5. **Coverage gap** — judged against the requirement's `binding:`, never against the bare id:
    - `binding: integration` — no passing test maps to it.
    - `binding: e2e` — no journey row in `test-mapping.md` lists it, or the journey listing it is red.
      It is **not** a gap that it has no test of its own; a journey deliberately carries several ids.
    - `binding: none` — never a gap. It is a structural or build-time property the spec says gets no
      test at all.
    Also a gap: a test present in the review set but absent from `test-mapping.md`.
-5. **Code issue** — a failing test whose assertion is right and whose production code is wrong.
+6. **Code issue** — a failing test whose assertion is right and whose production code is wrong.
 
 A gamed or wrong test is a **fail even when the whole suite is green**. That is the point of this
 review.

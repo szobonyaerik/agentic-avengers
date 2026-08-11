@@ -3,6 +3,7 @@
     "SubagentStart": [
       {
         "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_skills.sh\"", "timeout": 15 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_ponytail.sh\"", "timeout": 10 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_lessons.sh\"", "timeout": 10 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_activity.sh\"", "timeout": 10 },
@@ -28,8 +29,7 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_fidelity.sh\"", "timeout": 420 },
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_spec_review.sh\"", "timeout": 420 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_spec_gate.sh\"", "timeout": 720 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_verifier.sh\"", "timeout": 180 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_mutation.sh\"", "timeout": 600 }
         ]

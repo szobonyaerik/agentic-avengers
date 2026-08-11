@@ -71,7 +71,7 @@ Known risks and how the phase ordering mitigates them; areas likely to need iter
 
 ## Notes for the Spec Writer
 Anything that must stay consistent across phases — shared contracts, naming, sequencing — so the
-per-phase specs remain coherent (the fidelity gate checks each spec against these and the overview).
+per-phase specs remain coherent (the spec gate checks each spec against these and the overview).
 ```
 
 ## Guidelines

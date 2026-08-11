@@ -31,12 +31,15 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 MUTATION_MIN_SCORE="${MUTATION_MIN_SCORE:-0.85}"
-MUTATION_POLICY="${MUTATION_POLICY:-off}"
+# Default `advisory`, matching gate_ci.sh — the two must not disagree about what runs. Advisory
+# reports the score and its survivors and never blocks; it is an extra deterministic signal, not the
+# independence mechanism. `off` stays available and runs no mutation tool anywhere.
+MUTATION_POLICY="${MUTATION_POLICY:-advisory}"
 
 case "$MUTATION_POLICY" in
   enforce|advisory) ;;
   off)
-    echo "mutation: skipped (MUTATION_POLICY=off, the default). Independence rests on the Verifier's test-quality review." >&2
+    echo "mutation: skipped (MUTATION_POLICY=off). Independence rests on the Verifier's test-quality review." >&2
     exit 0 ;;
   *)
     echo "mutation: MUTATION_POLICY='$MUTATION_POLICY' is not one of enforce|advisory|off (fail closed)" >&2

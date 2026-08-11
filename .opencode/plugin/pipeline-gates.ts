@@ -20,8 +20,7 @@ declare const process: any
 // bad idea.
 
 const HOOKS = [
-  "hook_fidelity.sh",
-  "hook_spec_review.sh",
+  "hook_spec_gate.sh",
   "hook_verifier.sh",
   "hook_mutation.sh",
 ] as const
