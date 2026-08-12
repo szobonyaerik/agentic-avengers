@@ -87,7 +87,12 @@ with the verdict taken out of the model's hands entirely:
 1. **Observe** (`prompts/spec-gate-observe.md`) — reports every observation, with **no verdict
    pressure**. It answers with `observations`, never `verdict`; it is told it is not a gate and it
    cannot block. A reviewer told to be conservative follows that literally, so the conservatism is
-   removed from the pass that reads.
+   removed from the pass that reads. It is handed a `## CONTEXT (reference only)` block
+   (`scripts/spec_gate_context.py`) carrying **exactly** what the read path grants it — the
+   overview's `## Contracts and Decisions` section and the *immediately prior* phase's contract card,
+   never the whole overview and never `handover-archive.md`. Without it half of `contradiction` is
+   undetectable, and a closed set of four with an unobservable member is three items and a claim;
+   absent context is normal, named on stderr, and never fails the gate.
 2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation against
    the closed set. Its tie-break is the reverse of the old one: **when unsure, it is a note.**
 3. **Decide** (`scripts/spec_gate_triage.py`) — derives the verdict deterministically. **No model
@@ -235,7 +240,12 @@ written procedure and **zero invocations** for the same reason.
 skills in one `Required skills` line and `scripts/skill_contract.py` reads them out of it. There is
 no table: a hand-maintained list here was a second statement of a fact the definitions already carry,
 and a second statement of a fact is exactly the promise-versus-enforcement gap this item exists to
-close. Adding `skills/<name>` to an agent is enough to make it required.
+close. Adding `skills/<name>` to that line is enough to make it required, and **only that line
+counts** — a skill an agent names in *prose* is not a requirement. The Verifier's definition names
+`skills/mutation-interpret` to say it applies only when the mutation gate is on, and both
+implementers name `skills/ponytail` to say the hook injects it; read as requirements, that last one
+made `PONYTAIL_OFF=1` a permanent phase wedge. An agent with no such line has an **empty** contract,
+which `required_skills.py verify` reports rather than guessing at.
 
 **The load is OBSERVED, never self-reported.** `scripts/hook_skill_load.sh` seeds each stage's
 contract at `SubagentStart` and flips an entry on a real `Read`/`Skill` of `skills/<name>/SKILL.md`,

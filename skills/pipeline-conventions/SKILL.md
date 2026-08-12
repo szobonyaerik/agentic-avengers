@@ -172,7 +172,13 @@ Three consequences worth stating outright:
   1. **Observe** (`prompts/spec-gate-observe.md`) — reports every observation it has, with **no
      verdict pressure at all**. It answers with `observations`, not `verdict`; it cannot block, and it
      is told in as many words that it is not a gate. A reviewer told to be conservative follows that
-     literally, so the conservatism is removed from the pass that reads.
+     literally, so the conservatism is removed from the pass that reads. It is handed a
+     `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) carrying **exactly** the
+     extents the read path grants it — the overview's `## Contracts and Decisions` section and the
+     *immediately prior* phase's contract card, never the whole overview, never every prior phase,
+     never `handover-archive.md`. Half of `contradiction` is a contract declared in those documents,
+     so without them a closed set of four is three items and a claim. It is reference only: absent
+     context is normal (phase 1 has no prior card), named on stderr, and never fails the gate.
   2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation
      against the closed set. It emits `classifications`, not a verdict. Its tie-break is the reverse
      of the old one: **when unsure, it is a note.**
@@ -364,7 +370,13 @@ skill.
 them in one `Required skills` line and `scripts/skill_contract.py` reads them out of it. There is no
 table anywhere: a hand-maintained list was a second statement of a fact the definitions already
 carry, and a second statement of a fact is precisely the promise-versus-enforcement gap this section
-removes. **Adding `skills/<name>` to an agent is enough to make it required.** A skill's *directory*
+removes. **Adding `skills/<name>` to that line is enough to make it required** — and only that line
+counts: a `skills/<name>` named in an agent's *prose* is not a requirement, because prose says things
+a contract does not. `agents/avenger-verifier.md` names `skills/mutation-interpret` in order to say it
+applies only when the mutation gate is on, and both implementers name `skills/ponytail` in order to
+say the hook injects it — read as requirements, that last one turned `PONYTAIL_OFF=1` into a
+permanent phase wedge. An agent with no such line has an **empty** contract, which
+`required_skills.py verify` reports rather than guessing at. A skill's *directory*
 is what makes a reference real, never a readable `SKILL.md` inside it — keying on the file would make
 a skill whose body went missing quietly stop being required, which is the silent fallback the loud
 blocker below exists to replace.

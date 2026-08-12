@@ -8,12 +8,25 @@ something also says what SHOULD have been loaded.
 
 That "should" is read out of `agents/<stage>.md` itself. A hand-maintained table would be a second
 statement of the same fact, and the two would drift — the failure this file exists to avoid is a
-document claiming a requirement the agent no longer has. Adding `skills/<name>` to an agent is
-therefore enough to make it required; there is no list to remember.
+document claiming a requirement the agent no longer has. Adding `skills/<name>` to an agent's
+declared line is therefore enough to make it required; there is no list to remember.
 
-The reading is deliberately literal: a `skills/<name>` reference in the agent's own definition, with
-`<name>` an existing directory under `skills/`. An agent that names no skill has an empty contract,
-which is the honest answer rather than a guessed one.
+**The reading is the DECLARED LINE, not the whole file.** Every canonical agent carries one
+`Required skills` line in its header and says of it, in as many words, that the line is the
+contract. Scanning the whole document instead made prose load-bearing, and prose says things a
+contract does not: `agents/avenger-verifier.md` names `skills/mutation-interpret` *in order to say
+it applies only if the project turned the mutation gate on*, and both implementers name
+`skills/ponytail` *in order to say it is injected automatically* — a sentence explaining that an
+off-switchable hook delivers a skill was read as requiring the stage to load it, which turned
+`PONYTAIL_OFF=1` into a phase wedge. One statement of the contract, in the one place three
+documents already say it lives.
+
+An agent with no such line has an EMPTY contract. That is the honest answer rather than a guessed
+one, and it is stated rather than silently assumed: `required_skills.py verify` fails on a canonical
+agent that declares no line, because an omission there silently shrinks a stage's contract.
+
+`<name>` must be an existing directory under `skills/`, so a declared mention of a removed skill is
+not a requirement nobody can satisfy.
 """
 
 from __future__ import annotations
@@ -22,7 +35,10 @@ import re
 import sys
 from pathlib import Path
 
-#: `skills/<name>` as every agent definition spells it.
+#: THE declared line. One per agent, in its header, and each agent's own text calls it the contract.
+CONTRACT_LINE = re.compile(r"^.*\bRequired skills\b.*$", re.MULTILINE)
+
+#: `skills/<name>` as that line spells it.
 SKILL_REFERENCE = re.compile(r"skills/([a-z0-9][a-z0-9-]*)")
 
 #: Plugin- and namespace-qualified agent types ("plan-build-verify:avenger-verifier") name the same
@@ -60,17 +76,30 @@ def available_skills(root: Path | None = None) -> set[str]:
     return {p.name for p in skills.iterdir() if p.is_dir()}
 
 
-def required_skills(stage: str, root: Path | None = None) -> frozenset[str]:
-    """The skills `stage`'s own definition names. Empty for a stage with no definition."""
+def contract_line(stage: str, root: Path | None = None) -> str | None:
+    """The stage's declared `Required skills` line, or None when it declares none."""
     path = agent_file(stage, root)
     if path is None:
-        return frozenset()
+        return None
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
+        return None
+    match = CONTRACT_LINE.search(text)
+    return match.group(0) if match else None
+
+
+def required_skills(stage: str, root: Path | None = None) -> frozenset[str]:
+    """The skills `stage`'s DECLARED line names. Empty for a stage that declares none.
+
+    Deliberately not the whole file: a prose mention is not a declaration, and reading it as one made
+    every sentence that merely *names* a skill part of the contract.
+    """
+    line = contract_line(stage, root)
+    if line is None:
         return frozenset()
     existing = available_skills(root)
-    return frozenset(name for name in SKILL_REFERENCE.findall(text) if name in existing)
+    return frozenset(name for name in SKILL_REFERENCE.findall(line) if name in existing)
 
 
 def main(argv: list[str] | None = None) -> int:

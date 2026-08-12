@@ -22,9 +22,12 @@ number at which one spec still reads as one increment.
 ## How requirements are counted
 
 A **declaration** is a line whose first content is a requirement id (`R<n>.<k>.<m>`), reached through
-an optional markdown table pipe, list marker and/or bold. All four of these are one declaration:
+an optional markdown table pipe, heading marker, list marker (ordered or unordered) and/or bold. All
+six of these are one declaration:
 
     - R1.1.1 — `binding: e2e` — …
+    1. R1.1.1 — `binding: e2e` — …
+    ### R1.1.1
     **R1.1.1** — …
     R1.1.1 — …
     | R1.1.1 | binding: e2e | … |
@@ -76,27 +79,42 @@ DEFAULT_MAX = 12
 REQUIREMENT_ID = re.compile(r"R\d+\.\d+\.\d+")
 
 #: A DECLARATION - a line whose first content is a requirement id, reached through an optional
-#: markdown table pipe, list marker and/or bold, in that order. `- R1.1.2 — binding: e2e — …`,
-#: `**R1.1.2**` and `| R1.1.2 | binding: e2e | … |` all count; a line that merely mentions an id
-#: mid-sentence ("covers R1.1.1, R1.1.4") does not. `rest` is the remainder of the line, which is
-#: where `verifier_precheck.py` reads the `binding:` - including from a later table cell.
+#: markdown table pipe, heading marker, list marker (ordered `1.`/`1)` or unordered) and/or bold, in
+#: that order. `- R1.1.2 — binding: e2e — …`, `1. R1.1.2 — …`, `### R1.1.2`, `**R1.1.2**` and
+#: `| R1.1.2 | binding: e2e | … |` all count; a line that merely mentions an id mid-sentence
+#: ("covers R1.1.1, R1.1.4") does not. `rest` is the remainder of the line, which is where
+#: `verifier_precheck.py` reads the `binding:` - including from a later table cell.
+#:
+#: The layout set is widened at THIS regex whenever a real one is found, because the alternative is
+#: `unreadable_layout()` failing the gate closed on an ordinary markdown document until its author
+#: re-lays it out. A numbered requirements list and an id-per-heading are both ordinary; going blind
+#: on them is the same defect the table row already caused once.
 #:
 #: This is the ONE declaration regex. verifier_precheck.py imports it; it used to hold its own copy,
 #: and both went blind on table-formatted specs at the same moment, which is what a second copy is
 #: for.
-DECLARATION = re.compile(r"^[ \t]*(?:\|[ \t]*)?(?:[-*+][ \t]+)?(?:\*\*)?(R\d+\.\d+\.\d+)\b(?P<rest>.*)$")
+DECLARATION = re.compile(
+    r"^[ \t]*(?:\|[ \t]*)?(?:\#{1,6}[ \t]+)?(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\*\*)?"
+    r"(R\d+\.\d+\.\d+)\b(?P<rest>.*)$"
+)
 
-REQUIREMENTS_HEADING = re.compile(r"^##+[ \t]*Requirements\b.*$", re.IGNORECASE | re.MULTILINE)
-NEXT_HEADING = re.compile(r"^##+[ \t]+", re.MULTILINE)
+REQUIREMENTS_HEADING = re.compile(r"^(##+)[ \t]*Requirements\b.*$", re.IGNORECASE | re.MULTILINE)
 
 
 def requirements_section(text: str) -> str | None:
-    """The body of the `## Requirements` section, or None when the spec has no such heading."""
+    """The body of the `## Requirements` section, or None when the spec has no such heading.
+
+    The section ends at the next heading of the SAME OR SHALLOWER level, never at a deeper one: a
+    spec that gives each requirement its own `### R1.1.1` heading keeps them inside its
+    `## Requirements` section. Ending at any `##+` truncated such a section to nothing, and a section
+    with no ids in it is not even caught by `unreadable_layout()` - it reads as a clean `0/12`, which
+    is the silent-pass failure this whole check exists to prevent.
+    """
     start = REQUIREMENTS_HEADING.search(text)
     if not start:
         return None
     rest = text[start.end() :]
-    end = NEXT_HEADING.search(rest)
+    end = re.compile(rf"^#{{1,{len(start.group(1))}}}[ \t]+", re.MULTILINE).search(rest)
     return rest[: end.start()] if end else rest
 
 

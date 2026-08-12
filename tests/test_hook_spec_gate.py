@@ -308,6 +308,98 @@ def test_auto_mode_carries_the_sign_off_because_nobody_is_there(project: Path) -
     assert "review_status: approved" in spec.read_text()
 
 
+# ── the CONTEXT the closed blocking set depends on ───────────────────────────
+#
+# `contradiction` is one of the four things that block, and it is defined partly as a statement that
+# breaks a binding contract the overview or the prior phase's card declares. Nothing assembled those,
+# so half that category was undetectable and the closed set was three items and a claim.
+
+
+def observe_target(project: Path) -> str:
+    return (project / "scripts" / "gate_runner.py.targets").read_text().split("=== END ===")[0]
+
+
+@pytest.fixture
+def in_layout(project: Path):
+    """A spec inside `docs/features/<f>/phases/<n>-<slug>/specs/…`, with a feature and a prior phase.
+
+    Yields (project, spec, write_context) — the last one adds the overview and the prior card, so a
+    test can run the same spec with and without them.
+    """
+    phases = project / "docs" / "features" / "demo" / "phases"
+    spec = phases / "2-api" / "specs" / "2.1-a" / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(SPEC.format(status="draft", requirements=ONE_REQUIREMENT))
+
+    def write_context() -> None:
+        (phases.parent / "overview.md").write_text(
+            "# Demo\n\n## Goal\n\nSHIP-THE-THING\n\n"
+            "## Contracts and Decisions\n\n- VAULT-ONLY-TOKENS\n\n## Risks\n\nUNREAD-RISK\n"
+        )
+        (phases / "1-store").mkdir(parents=True)
+        (phases / "1-store" / "handover.md").write_text("# handover\n\n- PUT-IS-IDEMPOTENT\n")
+        (phases / "1-store" / "handover-archive.md").write_text("ARCHIVED-DETAIL\n")
+
+    return project, spec, write_context
+
+
+def test_the_observe_pass_is_given_the_contracts_it_could_be_contradicting(in_layout) -> None:
+    project, spec, write_context = in_layout
+    write_context()
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    target = observe_target(project)
+    assert "## CONTEXT (reference only)" in target
+    assert "VAULT-ONLY-TOKENS" in target
+    assert "PUT-IS-IDEMPOTENT" in target
+    assert "## SPEC UNDER REVIEW" in target, (
+        "without the marker the observe prompt reads the whole input as the spec, and would review "
+        "the context as if it were the document under review"
+    )
+
+
+def test_the_context_carries_only_the_extents_the_read_path_declares(in_layout) -> None:
+    project, spec, write_context = in_layout
+    write_context()
+
+    run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    target = observe_target(project)
+    assert "SHIP-THE-THING" not in target, "the overview's contracts header only, not the document"
+    assert "UNREAD-RISK" not in target
+    assert "ARCHIVED-DETAIL" not in target, "handover-archive.md is the half no stage reads"
+
+
+def test_absent_context_is_normal_and_never_fails_the_gate(in_layout) -> None:
+    """Phase 1 has no prior card and a feature may have no contracts section yet. Omitted and named
+    on stderr, so a gate running with no context is visible rather than silent."""
+    project, spec, _ = in_layout
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    assert "## CONTEXT (reference only)" not in observe_target(project)
+    assert "spec-gate context: absent" in result.stderr
+
+
+def test_the_context_composes_with_the_re_gate_bundle_rather_than_replacing_it(in_layout) -> None:
+    project, spec, write_context = in_layout
+    write_context()
+    run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    body = spec.read_text().replace("status: draft", "status: done")
+    spec.write_text(body.replace("the caller sees a greeting", "the caller sees a salutation"))
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    target = (project / "scripts" / "gate_runner.py.targets").read_text().split("=== END ===")[2]
+    assert "## CONTEXT (reference only)" in target
+    assert "## PREVIOUSLY APPROVED (reference only)" in target
+    assert "## CHANGES SINCE APPROVAL" in target
+
+
 def test_a_write_that_is_not_a_spec_is_ignored(project: Path) -> None:
     other = project / "docs" / "notes.md"
     other.write_text("# not a spec\n")

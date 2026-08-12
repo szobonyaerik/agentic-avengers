@@ -5,7 +5,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
 ---
 
-> **Required skills.** `skills/pipeline-conventions`, `skills/self-improvement` — load each before you start.
+> **Required skills.** `skills/pipeline-conventions`, `skills/tdd`, `skills/self-improvement` — load each before you start.
 > This line is the contract: `scripts/skill_contract.py` derives what this stage requires by reading
 > it here, so there is no second list anywhere to keep in step. Small ones are injected for you at
 > spawn; the rest you open yourself, and opening them is what records the load. A required skill with

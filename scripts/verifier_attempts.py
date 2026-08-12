@@ -99,9 +99,14 @@ def main(argv: list[str] | None = None) -> int:
     latest = records[-1] if records else (0, 0, "?")
     if latest[0] < args.max:
         return WITHIN
-    if latest[2] == "pass" and latest[1] == 0:
-        # At the cap but clean: the cap is on the LOOP, not on a phase that finished on its last
-        # allowed attempt. Failing here would turn a successful third attempt into a stop.
+    if latest[0] == args.max and latest[2] == "pass" and latest[1] == 0:
+        # At the cap but clean: the cap is on the LOOP, not on a phase that finished on its LAST
+        # ALLOWED attempt. Failing here would turn a successful third attempt into a stop.
+        #
+        # Deliberately `== args.max`, not `>=`: an attempt PAST the cap is not an allowed attempt, so
+        # a clean fourth verdict does not get the exemption a clean third does. Read as `>=` this
+        # exemption was the cap's own escape hatch — every attempt after the third could clear it by
+        # eventually passing, which is precisely the unbounded loop the cap exists to stop.
         return WITHIN
     print(
         f"verifier: phase {args.phase_dir.name} is at attempt {latest[0]} of a cap of {args.max}, "

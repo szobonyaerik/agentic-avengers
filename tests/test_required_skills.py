@@ -80,17 +80,38 @@ def test_an_agent_this_pipeline_does_not_own_requires_nothing() -> None:
     assert required_for("") == ()
 
 
-def test_adding_a_skill_to_an_agent_is_enough_to_make_it_required(tmp_path: Path) -> None:
+def test_adding_a_skill_to_an_agents_declared_line_is_enough_to_make_it_required(
+    tmp_path: Path,
+) -> None:
     """The point of deriving it: there is no second list to remember, so the two cannot drift."""
     (tmp_path / "agents").mkdir()
     (tmp_path / "skills" / "tdd").mkdir(parents=True)
     (tmp_path / "skills" / "tdd" / "SKILL.md").write_text("x")
     agent = tmp_path / "agents" / "avenger-new.md"
-    agent.write_text("Load `skills/tdd` before you start.\n")
+    agent.write_text("> **Required skills.** `skills/tdd` — load each before you start.\n")
 
     import skill_contract
 
     assert skill_contract.required_skills("avenger-new", root=tmp_path) == frozenset({"tdd"})
+
+
+def test_the_bug_hunter_declares_the_tdd_procedure_its_own_prose_makes_mandatory() -> None:
+    """It is told to write the regression test FIRST and watch it fail. Reading that requirement out
+    of the prose was the shape being removed; the fix is to declare it, not to scan for it."""
+    assert "tdd" in required_for("avenger-bug-hunter")
+
+
+def test_an_agent_with_no_declared_line_is_a_verify_failure(tmp_path: Path) -> None:
+    """An empty contract and a forgotten line read identically at the audit, so the omission is
+    named rather than passed."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "agents" / "avenger-x.md").write_text("Load `skills/tdd` at some point.\n")
+
+    from required_skills import undeclared
+
+    assert undeclared(tmp_path) == ["avenger-x"]
+    assert main(["verify", "--root", str(tmp_path)]) == 1
 
 
 def test_a_skill_whose_body_vanished_is_still_required() -> None:
@@ -105,13 +126,49 @@ def test_a_skill_whose_body_vanished_is_still_required() -> None:
     assert "no-such-skill" not in skill_contract.available_skills(root)
 
 
-def test_a_skill_another_hook_owns_is_not_delivered_twice() -> None:
+def test_a_skill_another_hook_owns_is_not_delivered_twice(tmp_path: Path) -> None:
     """`scripts/hook_ponytail.sh` owns ponytail and records its own load. Delivering it here as well
     would cost twice and would put the minimalism persona back after `PONYTAIL_OFF=1` — an off switch
-    that does not switch anything off."""
-    assert "ponytail" in required_for("avenger-backend-architect")
-    assert "ponytail" not in to_deliver("avenger-backend-architect")
-    assert "tdd" in to_deliver("avenger-backend-architect")
+    that does not switch anything off.
+
+    Driven against a synthetic agent because no real one DECLARES ponytail: both implementers name it
+    only in prose, to say the hook injects it."""
+    (tmp_path / "agents").mkdir()
+    for skill in ("ponytail", "tdd"):
+        (tmp_path / "skills" / skill).mkdir(parents=True)
+        (tmp_path / "skills" / skill / "SKILL.md").write_text("x")
+    (tmp_path / "agents" / "avenger-x.md").write_text(
+        "> **Required skills.** `skills/ponytail`, `skills/tdd` — load each before you start.\n"
+    )
+
+    assert "ponytail" in required_for("avenger-x", tmp_path)
+    assert "ponytail" not in to_deliver("avenger-x", tmp_path)
+    assert "tdd" in to_deliver("avenger-x", tmp_path)
+
+
+def test_ponytail_off_leaves_an_implementers_phase_clean(measured, monkeypatch) -> None:
+    """A documented off switch must not become a permanent phase wedge. `skills/ponytail` is named in
+    the implementers' PROSE, not on their declared line, so it is not part of the contract, nothing
+    seeds it required, and the only hook that could ever record it is the one `PONYTAIL_OFF=1` turns
+    off. Read from the whole file it was seeded `required: true, loaded: false` and the audit blocked
+    handover forever."""
+    project, env, _ = measured
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.setenv("PONYTAIL_OFF", "1")
+    monkeypatch.delenv("SKILLS_OFF", raising=False)
+    import metrics_sink
+    import pipeline_metrics
+
+    monkeypatch.setattr(metrics_sink, "_writer_unusable", False)
+    for skill in required_for("avenger-backend-architect"):
+        pipeline_metrics.record_skill_load(
+            "01", stage="avenger-backend-architect", skill=skill, evidence="Read SKILL.md"
+        )
+
+    assert "ponytail" not in required_for("avenger-backend-architect")
+    assert main(["audit"]) == 0
 
 
 def test_every_required_skill_exists_in_this_repo() -> None:
@@ -123,7 +180,9 @@ def test_a_missing_required_skill_is_reported(tmp_path: Path) -> None:
     (tmp_path / "agents").mkdir()
     (tmp_path / "skills" / "tdd").mkdir(parents=True)
     (tmp_path / "skills" / "tdd" / "SKILL.md").write_text("x")
-    (tmp_path / "agents" / "avenger-x.md").write_text("uses `skills/tdd`\n")
+    (tmp_path / "agents" / "avenger-x.md").write_text(
+        "> **Required skills.** `skills/tdd` — load each before you start.\n"
+    )
     (tmp_path / "skills" / "tdd" / "SKILL.md").write_text("   ")
 
     assert main(["verify", "--root", str(tmp_path)]) == 1
@@ -140,7 +199,8 @@ def plugin(tmp_path: Path) -> Path:
     shutil.copytree(ROOT / "scripts", root / "scripts")
     (root / "agents").mkdir()
     (root / "agents" / "avenger-backend-architect.md").write_text(
-        "Load `skills/pipeline-conventions`, `skills/tdd` and `skills/self-improvement`.\n"
+        "> **Required skills.** `skills/pipeline-conventions`, `skills/tdd`, "
+        "`skills/self-improvement` — load each before you start.\n"
     )
     (root / "skills").mkdir()
     for skill in ("pipeline-conventions", "tdd", "self-improvement"):

@@ -92,6 +92,25 @@ def test_at_the_cap_and_clean_is_NOT_a_stop(phase: Path) -> None:
     assert main(["check", str(phase)]) == 0
 
 
+def test_a_fourth_attempt_is_refused(phase: Path) -> None:
+    """The cap has to bind the attempt AFTER the last allowed one, or it bounds nothing — and
+    `verification_attempts` is the metric H4 is judged on."""
+    for n in (1, 2, 3):
+        archive(phase, n, 4)
+    verdict(phase, 4, 2)
+    assert main(["check", str(phase)]) == 1
+
+
+def test_a_fourth_attempt_is_refused_even_when_it_passes_cleanly(phase: Path) -> None:
+    """The at-the-cap-but-clean exemption belongs to the LAST ALLOWED attempt only. Read as "at or
+    past the cap" it was the cap's own escape hatch: every attempt beyond the third could clear it by
+    eventually passing, which is the unbounded loop the cap exists to stop."""
+    for n in (1, 2, 3):
+        archive(phase, n, 4)
+    verdict(phase, 4, 0, result="pass")
+    assert main(["check", str(phase)]) == 1
+
+
 def test_a_pass_still_carrying_findings_is_not_treated_as_clean(phase: Path) -> None:
     archive(phase, 1, 6)
     archive(phase, 2, 2)

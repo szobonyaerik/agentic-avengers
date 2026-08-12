@@ -172,10 +172,26 @@ case "$V" in
     fi
     exit 0 ;;
   fail)
-    # At the attempt cap this says so first: 80% of re-attempts measured across one feature were the
-    # Verifier routing back to itself, and the remedy at the cap is to carry, waive or escalate —
-    # never a fourth attempt.
-    python3 "$SD/verifier_attempts.py" check "$PHASE_DIR" || true
+    # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts
+    # measured across one feature were the Verifier routing back to itself. This used to be
+    # `|| true` — a cap that printed a notice and then routed back anyway, which is a limit that
+    # never fires while reading as one that does, and it would have made H4's
+    # `verification_attempts` metric look bounded by a bound that did nothing.
+    #
+    # The route-back below is deliberately NOT reached at the cap: the three honest remedies are to
+    # carry the remainder as known-open in handover.md, waive it explicitly, or escalate. Break-glass
+    # still applies through fail(), because escapable and audited beats a hard wedge.
+    python3 "$SD/verifier_attempts.py" check "$PHASE_DIR"; cap_rc=$?
+    if [ "$cap_rc" -eq 1 ]; then
+      fail "verifier:attempt-cap" \
+        "verifier: the verification loop is at its cap (the series is above) — a further attempt is" \
+        "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, waive them explicitly" \
+        "(scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to a human."
+    elif [ "$cap_rc" -ne 0 ]; then
+      fail "verifier:attempt-cap" \
+        "verifier: the attempt cap could not be decided (cause above). A cap that cannot be read" \
+        "bounds nothing, so this fails closed."
+    fi
     fail "verifier" "verifier: verdict.json is 'fail' — route back per its findings:" \
       "$(jq -r '.routed[]? | "  - \(.to): \(.reason) (\(.spec_id // "-")) finding \(.finding_id)"' "$VERDICT" 2>/dev/null)" ;;
   *)

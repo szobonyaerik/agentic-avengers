@@ -97,7 +97,9 @@ POINTER = "pointer"
 #: twice they cost twice, and — worse — that hook's off switch would stop meaning what it says:
 #: `PONYTAIL_OFF=1` turns off the minimalism persona, and this hook injecting the same body anyway
 #: would put it back. Ownership, not exemption: the owning hook records its own load, so the audit
-#: below still sees one.
+#: below still sees one. No agent declares `skills/ponytail` on its `Required skills` line today —
+#: both implementers name it only in prose, to say the hook injects it — so this maps an ownership
+#: that would matter the moment one did, rather than an exemption anything currently relies on.
 DELIVERED_ELSEWHERE = {"ponytail": "scripts/hook_ponytail.sh"}
 
 
@@ -201,6 +203,17 @@ def audit_gaps(record: dict | None) -> list[str]:
     return gaps
 
 
+def undeclared(root: Path) -> list[str]:
+    """Canonical agents that declare no `Required skills` line at all.
+
+    The contract is read from that one line and nowhere else, so a stage missing it has an EMPTY
+    contract — which is indistinguishable, at the audit, from a stage that legitimately needs
+    nothing. That silence is exactly the shape the derivation replaced, so it is said out loud here
+    rather than guessed at by scanning the agent's prose.
+    """
+    return [stage for stage in stages(root) if skill_contract.contract_line(stage, root) is None]
+
+
 def missing(root: Path) -> list[tuple[str, str]]:
     """(stage, skill) for every required skill that is absent or unreadable."""
     out: list[tuple[str, str]] = []
@@ -298,16 +311,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "audit":
         return _audit(args.all)
 
+    silent = undeclared(args.root)
     gaps = missing(args.root)
-    if not gaps:
+    if not silent and not gaps:
         return OK
-    print(
-        "required_skills: a stage requires a skill that is missing or empty. A required skill that "
-        "is not there is a stage running on whatever the model already believed:",
-        file=sys.stderr,
-    )
-    for stage, skill in gaps:
-        print(f"  ✗ {stage} requires skills/{skill}/SKILL.md", file=sys.stderr)
+    if silent:
+        print(
+            "required_skills: a canonical agent declares no `Required skills` line, so its contract "
+            "reads as empty. An omission there shrinks a stage's contract silently:",
+            file=sys.stderr,
+        )
+        for stage in silent:
+            print(f"  ✗ agents/{stage}.md has no `Required skills` line", file=sys.stderr)
+    if gaps:
+        print(
+            "required_skills: a stage requires a skill that is missing or empty. A required skill "
+            "that is not there is a stage running on whatever the model already believed:",
+            file=sys.stderr,
+        )
+        for stage, skill in gaps:
+            print(f"  ✗ {stage} requires skills/{skill}/SKILL.md", file=sys.stderr)
     return MISSING
 
 

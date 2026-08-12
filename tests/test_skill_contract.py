@@ -14,12 +14,55 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import skill_contract  # noqa: E402
 
 
-def test_the_contract_is_what_the_agent_definition_names():
+def test_the_contract_is_what_the_agent_DECLARES():
     required = skill_contract.required_skills("avenger-verifier")
 
     assert "verifier-triage" in required
     assert "tdd" in required
     assert "ponytail" not in required   # the Verifier is deliberately outside ponytail's reach
+
+
+def test_a_prose_mention_outside_the_declared_line_is_not_a_requirement(tmp_path):
+    """The contract is ONE line. Scanning the whole file made prose load-bearing, and prose says
+    things a contract does not — `agents/avenger-verifier.md` names `skills/mutation-interpret` in
+    order to say it does NOT apply by default, and both implementers name `skills/ponytail` in order
+    to say a hook injects it, which turned `PONYTAIL_OFF=1` into a phase wedge."""
+    (tmp_path / "agents").mkdir()
+    for name in ("tdd", "ponytail", "mutation-interpret"):
+        (tmp_path / "skills" / name).mkdir(parents=True)
+        (tmp_path / "skills" / name / "SKILL.md").write_text("x")
+    (tmp_path / "agents" / "avenger-x.md").write_text(
+        "> **Required skills.** `skills/tdd` — load each before you start.\n"
+        "\n"
+        "`skills/ponytail` is injected into you automatically by the SubagentStart hook.\n"
+        "`skills/mutation-interpret` applies **only if** the project turned the mutation gate on.\n"
+    )
+
+    assert skill_contract.required_skills("avenger-x", root=tmp_path) == frozenset({"tdd"})
+
+
+def test_the_real_divergences_that_prompted_the_narrowing_are_gone():
+    """Both were live: the Verifier required a skill its own definition says does not apply, and the
+    implementers required one whose documented off switch stops anything ever recording it."""
+    assert "mutation-interpret" not in skill_contract.required_skills("avenger-verifier")
+    for implementer in ("avenger-backend-architect", "avenger-frontend-developer"):
+        assert "ponytail" not in skill_contract.required_skills(implementer)
+
+
+def test_an_agent_that_declares_no_line_has_an_empty_contract(tmp_path):
+    """The honest answer, said rather than guessed — `required_skills.py verify` fails on it."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "skills" / "tdd").mkdir(parents=True)
+    (tmp_path / "skills" / "tdd" / "SKILL.md").write_text("x")
+    (tmp_path / "agents" / "avenger-x.md").write_text("Load `skills/tdd` at some point.\n")
+
+    assert skill_contract.contract_line("avenger-x", root=tmp_path) is None
+    assert skill_contract.required_skills("avenger-x", root=tmp_path) == frozenset()
+
+
+def test_every_canonical_agent_declares_its_line():
+    for path in (ROOT / "agents").glob("*.md"):
+        assert skill_contract.contract_line(path.stem) is not None, path.name
 
 
 def test_a_qualified_agent_type_names_the_same_contract():

@@ -46,7 +46,11 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    to give, `prompts/spec-gate-triage.md` classifies against a **closed** four-item blocking set
    (missing requirement, contradiction, untestable criterion, unhandled critical edge case), and
    `scripts/spec_gate_triage.py` derives the verdict — **no model decides whether a spec is blocked**.
-   Everything else is a **note**; notes never block and land in `spec-notes.md`.
+   Everything else is a **note**; notes never block and land in `spec-notes.md`. The observe pass is
+   given a `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) — the overview's
+   `## Contracts and Decisions` section and the immediately prior phase's contract card, and nothing
+   else — because half of `contradiction` is a contract those declare. Absent context is normal and
+   never fails the gate.
 3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and

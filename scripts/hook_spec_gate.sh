@@ -16,7 +16,10 @@
 #      requirement cap and no cost dimension anywhere, so the only answer a rejected spec had was
 #      more text — 25k -> 51k characters across four rejected rounds, measured.
 #   3. OBSERVE (model) — prompts/spec-gate-observe.md reports everything it notices, with NO verdict
-#      to give. It literally cannot block: it answers with `observations`, not `verdict`.
+#      to give. It literally cannot block: it answers with `observations`, not `verdict`. It is given
+#      a `## CONTEXT (reference only)` block (scripts/spec_gate_context.py) carrying the binding
+#      contracts a spec can CONTRADICT, since that is one of the four things that block and it is
+#      undetectable without them.
 #   4. TRIAGE (model, cheaper) + DECIDE (script) — prompts/spec-gate-triage.md classifies each
 #      observation against the CLOSED blocking set, and scripts/spec_gate_triage.py turns those
 #      classifications into the verdict deterministically. **No model decides whether a spec is
@@ -178,8 +181,43 @@ TRIAGE_IN="$(mktemp "${TMPDIR:-/tmp}/spec-gate-triage-in.XXXXXX")"
 DECISION="$(mktemp "${TMPDIR:-/tmp}/spec-gate-decision.XXXXXX")"
 GERR="$(mktemp "${TMPDIR:-/tmp}/spec-gate-stderr.XXXXXX")"
 REPORT="$(mktemp "${TMPDIR:-/tmp}/spec-gate-report.XXXXXX")"
-cleanup () { rm -f "$OBS" "$CLS" "$TRIAGE_IN" "$DECISION" "$GERR" "$REPORT" ${BUNDLE:+"$BUNDLE"}; }
+CONTEXT="$(mktemp "${TMPDIR:-/tmp}/spec-gate-context.XXXXXX")"
+OBSERVE_IN="$(mktemp "${TMPDIR:-/tmp}/spec-gate-observe-in.XXXXXX")"
+cleanup () {
+  rm -f "$OBS" "$CLS" "$TRIAGE_IN" "$DECISION" "$GERR" "$REPORT" "$CONTEXT" "$OBSERVE_IN" \
+        ${BUNDLE:+"$BUNDLE"}
+}
 trap cleanup EXIT
+
+# The CONTEXT the closed blocking set depends on. `contradiction` is defined as a statement that
+# cannot hold beside another in this spec OR one that breaks a binding contract the overview or the
+# prior phase's card declares — and that second half was unobservable, because nothing assembled
+# those two documents. A closed set with an undetectable member is three items and a claim.
+#
+# Exactly the extents scripts/doc_read_path.py declares for this reader and no more: the overview's
+# `## Contracts and Decisions` section, and the IMMEDIATELY prior phase's contract card. Never the
+# whole overview, never every prior phase, never handover-archive.md.
+#
+# Reference only, and NEVER a gate: absent context is normal (phase 1 has no prior card), so it is
+# omitted and named on stderr rather than failing anything. It composes with the re-gate bundle
+# rather than replacing it — `## CONTEXT` sits ahead of the markers the observe prompt already reads.
+python3 "$SD/spec_gate_context.py" "$FILE" > "$CONTEXT" 2>"$GERR" || : # never fails the gate
+cat "$GERR" >&2
+if [ -s "$CONTEXT" ]; then
+  {
+    cat "$CONTEXT"
+    echo
+    if [ -n "$BUNDLE" ]; then
+      cat "$BUNDLE"
+    else
+      # The marker is required, not decorative: the observe prompt reads the WHOLE input as the spec
+      # when no marker is present, which would hand it the context to review as if it were the spec.
+      echo "## SPEC UNDER REVIEW"
+      cat "$FILE"
+    fi
+  } > "$OBSERVE_IN"
+  TARGET="$OBSERVE_IN"
+fi
 # `exec` replaces this shell, so the EXIT trap would never run — clean up first, by hand.
 bypass_and_exit () { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "spec-gate"; }
 

@@ -114,6 +114,45 @@ def test_a_separator_row_is_not_a_declaration() -> None:
     assert ids == []
 
 
+def numbered(n: int) -> str:
+    return "## Requirements\n\n" + "".join(
+        f"{i}. R1.1.{i} — `binding: e2e` — behavior {i}\n" for i in range(1, n + 1)
+    )
+
+
+def headed(n: int) -> str:
+    return "## Requirements\n\n" + "".join(
+        f"### R1.1.{i}\n\n`binding: e2e` — behavior {i}\n\n" for i in range(1, n + 1)
+    )
+
+
+def test_an_ordered_list_item_is_a_declaration() -> None:
+    """An ordinary markdown requirements list. Blind to it, `unreadable_layout()` failed the gate
+    closed on every write until the author re-laid the document out."""
+    ids, scope = declared_ids(HEAD + numbered(3))
+    assert ids == ["R1.1.1", "R1.1.2", "R1.1.3"]
+    assert scope == "requirements-section"
+    assert unreadable_layout(HEAD + numbered(3)) is None
+
+
+def test_a_paren_ordered_list_item_is_a_declaration() -> None:
+    ids, _ = declared_ids(HEAD + "## Requirements\n1) R1.1.1 — a thing\n")
+    assert ids == ["R1.1.1"]
+
+
+def test_a_heading_per_requirement_is_a_declaration() -> None:
+    ids, scope = declared_ids(HEAD + headed(3))
+    assert ids == ["R1.1.1", "R1.1.2", "R1.1.3"]
+    assert scope == "requirements-section"
+    assert unreadable_layout(HEAD + headed(3)) is None
+
+
+@pytest.mark.parametrize("layout", [numbered, headed])
+def test_the_new_layouts_reach_the_cap_like_any_other(tmp_path: Path, layout) -> None:
+    assert main([str(spec(tmp_path, layout(12)))]) == 0
+    assert main([str(spec(tmp_path, layout(19)))]) == 1
+
+
 def test_ids_present_but_none_declared_is_an_error_not_a_count_of_zero(tmp_path: Path) -> None:
     """The floor. Widening the regex fixes the layout that was found; this fixes the class — a count
     of zero over text plainly full of requirement ids is a layout nobody read, not a small spec."""

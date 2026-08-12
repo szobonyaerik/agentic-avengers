@@ -96,6 +96,14 @@ if [ "$FULL" -eq 1 ]; then
         record_fail "verifier:unreviewed"
       fi
     fi
+    # The verification loop is capped at 3 attempts per phase. Enforced here as well as in the
+    # in-session hook (scripts/hook_verifier.sh): a cap only a hook can apply is a cap that stops
+    # existing the moment the phase is driven any other way, and this is the metric H4 is measured
+    # on. At the cap and CLEAN is not a stop — the cap is on the loop, not on the phase.
+    if ! python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null 2>&1; then
+      python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null
+      record_fail "verifier:attempt-cap"
+    fi
     # An amendment names the requirement ids a post-verification change touched. A pass standing
     # over one that is OWED re-verification — any pending amendment on a passing phase, and every
     # security-relevant amendment always — is a claim about code that has since changed.
