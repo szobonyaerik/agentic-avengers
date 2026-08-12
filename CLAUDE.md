@@ -218,7 +218,10 @@ the finding in place with `break_glass`. Read as "the findings array is empty", 
 satisfied by its own prescribed remedy, and CI stayed red with nothing left that could clear it. The
 rule is not restated: `verifier_attempts.py` imports `open_findings` from `verifier_bundle_scope`,
 which already owns it. What still stops is a verdict of **`fail`** at or past the cap — which is what
-refuses a further attempt.
+refuses a further attempt. **Its exit 1 means the cap and nothing else**: an uncaught exception exits
+1 too, so an unreadable `attempt` field once arrived at the hook *as* a cap and prescribed three
+remedies that could not repair a malformed file. Every unexpected failure exits 2 with its own cause,
+per §6's rule that a stop names which.
 
 The **Breaker stays separate** and is never folded into verification: it found phase 8's credential
 leaks by *constructing inputs*, which is a different instrument from reading a test set.

@@ -24,8 +24,18 @@ saw and withheld - so it makes the shape legible and leaves the judgement where 
 Attempt counts come from `verdict.json`'s `attempt` field and the `verdict-attempt-<n>.json` archives
 beside it, which the Verifier already writes.
 
+**Exit 1 means the cap and nothing else.** An uncaught exception also exits 1, so an unguarded
+`int()` over a malformed `attempt` field made a *crash* arrive at `hook_verifier.sh` as a cap: the
+handover was refused with "a further attempt is refused — carry, waive or escalate", for a phase that
+might be on attempt 1, whose actual problem was an unreadable file that none of those three remedies
+can fix. A failure indistinguishable from a judgement is the defect class this whole overhaul exists
+to remove, so every unexpected error here exits **2** with its own cause, the same
+`0 = within / 1 = capped / 2 = error` convention every sibling script uses.
+
 Usage:
-    verifier_attempts.py check <phase-dir> [--max N]   exit 0 = within cap, 1 = at/over, 2 = error
+    verifier_attempts.py check <phase-dir> [--max N]   exit 0 = within cap, 1 = at/over,
+                                                       2 = error (unreadable record, or any
+                                                       unexpected failure — never the cap)
     verifier_attempts.py series <phase-dir>            print attempt -> new findings, one per line
 """
 
@@ -57,12 +67,58 @@ DEFAULT_MAX_ATTEMPTS = 3
 ARCHIVE = re.compile(r"\Averdict-attempt-(\d+)\.json\Z")
 
 
+class UnreadableVerdict(Exception):
+    """A verdict record whose attempt this module cannot read.
+
+    Raised rather than guessed at: an attempt number invented for a malformed record would be the
+    cap deciding on a fact it does not have. It is caught in `main` and reported as ERROR with its
+    own cause, never as the cap.
+    """
+
+    def __init__(self, path: Path, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
+
+
 def _read(path: Path) -> dict | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _attempt_number(value: object) -> int | None:
+    """`attempt` as a whole number, or None when the record does not carry a readable one.
+
+    Guarded the way `_read` guards the JSON around it. `bool` is excluded deliberately: `True` is an
+    `int` in Python and an attempt of "true" is a malformed record, not attempt 1.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        return int(value.strip())
+    return None
+
+
+def _numbered(data: dict, path: Path, fallback: int) -> int:
+    """The record's attempt number, its `fallback` when it declares none, or a hard error.
+
+    An absent, empty or zero `attempt` falls back, exactly as before — attempts are 1-based, so those
+    all mean "not declared". A DECLARED attempt that is not a whole number is an unreadable record.
+    """
+    raw = data.get("attempt")
+    if raw is None or raw == "" or raw == 0:
+        return fallback
+    number = _attempt_number(raw)
+    if number is None:
+        raise UnreadableVerdict(
+            path, f"`attempt` is {raw!r}, which is not a whole number of attempts"
+        )
+    return number or fallback
 
 
 class Attempt(NamedTuple):
@@ -90,19 +146,38 @@ def _attempt(number: int, data: dict) -> Attempt:
 
 
 def attempts(phase_dir: Path) -> list[Attempt]:
-    """Every attempt on record, in order."""
+    """Every attempt on record, in order.
+
+    An ARCHIVE with an unreadable `attempt` does not stop the walk: its filename already carries the
+    number authoritatively, so falling back to it invents nothing, and losing the whole series to one
+    malformed archive would hide the trickle this module exists to make visible. The LIVE
+    `verdict.json` has no such second source — it is the record the cap decides on — so an unreadable
+    one raises rather than being guessed at or skipped.
+    """
     seen: dict[int, Attempt] = {}
     for path in sorted(Path(phase_dir).glob("verdict-attempt-*.json")):
-        if not ARCHIVE.match(path.name):
+        archived = ARCHIVE.match(path.name)
+        if not archived:
             continue
         data = _read(path)
         if data is None:
             continue
-        number = int(data.get("attempt") or ARCHIVE.match(path.name).group(1))
+        from_name = int(archived.group(1))
+        try:
+            number = _numbered(data, path, from_name)
+        except UnreadableVerdict as exc:
+            print(
+                f"  (archive {path.name}: {exc.reason} — using the number in its filename)",
+                file=sys.stderr,
+            )
+            number = from_name
         seen[number] = _attempt(number, data)
-    live = _read(Path(phase_dir) / "verdict.json")
+    live_path = Path(phase_dir) / "verdict.json"
+    live = _read(live_path)
+    if live is None and live_path.exists():
+        raise UnreadableVerdict(live_path, "the file is not readable JSON describing an object")
     if live is not None:
-        number = int(live.get("attempt") or (max(seen) + 1 if seen else 1))
+        number = _numbered(live, live_path, max(seen) + 1 if seen else 1)
         seen[number] = _attempt(number, live)
     return [seen[n] for n in sorted(seen)]
 
@@ -114,6 +189,35 @@ def current(phase_dir: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Exit 1 means the cap. Everything unexpected is ERROR, and says which.
+
+    The catch-all is the point, not the belt: guarding one `int()` fixes one crash, while an
+    uncaught exception of ANY kind exiting 1 makes the next one arrive at `hook_verifier.sh` as a cap
+    again, prescribing three remedies that cannot apply. `SystemExit` from argparse is a
+    `BaseException` and passes through untouched.
+    """
+    try:
+        return _check(argv)
+    except UnreadableVerdict as exc:
+        print(
+            f"[verifier_attempts] cannot read the verification record: {exc}\n"
+            f"  This is NOT the attempt cap and the phase may be well under it — carrying, waiving\n"
+            f"  or escalating findings cannot fix it. Repair {exc.path} so its `attempt` is the\n"
+            f"  whole number the Verifier writes, then run this again.",
+            file=sys.stderr,
+        )
+        return ERROR
+    except Exception as exc:  # noqa: BLE001 — an unexpected failure is an ERROR, never a cap
+        print(
+            f"[verifier_attempts] unexpected failure deciding the attempt cap: "
+            f"{type(exc).__name__}: {exc}\n"
+            f"  Reported as an error rather than a cap: the loop was never judged.",
+            file=sys.stderr,
+        )
+        return ERROR
+
+
+def _check(argv: list[str] | None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("check", "series"))
     parser.add_argument("phase_dir", type=Path)

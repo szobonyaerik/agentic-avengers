@@ -188,9 +188,13 @@ case "$V" in
         "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, waive them explicitly" \
         "(scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to a human."
     elif [ "$cap_rc" -ne 0 ]; then
-      fail "verifier:attempt-cap" \
-        "verifier: the attempt cap could not be decided (cause above). A cap that cannot be read" \
-        "bounds nothing, so this fails closed."
+      # Exit 2 is an ERROR, not the cap, and it carries its own tag so the override log can tell the
+      # two apart. Deliberately no cap guidance here: carrying, waiving or escalating cannot repair
+      # an unreadable record, and printing those remedies for it is how a crash came to read as a
+      # verdict in the first place.
+      fail "verifier:attempt-cap-unreadable" \
+        "verifier: the attempt cap could not be DECIDED (cause above) — this is not the cap itself." \
+        "A cap that cannot be read bounds nothing, so this fails closed. Fix what it named."
     fi
     fail "verifier" "verifier: verdict.json is 'fail' — route back per its findings:" \
       "$(jq -r '.routed[]? | "  - \(.to): \(.reason) (\(.spec_id // "-")) finding \(.finding_id)"' "$VERDICT" 2>/dev/null)" ;;

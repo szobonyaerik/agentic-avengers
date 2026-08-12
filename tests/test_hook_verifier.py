@@ -124,6 +124,24 @@ def test_a_phase_that_passes_cleanly_on_its_last_allowed_attempt_still_passes(pr
     assert result.returncode == 0, result.stderr
 
 
+def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(project: Path) -> None:
+    """`CAPPED` is exit 1 and so is an uncaught exception, so a malformed `attempt` arrived here as a
+    cap: the handover was refused with "carry, waive or escalate" for a phase that might be on
+    attempt 1, whose real problem is a file none of those three remedies can repair."""
+    (phase_dir(project) / "verdict.json").write_text(json.dumps({
+        "attempt": "N/A", "verdict": "fail", "findings": [{"id": "f0", "status": "open"}],
+        "routed": [{"to": "implementer", "reason": "code issue", "finding_id": "f0"}],
+    }))
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "could not be DECIDED" in result.stderr
+    assert "not the cap itself" in result.stderr
+    assert "A fourth attempt is not one of the three" not in result.stderr
+    assert "KNOWN-OPEN" not in result.stderr
+
+
 def test_the_cap_is_escapable_and_audited_rather_than_a_hard_wedge(project: Path) -> None:
     """Consistent with every other blocking check here: break-glass through the same `fail()` path,
     logged and visible, never silent."""

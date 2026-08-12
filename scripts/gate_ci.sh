@@ -100,9 +100,17 @@ if [ "$FULL" -eq 1 ]; then
     # in-session hook (scripts/hook_verifier.sh): a cap only a hook can apply is a cap that stops
     # existing the moment the phase is driven any other way, and this is the metric H4 is measured
     # on. At the cap and CLEAN is not a stop — the cap is on the loop, not on the phase.
-    if ! python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null 2>&1; then
+    # Exit 1 is the cap; anything else is an ERROR that could not decide it. They are recorded under
+    # different names, because a failed run naming the wrong cause sends the fix at the wrong thing.
+    python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null 2>&1
+    cap_rc=$?
+    if [ "$cap_rc" -ne 0 ]; then
       python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null
-      record_fail "verifier:attempt-cap"
+      if [ "$cap_rc" -eq 1 ]; then
+        record_fail "verifier:attempt-cap"
+      else
+        record_fail "verifier:attempt-cap-unreadable"
+      fi
     fi
     # An amendment names the requirement ids a post-verification change touched. A pass standing
     # over one that is OWED re-verification — any pending amendment on a passing phase, and every

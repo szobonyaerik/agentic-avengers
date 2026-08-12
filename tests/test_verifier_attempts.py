@@ -213,3 +213,98 @@ def test_series_prints_without_judging(phase: Path, capsys: pytest.CaptureFixtur
 
 def test_a_missing_phase_directory_is_an_error(tmp_path: Path) -> None:
     assert main(["check", str(tmp_path / "nope")]) == 2
+
+
+# ── exit 1 means the cap and nothing else ────────────────────────────────────
+#
+# An uncaught exception also exits 1, so an unguarded `int()` over a malformed `attempt` made a CRASH
+# arrive at hook_verifier.sh as a cap: the handover was refused with "a further attempt is refused —
+# carry, waive or escalate" for a phase that might be on attempt 1, whose real problem none of those
+# three remedies can touch. A failure indistinguishable from a judgement.
+
+
+def test_a_malformed_attempt_is_an_error_and_never_the_cap(
+    phase: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (phase / "verdict.json").write_text(json.dumps({
+        "attempt": "N/A", "verdict": "pass", "findings": [],
+    }))
+
+    assert main(["check", str(phase)]) == 2
+
+    err = capsys.readouterr().err
+    assert "N/A" in err and "verdict.json" in err
+    assert "NOT the attempt cap" in err
+    assert "A fourth attempt is not one of the three" not in err, (
+        "the cap's remedies cannot repair an unreadable record, so they must not be prescribed for it"
+    )
+
+
+def test_an_unreadable_verdict_file_is_an_error_rather_than_a_silent_pass(phase: Path) -> None:
+    """Skipping it would let a phase past the cap on the strength of a file nobody could read."""
+    (phase / "verdict.json").write_text("{not json")
+    assert main(["check", str(phase)]) == 2
+
+
+@pytest.mark.parametrize("value", [True, 1.5, [], {}, "3.5"])
+def test_every_shape_that_is_not_a_whole_number_of_attempts_is_an_error(
+    phase: Path, value: object
+) -> None:
+    (phase / "verdict.json").write_text(json.dumps({
+        "attempt": value, "verdict": "pass", "findings": [],
+    }))
+    assert main(["check", str(phase)]) == 2
+
+
+def test_an_absent_or_zero_attempt_still_falls_back_rather_than_erroring(phase: Path) -> None:
+    """Attempts are 1-based, so absent, empty and zero all mean "not declared" — unchanged."""
+    archive(phase, 1, 6)
+    (phase / "verdict.json").write_text(json.dumps({"verdict": "fail", "findings": []}))
+    assert [a.number for a in attempts(phase)] == [1, 2]
+
+
+def test_a_malformed_archive_does_not_crash_the_series(
+    phase: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Its filename carries the number authoritatively, so falling back to it invents nothing — and
+    losing the whole series to one malformed archive would hide the trickle this module makes
+    visible."""
+    (phase / "verdict-attempt-1.json").write_text(json.dumps({
+        "attempt": "oops", "verdict": "fail", "findings": [{"id": "a"}],
+    }))
+    verdict(phase, 2, 1)
+
+    assert [a.number for a in attempts(phase)] == [1, 2]
+    assert "using the number in its filename" in capsys.readouterr().err
+
+
+def test_a_genuine_cap_still_exits_1_with_its_remedies(
+    phase: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of the same guarantee: narrowing what exit 1 means must not stop it meaning
+    the cap."""
+    archive(phase, 1, 6)
+    archive(phase, 2, 2)
+    verdict(phase, 3, 8)
+
+    assert main(["check", str(phase)]) == 1
+    assert "A fourth attempt is not one of the three" in capsys.readouterr().err
+
+
+def test_an_unexpected_failure_is_reported_as_an_error_not_a_cap(
+    phase: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The catch-all is the point, not the belt: guarding one `int()` fixes one crash, while any
+    other exception exiting 1 would arrive as a cap again."""
+    import verifier_attempts
+
+    def boom(_phase_dir):
+        raise RuntimeError("the disk went away")
+
+    monkeypatch.setattr(verifier_attempts, "attempts", boom)
+    verdict(phase, 1, 0, result="pass")
+
+    assert main(["check", str(phase)]) == 2
+    err = capsys.readouterr().err
+    assert "RuntimeError: the disk went away" in err
+    assert "the loop was never judged" in err
