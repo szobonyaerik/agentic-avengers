@@ -27,10 +27,16 @@ def phase(tmp_path: Path) -> Path:
     return directory
 
 
-def verdict(phase: Path, attempt: int, findings: int, result: str = "fail") -> None:
+def verdict(
+    phase: Path, attempt: int, findings: int, result: str = "fail", status: str = "open",
+    break_glass: bool = False,
+) -> None:
     (phase / "verdict.json").write_text(json.dumps({
         "attempt": attempt, "verdict": result,
-        "findings": [{"id": f"f{i}", "status": "open"} for i in range(findings)],
+        "findings": [
+            {"id": f"f{i}", "status": status, "break_glass": break_glass}
+            for i in range(findings)
+        ],
     }))
 
 
@@ -52,7 +58,9 @@ def test_the_series_comes_from_the_archives_plus_the_live_verdict(phase: Path) -
     archive(phase, 1, 6)
     archive(phase, 2, 2)
     verdict(phase, 3, 8)
-    assert attempts(phase) == [(1, 6, "fail"), (2, 2, "fail"), (3, 8, "fail")]
+    assert [(a.number, a.findings, a.verdict) for a in attempts(phase)] == [
+        (1, 6, "fail"), (2, 2, "fail"), (3, 8, "fail"),
+    ]
     assert current(phase) == 3
 
 
@@ -64,7 +72,16 @@ def test_a_phase_never_verified_is_attempt_zero(phase: Path) -> None:
 def test_an_unreadable_archive_is_skipped_not_fatal(phase: Path) -> None:
     (phase / "verdict-attempt-1.json").write_text("{broken")
     verdict(phase, 2, 1)
-    assert attempts(phase) == [(2, 1, "fail")]
+    assert [(a.number, a.findings, a.verdict) for a in attempts(phase)] == [(2, 1, "fail")]
+
+
+def test_an_attempt_separates_what_it_raised_from_what_is_still_unresolved(phase: Path) -> None:
+    """The series is what each attempt RAISED — a finding later fixed or waived still happened. The
+    verdict can only be judged clean against what is still open and unwaived."""
+    verdict(phase, 1, 3, result="pass", status="acknowledged", break_glass=True)
+    latest = attempts(phase)[-1]
+    assert latest.findings == 3
+    assert latest.unresolved == 0
 
 
 # ── the cap ──────────────────────────────────────────────────────────────────
@@ -101,20 +118,53 @@ def test_a_fourth_attempt_is_refused(phase: Path) -> None:
     assert main(["check", str(phase)]) == 1
 
 
-def test_a_fourth_attempt_is_refused_even_when_it_passes_cleanly(phase: Path) -> None:
-    """The at-the-cap-but-clean exemption belongs to the LAST ALLOWED attempt only. Read as "at or
-    past the cap" it was the cap's own escape hatch: every attempt beyond the third could clear it by
-    eventually passing, which is the unbounded loop the cap exists to stop."""
-    for n in (1, 2, 3):
-        archive(phase, n, 4)
-    verdict(phase, 4, 0, result="pass")
-    assert main(["check", str(phase)]) == 1
+# ── the three ways a verdict can be resolved, per the schema ─────────────────
+#
+# skills/verifier-triage defines `pass`/`bypassed: false` as "no findings, or all findings resolved
+# (fixed)" and `pass`/`bypassed: true` as "every remaining finding is acknowledged (waived)". A cap
+# whose exemption reads "the findings array is empty" cannot be cleared by two of the three remedies
+# its own message prescribes.
 
 
-def test_a_pass_still_carrying_findings_is_not_treated_as_clean(phase: Path) -> None:
+def test_at_the_cap_with_every_finding_fixed_is_resolved(phase: Path) -> None:
+    archive(phase, 1, 6)
+    archive(phase, 2, 2)
+    verdict(phase, 3, 4, result="pass", status="fixed")
+    assert main(["check", str(phase)]) == 0
+
+
+def test_at_the_cap_with_every_finding_waived_is_resolved(phase: Path) -> None:
+    """Waiving the remainder is one of the three remedies the cap's own message names. The Verifier
+    records a waiver by leaving the finding in place with `break_glass`, so a check that demanded an
+    empty array left CI permanently red with no action that could clear it."""
+    archive(phase, 1, 6)
+    archive(phase, 2, 2)
+    verdict(phase, 3, 4, result="pass", status="acknowledged", break_glass=True)
+    assert main(["check", str(phase)]) == 0
+
+
+def test_a_pass_still_carrying_an_open_finding_is_not_resolved(phase: Path) -> None:
     archive(phase, 1, 6)
     archive(phase, 2, 2)
     verdict(phase, 3, 2, result="pass")
+    assert main(["check", str(phase)]) == 1
+
+
+def test_a_phase_past_the_cap_that_ended_resolved_is_not_held_hostage(phase: Path) -> None:
+    """The cap stops a LOOP, and a resolved verdict has ended it. A phase cannot un-run its own
+    history, so refusing it forever would be a red with no clearing action — and the measured feature
+    ran eight attempts, so a repo upgrading to this version would fail CI on its own past."""
+    for n in (1, 2, 3, 4, 5):
+        archive(phase, n, 4)
+    verdict(phase, 6, 3, result="pass", status="fixed")
+    assert main(["check", str(phase)]) == 0
+
+
+def test_a_failing_verdict_past_the_cap_still_stops(phase: Path) -> None:
+    """Which is what actually refuses a further attempt."""
+    for n in (1, 2, 3, 4):
+        archive(phase, n, 4)
+    verdict(phase, 5, 3)
     assert main(["check", str(phase)]) == 1
 
 

@@ -150,6 +150,49 @@ def test_a_table_row_whose_binding_cannot_be_read_is_owed_a_trace(phase: Path) -
     assert "R1.1.7" in owed and exempt == []
 
 
+# ── one layout rule, one owner ───────────────────────────────────────────────
+#
+# `requirement_cap` owns both what a declaration looks like AND where its `binding:` sits, because
+# they are the same fact about a spec's layout. They used to be two statements: the cap was widened
+# to accept headings and ordered lists, this module still read the binding from the declaration line
+# alone, and a `### R1.1.1` / `binding: none` spec — which the cap now counts correctly — was
+# reported at handover as an untraced coverage gap for a requirement exempt by construction.
+
+
+LAYOUTS = {
+    "unordered": "- R1.1.1 — `binding: {b}` — a thing\n",
+    "ordered": "1. R1.1.1 — `binding: {b}` — a thing\n",
+    "bold": "**R1.1.1** — `binding: {b}` — a thing\n",
+    "table": "| id | binding |\n|---|---|\n| R1.1.1 | binding: {b} | a thing |\n",
+    "heading": "### R1.1.1\n\n`binding: {b}` — a thing\n",
+}
+
+
+@pytest.mark.parametrize("layout", sorted(LAYOUTS))
+def test_every_layout_the_cap_accepts_reads_its_binding(phase: Path, layout: str) -> None:
+    """Both parsers move together or a red test says so."""
+    bound = write_spec(phase, LAYOUTS[layout].format(b="e2e"))
+    assert bound_requirements(bound) == (["R1.1.1"], []), f"{layout}: bound must be owed a trace"
+
+    unbound = write_spec(phase, LAYOUTS[layout].format(b="none"))
+    assert bound_requirements(unbound) == ([], ["R1.1.1"]), f"{layout}: none must be exempt"
+
+
+def test_a_heading_declaration_does_not_inherit_the_next_ones_binding(phase: Path) -> None:
+    """The lookahead is bounded by the next declaration, so an unbound requirement cannot be
+    exempted by its neighbour — the absence of a declaration must never buy the absence of a test."""
+    spec = write_spec(
+        phase,
+        "### R1.1.1\n\na thing with no binding\n\n### R1.1.2\n\n`binding: none` — structural\n",
+    )
+    assert bound_requirements(spec) == (["R1.1.1"], ["R1.1.2"])
+
+
+def test_a_heading_declaration_does_not_reach_past_its_own_section(phase: Path) -> None:
+    spec = write_spec(phase, "### R1.1.1\n\na thing with no binding\n\n## Notes\n\nbinding: none\n")
+    assert bound_requirements(spec) == (["R1.1.1"], [])
+
+
 def test_traced_ids_reads_every_mapping_in_the_phase(phase: Path) -> None:
     write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
     write_spec(phase, "- R1.2.1 — `binding: integration` — b\n", name="1.2-b")

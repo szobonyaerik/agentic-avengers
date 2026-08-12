@@ -20,6 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from doc_read_path import HANDOVER_MAX_BYTES  # noqa: E402
 from spec_gate_context import MARKER, build, contracts_section, layout, prior_card  # noqa: E402
 
 OVERVIEW = """---
@@ -132,7 +133,35 @@ def test_the_archive_is_never_read(feature: Path) -> None:
 
 def test_a_gap_in_the_numbering_still_finds_the_nearest_prior_card(feature: Path) -> None:
     card_at(feature, "1-first")
-    assert prior_card(feature, 4)[0] == "1-first"
+    assert prior_card(feature, 4).phase == "1-first"
+
+
+def test_an_oversized_handover_is_bounded_by_the_read_paths_own_cap(feature: Path) -> None:
+    """The cap's enforcement is diff-scoped, so a pre-rule handover is counted and not blocked.
+    Reading it whole here would prepend all of it to EVERY spec write in the next phase — one
+    measured handover held 272 KB, which is the cost the contract card was introduced to remove."""
+    card_at(feature, "1-first", "# handover\n\n" + "x" * (HANDOVER_MAX_BYTES * 3))
+
+    card = prior_card(feature, 2)
+    block, notes = build(spec_at(feature, "2-storage"))
+
+    assert card.truncated is True
+    assert len(card.body.encode("utf-8")) <= HANDOVER_MAX_BYTES
+    assert len(block.encode("utf-8")) < HANDOVER_MAX_BYTES * 2
+    assert any("TRUNCATED" in note for note in notes), "a truncated context must never be silent"
+
+
+def test_a_card_within_the_cap_is_carried_whole_and_says_nothing_about_truncation(
+    feature: Path,
+) -> None:
+    card_at(feature, "1-first")
+
+    card = prior_card(feature, 2)
+    _, notes = build(spec_at(feature, "2-storage"))
+
+    assert card.truncated is False
+    assert "`TokenStore.put` is idempotent." in card.body
+    assert not any("TRUNCATED" in note for note in notes)
 
 
 # ── absent parts are normal, never errors ────────────────────────────────────

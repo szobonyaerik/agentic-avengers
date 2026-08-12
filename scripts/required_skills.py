@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -101,6 +102,60 @@ POINTER = "pointer"
 #: both implementers name it only in prose, to say the hook injects it — so this maps an ownership
 #: that would matter the moment one did, rather than an exemption anything currently relies on.
 DELIVERED_ELSEWHERE = {"ponytail": "scripts/hook_ponytail.sh"}
+
+#: The stages `scripts/hook_ponytail.sh` injects the minimalism ladder into. **That hook owns this
+#: default**; it is restated here only so the NOTE below can tell "expected and absent" from "never
+#: expected", and the note is advisory, so a drift between the two costs a wrong note and never a
+#: wrong verdict. The delivery path deliberately does not import this: an injection that fails
+#: because a Python module could not be imported would be a far worse failure than a stale default.
+PONYTAIL_AGENTS_DEFAULT = "avenger-backend-architect|avenger-frontend-developer"
+
+
+def ponytail_expected(stage: str) -> bool:
+    """Whether `hook_ponytail.sh` would have injected the ladder into this stage.
+
+    `PONYTAIL_OFF=1` is a deliberate, supported choice, so nothing is expected under it — a note that
+    fired every time the documented off switch was used is noise that teaches people to ignore notes.
+    """
+    if os.environ.get("PONYTAIL_OFF", "").strip() == "1":
+        return False
+    try:
+        pattern = re.compile(os.environ.get("PONYTAIL_AGENTS") or PONYTAIL_AGENTS_DEFAULT, re.I)
+    except re.error:
+        return False
+    return bool(stage) and bool(pattern.search(stage))
+
+
+def ponytail_notes(record: dict | None) -> list[str]:
+    """One NOTE per stage that was expected to receive ponytail and has no record of it.
+
+    **A note, never a gap.** `skills/ponytail` is deliberately outside every declared contract:
+    requiring it would make the required set depend on an environment variable, and a documented off
+    switch that can fail an audit is not an off switch — that exact wedge was removed from this file
+    and is not coming back in a milder form.
+
+    But an absence nobody can see is how a pipeline discovers three phases late that every
+    implementation ran without the minimalism ladder. The injection already records itself
+    (`hook_ponytail.sh`), so the absence is observable; this makes it *visible*. It never touches the
+    exit code and nothing branches on it.
+    """
+    loads = (record or {}).get("skill_loads") or []
+    seen = {
+        entry.get("stage")
+        for entry in loads
+        if isinstance(entry, dict) and entry.get("skill") == "ponytail" and entry.get("loaded")
+    }
+    stages_in_record = {
+        entry.get("stage") for entry in loads if isinstance(entry, dict) and entry.get("stage")
+    }
+    return [
+        f"{stage} was expected to be injected with skills/ponytail and no injection was recorded. "
+        f"This is a NOTE, not a gap: ponytail is never required and never blocks. It means this "
+        f"stage may have implemented without the minimalism ladder — check hook_ponytail.sh reached "
+        f"it, or set PONYTAIL_OFF=1 if that is deliberate."
+        for stage in sorted(stages_in_record - seen)
+        if ponytail_expected(str(stage))
+    ]
 
 
 def required_for(agent_type: str, root: Path | None = None) -> tuple[str, ...]:
@@ -258,8 +313,16 @@ def _audit(all_phases: bool) -> int:
         return OK
 
     gaps: list[str] = []
+    notes: list[str] = []
     for phase in scope:
-        gaps += [f"phase {phase}: {gap}" for gap in audit_gaps(sink.show(phase))]
+        record = sink.show(phase)
+        gaps += [f"phase {phase}: {gap}" for gap in audit_gaps(record)]
+        notes += [f"phase {phase}: {note}" for note in ponytail_notes(record)]
+
+    # Printed before the verdict and outside it. Notes never reach the exit code, in any mode.
+    for note in notes:
+        print(f"  ⓘ note: {note}", file=sys.stderr)
+
     if not gaps:
         print(
             f"  required skills: every required skill has an observed load — {mode}",

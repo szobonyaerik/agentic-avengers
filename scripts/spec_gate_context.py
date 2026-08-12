@@ -15,9 +15,12 @@ path declares and no more**:
 - `overview.md` -> the `## Contracts and Decisions` section ONLY. Not the whole document: the read
   path gives the spec gate that header and gives the spec *writer* the whole file, and sending more
   here would quietly re-acquire a read the read-path work removed.
-- `handover.md` -> the **immediately prior** phase's contract card. Not every prior phase's - that
-  is the 272 KB, 485k-1,475k-token read the contract card replaced - and never
-  `handover-archive.md`, which no stage reads.
+- `handover.md` -> the **immediately prior** phase's contract card, bounded by the read path's own
+  `HANDOVER_MAX_BYTES`. Not every prior phase's - that is the 272 KB, 485k-1,475k-token read the
+  contract card replaced - and never `handover-archive.md`, which no stage reads. The byte bound
+  matters because the cap's own enforcement is diff-scoped: an oversized pre-rule handover is
+  counted, not blocked, and reading it whole would hand this new reader the entire cost the card was
+  introduced to remove. A truncated card is reported on stderr, never carried silently.
 
 Both are derived from the spec's own path, never asked of a model:
 `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`.
@@ -38,6 +41,14 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The contract card's cap belongs to the read-path table, which owns every extent in this file. A
+# literal 6144 here would be a second statement of it, and the second statement is the one that
+# drifts.
+from doc_read_path import HANDOVER_MAX_BYTES  # noqa: E402
 
 #: The stable header the overview carries its binding contracts under.
 CONTRACTS_HEADING = re.compile(
@@ -90,11 +101,27 @@ def overview_contracts(feature_dir: Path) -> str | None:
     return contracts_section(text)
 
 
-def prior_card(feature_dir: Path, phase: int) -> tuple[str, str] | None:
-    """(phase directory name, contract card) for the immediately prior phase, or None.
+class Card(NamedTuple):
+    """The prior phase's contract card as this reader is allowed to carry it."""
+
+    phase: str
+    body: str
+    truncated: bool
+
+
+def prior_card(feature_dir: Path, phase: int) -> Card | None:
+    """The immediately prior phase's contract card, bounded by the read path's own cap, or None.
 
     "Immediately prior" is the highest phase number below this one that actually has a card, so a
     feature numbered 1, 2, 4 does not lose its context to a gap - but only ONE card is ever carried.
+
+    **Bounded by `doc_read_path.HANDOVER_MAX_BYTES`**, imported rather than restated. That cap is
+    what makes a handover a contract card rather than a document, and its own enforcement is
+    diff-scoped, so a pre-rule or hand-edited oversized handover is counted and not blocked. Reading
+    it whole here would prepend all of it to EVERY spec write in the next phase - re-acquiring, for a
+    brand-new reader, precisely the cost the contract card was introduced to remove: one measured
+    handover held 272 KB and cost 485k-1,475k tokens. An over-cap card is carried as its bounded
+    prefix and the truncation is reported, never silent.
     """
     candidates: list[tuple[int, Path]] = []
     for directory in (feature_dir / "phases").glob("*"):
@@ -107,10 +134,15 @@ def prior_card(feature_dir: Path, phase: int) -> tuple[str, str] | None:
         return None
     _, directory = max(candidates, key=lambda pair: pair[0])
     try:
-        card = (directory / "handover.md").read_text(encoding="utf-8").strip()
+        raw = (directory / "handover.md").read_text(encoding="utf-8")
     except OSError:
         return None
-    return (directory.name, card) if card else None
+    encoded = raw.encode("utf-8")
+    truncated = len(encoded) > HANDOVER_MAX_BYTES
+    if truncated:
+        raw = encoded[:HANDOVER_MAX_BYTES].decode("utf-8", "ignore")
+    card = raw.strip()
+    return Card(directory.name, card, truncated) if card else None
 
 
 def build(spec: Path) -> tuple[str, list[str]]:
@@ -132,9 +164,14 @@ def build(spec: Path) -> tuple[str, list[str]]:
 
     card = prior_card(feature_dir, phase)
     if card:
-        name, body = card
-        parts.append(f"### Contract card carried forward from phase {name}\n\n{body}")
-        notes.append(f"included: phases/{name}/handover.md — the immediately prior phase's card")
+        parts.append(f"### Contract card carried forward from phase {card.phase}\n\n{card.body}")
+        bound = (
+            f" — TRUNCATED to the first {HANDOVER_MAX_BYTES} bytes; that handover is over the "
+            f"contract-card cap" if card.truncated else ""
+        )
+        notes.append(
+            f"included: phases/{card.phase}/handover.md — the immediately prior phase's card{bound}"
+        )
     else:
         notes.append(f"absent: no prior phase card before phase {phase}")
 

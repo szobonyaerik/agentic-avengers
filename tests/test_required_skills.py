@@ -34,6 +34,7 @@ from required_skills import (  # noqa: E402
     inject_max_bytes,
     main,
     missing,
+    ponytail_notes,
     required_for,
     skill_path,
     stages,
@@ -486,6 +487,74 @@ def test_the_audit_honours_the_off_switch(measured, monkeypatch) -> None:
 
     monkeypatch.setenv("SKILLS_OFF", "1")
     assert main(["audit"]) == 0
+
+
+# ── ponytail: evidenced, never required ──────────────────────────────────────
+#
+# Requiring it would make the required set depend on an environment variable, and a documented off
+# switch that can fail an audit is not an off switch. But an absence nobody can see is how a pipeline
+# discovers three phases late that every implementation ran without the minimalism ladder. So: a
+# NOTE, which never reaches the exit code and which nothing branches on.
+
+
+def test_an_implementer_with_no_ponytail_record_gets_a_note() -> None:
+    notes = ponytail_notes({"skill_loads": [
+        {"stage": "avenger-backend-architect", "skill": "tdd", "required": True, "loaded": True},
+    ]})
+    assert len(notes) == 1
+    assert "avenger-backend-architect" in notes[0]
+    assert "skills/ponytail" in notes[0] and "no injection was recorded" in notes[0]
+    assert "NOTE, not a gap" in notes[0]
+
+
+def test_a_recorded_injection_produces_no_note() -> None:
+    assert ponytail_notes({"skill_loads": [
+        {"stage": "avenger-backend-architect", "skill": "tdd", "required": True, "loaded": True},
+        {"stage": "avenger-backend-architect", "skill": "ponytail", "loaded": True},
+    ]}) == []
+
+
+def test_a_stage_ponytail_never_reaches_gets_no_note() -> None:
+    """The Verifier is deliberately outside its scope — "write less code" fights its job."""
+    assert ponytail_notes({"skill_loads": [
+        {"stage": "avenger-verifier", "skill": "tdd", "required": True, "loaded": True},
+    ]}) == []
+
+
+def test_the_off_switch_produces_no_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deliberate, supported choice is not a surprise, and a note that fires every time the switch
+    is used is noise that trains people to ignore notes."""
+    monkeypatch.setenv("PONYTAIL_OFF", "1")
+    assert ponytail_notes({"skill_loads": [
+        {"stage": "avenger-backend-architect", "skill": "tdd", "required": True, "loaded": True},
+    ]}) == []
+
+
+def test_the_note_is_visible_and_never_changes_the_exit_code(
+    measured, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project, env, _ = measured
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.delenv("SKILLS_OFF", raising=False)
+    monkeypatch.delenv("PONYTAIL_OFF", raising=False)
+    import metrics_sink
+    import pipeline_metrics
+
+    monkeypatch.setattr(metrics_sink, "_writer_unusable", False)
+    for skill in required_for("avenger-backend-architect"):
+        pipeline_metrics.record_skill_load(
+            "01", stage="avenger-backend-architect", skill=skill, evidence="Read SKILL.md"
+        )
+
+    assert main(["audit"]) == 0, "a note must never reach the exit code"
+    err = capsys.readouterr().err
+    assert "note:" in err and "skills/ponytail" in err
+
+    monkeypatch.setenv("PONYTAIL_OFF", "1")
+    assert main(["audit"]) == 0
+    assert "skills/ponytail" not in capsys.readouterr().err
 
 
 def test_no_writer_is_clean_and_says_so(

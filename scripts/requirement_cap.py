@@ -40,6 +40,11 @@ cannot fire is the defect class this overhaul exists to remove, so `DECLARATION`
 owned here**, imported by `verifier_precheck.py` rather than copied into it - the copy is what went
 blind in two places at once.
 
+**Where a requirement's `binding:` sits is part of the same layout knowledge, so it is owned here
+too** (`declared_bindings`). Widening `DECLARATION` without teaching the precheck the same layouts
+was one parsing rule stated in two places, and it drifted the moment one moved: a heading-style spec
+counted correctly here and was then reported at handover as an untraced coverage gap.
+
 Counting is over **distinct ids**, so the same id restated under `## Acceptance criteria` is not
 counted twice, and an id merely mentioned mid-sentence ("covers R1.1.1, R1.1.4") is not a
 declaration.
@@ -82,8 +87,7 @@ REQUIREMENT_ID = re.compile(r"R\d+\.\d+\.\d+")
 #: markdown table pipe, heading marker, list marker (ordered `1.`/`1)` or unordered) and/or bold, in
 #: that order. `- R1.1.2 — binding: e2e — …`, `1. R1.1.2 — …`, `### R1.1.2`, `**R1.1.2**` and
 #: `| R1.1.2 | binding: e2e | … |` all count; a line that merely mentions an id mid-sentence
-#: ("covers R1.1.1, R1.1.4") does not. `rest` is the remainder of the line, which is where
-#: `verifier_precheck.py` reads the `binding:` - including from a later table cell.
+#: ("covers R1.1.1, R1.1.4") does not. `rest` is the remainder of the line.
 #:
 #: The layout set is widened at THIS regex whenever a real one is found, because the alternative is
 #: `unreadable_layout()` failing the gate closed on an ordinary markdown document until its author
@@ -98,7 +102,61 @@ DECLARATION = re.compile(
     r"(R\d+\.\d+\.\d+)\b(?P<rest>.*)$"
 )
 
+#: The `binding:` a declaration carries. Read from the declaration line, or - when the layout puts it
+#: there - from the block immediately below it. See `declared_bindings`.
+BINDING = re.compile(r"binding:[ \t`]*([a-z0-9-]+)", re.IGNORECASE)
+
+#: Any markdown heading. Ends a declaration's continuation block, so a requirement can never inherit
+#: the binding of whatever follows the section it lives in.
+ANY_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]+")
+
 REQUIREMENTS_HEADING = re.compile(r"^(##+)[ \t]*Requirements\b.*$", re.IGNORECASE | re.MULTILINE)
+
+
+def declared_bindings(text: str) -> list[tuple[str, str | None]]:
+    """(requirement id, its `binding:` or None) for every declaration, in document order.
+
+    **Where a binding is found is a property of the LAYOUT, so it is owned here, beside the layout
+    regex.** `verifier_precheck.py` used to read the binding from the declaration line alone; when
+    `DECLARATION` was widened to accept headings and ordered lists, the two statements of one parsing
+    rule drifted instantly - a `### R1.1.1` / `binding: none` spec counted correctly at the cap and
+    was then reported at handover as an untraced coverage gap, for a requirement that is exempt by
+    construction. One module owns how a requirement is declared AND where its binding is.
+
+    Inline layouts (list item, bold, table row) carry the binding on the declaration line, including
+    in a later table cell. A heading-style declaration carries it in the block below, so the search
+    continues past blank lines into the first block and stops at the next declaration or the next
+    heading — never further. That bound is what stops a requirement inheriting its neighbour's
+    binding.
+
+    A binding that cannot be read is None, and the caller keeps such a requirement **owed a trace**:
+    an unreadable binding buys no more than a missing one does.
+    """
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if DECLARATION.match(line)]
+    out: list[tuple[str, str | None]] = []
+    for position, index in enumerate(starts):
+        match = DECLARATION.match(lines[index])
+        found = BINDING.search(match.group("rest"))
+        if found is None:
+            limit = starts[position + 1] if position + 1 < len(starts) else len(lines)
+            found = BINDING.search("\n".join(_continuation(lines, index + 1, limit)))
+        out.append((match.group(1), found.group(1).lower() if found else None))
+    return out
+
+
+def _continuation(lines: list[str], start: int, limit: int) -> list[str]:
+    """The first non-empty block after a declaration line, bounded by `limit` and any heading."""
+    block: list[str] = []
+    for line in lines[start:limit]:
+        if ANY_HEADING.match(line):
+            break
+        if not line.strip():
+            if block:
+                break
+            continue
+        block.append(line)
+    return block
 
 
 def requirements_section(text: str) -> str | None:

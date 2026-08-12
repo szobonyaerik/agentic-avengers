@@ -175,8 +175,12 @@ Three consequences worth stating outright:
      literally, so the conservatism is removed from the pass that reads. It is handed a
      `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) carrying **exactly** the
      extents the read path grants it — the overview's `## Contracts and Decisions` section and the
-     *immediately prior* phase's contract card, never the whole overview, never every prior phase,
-     never `handover-archive.md`. Half of `contradiction` is a contract declared in those documents,
+     *immediately prior* phase's contract card **bounded by `HANDOVER_MAX_BYTES`**, never the whole
+     overview, never every prior phase, never `handover-archive.md`. The byte bound is not
+     decoration: that cap is enforced diff-scoped, so an oversized pre-rule handover is counted and
+     not blocked, and reading it whole would hand this new reader the whole cost the contract card
+     removed. A truncated card is reported, never silent.
+     Half of `contradiction` is a contract declared in those documents,
      so without them a closed set of four is three items and a claim. It is reference only: absent
      context is normal (phase 1 has no prior card), named on stderr, and never fails the gate.
   2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation
@@ -258,6 +262,11 @@ Three consequences worth stating outright:
     visible in the number rather than inferred. At the cap the remaining findings are **carried as
     known-open in `handover.md`, waived explicitly, or escalated** — all three honest; a fourth
     attempt is not one of them. The trade is named: some findings are carried rather than fixed.
+    Enforced in `hook_verifier.sh` AND `gate_ci.sh --full`, with `GATE_BYPASS` honoured. The cap is on
+    the **loop**, so a `pass` whose findings are all `fixed` or waived clears it — waiving the
+    remainder is one of the three remedies above, and a check its own prescribed remedy cannot satisfy
+    is a wedge, not a gate. "Still open" is not restated: it is `open_findings`, imported from
+    `verifier_bundle_scope`. A verdict of **`fail`** at or past the cap is what stops.
   - **The bundle is scoped to the specs that changed.** It used to re-send every `spec.md` and every
     `test-mapping.md` on every attempt — one measured ~832k tokens, and one phase had to be split
     into four chunks to fit a context at all. The diff-only rule above covers spec *re-gates* and
@@ -428,6 +437,12 @@ here too would cost twice and would put the minimalism persona back after `PONYT
 switch that switches nothing off. Reach is scoped per skill for the same reason `hook_ponytail.sh`
 excludes the Verifier and `hook_lessons.sh` does not: a skill that fights a stage's job must not
 reach it.
+
+It is also **evidenced but never required**: it is on no declared `Required skills` line, because
+requiring it would make the required set depend on `PONYTAIL_OFF` and a contract an env var can
+change is not a contract. Absence is still visible — a stage the hook would have reached with no
+injection recorded surfaces as a **NOTE** from `required_skills.py`, which never enters the exit code
+in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at all.
 
 ## Hard rules
 

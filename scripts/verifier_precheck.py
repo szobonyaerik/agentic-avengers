@@ -69,13 +69,8 @@ sys.path.insert(0, str(HERE))
 # the same moment: the cap read `0/12` and this check reported zero ids owed a trace, so it passed
 # vacuously on the very spec it exists to hold. A second copy of a rule is the copy that drifts.
 from doc_read_path import changed_paths  # noqa: E402
-from requirement_cap import DECLARATION  # noqa: E402
+from requirement_cap import declared_bindings  # noqa: E402
 
-#: The `binding:` a declaration carries. Searched over the REST of the declaration line, so a table
-#: row's later cell (`| R1.1.1 | binding: none | … |`) reads exactly like an inline one. A row whose
-#: binding cannot be read is **owed a trace**, never exempt - an unreadable binding buys no more than
-#: a missing one does.
-BINDING = re.compile(r"binding:[ \t`]*([a-z0-9-]+)", re.IGNORECASE)
 ACCEPTANCE_HEADING = re.compile(r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE)
 
 
@@ -85,6 +80,11 @@ def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
     A requirement whose declaration says `binding: none` is exempt. One that declares no binding at
     all is **owed a trace**, not exempt: a missing binding is a spec defect, and treating it as
     exempt would let the absence of a declaration buy the absence of a test.
+
+    Both the layout and where the binding sits inside it come from `requirement_cap`, which owns
+    them. This module used to re-derive the second half from the declaration line alone, so widening
+    the shared regex to accept headings and ordered lists silently moved a block later and gave it a
+    wronger message.
     """
     try:
         text = spec.read_text(encoding="utf-8")
@@ -92,15 +92,10 @@ def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
         return [], []
     owed: list[str] = []
     exempt: list[str] = []
-    for line in text.splitlines():
-        match = DECLARATION.match(line)
-        if not match:
-            continue
-        rid = match.group(1)
+    for rid, binding in declared_bindings(text):
         if rid in owed or rid in exempt:
             continue
-        binding = BINDING.search(match.group("rest"))
-        (exempt if binding and binding.group(1).lower() == "none" else owed).append(rid)
+        (exempt if binding == "none" else owed).append(rid)
     return owed, exempt
 
 

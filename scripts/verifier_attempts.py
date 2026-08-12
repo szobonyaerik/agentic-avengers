@@ -36,6 +36,16 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# "Still open" is ONE rule — `status: open` and not waived by break-glass — and `verifier_bundle_scope`
+# already owns it, because it is what keeps a spec in the review set. Restating it here as "the
+# findings array is empty" made the cap unclearable by the very remedy its own message prescribes:
+# waive the remainder, the Verifier writes `pass` with `bypassed: true` and the waived findings still
+# in the array, and CI stayed red with no action left that could clear it.
+from verifier_bundle_scope import open_findings  # noqa: E402
 
 WITHIN = 0
 CAPPED = 1
@@ -55,9 +65,33 @@ def _read(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def attempts(phase_dir: Path) -> list[tuple[int, int, str]]:
-    """(attempt number, finding count, verdict) for every attempt on record, in order."""
-    seen: dict[int, tuple[int, str]] = {}
+class Attempt(NamedTuple):
+    """One verification attempt on record.
+
+    `findings` is every finding it raised — that is the trickle series, and a finding that was later
+    fixed or waived still happened. `unresolved` is the subset still open and unwaived, which is the
+    only count a verdict can be judged clean against.
+    """
+
+    number: int
+    findings: int
+    verdict: str
+    unresolved: int
+
+
+def _attempt(number: int, data: dict) -> Attempt:
+    findings = [f for f in (data.get("findings") or []) if isinstance(f, dict)]
+    return Attempt(
+        number=number,
+        findings=len(data.get("findings") or []),
+        verdict=str(data.get("verdict") or "?"),
+        unresolved=len(open_findings(findings)),
+    )
+
+
+def attempts(phase_dir: Path) -> list[Attempt]:
+    """Every attempt on record, in order."""
+    seen: dict[int, Attempt] = {}
     for path in sorted(Path(phase_dir).glob("verdict-attempt-*.json")):
         if not ARCHIVE.match(path.name):
             continue
@@ -65,18 +99,18 @@ def attempts(phase_dir: Path) -> list[tuple[int, int, str]]:
         if data is None:
             continue
         number = int(data.get("attempt") or ARCHIVE.match(path.name).group(1))
-        seen[number] = (len(data.get("findings") or []), str(data.get("verdict") or "?"))
+        seen[number] = _attempt(number, data)
     live = _read(Path(phase_dir) / "verdict.json")
     if live is not None:
         number = int(live.get("attempt") or (max(seen) + 1 if seen else 1))
-        seen[number] = (len(live.get("findings") or []), str(live.get("verdict") or "?"))
-    return [(n, *seen[n]) for n in sorted(seen)]
+        seen[number] = _attempt(number, live)
+    return [seen[n] for n in sorted(seen)]
 
 
 def current(phase_dir: Path) -> int:
     """The highest attempt number on record; 0 when the phase has never been verified."""
     records = attempts(phase_dir)
-    return records[-1][0] if records else 0
+    return records[-1].number if records else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,29 +126,39 @@ def main(argv: list[str] | None = None) -> int:
 
     records = attempts(args.phase_dir)
     if args.action == "series":
-        for number, findings, verdict in records:
-            print(f"attempt {number}: {findings} finding(s), verdict {verdict}")
+        for record in records:
+            print(
+                f"attempt {record.number}: {record.findings} finding(s), verdict {record.verdict}"
+            )
         return WITHIN
 
-    latest = records[-1] if records else (0, 0, "?")
-    if latest[0] < args.max:
+    latest = records[-1] if records else Attempt(0, 0, "?", 0)
+    if latest.number < args.max:
         return WITHIN
-    if latest[0] == args.max and latest[2] == "pass" and latest[1] == 0:
-        # At the cap but clean: the cap is on the LOOP, not on a phase that finished on its LAST
-        # ALLOWED attempt. Failing here would turn a successful third attempt into a stop.
+    if latest.verdict == "pass" and latest.unresolved == 0:
+        # At the cap but RESOLVED: the cap is on the LOOP, and a phase whose latest verdict passes
+        # with nothing left open has ended the loop. Stopping it would refuse the phase for its own
+        # history, with no action left that could ever clear it.
         #
-        # Deliberately `== args.max`, not `>=`: an attempt PAST the cap is not an allowed attempt, so
-        # a clean fourth verdict does not get the exemption a clean third does. Read as `>=` this
-        # exemption was the cap's own escape hatch — every attempt after the third could clear it by
-        # eventually passing, which is precisely the unbounded loop the cap exists to stop.
+        # "Resolved" is `open_findings` — every finding either `fixed` or waived — and not "the
+        # findings array is empty", because waiving the remainder is one of the three remedies this
+        # cap's own message prescribes, and the Verifier records a waiver by leaving the finding in
+        # place with `break_glass`. A check its prescribed remedy cannot satisfy is a wedge.
+        #
+        # The cap still binds where it matters: a verdict of `fail` at or past the cap stops here,
+        # which is what refuses a further attempt.
         return WITHIN
     print(
-        f"verifier: phase {args.phase_dir.name} is at attempt {latest[0]} of a cap of {args.max}, "
-        f"and the latest verdict is '{latest[2]}' with {latest[1]} finding(s).",
+        f"verifier: phase {args.phase_dir.name} is at attempt {latest.number} of a cap of "
+        f"{args.max}, and the latest verdict is '{latest.verdict}' with {latest.unresolved} "
+        f"unresolved finding(s) of {latest.findings} raised.",
         file=sys.stderr,
     )
-    for number, findings, verdict in records:
-        print(f"    attempt {number}: {findings} finding(s), verdict {verdict}", file=sys.stderr)
+    for record in records:
+        print(
+            f"    attempt {record.number}: {record.findings} finding(s), verdict {record.verdict}",
+            file=sys.stderr,
+        )
     print(
         "\n  The loop stops here. 80% of re-attempts measured across one feature were the Verifier\n"
         "  routing back to ITSELF, and a per-attempt trickle of new findings is a gate disclosing a\n"

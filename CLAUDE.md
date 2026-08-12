@@ -89,7 +89,9 @@ with the verdict taken out of the model's hands entirely:
    cannot block. A reviewer told to be conservative follows that literally, so the conservatism is
    removed from the pass that reads. It is handed a `## CONTEXT (reference only)` block
    (`scripts/spec_gate_context.py`) carrying **exactly** what the read path grants it — the
-   overview's `## Contracts and Decisions` section and the *immediately prior* phase's contract card,
+   overview's `## Contracts and Decisions` section and the *immediately prior* phase's contract card
+   (bounded by the read path's own `HANDOVER_MAX_BYTES`, since that cap is enforced diff-scoped and
+   an oversized pre-rule handover is counted rather than blocked; a truncated card says so),
    never the whole overview and never `handover-archive.md`. Without it half of `contradiction` is
    undetectable, and a closed set of four with an unobservable member is three items and a claim;
    absent context is normal, named on stderr, and never fails the gate.
@@ -204,8 +206,19 @@ re-attempts were the Verifier routing back to itself**, and one phase's new-find
 re-verification at a time. `scripts/verifier_attempts.py` stops the loop and prints the series so a
 trickle is visible in the number. At the cap the remainder is **carried as known-open in
 `handover.md`, waived explicitly, or escalated**; a fourth attempt is not one of the three. The trade
-is named: some findings are carried rather than fixed. The cap is on the **loop**, not the phase — a
-phase that passes cleanly on attempt 3 is not stopped.
+is named: some findings are carried rather than fixed. It is enforced in `hook_verifier.sh` and in
+`gate_ci.sh --full` — enforcement that only an in-session hook can apply stops existing the moment
+the phase is driven any other way — and `GATE_BYPASS` is honoured through the same audited `fail()`
+path as every other blocking check.
+
+The cap is on the **loop**, not the phase, and "resolved" is read the way the verdict schema defines
+it: a `pass` whose findings are all **`fixed` or waived** clears, because *waive the remainder* is one
+of the three remedies the cap's own message prescribes and the Verifier records a waiver by leaving
+the finding in place with `break_glass`. Read as "the findings array is empty", the check could not be
+satisfied by its own prescribed remedy, and CI stayed red with nothing left that could clear it. The
+rule is not restated: `verifier_attempts.py` imports `open_findings` from `verifier_bundle_scope`,
+which already owns it. What still stops is a verdict of **`fail`** at or past the cap — which is what
+refuses a further attempt.
 
 The **Breaker stays separate** and is never folded into verification: it found phase 8's credential
 leaks by *constructing inputs*, which is a different instrument from reading a test set.
@@ -264,6 +277,15 @@ so without that record the audit would report a false gap on precisely the skill
 guaranteed. Over it the stage gets a **pointer** — path, size, description — and *opening the file*
 is what records it. `skills/ponytail` is delivered by `hook_ponytail.sh` alone, which records its own
 load; delivering it twice would cost twice and would put the persona back after `PONYTAIL_OFF=1`.
+
+**`skills/ponytail` is evidenced but never REQUIRED**, and that is a decision rather than an
+oversight: it appears on no declared line, so requiring it would make the required set depend on an
+environment variable, and a required set an env var can change is not a contract — a documented off
+switch that can fail an audit is not an off switch. Its absence is still not silent. A stage
+`hook_ponytail.sh` would have reached, with no injection recorded, surfaces as a **NOTE**
+(`required_skills.py`): visible, never a gap, never in the exit code in any mode, and nothing branches
+on it. `PONYTAIL_OFF=1` produces **no note** — an expected absence is not a surprise, and a note that
+fires whenever the switch is used is noise that trains people to ignore notes.
 
 **A pointer is not a suggestion**: `required_skills.py audit` runs at handover (`hook_verifier.sh`)
 and in CI (`gate_ci.sh --full`) and **fails the phase** on a required skill with no observed load.

@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from requirement_cap import (  # noqa: E402
     DEFAULT_MAX,
     cap,
+    declared_bindings,
     declared_ids,
     main,
     split_message,
@@ -151,6 +152,39 @@ def test_a_heading_per_requirement_is_a_declaration() -> None:
 def test_the_new_layouts_reach_the_cap_like_any_other(tmp_path: Path, layout) -> None:
     assert main([str(spec(tmp_path, layout(12)))]) == 0
     assert main([str(spec(tmp_path, layout(19)))]) == 1
+
+
+# ── the binding lives with the layout that decides where it sits ─────────────
+
+
+def test_an_inline_binding_is_read_from_the_declaration_line() -> None:
+    assert declared_bindings("- R1.1.1 — `binding: e2e` — a thing\n") == [("R1.1.1", "e2e")]
+
+
+def test_a_table_cell_binding_is_read_from_the_same_row() -> None:
+    assert declared_bindings("| R1.1.1 | binding: none | a thing |\n") == [("R1.1.1", "none")]
+
+
+def test_a_heading_declaration_takes_its_binding_from_the_block_below() -> None:
+    """The layout the widened regex admitted. Read from the declaration line alone this was None, so
+    a `binding: none` requirement was reported at handover as an untraced coverage gap."""
+    assert declared_bindings("### R1.1.1\n\n`binding: none` — structural\n") == [("R1.1.1", "none")]
+
+
+def test_the_lookahead_stops_at_the_next_declaration() -> None:
+    assert declared_bindings(
+        "### R1.1.1\n\nno binding here\n\n### R1.1.2\n\n`binding: none` — structural\n"
+    ) == [("R1.1.1", None), ("R1.1.2", "none")]
+
+
+def test_the_lookahead_stops_at_the_next_heading() -> None:
+    assert declared_bindings("### R1.1.1\n\nno binding\n\n## Notes\n\nbinding: none\n") == [
+        ("R1.1.1", None)
+    ]
+
+
+def test_an_unreadable_binding_is_none_rather_than_guessed() -> None:
+    assert declared_bindings("- R1.1.1 — a thing with no binding\n") == [("R1.1.1", None)]
 
 
 def test_ids_present_but_none_declared_is_an_error_not_a_count_of_zero(tmp_path: Path) -> None:
