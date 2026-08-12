@@ -68,14 +68,14 @@ feature: <feature>
 type: architecture-overview
 status: draft
 created: YYYY-MM-DD
-readers: avenger-implementation-planner @ once; avenger-spec-writer @ per spec (whole); spec-review @ per spec (## Contracts and Decisions only); e2e-author @ feature close (the goal)
+readers: avenger-implementation-planner @ once; avenger-spec-writer @ per spec (whole); spec gate @ per spec (## Contracts and Decisions header only); e2e-author @ feature close (the goal)
 ---
 
 # <Feature> — Architecture Overview
 
 ## Contracts and Decisions
 **A stable header, and the only section some readers open.** The Spec Writer reads this whole file;
-the spec-review gate reads *this section only*, once per spec. So everything a later spec can
+the spec gate reads *this section only*, once per spec. So everything a later spec can
 **contradict** belongs here and nowhere else: the interfaces and their signatures, the decisions
 with what each one costs, and the invariants that must hold across phases. One line per item, each
 pointing at where it is defined. If a reader has to go below this header to find out whether a spec

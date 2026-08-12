@@ -26,7 +26,7 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
    `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a
    **contract card capped at 6144 bytes** (the rest in `handover-archive.md`, which nothing reads),
-   `work_kind` rides in the spec's own frontmatter, spec-review reads `overview.md`'s
+   `work_kind` rides in the spec's own frontmatter, the spec gate reads `overview.md`'s
    `## Contracts and Decisions` header only, `test-mapping.md` is the table (evidence in
    `test-evidence.md`, read on route-back), and a verified phase's specs leave the read path in
    favour of its card. `scripts/doc_read_path.py` is the table and the check; `check --sources` is

@@ -58,8 +58,8 @@ python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feat
 ```
 
 Write the note so it is actionable **without** the run's context — it will be read weeks later, in a
-different repo. "Fidelity NO-GO'd 1.2 three times on wording, not substance; the rubric may be
-penalising terse acceptance criteria" beats "spec gate annoying".
+different repo. "The spec gate blocked 1.2 three times on wording, not substance; triage may be
+classifying terse acceptance criteria as untestable" beats "spec gate annoying".
 
 ## Preflight sweep (start of every interactive `/avenger-run`)
 

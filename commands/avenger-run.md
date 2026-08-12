@@ -280,7 +280,7 @@ finding:
 - **Default under `--auto`** — drive the `auto-fix` and `no-op` findings on your own judgement
   exactly as you would interactively, but on an **`ask-user` finding, halt the run**, with the
   finding recorded **verbatim** in the report (id, file, full description). This is the same halt
-  `--auto` already performs on a spec-review NO-GO. `no-mistakes` marks a finding `ask-user`
+  `--auto` already performs on a **blocked** spec gate. `no-mistakes` marks a finding `ask-user`
   precisely because it challenges the user's deliberate intent or changes product behaviour, so an
   unattended run must not answer it. Nothing is lost: the `no-mistakes` run stays parked on the
   branch and the user resumes interactively to answer it. On that resume the resolver still reports

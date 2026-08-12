@@ -102,13 +102,22 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 2. @avenger-solution-architect        -> overview.md
 3. @avenger-implementation-planner    -> plan.md   (phases, each with candidate specs <n>.<k>)
 4. @avenger-spec-writer               -> phases/1-endpoint/specs/1.1-health/spec.md
-      • On write, the Fidelity Gate fires automatically (cross-family). NO-GO -> back to spec-writer.
+      • On write, the spec gate fires automatically (scripts/hook_spec_gate.sh). Before any model
+        call, two mechanical checks run: the requirement cap (over 12 the spec SPLITS into siblings,
+        it is never rejected for size) and scripts/subprocess_check.py, which flags any test that
+        spawns a process without @pytest.mark.subprocess("<why>"). Register that marker in the
+        project's pytest config and point SUBPROC_CHECK_PATHS at your tests if they are not at
+        tests/ (skills/tdd).
+      • Then the gate itself: observe -> triage -> decide, and it stamps spec_gate: approved|blocked.
+        blocked -> back to spec-writer. Exactly four things block: a missing requirement, a
+        contradiction, an untestable criterion, an unhandled critical edge case. Everything else is a
+        NOTE, which blocks nothing and lands in spec-notes.md beside the spec, read once by the
+        implementer.
       • The spec lands with review_status: pending.
 
 5. /spec-review docs/features/health-endpoint/phases/1-endpoint/specs/1.1-health/spec.md
-      • First, no model: scripts/subprocess_check.py flags any test that spawns a process without
-        @pytest.mark.subprocess("<why>"). Register that marker in the project's pytest config and
-        point SUBPROC_CHECK_PATHS at your tests if they are not at tests/ (skills/tdd).
+      • The machine gate already ran on the write; this command does not re-run it and runs no
+        second rubric. It reads spec_gate first and stops if it is blocked.
       • You are grilled ONE question at a time against the spec-review checklist, each with a
         recommendation. Answer them; when the bar is met it sets review_status: approved.
       • Re-reviewing a spec that is already approved AND implemented covers its DIFF only

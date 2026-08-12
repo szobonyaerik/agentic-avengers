@@ -124,7 +124,7 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
                  route-backs: code | wrong-gamed test | coverage gap -> implementer
   PASS -> THE PHASE SUITE LOCKS (locked-after-verify). Weakening a test then needs re-verification;
           adding one a later gate demands is always allowed.
-  mutation (optional; MUTATION_POLICY off by default | advisory | enforce)
+  mutation (MUTATION_POLICY advisory by default — runs, reports, never blocks | enforce | off)
                  an extra signal, NOT the independence mechanism
   breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
   handover -> .../phases/<n>-<slug>/handover.md   CONTRACT CARD, hard cap 6144 bytes
@@ -238,8 +238,9 @@ agentic-avengers/
 │   ├── required_skills.py     delivery + the blocking audit; WHICH skills is derived from each
 │   │                          agent's own definition (skill_contract.py). Small ones injected
 │   │                          whole, large ones a pointer (SKILL_INJECT_MAX_BYTES); `audit`
-│   │                          fails a phase on a required skill with no OBSERVED load
-│   │                          evidence of, scoped to the run (`--all` sweeps every delivery)
+│   │                          fails a phase on a required skill with no OBSERVED load. The
+│   │                          evidence is per-phase, so phase 1 cannot block phase 8
+│   │                          (`--all` sweeps every phase, under `gate_ci.sh --full`)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
 │   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
 │   │                          diff-scoped; and `--sources`, so a removed read cannot come back)

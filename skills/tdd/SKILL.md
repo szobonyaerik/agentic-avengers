@@ -59,8 +59,9 @@ markers =
     subprocess(why): this test spawns a real process, for the stated reason.
 ```
 
-`scripts/subprocess_check.py` enforces this at the spec-review gate; it is the only stage that can
-see the cost, since every reading stage reads for correctness and a subprocess is not incorrect. It
+`scripts/subprocess_check.py` enforces this from the spec-gate hook, on every spec write in both
+modes; it is the only stage that can see the cost, since every reading stage reads for correctness
+and a subprocess is not incorrect. It
 scans `$SUBPROC_CHECK_PATHS` (os.pathsep-separated), falling back to `tests/`; set it in the
 project's `.env` when the tests are elsewhere, or the gate scans nothing and says so on stderr.
 

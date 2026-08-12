@@ -40,8 +40,8 @@ epithet, so re-skinning personas later means editing this table and `ARCHETYPES`
 | avenger-handover | the Courier |
 | avenger-agent-factory | the Artificer |
 
-The two gate stages (fidelity, spec-review) and the ship gate are deliberately **not** patrons —
-gates are moments at the door, not people at a table.
+The gate stages (the spec gate, the human spec-review) and the ship gate are deliberately **not**
+patrons — gates are moments at the door, not people at a table.
 
 ## Data sources (all optional, all read-only)
 

@@ -43,10 +43,12 @@ Route-backs it must honor (all already emitted by the gates):
   full pass).
 - verifier code failure → back to `avenger-backend-architect`.
 - verifier **test-quality** finding (tautological / off-seam / untraced requirement) → back to the
-  implementer to ADD or rewrite its own not-yet-locked tests.
-- breaker counterexample, or a surviving mutant when a project set `MUTATION_POLICY` to
-  advisory/enforce → back to the implementer, to **add** a test (the suite is locked by then —
-  additions only).
+  implementer to ADD or rewrite its own not-yet-locked tests. Verification is capped at **3 attempts
+  per phase** (`scripts/verifier_attempts.py`); at the cap the remainder is carried as known-open in
+  `handover.md`, waived, or escalated — a fourth attempt is not one of the three.
+- breaker counterexample, or a surviving mutant under `MUTATION_POLICY=enforce` → back to the
+  implementer, to **add** a test (the suite is locked by then — additions only). Under `advisory`,
+  the default, survivors are reported and route nothing back.
 - Stop after N retries on the same stage and surface the report (don't loop forever).
 - **A mutation route-back loop is a signal, not a grind.** The gate passes at a threshold (default
   0.85), not at zero survivors. If the same phase bounces twice, stop and surface it: either the
