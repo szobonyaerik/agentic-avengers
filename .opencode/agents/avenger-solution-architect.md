@@ -71,7 +71,7 @@ feature: <feature>
 type: architecture-overview
 status: draft
 created: YYYY-MM-DD
-readers: avenger-implementation-planner @ once; avenger-spec-writer @ per spec (whole); spec gate @ per spec (## Contracts and Decisions header only); e2e-author @ feature close (the goal)
+readers: avenger-implementation-planner @ once; avenger-spec-writer @ per spec (whole); spec gate @ per spec (## Contracts and Decisions header only); spec-review (human grill) @ per spec (## Contracts and Decisions header only); e2e-author @ feature close (the goal)
 ---
 
 # <Feature> — Architecture Overview

@@ -40,8 +40,8 @@ deleted; the read directives changed.**
   checked, and `skills/phase-handover` tells the writer the length the task warrants outright.
 - `work_kind` rides in **the spec's own frontmatter**; `task-analysis.md` is read once, by the
   Solution Architect. **Never send a reader to another document for a single field.**
-- `overview.md` gains a stable `## Contracts and Decisions` header. **Spec-review reads the header;
-  the spec writer still reads the whole file.**
+- `overview.md` gains a stable `## Contracts and Decisions` header. **The spec gate and the human
+  spec-review read the header; the spec writer still reads the whole file.**
 - `test-mapping.md` is **the table**; mutation evidence, route-back history, build order and
   deviations move to `test-evidence.md`, read **on route-back only**.
 - `verdict.json` archives a superseded attempt to `verdict-attempt-<n>.json` instead of nesting it,
@@ -53,7 +53,11 @@ deleted; the read directives changed.**
   to carry the line; whether they belong on the read path is issue #29. This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
   `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
-  removed read. **Change the directive at the table, never one caller at a time.** Every entry also
+  removed read. **That check is one-directional** — it catches a removed read coming back, never a
+  stage instructed to read something the table does not declare, so the table is not self-verifying
+  and an undeclared reader leaves it incomplete rather than wrong (which is how the human
+  spec-review's two reads went undeclared). **Change the directive at the table, never one caller at
+  a time.** Every entry also
   names the template or stage instruction that makes its writer emit the line: declaring a reader is
   not the same as instructing anyone to write it down, and three artifact classes shipped with the
   first and not the second.

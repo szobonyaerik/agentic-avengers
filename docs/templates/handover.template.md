@@ -8,7 +8,7 @@ status: green
 next: <next-phase-slug | e2e | ship>
 verdict: pass | pass (bypassed) | fail   <!-- from verdict.json in this phase dir -->
 mutation: n/a (off) | <score> (policy <enforce|advisory>)
-readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; e2e-author @ feature close
+readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; spec-review (human grill) @ the immediately prior card; e2e-author @ feature close
 ---
 
 <!-- THIS IS A CONTRACT CARD, NOT A RECORD. HARD CAP: 6144 bytes, checked by

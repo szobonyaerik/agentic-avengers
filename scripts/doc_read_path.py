@@ -25,6 +25,13 @@ Two checks keep the declaration true rather than aspirational:
                    `handover-archive.md`, fails here rather than being discovered by the next
                    measurement.
 
+`check --sources` guards **one direction only**: a read this table REMOVED cannot come back. It says
+nothing about the inverse - a stage instructed to read something that `READ_PATH` never declares. So
+the table is not self-verifying, and an instructed-but-undeclared reader makes it *incomplete* rather
+than wrong, which is harder to notice. The human spec-review survived exactly that way: it was
+reading `overview.md`'s header and the prior phase's card per spec, on nobody's `readers:` line.
+Adding a reader here is how that is fixed; bending the prose to match a silent table is not.
+
 The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
 one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
 you change** - the same rule `scripts/verifier_bundle_scope.py` (the verifier bundle),
@@ -80,6 +87,7 @@ READ_PATH: dict[str, dict] = {
             "avenger-implementation-planner @ once",
             "avenger-spec-writer @ per spec (whole)",
             "spec gate @ per spec (## Contracts and Decisions header only)",
+            "spec-review (human grill) @ per spec (## Contracts and Decisions header only)",
             "e2e-author @ once, at feature close (the goal)",
         ],
         "extent": "whole | header",
@@ -186,6 +194,7 @@ READ_PATH: dict[str, dict] = {
         "readers": [
             "avenger-spec-writer @ per spec, prior phases' cards",
             "spec gate @ per spec, the immediately prior phase's card (CONTEXT, never gated)",
+            "spec-review (human grill) @ per spec, the immediately prior phase's card",
             "e2e-author @ once, at feature close",
         ],
         "extent": "card",

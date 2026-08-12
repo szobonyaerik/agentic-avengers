@@ -126,7 +126,7 @@ status: green
 next: <next-phase-slug | e2e | ship>
 verdict: pass | pass (bypassed) | fail
 mutation: n/a (off) | <score> (policy advisory|enforce)
-readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
+readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; spec-review (human grill) @ the immediately prior card; e2e-author @ feature close
 ---
 ## Phase <phase> — contract card
 
@@ -177,7 +177,7 @@ status: green
 next: 2-analysis
 verdict: pass
 mutation: n/a (off)
-readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
+readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; spec-review (human grill) @ the immediately prior card; e2e-author @ feature close
 ---
 ## Phase 1-webhook — contract card
 

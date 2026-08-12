@@ -75,14 +75,14 @@ deleted to fix this; the read directives changed.
 | document | read by | extent |
 |---|---|---|
 | `task-analysis.md` | the Solution Architect, **once, at feature start** | whole |
-| `overview.md` | planner + Spec Writer whole; **the spec gate reads the `## Contracts and Decisions` header only** | whole / header |
+| `overview.md` | planner + Spec Writer whole; **the spec gate and the human spec-review read the `## Contracts and Decisions` header only** | whole / header |
 | `plan.md` | the Spec Writer, per spec; phase-handover, per phase (the next phase's entry only) | whole |
 | `spec.md` | its own gates and its own implementer; the verifier bundle, changed specs only | whole |
 | `test-mapping.md` | the Verifier, per phase | **the table** |
 | `test-evidence.md` | **on route-back only** | whole |
 | `verdict.json` | phase-handover, feature close | whole; `report` ≤ 1500 chars |
 | `verdict-attempt-<n>.json` | **nobody** — archive | — |
-| `handover.md` | the Spec Writer (prior cards), the spec gate (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
+| `handover.md` | the Spec Writer (prior cards), the spec gate and the human spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
 | `handover-archive.md` | **nobody** — archive | — |
 | `pipeline-observations.md` | the retrospective triage, once at feature close; the preflight sweep, frontmatter only | whole |
 | `e2e-mapping.md` | feature close, once | whole |
@@ -111,6 +111,12 @@ Four rules follow from it, and each one is enforced rather than requested:
   `doc_read_path.py check --sources` scans `agents/`, `skills/`, `commands/` and `prompts/` and
   fails when a stage instruction names a document that left the read path. A guard bolted onto one
   command is a guard the next command does not have.
+  **That guard is one-directional**: it catches a removed read coming back, and nothing catches the
+  inverse — a stage instructed to read something the table never declares. So the table is not
+  self-verifying; a reader that is instructed but undeclared leaves it *incomplete* rather than
+  wrong, which is harder to spot. The human spec-review reached this list that way. When a stage
+  genuinely needs a read, add the reader to the table; never bend the instruction to match a silent
+  one.
 
 ## Tiered requirement binding — what decides suite size
 
