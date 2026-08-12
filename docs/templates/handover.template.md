@@ -8,7 +8,7 @@ status: green
 next: <next-phase-slug | e2e | ship>
 verdict: pass | pass (bypassed) | fail   <!-- from verdict.json in this phase dir -->
 mutation: n/a (off) | <score> (policy <enforce|advisory>)
-readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
+readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; spec-review (human grill) @ the immediately prior card; e2e-author @ feature close
 ---
 
 <!-- THIS IS A CONTRACT CARD, NOT A RECORD. HARD CAP: 6144 bytes, checked by
@@ -40,6 +40,8 @@ readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immedia
 - Test-quality review: clean | findings routed; scope: targeted | expanded
 - Mutation: n/a (off) | <score> (policy <enforce|advisory>)
 - Bypasses: none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
+- Amendments: none | <A-id> <R ids touched> [security]   <!-- ids from amendments.json; this is where a later phase sees the phase moved after it was first verified -->
+- Carried known-open: none | <finding-id> <one line>   <!-- verification is capped at 3 attempts, so some findings are CARRIED rather than fixed. This card is the only place they stay visible; a carried finding recorded nowhere is the cap turning into silent attrition. -->
 
 ## Artifacts
 <!-- Link every artifact that exists. A link is ~80 bytes; the links are what the card is FOR, and

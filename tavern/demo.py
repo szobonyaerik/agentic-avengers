@@ -33,7 +33,7 @@ STAGE_SENTENCE = {
     "solution-architect": "sketching the tower on a napkin",
     "implementation-planner": "charting phases on the war map",
     "spec-writer": "inking spec 2.1 with a steady hand",
-    "fidelity-gate": "the bouncer squints at the spec's papers",
+    "spec-gate": "the bouncer squints at the spec's papers",
     "spec-review": "a rival guild reviews the contract",
     "implementer": "hammering a failing test until it rings green",
     "verifier": "weighing the tests on brass scales",
@@ -117,9 +117,9 @@ def demo_state(started_monotonic: float) -> dict:
 
     moments = []
     stage_pos = elapsed % _STAGE_SECS
-    if stage == "fidelity-gate":
+    if stage == "spec-gate":
         kind = "gate_fail" if tick % 7 == 3 else "gate_pass"
-        moments.append({"kind": kind, "text": "fidelity gate: " + ("NO-GO — routed back" if kind == "gate_fail" else "GO")})
+        moments.append({"kind": kind, "text": "spec gate: " + ("blocked — routed back" if kind == "gate_fail" else "approved")})
     elif stage == "verifier" and stage_pos > _STAGE_SECS - 6:
         kind = "route_back" if tick % 5 == 2 else "gate_pass"
         moments.append({"kind": kind, "text": "verifier: " + ("finding routed to implementer" if kind == "route_back" else "phase verdict: pass")})
@@ -137,7 +137,7 @@ def demo_state(started_monotonic: float) -> dict:
         "specs": [
             {"spec": f"{phase_no}.1", "phase": f"{phase_no}-demo-phase",
              "status": "done" if stage in ("verifier", "handover", "e2e-author", "done") else "in-progress",
-             "fidelity_verdict": "GO" if AVENGER_STAGES.index(stage) > 4 else "",
+             "spec_gate": "approved" if AVENGER_STAGES.index(stage) > 4 else "pending",
              "review_status": "approved" if AVENGER_STAGES.index(stage) > 5 else ""},
         ],
         "verdicts": (

@@ -69,7 +69,11 @@ NEEDS_GATING = 0
 UNCHANGED = 1
 ERROR = 2
 
-GATES = ("fidelity", "review")
+#: `gate` is the one spec gate. `fidelity` and `review` are the two it replaced: still accepted so a
+#: repository mid-upgrade can read the stamps and kept bodies its old specs carry, never written by
+#: anything shipped. Each gate keeps its OWN key — a shared one would mean the first gate to stamp it
+#: makes every later gate skip.
+GATES = ("gate", "fidelity", "review")
 
 ACTIONS = ("check", "stamp", "previous", "body", "report")
 
@@ -78,7 +82,8 @@ ACTIONS = ("check", "stamp", "previous", "body", "report")
 LEGACY_VERDICT = "GO"
 
 #: Verdicts that make the judged body the new reference for "what this gate last approved".
-PASSING = {"GO", "REVIEW", "PASS"}
+#: `APPROVED` is the one spec gate's token; `GO`/`REVIEW`/`PASS` are the two gates it replaced.
+PASSING = {"APPROVED", "GO", "REVIEW", "PASS"}
 
 CACHE_DIR = ".avenger-gate-cache"
 

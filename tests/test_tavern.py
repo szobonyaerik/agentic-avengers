@@ -8,6 +8,7 @@ when a source is missing and reports it when present.
 """
 
 import json
+import re
 import shutil
 import sys
 import threading
@@ -27,7 +28,7 @@ phase: 1-core
 spec: "1.1"
 status: done
 review_status: approved
-fidelity_verdict: GO
+spec_gate: approved
 criticality: normal
 ---
 
@@ -50,7 +51,15 @@ def project(tmp_path):
         "verdict": "pass", "tests": {"total": 3, "passed": 3, "failed": 0}, "findings": [],
     }))
     (root / "scripts").mkdir()
-    shutil.copy(REPO / "scripts" / "pipeline_state.py", root / "scripts" / "pipeline_state.py")
+    # The resolver plus the siblings it imports — DERIVED, not listed. It grew two of them (the one
+    # place the spec gate's stamp is read, and the amendment ledger) and a fixture copying one file
+    # made the resolver die at import, which reached the server as a feature with no `stage` at all.
+    resolver = REPO / "scripts" / "pipeline_state.py"
+    shutil.copy(resolver, root / "scripts" / "pipeline_state.py")
+    for module in re.findall(r"^import ([a-z_]+)", resolver.read_text(), re.M):
+        sibling = REPO / "scripts" / f"{module}.py"
+        if sibling.is_file():
+            shutil.copy(sibling, root / "scripts" / sibling.name)
     (root / ".agent-activity.jsonl").write_text(
         json.dumps({"ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
                     "agent_type": "avenger-verifier", "agent_id": "a1"}) + "\n"
@@ -121,7 +130,7 @@ def test_state_merges_all_sources(tavern):
     (feature,) = state["features"]
     assert feature["feature"] == "demo"
     assert feature["stage"]  # whatever the resolver owes next — presence is the contract
-    assert feature["specs"][0]["fidelity_verdict"] == "GO"
+    assert feature["specs"][0]["spec_gate"] == "approved"
     assert feature["verdicts"][0]["verdict"] == "pass"
 
     # activity: started-not-stopped agents only

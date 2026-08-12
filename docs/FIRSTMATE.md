@@ -22,8 +22,8 @@ systems already agree on. The division of labour:
 | **no-mistakes** | lint, docs, push, PR, CI at feature close | its own daemon worktree |
 
 Two rules to respect at the boundary:
-- Under `--auto` the pipeline **halts** on an `ask-user` ship-gate finding and on a spec-review
-  NO-GO. That halt surfaces as the crewmate going quiet with the halt in its transcript —
+- Under `--auto` the pipeline **halts** on an `ask-user` ship-gate finding and on a **blocked** spec
+  gate. That halt surfaces as the crewmate going quiet with the halt in its transcript —
   firstmate's stale/wake cycle will escalate it to you. `--ship-yes` pre-consents per run;
   deliberately not the default.
 - The layering runs upward too: the pipeline **writes** firstmate's per-phase metrics record as each
@@ -57,7 +57,7 @@ the same three `no-mistakes` states `/avenger-run` §1 checks, plus the gate key
 no-mistakes doctor            # binary + runnable pipeline agent
 no-mistakes axi               # repo initialised (else: no-mistakes init)
 grep REPLACE_ME .no-mistakes.yaml && echo "fill me in"   # config filled
-# OPENROUTER_API_KEY in the project .env — fidelity/spec-review/verifier gates fail closed without it
+# OPENROUTER_API_KEY in the project .env — the spec gate and verifier gates fail closed without it
 ```
 
 ## 1. Register the projects with firstmate
@@ -88,7 +88,7 @@ switching to `feat/<feature-id>` from origin itself:
 
 > Ship task on `<project-a>`: run `/plan-build-verify:avenger-run <feature-id> --auto`. This
 > resumes an existing feature — the `feat/<feature-id>` branch exists on origin. Escalate ask-user
-> findings and NO-GO halts to me.
+> findings and blocked-spec halts to me.
 
 Two crewmate mechanics the pipeline already accounts for, worth knowing when reading its output:
 the project's gitignored `.env` (with `OPENROUTER_API_KEY`) stays in the primary checkout, and the
@@ -141,7 +141,7 @@ yet on this machine.
 |---|---|---|
 | no patrons | `--fm-home` wrong (no `state/*.meta` there) | point at the home the first mate actually runs from |
 | patrons but no avengers on job 1 | `<project-a>` lacks the activity hook | re-run `scripts/install.sh <project-a>` (vendors `hook_activity.sh` + hooks.json) |
-| job 1 quiet for long | `--auto` halted on ask-user / NO-GO, or preflight failed | read its window (⚔ Focus); preflight §0 above |
+| job 1 quiet for long | `--auto` halted on ask-user / a blocked spec, or preflight failed | read its window (⚔ Focus); preflight §0 above |
 | `⚑ stage` never moves | resolver can't run in that root | `python3 scripts/pipeline_state.py <feature-id> --root <root>` by hand and read the error |
 | job 1 halts at preflight: branch | `feat/<feature-id>` checked out in the primary checkout too | `git switch main` in the primary, re-dispatch |
 | job 1 halts at preflight: no-mistakes | `no-mistakes axi` reports uninitialised *inside the worktree* | run `no-mistakes init` once in that worktree (the bare gate repo + DB record may be keyed per working dir) |

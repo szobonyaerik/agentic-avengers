@@ -27,7 +27,7 @@ AVENGER_STAGES = [
     "solution-architect",
     "implementation-planner",
     "spec-writer",
-    "fidelity-gate",
+    "spec-gate",
     "spec-review",
     "implementer",
     "verifier",
@@ -141,6 +141,20 @@ def read_activity(root: Path, stale_secs: int = 900) -> dict:
 # ---------------------------------------------------------------- pipeline
 
 
+def _spec_gate_status(fields: dict) -> str:
+    """A spec's machine-gate status, resolved by the pipeline's own module when it is vendored.
+
+    The monitor watches other repositories, and one of them may not have `spec_gate_state.py` yet.
+    Falling back to reading the raw stamp is right here and only here: this is a display, and a
+    display that shows nothing is better than one that decides a gate question on its own.
+    """
+    try:
+        import spec_gate_state
+    except ImportError:
+        return fields.get("spec_gate", "") or fields.get("fidelity_verdict", "")
+    return spec_gate_state.status(fields)
+
+
 def read_pipeline(root: Path) -> dict:
     """Pipeline state for every feature under a watched root, via the vendored resolver."""
     features_dir = root / "docs" / "features"
@@ -174,7 +188,10 @@ def read_pipeline(root: Path) -> dict:
                 "spec": fm.get("spec") or spec_md.parent.name,
                 "phase": fm.get("phase") or spec_md.parents[2].name,
                 "status": fm.get("status", ""),
-                "fidelity_verdict": fm.get("fidelity_verdict", ""),
+                # The ONE machine gate's stamp. `spec_gate_state.status` is the only place that
+                # decides what it means — including how a legacy `fidelity_verdict` reads — so the
+                # monitor never grows a second copy of that rule.
+                "spec_gate": _spec_gate_status(fm),
                 "review_status": fm.get("review_status", ""),
             })
         verdicts = []

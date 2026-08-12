@@ -24,6 +24,7 @@ from gate_timeouts import (  # noqa: E402
     HOOK_HEADROOM_S,
     METRICS_SPAWN,
     call_timeout,
+    gate_calls,
     gate_hooks,
     main,
     metrics_processes,
@@ -49,8 +50,8 @@ def test_the_shipped_hooks_can_outlive_the_call_they_wrap() -> None:
 
 def test_every_hook_that_can_reach_the_gate_is_checked() -> None:
     """The relation is worthless if the set it applies to is empty or wrong."""
-    names = {name for _, name, _ in gate_hooks(HOOKS_JSON, SCRIPTS)}
-    assert names == {"hook_fidelity.sh", "hook_spec_review.sh"}
+    names = {name for _, name, _, _ in gate_hooks(HOOKS_JSON, SCRIPTS)}
+    assert names == {"hook_spec_gate.sh"}
 
 
 def test_a_hook_that_never_calls_the_gate_is_not_forced_to_wait_for_one() -> None:
@@ -60,8 +61,37 @@ def test_a_hook_that_never_calls_the_gate_is_not_forced_to_wait_for_one() -> Non
 
 def test_the_gate_hooks_are_derived_from_what_they_call_not_from_a_list() -> None:
     """A hook that starts calling the gate is covered without anyone updating this module."""
-    assert reaches_gate_runner(SCRIPTS / "hook_fidelity.sh", SCRIPTS)
+    assert reaches_gate_runner(SCRIPTS / "hook_spec_gate.sh", SCRIPTS)
     assert reaches_gate_runner(SCRIPTS / "verifier_review.sh", SCRIPTS)
+
+
+def test_a_hook_that_calls_the_gate_twice_needs_a_budget_for_two_calls() -> None:
+    """The spec gate observes, then triages. A budget sized for one call reinstates the original
+    defect exactly: the harness kills the hook mid-second-call and a killed hook reports nothing.
+
+    It routes both passes through one `run_pass` helper, which is the better shape and which a
+    naive count of invocation *sites* would read as a single call — so the counter expands the
+    helper rather than the hook being written worse to suit the counter."""
+    assert gate_calls(SCRIPTS / "hook_spec_gate.sh", SCRIPTS) == 2
+    assert required_hook_timeout(calls=2) == 2 * call_timeout() + HOOK_HEADROOM_S
+
+    shipped = {name: (timeout, calls) for _, name, timeout, calls in gate_hooks(HOOKS_JSON, SCRIPTS)}
+    timeout, calls = shipped["hook_spec_gate.sh"]
+    assert timeout >= required_hook_timeout(calls=calls)
+
+
+def test_a_helper_called_twice_counts_twice(tmp_path: Path) -> None:
+    """The property, away from the shipped file, so it survives a refactor of either."""
+    hook = tmp_path / "hook_two.sh"
+    hook.write_text(
+        "#!/usr/bin/env bash\n"
+        "run_pass () {\n"
+        '  python3 "$SD/gate_runner.py" --rubric "$1"\n'
+        "}\n"
+        'run_pass a\n'
+        'if ! run_pass b; then exit 2; fi\n'
+    )
+    assert gate_calls(hook, SCRIPTS) == 2
 
 
 REFERENCE_FORMS = {
@@ -101,13 +131,23 @@ def test_the_required_budget_leaves_room_for_the_work_around_the_call() -> None:
 
 
 def test_an_inverted_pair_is_reported_with_both_numbers(tmp_path: Path) -> None:
-    """The message has to name the inversion; 'the hook failed' is what cost the day."""
+    """The message has to name the inversion; 'the hook failed' is what cost the day.
+
+    The original 120s-vs-300s pair, reproduced on a single-call hook of this test's own so the
+    arithmetic stays the one the defect had — the shipped gate hook now makes two calls and its
+    numbers are checked separately."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "hook_one.sh").write_text(
+        '#!/usr/bin/env bash\npython3 "$SD/gate_runner.py" --rubric r --target t\n'
+    )
+    (scripts / "gate_runner.py").write_text("# stand-in for resolution only\n")
     hooks = tmp_path / "hooks.json"
     hooks.write_text(json.dumps({"hooks": {"PostToolUse": [{"hooks": [
-        {"type": "command", "command": 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/hook_fidelity.sh"',
+        {"type": "command", "command": 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/hook_one.sh"',
          "timeout": 120},
     ]}]}}))
-    found = violations(hooks, SCRIPTS)
+    found = violations(hooks, scripts)
     assert len(found) == 1
     assert "120s" in found[0] and "300s" in found[0]
     assert "kills the hook 180s before the gate can answer" in found[0]
@@ -173,18 +213,18 @@ def test_measurement_fits_inside_the_headroom_it_spends(
     per-process, so every process on a hook's path can pay the per-call bound once. The hook budget
     has to outlive the provider call PLUS all of that."""
     monkeypatch.delenv("AVENGER_METRICS_TIMEOUT", raising=False)
-    for _, name, _ in gate_hooks(HOOKS_JSON, SCRIPTS):
+    for _, name, _, _ in gate_hooks(HOOKS_JSON, SCRIPTS):
         assert metrics_worst_case_s(SCRIPTS / name, SCRIPTS) <= HOOK_HEADROOM_S, name
 
 
-def test_the_fidelity_path_counts_every_process_that_can_pay_the_timeout() -> None:
-    """The worst case today: phase-open, spec-round, the kill trap's own record — and the gate
-    runner, which records in-process rather than by spawning the CLI."""
-    hook = SCRIPTS / "hook_fidelity.sh"
+def test_the_spec_gate_path_counts_every_process_that_can_pay_the_timeout() -> None:
+    """The worst case today: phase-open, spec-round, the kill trap's own record — plus the gate
+    runner and the triage decider, which record in-process rather than by spawning the CLI."""
+    hook = SCRIPTS / "hook_spec_gate.sh"
     spawned = len(METRICS_SPAWN.findall(hook.read_text(encoding="utf-8")))
 
     assert spawned >= 3
-    assert metrics_processes(hook, SCRIPTS) == spawned + 1
+    assert metrics_processes(hook, SCRIPTS) == spawned + 2
 
 
 def test_a_new_emission_point_moves_the_count_by_itself(tmp_path: Path) -> None:
@@ -219,7 +259,7 @@ def test_a_metrics_budget_that_eats_the_headroom_is_a_failure(
 
     found = violations(HOOKS_JSON, SCRIPTS)
 
-    assert any("HEADROOM EXHAUSTED" in line and "hook_fidelity.sh" in line for line in found)
+    assert any("HEADROOM EXHAUSTED" in line and "hook_spec_gate.sh" in line for line in found)
     assert all("60s AVENGER_METRICS_TIMEOUT" in line
                for line in found if "HEADROOM EXHAUSTED" in line)
 
@@ -236,7 +276,7 @@ def test_verify_fails_when_measurement_would_eat_the_hook_budget(
 def test_a_sound_pair_reports_nothing(tmp_path: Path) -> None:
     hooks = tmp_path / "hooks.json"
     hooks.write_text(json.dumps({"hooks": {"PostToolUse": [{"hooks": [
-        {"type": "command", "command": 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/hook_fidelity.sh"',
-         "timeout": required_hook_timeout()},
+        {"type": "command", "command": 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/hook_spec_gate.sh"',
+         "timeout": required_hook_timeout(calls=2)},
     ]}]}}))
     assert violations(hooks, SCRIPTS) == []

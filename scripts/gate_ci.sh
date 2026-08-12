@@ -7,8 +7,8 @@
 # spec review) run in-chat; this floor only checks their COMMITTED ARTIFACTS — `review_status:
 # approved` on specs, a passing `verdict.json` per phase — plus the suite, the static cross-family
 # assertion, and mutation if a team turned it on. See pipeline-conventions: "Where the models run".
-# The Fidelity Gate is the one model gate in this repo and it runs as an in-session hook
-# (scripts/hook_fidelity.sh), never in CI.
+# The spec gate is the one model gate in this repo and it runs as an in-session hook
+# (scripts/hook_spec_gate.sh), never in CI.
 #
 # Break-glass: GATE_BYPASS="reason" overrides a FAILING gate; logged + visible, never silent.
 # bash 3.2-compatible (macOS default).
@@ -52,13 +52,23 @@ for spec in "${SPECS[@]:-}"; do
   # built must carry its approvals.
   grep -qE '^status:[[:space:]]*(done|in-progress)[[:space:]]*$' "$spec" 2>/dev/null || continue
   echo "• spec artifacts: $spec"
-  grep -qE '^review_status:[[:space:]]*approved[[:space:]]*$' "$spec" 2>/dev/null \
-    || { echo "  ✗ review_status is not 'approved' — the human spec review never passed." >&2
-         record_fail "spec-review:$spec"; }
-  if grep -qE '^fidelity_verdict:[[:space:]]*NO-GO' "$spec" 2>/dev/null; then
-    echo "  ✗ fidelity_verdict is NO-GO — the spec was routed back and never re-gated." >&2
-    record_fail "fidelity:$spec"
+  # The ONE machine gate, read through the one module that decides what its stamp means (including
+  # how a legacy fidelity_verdict reads). Never re-derived here: this used to be a second copy of
+  # that rule, and a second copy is the one that drifts.
+  GATE_STATE="$(python3 "$SCRIPT_DIR/spec_gate_state.py" status "$spec" 2>/dev/null)"
+  if [ "$GATE_STATE" != "approved" ]; then
+    echo "  ✗ spec_gate is '$GATE_STATE' — the spec gate never approved this spec." >&2
+    record_fail "spec-gate:$spec"
   fi
+  grep -qE '^review_status:[[:space:]]*approved[[:space:]]*$' "$spec" 2>/dev/null \
+    || { echo "  ✗ review_status is not 'approved' — the human sign-off never happened." >&2
+         record_fail "spec-review:$spec"; }
+  # Size is decided mechanically and never by a gate verdict: over the cap the spec SPLITS. A
+  # rejection for size is one more thing for a spec to grow around, which is how one spec reached
+  # 51k characters across four rejected rounds.
+  python3 "$SCRIPT_DIR/requirement_cap.py" "$spec" >/dev/null 2>&1 \
+    || { python3 "$SCRIPT_DIR/requirement_cap.py" "$spec" >/dev/null
+         record_fail "requirement-cap:$spec"; }
 done
 
 # 1b) Verdict artifacts — every phase with a handover must carry a passing Verifier verdict.
@@ -86,7 +96,55 @@ if [ "$FULL" -eq 1 ]; then
         record_fail "verifier:unreviewed"
       fi
     fi
+    # The verification loop is capped at 3 attempts per phase. Enforced here as well as in the
+    # in-session hook (scripts/hook_verifier.sh): a cap only a hook can apply is a cap that stops
+    # existing the moment the phase is driven any other way, and this is the metric H4 is measured
+    # on. At the cap and CLEAN is not a stop — the cap is on the loop, not on the phase.
+    # Exit 1 is the cap; anything else is an ERROR that could not decide it. They are recorded under
+    # different names, because a failed run naming the wrong cause sends the fix at the wrong thing.
+    python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null 2>&1
+    cap_rc=$?
+    if [ "$cap_rc" -ne 0 ]; then
+      python3 "$SCRIPT_DIR/verifier_attempts.py" check "$(dirname "$ho")" >/dev/null
+      if [ "$cap_rc" -eq 1 ]; then
+        record_fail "verifier:attempt-cap"
+      else
+        record_fail "verifier:attempt-cap-unreadable"
+      fi
+    fi
+    # An amendment names the requirement ids a post-verification change touched. A pass standing
+    # over one that is OWED re-verification — any pending amendment on a passing phase, and every
+    # security-relevant amendment always — is a claim about code that has since changed.
+    if ! python3 "$SCRIPT_DIR/amendments.py" due "$(dirname "$ho")" >/dev/null 2>&1; then
+      python3 "$SCRIPT_DIR/amendments.py" due "$(dirname "$ho")" >/dev/null
+      record_fail "amendments:owed"
+    fi
   done < <(find docs/features -type f -name handover.md 2>/dev/null)
+fi
+
+# 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
+#      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
+#      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY
+#      commit, which is what stops the same defect being found twice, six attempts apart, in one
+#      phase — and it is diff-scoped by default for the same reason the spec loop above is: you are
+#      responsible for what you change, so a repository full of pre-rule phases can upgrade instead
+#      of being held hostage by CI. --full audits everything.
+echo "• verifier pre-check: traceability, gate-stamp freshness, spec structure"
+if [ "$FULL" -eq 1 ]; then
+  python3 "$SCRIPT_DIR/verifier_precheck.py" --all --root "$ROOT" || record_fail "verifier-precheck"
+else
+  python3 "$SCRIPT_DIR/verifier_precheck.py" --root "$ROOT" || record_fail "verifier-precheck"
+fi
+
+# 1bc) Required skills exist, and every skill a stage was owed was actually observed being loaded. A
+#      stage whose required skill file is missing does not get a lighter version of the rules; it
+#      gets none, and until now that failed silently. The audit is the other half of pointer
+#      delivery: a pointer nothing checks is the instruction-with-no-mechanism it replaced.
+if [ "$FULL" -eq 1 ]; then
+  echo "• required skills: every stage's required SKILL.md is present"
+  python3 "$SCRIPT_DIR/required_skills.py" verify --root "$ROOT" || record_fail "required-skills"
+  echo "• required skills: every required skill has an observed load"
+  python3 "$SCRIPT_DIR/required_skills.py" audit --all || record_fail "required-skills:unloaded"
 fi
 
 # 1bb) The document read path — the artifacts obey their declared readers and caps, and no stage
@@ -152,7 +210,12 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
 #    Same contract as scripts/hook_mutation.sh: baseline first, diff-scoped, deterministic verdict
 #    at MUTATION_MIN_SCORE, and the same MUTATION_POLICY authority switch (blocking|advisory|off).
 #    Keep the two in step — CI and in-session must not disagree.
-MUTATION_POLICY="${MUTATION_POLICY:-off}"
+# Default `advisory`, not `off`. It is deterministic, diff-scoped, needs no model below the
+# threshold, and every non-discriminating test this project ever caught was caught by mutation —
+# including two in one phase that neither spec gate nor a green 281-test suite surfaced. Advisory
+# never blocks, so the cost of the default being wrong is a line of output. It is still not the
+# independence mechanism; that is the Verifier's test-quality review.
+MUTATION_POLICY="${MUTATION_POLICY:-advisory}"
 case "$MUTATION_POLICY" in
   enforce|advisory|off) ;;
   *) echo "  ✗ MUTATION_POLICY='$MUTATION_POLICY' is not one of enforce|advisory|off (fail closed)" >&2

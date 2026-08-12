@@ -11,7 +11,7 @@ so it is the one that keeps this log.
 
 > **This is not `docs/lessons/`.** That log (the `self-improvement` skill) is **per-project** and
 > about the **work** — a pytest trap, a migration gotcha. This one is about the **machinery**, and
-> its destination is the **agentic-avengers repo**. A note like "the fidelity rubric NO-GO'd the
+> its destination is the **agentic-avengers repo**. A note like "the spec gate blocked the
 > same spec three times" is useless to the project you happen to be building; it is a change
 > request against the pipeline. Keep them apart — if you find yourself writing about the project's
 > code here, it belongs in `docs/lessons/`.
@@ -22,7 +22,7 @@ All of these are already on disk. You are reading signals, not instrumenting any
 
 | Kind | Signal | Reads as |
 |---|---|---|
-| `gate-friction` | `fidelity_verdict: NO-GO` repeatedly on one spec | rubric too strict, or spec-writer guidance too thin |
+| `gate-friction` | `spec_gate: blocked` repeatedly on one spec, or a blocker outside the closed set | the triage pass is drifting, or spec-writer guidance is too thin |
 | `route-back` | `findings[].kind` in `verdict.json` | a spike in *wrong/gamed test* means the `tdd` guidance is failing, not the implementer |
 | `bypass` | `bypassed: true`, `break_glass`, `waiver_reason` | which gate people route around |
 | `stage-churn` | the same stage resolved repeatedly by `pipeline_state.py` | a stage that cannot get it right first time |
@@ -58,8 +58,8 @@ python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_observations.py" append <feat
 ```
 
 Write the note so it is actionable **without** the run's context — it will be read weeks later, in a
-different repo. "Fidelity NO-GO'd 1.2 three times on wording, not substance; the rubric may be
-penalising terse acceptance criteria" beats "fidelity gate annoying".
+different repo. "The spec gate blocked 1.2 three times on wording, not substance; triage may be
+classifying terse acceptance criteria as untestable" beats "spec gate annoying".
 
 ## Preflight sweep (start of every interactive `/avenger-run`)
 
@@ -77,7 +77,7 @@ sweep, everything an `--auto` run learned is stranded on disk forever.
 ## Triage (at feature close, stage `done`)
 
 1. **Final sweep.** Re-read `verdict.json` for every phase, `gate-overrides.log`, and the specs'
-   `fidelity_verdict` stamps. Add anything the run revealed that you did not catch live.
+   `spec_gate` stamps and each phase's `amendments.json`. Add anything the run revealed that you did not catch live.
 2. **Render a lavish triage artifact.** Load the `lavish` skill and open its **`input` playbook** —
    it exists precisely to collect a structured selection from inside the artifact. Show one card per
    observation with its kind, its evidence paths, and *what change it implies*. Then:
@@ -94,8 +94,8 @@ sweep, everything an `--auto` run learned is stranded on disk forever.
      --label pipeline-improvement \
      --body "<observation + evidence paths + the concrete change proposed>"
    ```
-   Title the issue as the **change** ("loosen the fidelity rubric on terse acceptance criteria"),
-   not the symptom ("fidelity gate is annoying"). Carry the evidence paths into the body so it is
+   Title the issue as the **change** ("stop the triage pass blocking on terse acceptance criteria"),
+   not the symptom ("the spec gate is annoying"). Carry the evidence paths into the body so it is
    actionable without re-deriving them.
    `--title`/`--body` carry prose inline here on purpose: this step is **interactive-only** — under
    `--auto` triage is skipped entirely and `gh-axi issue create` is hard-denied whatever its

@@ -16,7 +16,7 @@ for these rules; `/pipeline-init` can also copy them into a target repo's own CL
 
 ## The chain
 
-`task-analyst → solution-architect → implementation-planner → spec-writer → [fidelity gate] →
+`task-analyst → solution-architect → implementation-planner → spec-writer → [spec gate] →
 [human spec review] → backend/frontend implementer → verifier → (breaker, optional) → handover`,
 looped per phase until the feature is done, then a single feature-level **e2e** stage, then the
 **ship gate** (`no-mistakes`: lint, docs, push, PR, CI), and finally the **retrospective triage**
@@ -75,14 +75,14 @@ deleted to fix this; the read directives changed.
 | document | read by | extent |
 |---|---|---|
 | `task-analysis.md` | the Solution Architect, **once, at feature start** | whole |
-| `overview.md` | planner + Spec Writer whole; **spec-review reads the `## Contracts and Decisions` header only** | whole / header |
+| `overview.md` | planner + Spec Writer whole; **the spec gate and the human spec-review read the `## Contracts and Decisions` header only** | whole / header |
 | `plan.md` | the Spec Writer, per spec; phase-handover, per phase (the next phase's entry only) | whole |
 | `spec.md` | its own gates and its own implementer; the verifier bundle, changed specs only | whole |
 | `test-mapping.md` | the Verifier, per phase | **the table** |
 | `test-evidence.md` | **on route-back only** | whole |
 | `verdict.json` | phase-handover, feature close | whole; `report` ≤ 1500 chars |
 | `verdict-attempt-<n>.json` | **nobody** — archive | — |
-| `handover.md` | the Spec Writer (prior cards), spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
+| `handover.md` | the Spec Writer (prior cards), the spec gate and the human spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
 | `handover-archive.md` | **nobody** — archive | — |
 | `pipeline-observations.md` | the retrospective triage, once at feature close; the preflight sweep, frontmatter only | whole |
 | `e2e-mapping.md` | feature close, once | whole |
@@ -111,10 +111,16 @@ Four rules follow from it, and each one is enforced rather than requested:
   `doc_read_path.py check --sources` scans `agents/`, `skills/`, `commands/` and `prompts/` and
   fails when a stage instruction names a document that left the read path. A guard bolted onto one
   command is a guard the next command does not have.
+  **That guard is one-directional**: it catches a removed read coming back, and nothing catches the
+  inverse — a stage instructed to read something the table never declares. So the table is not
+  self-verifying; a reader that is instructed but undeclared leaves it *incomplete* rather than
+  wrong, which is harder to spot. The human spec-review reached this list that way. When a stage
+  genuinely needs a read, add the reader to the table; never bend the instruction to match a silent
+  one.
 
 ## Tiered requirement binding — what decides suite size
 
-Every requirement declares a **`binding:`**, written by the Spec Writer and settled at spec-review.
+Every requirement declares a **`binding:`**, written by the Spec Writer and settled at the spec gate.
 It, and not the requirement count, is what determines how many tests exist.
 
 | `binding:` | Meaning | Verified by |
@@ -142,11 +148,11 @@ Three consequences worth stating outright:
   one-test-per-id rule here would route back a coverage gap on every requirement the spec
   deliberately left unbound, and hand the suite straight back its lost multiplier. The rule is in
   `skills/verifier-triage`, and `prompts/verifier-review.md` carries it for the cross-family reader.
-- **Cost is only visible at spec-review.** Fidelity, cross-family review and verification all read
-  for **correctness**, and an expensive test is not incorrect. `scripts/subprocess_check.py` is the
-  mechanical half of that gate: an AST walk over `tests/` for spawners without
-  `@pytest.mark.subprocess("<why>")`. It runs on every spec write in **both** modes via
-  `scripts/hook_spec_review.sh`, over `$SUBPROC_CHECK_PATHS` when a project's tests are not at
+- **Cost is only visible at the spec gate.** Its observe pass, the cross-family review and
+  verification all read for **correctness**, and an expensive test is not incorrect.
+  `scripts/subprocess_check.py` is the mechanical half of that gate: an AST walk over `tests/` for
+  spawners without `@pytest.mark.subprocess("<why>")`. It runs on every spec write in **both** modes
+  via `scripts/hook_spec_gate.sh`, over `$SUBPROC_CHECK_PATHS` when a project's tests are not at
   `tests/` — an absent root scans nothing, which is CLEAN but always reported on stderr, never a
   silent pass. Deliberately **not** a wall-clock budget — seven runs of one
   unchanged suite spanned 66.43s to 137.76s on one machine, so a runtime gate would fail green suites
@@ -154,33 +160,119 @@ Three consequences worth stating outright:
 
 ## Gates
 
-- **Fidelity Gate (per spec, automated, cross-family)** — *this repo only.* Fires on spec write via
-  `scripts/hook_fidelity.sh` + `prompts/fidelity-rubric.md`, stamps `fidelity_verdict`; `NO-GO` routes
-  back to the Spec Writer. It is a cheap machine pre-filter, **not** a substitute for the human review
-  that follows.
+- **The spec gate (per spec, automated, cross-family, TWO passes, ONE verdict)** — *this repo only.*
+  Fires on spec write via `scripts/hook_spec_gate.sh`, stamps `spec_gate: approved | blocked`;
+  `blocked` routes back to the Spec Writer.
+
+  It replaced **two** gates — the Fidelity Gate and the automated half of spec-review — which asked
+  overlapping questions of the same document at the same moment. In one measured phase a spec passed
+  one and failed the other on **byte-identical text**. Both told their reviewer to judge *"without
+  charity … assume gaps until the spec proves otherwise"*, and both ended *"when unsure between
+  REVIEW and NO-GO, choose NO-GO"*, across seven dimensions all asking "is everything covered?" with
+  **no size ceiling, requirement cap or cost dimension anywhere**. The only response available to a
+  rejected spec is more text: spec 8.0 went 25k -> 51k characters and 8.2 went 40k -> 57k across four
+  rejected rounds, until the gate flagged them for excess surface.
+
+  So the gate is **report-everything, then triage**, and the verdict is not a model's to give:
+
+  1. **Observe** (`prompts/spec-gate-observe.md`) — reports every observation it has, with **no
+     verdict pressure at all**. It answers with `observations`, not `verdict`; it cannot block, and it
+     is told in as many words that it is not a gate. A reviewer told to be conservative follows that
+     literally, so the conservatism is removed from the pass that reads. It is handed a
+     `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) carrying **exactly** the
+     extents the read path grants it — the overview's `## Contracts and Decisions` section and the
+     *immediately prior* phase's contract card **bounded by `HANDOVER_MAX_BYTES`**, never the whole
+     overview, never every prior phase, never `handover-archive.md`. The byte bound is not
+     decoration: that cap is enforced diff-scoped, so an oversized pre-rule handover is counted and
+     not blocked, and reading it whole would hand this new reader the whole cost the contract card
+     removed. A truncated card is reported, never silent.
+     Half of `contradiction` is a contract declared in those documents,
+     so without them a closed set of four is three items and a claim. It is reference only: absent
+     context is normal (phase 1 has no prior card), named on stderr, and never fails the gate.
+  2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation
+     against the closed set. It emits `classifications`, not a verdict. Its tie-break is the reverse
+     of the old one: **when unsure, it is a note.**
+  3. **Decide** (`scripts/spec_gate_triage.py`) — turns classifications into the verdict,
+     deterministically. **No model decides whether a spec is blocked.**
+
+  **The blocking set is CLOSED, and it is exactly four things:** a **missing requirement**, an
+  internal **contradiction**, an **untestable criterion**, an **unhandled critical edge case**.
+  Everything else is a **note**; **notes never block** and land in the spec's known-open list
+  (`spec-notes.md`, read once by the implementer). The closed set is what stops the filter drifting
+  back into the ratchet it replaces, and it is closed *mechanically*: a category the table does not
+  know is a **hard failure naming what was invented**, never a judgement call — guessing "blocking"
+  reinstates the ratchet and guessing "note" silently deletes a finding. Adding a fifth category is a
+  deliberate edit to `spec_gate_triage.BLOCKING`, reviewed as such.
+
+  **Size is decided before the gate runs, and the remedy is a split.** `scripts/requirement_cap.py`
+  counts declared requirement ids and caps them at **12** (`SPEC_REQUIREMENT_MAX`). Over the cap the
+  spec **splits** into siblings `<n>.<k>` under the same phase, each independently gated. It runs
+  **before** any paid call, so an over-cap spec costs nothing — and the gate rubrics are told never
+  to reject a spec for being large, because **a rejection for size is one more thing to grow
+  around**.
+
 - **Human spec review (per spec)** — a human runs `grill-me` against the spec using
-  `spec-review-checklist`, then sets `review_status: approved`. This is the last gate before
-  implementation. Automated mode (`/spec-review --auto`, `SPEC_REVIEW_MODE=auto`) exists for
-  unattended runs and fails closed like any gate.
-  A spec reaches the implementer only when `fidelity_verdict != NO-GO` **and** `review_status: approved`.
+  `spec-review-checklist`, then sets `review_status: approved`. `review_status` now means only that:
+  a **human** sign-off, written by no model except in unattended mode, where `SPEC_REVIEW_MODE=auto`
+  has the machine gate carry it because nobody is there. One machine gate plus one human is not two
+  rubrics; two rubrics was the defect.
+  A spec reaches the implementer only when `spec_gate: approved` **and** `review_status: approved`.
   - **A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
     passed by this same gate before and is not a finding. One spec drew REVIEW, REVIEW, then a NO-GO
     naming requirements the gate itself had approved twice, unchanged — a verdict is a **sample from
     a distribution**, not a fact about the artifact, and variance in a gate that fails closed is far
     more expensive than variance in one that fails open. `scripts/spec_gate_cache.py` keeps the body
-    each gate last **approved** — a rejection records its hash, its verdict and its report, but does
+    the gate last **approved** — a rejection records its hash, its verdict and its report, but does
     not replace that body: it is the reference the next re-gate diffs against under
     `## PREVIOUSLY APPROVED`, and overwriting it would show the author changes-since-rejection while
-    telling them they were changes-since-approval. `scripts/hook_spec_review.sh` hands the reviewer a
+    telling them they were changes-since-approval. `scripts/hook_spec_gate.sh` hands the reviewer a
     `## CHANGES SINCE APPROVAL` diff; with no kept body the whole spec is gated, the safe direction.
     A **full** re-gate is still owed when the diff changes the requirement set, Scope, Interfaces /
     contracts, `work_kind`, or any `binding:` — and a **first** gate is always full.
-- **Verifier (per phase, cross-family)** — after every spec in the phase is green, the Verifier runs
-  the full suite, traces coverage, and puts the phase-mapped/changed tests and their directly
-  referenced helpers through a **targeted test-quality review on a cross-family model** (the
-  independence check). It expands only on explicit criticality or evidence, then passes or routes
-  back. Fail closed — a green suite with no completed review is an *unreviewed* phase, not a pass. It
-  persists `verdict.json`. **On pass, the phase's tests lock.**
+  - **The hook makes TWO provider calls, and its budget says so.** `scripts/gate_timeouts.py` counts
+    invocation sites — expanding a helper function by its call sites, so factoring both passes
+    through one `run_pass` does not read as one call — and requires
+    `hook timeout >= calls x call timeout + headroom`. A budget sized for one call is the 120s-hook
+    -around-a-300s-call defect exactly, and a killed hook reports nothing at all.
+- **Verifier (per phase, cross-family) — narrowed to three jobs.** After every spec in the phase is
+  green, the Verifier runs the full suite, traces coverage, and puts the phase-mapped/changed tests
+  and their directly referenced helpers through a **targeted test-quality review on a cross-family
+  model** (the independence check). It expands only on explicit criticality or evidence, then passes
+  or routes back. Fail closed — a green suite with no completed review is an *unreviewed* phase, not
+  a pass. It persists `verdict.json`. **On pass, the phase's tests lock.**
+  - **What it keeps, and why only these.** A scout measured all **46** of its findings across 8
+    phases: only **3** were user-visible defects no other stage could have found — but **two of those
+    were plaintext-credential leaks**, and that is what buys the stage. So it keeps exactly (a)
+    **coverage judged per `binding:`** against the requirement set, (b) **reading a green suite for
+    gamed, tautological and implementation-coupled tests**, and (c) **adversarial execution against a
+    real collaborator** on any requirement whose subject is a secret, a resource lifetime or a
+    concurrency invariant.
+  - **Its bookkeeping moved to a script.** **12 of 46 findings (26%)** were about the pipeline's own
+    gate stamps, traceability rows and spec headings — 45% on the worst phase, where **attempts 2 and
+    5 produced nothing but bookkeeping**, roughly 70 minutes and ~410k tokens for four
+    stamp-freshness observations. Every one was mechanically decidable. `scripts/verifier_precheck.py`
+    now decides them for no tokens: every requirement id appears in some `test-mapping.md` row for
+    its phase (`binding: none` exempt by construction), the gate stamp is fresh for every spec, and
+    every spec still has its `## Acceptance criteria` heading. **A defect that recurred twice, six
+    attempts apart, in one phase, because nothing checked it continuously** — so it runs on **every
+    commit**, and **diff-scoped**, the same "you are responsible for what you change" rule as the
+    verifier bundle, the spec re-gate cache and the mutation gate: the phases the commit touches from
+    `gate_ci.sh`, the **whole phase** at handover from `scripts/hook_verifier.sh`, and everything
+    under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer repo's CI over
+    locked phases nobody touched; when git cannot say what changed, nothing is enforced and the check
+    says so out loud rather than falling back to enforcing everything.
+  - **The loop is capped at 3 attempts, and route-backs are bundled.** **16 of 20 re-attempts were
+    the Verifier routing back to itself.** One phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 —
+    a gate disclosing a subset of what it could already see, one expensive round at a time.
+    `scripts/verifier_attempts.py` stops the loop at the cap and prints the series, so a trickle is
+    visible in the number rather than inferred. At the cap the remaining findings are **carried as
+    known-open in `handover.md`, waived explicitly, or escalated** — all three honest; a fourth
+    attempt is not one of them. The trade is named: some findings are carried rather than fixed.
+    Enforced in `hook_verifier.sh` AND `gate_ci.sh --full`, with `GATE_BYPASS` honoured. The cap is on
+    the **loop**, so a `pass` whose findings are all `fixed` or waived clears it — waiving the
+    remainder is one of the three remedies above, and a check its own prescribed remedy cannot satisfy
+    is a wedge, not a gate. "Still open" is not restated: it is `open_findings`, imported from
+    `verifier_bundle_scope`. A verdict of **`fail`** at or past the cap is what stops.
   - **The bundle is scoped to the specs that changed.** It used to re-send every `spec.md` and every
     `test-mapping.md` on every attempt — one measured ~832k tokens, and one phase had to be split
     into four chunks to fit a context at all. The diff-only rule above covers spec *re-gates* and
@@ -196,9 +288,13 @@ Three consequences worth stating outright:
     under repair, which is exactly where economising is wrong. No state, a lost state file, nothing
     changed, or `VERIFIER_SCOPE=full` sends the whole phase; the safe direction costs tokens, not
     coverage.
-- **Mutation gate (optional)** — off by default and most teams leave it off. Only when a project sets
-  `MUTATION_POLICY` to `enforce`/`advisory` does the Verifier run it; otherwise no mutation tool runs
-  anywhere. It is **not** the independence mechanism — the Verifier's test-quality review is.
+- **Mutation gate — `advisory` by DEFAULT.** `MUTATION_POLICY` = `advisory` (default: runs, reports
+  the score and its survivors, **never blocks**) · `enforce` (fails closed) · `off` (runs no mutation
+  tool anywhere). It was off by default; it is on because it is deterministic, diff-scoped, needs no
+  model below `MUTATION_MIN_SCORE`, and **every non-discriminating test this project has ever caught
+  was caught by mutation** — including two in one phase that neither spec gate nor a green 281-test
+  suite surfaced. Advisory never blocks, so the cost of the default being wrong is a line of output.
+  It is still **not** the independence mechanism — the Verifier's test-quality review is.
 - **Breaker** — critical/security paths only, optional.
 - **Feature-level e2e** — once, after the final phase is green (see below).
 - **Phase review gate (per phase, `no-mistakes`, review-only)** — after each handover,
@@ -217,7 +313,7 @@ Three consequences worth stating outright:
     retrospective triage so its findings feed that triage. It runs in interactive **and `--auto`**
     runs alike — it is not interactive-only. Under `--auto` the orchestrator drives the gate's
     `auto-fix` and `no-op` findings itself, but an **`ask-user` finding halts the run**, recorded
-    verbatim, exactly as `--auto` halts on a spec-review NO-GO: `no-mistakes` marks a finding
+    verbatim, exactly as `--auto` halts on a blocked spec: `no-mistakes` marks a finding
     `ask-user` because it challenges the user's deliberate intent or changes product behaviour, so an
     unattended run must not answer it. `/avenger-run --auto --ship-yes` passes `--yes` to
     `no-mistakes`, which resolves `ask-user` findings too — the user's standing consent for the
@@ -236,8 +332,123 @@ Three consequences worth stating outright:
     `~/.no-mistakes/config.yaml`). This is a **conscious exception to the cross-family rule below**,
     not an oversight and not a break-glass bypass: no-mistakes runs in the daemon's own disposable
     worktree with no shared context with the stage that wrote the code, so it decorrelates *context*
-    while accepting shared *family* blind spots. The per-phase gates — fidelity, spec-review,
+    while accepting shared *family* blind spots. The per-phase gates — the spec gate,
     verifier — are unaffected and stay cross-family.
+
+## Amendments — changing a verified phase without re-verifying all of it
+
+The pipeline had no concept of a correction. Once a phase was verified, **any** change to it — a
+one-line fix, a renamed helper, a scrub that turned out to be defeated by JSON escaping — re-opened
+the whole phase and cost a full verification round. One measured phase ran **eight** verification
+attempts; rounds 3 through 8 were that shape.
+
+An **amendment** is a record on disk (`amendments.json`, beside `verdict.json`) that names the
+requirement ids a post-verification change touched. **Only those re-verify**, carrying their own
+evidence. A verdict then reads *verified at attempt N, plus amendments A1..An* — the attempt count
+stops being the only thing that can express "this phase moved".
+
+```bash
+# prose belongs in a file the command reads — the reason is author-written prose
+python3 scripts/amendments.py open <phase-dir> --requirements R8.2.30,R8.2.31 \
+  --reason-file <file> [--security]
+python3 scripts/amendments.py scope <phase-dir>   # the ids owed re-verification, and only those
+python3 scripts/amendments.py close <phase-dir> A1 --evidence <path>
+```
+
+Two rules, both enforced rather than asked for (`scripts/hook_verifier.sh` and `gate_ci.sh --full`
+run `amendments.py due`):
+
+- **Batched at phase close.** Ordinary amendments accumulate and are re-verified together, once.
+  That is the whole saving: six route-backs become one bundled pass.
+- **Security is never batched.** An amendment opened with `--security` is owed re-verification
+  **immediately**. A phase-8 credential leak must not wait for a batch, and the cost argument that
+  justifies batching does not apply to a secret already in a log. A pending amendment on a phase
+  whose verdict *already passes* is owed now for the same reason: that verdict is a claim about code
+  that has since changed.
+
+An amendment with no requirement ids is refused — the naming **is** the scope of the re-verification
+it owes, so an unnamed one narrows verification to nothing while claiming to have narrowed it. A
+corrupt ledger is an error, never an empty one: reading it as "no amendments" would silently drop a
+pending security re-verification.
+
+## Skills are delivered, not requested — and the load is observed
+
+The pipeline delegates its core behaviour to thirteen skills, and it used to delegate by **asking**:
+every implementer prompt said "Load `skills/tdd` before you start". That is an instruction, not a
+mechanism. Nothing checked and nothing recorded, so a stage that skipped a required skill fell back
+silently to whatever the model already believed — which is the failure mode this pipeline removes
+from everything else. `docs/lessons/` shipped with a complete written procedure and **zero
+invocations** for exactly this reason: a directive in a skill reaches only the agents that load that
+skill.
+
+**WHICH skills a stage requires is DERIVED from its own `agents/<stage>.md`.** Every agent declares
+them in one `Required skills` line and `scripts/skill_contract.py` reads them out of it. There is no
+table anywhere: a hand-maintained list was a second statement of a fact the definitions already
+carry, and a second statement of a fact is precisely the promise-versus-enforcement gap this section
+removes. **Adding `skills/<name>` to that line is enough to make it required** — and only that line
+counts: a `skills/<name>` named in an agent's *prose* is not a requirement, because prose says things
+a contract does not. `agents/avenger-verifier.md` names `skills/mutation-interpret` in order to say it
+applies only when the mutation gate is on, and both implementers name `skills/ponytail` in order to
+say the hook injects it — read as requirements, that last one turned `PONYTAIL_OFF=1` into a
+permanent phase wedge. An agent with no such line has an **empty** contract, which
+`required_skills.py verify` reports rather than guessing at. A skill's *directory*
+is what makes a reference real, never a readable `SKILL.md` inside it — keying on the file would make
+a skill whose body went missing quietly stop being required, which is the silent fallback the loud
+blocker below exists to replace.
+
+**The load is OBSERVED, never self-reported.** `scripts/hook_skill_load.sh` seeds each stage's
+contract at `SubagentStart` as required-and-not-yet-observed and flips an entry on a real
+`Read`/`Skill` of `skills/<name>/SKILL.md`. Entries are keyed `<stage>:<skill>` in the per-phase
+metrics record's `skill_loads[]`, so the requirement and its answer are one row, and a seed never
+overwrites an observed load whichever order the hooks run in. There is **no second evidence file**,
+and nothing anywhere asks an agent to report its own compliance: a path that needed the agent to run
+a command to prove a load would be the instruction-with-no-mechanism this section removes, one layer
+up.
+
+**Delivery is pointer plus evidenced load, decided by size** (`SKILL_INJECT_MAX_BYTES`, default
+**8192**), by `scripts/hook_skills.sh` on `SubagentStart`. Injecting every body guarantees the load
+and costs the same order as the reads the read-path work had just removed — every stage requires
+`pipeline-conventions`, the largest file in `skills/`, on every `avenger-*` spawn. Observation is a
+cheaper way to **detect** a failure to load, and a required skill with no observed load blocks the
+phase anyway, so **detection beats prevention when both end the same way**:
+
+- **At or under the ceiling → injected whole**, and the injection is **recorded as an observed load**
+  with the evidence naming injection. An injected skill is never read, so without that record it
+  would seed required-and-unobserved and never flip — and the audit would report a false gap on
+  precisely the skills whose load is *guaranteed*.
+- **Over it → a POINTER**: path, size and one-line description, and nothing to run afterwards.
+  Opening the file is what records the load. **A pointer is not a suggestion** —
+  `required_skills.py audit` runs at handover (`hook_verifier.sh`) and in CI (`gate_ci.sh --full`),
+  and a required skill with no observed load **fails the phase**, naming the stage and the skill.
+  Keyed `<stage>:<skill>`, so a load by the Verifier says nothing about whether the implementer
+  loaded it.
+
+**The audit needs no session id to be scoped.** The evidence is per-phase by construction —
+`hook_skill_load.sh` records nothing when no phase is in flight — so a pointer delivered in phase 1
+cannot block phase 8, with no run-scoping machinery at all. The handover audit reads the phase in
+flight; `--all` sweeps every phase, which is what CI runs. `SKILLS_OFF=1` makes the audit a no-op
+because nothing was delivered to load, and a run with no metrics writer observed nothing and says so
+rather than passing invisibly.
+
+The saving is a **prediction, not a result**: declared as **H9** before it landed — roughly 1M tokens
+saved per 8-phase feature with zero unrecorded required loads — and settled in phase 9.
+
+**A required skill that is missing or unreadable is a loud BLOCKER in the injected context**, recorded
+`loaded: false`: a required skill that is absent is not a lighter version of the rules, it is no
+rules. `SKILLS_OFF=1` disables it, and everything else fails closed and delivers nothing — an
+unreadable payload, an agent this pipeline does not own, an unparseable ceiling.
+
+`skills/ponytail` is delivered by `hook_ponytail.sh` alone, which records its own load. Delivering it
+here too would cost twice and would put the minimalism persona back after `PONYTAIL_OFF=1` — an off
+switch that switches nothing off. Reach is scoped per skill for the same reason `hook_ponytail.sh`
+excludes the Verifier and `hook_lessons.sh` does not: a skill that fights a stage's job must not
+reach it.
+
+It is also **evidenced but never required**: it is on no declared `Required skills` line, because
+requiring it would make the required set depend on `PONYTAIL_OFF` and a contract an env var can
+change is not a contract. Absence is still visible — a stage the hook would have reached with no
+injection recorded surfaces as a **NOTE** from `required_skills.py`, which never enters the exit code
+in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at all.
 
 ## Hard rules
 
@@ -370,7 +581,7 @@ Three consequences worth stating outright:
   skipped.
 - **Model-based gates run in-chat** — the Verifier's triage and test-quality review, and the grill-me
   spec review. CI only checks their **committed artifacts**. The one exception is the automated
-  **Fidelity Gate**, which is a hook and does call a model in-session; it never runs in CI.
+  **spec gate**, which is a hook and does call a model in-session (twice); it never runs in CI.
 
 ## Two learning logs — keep them apart
 
@@ -452,9 +663,10 @@ seeded skill requirement never overwrites an observed load, whichever order the 
 |---|---|---|
 | every gate call: model, family, **measured** latency, verdict, and on failure the `cause` | `gate_runner.py` | the single point every gate call passes through; §Gates' failure taxonomy is what it records |
 | a gate the harness **killed** mid-call | the hook's own signal trap | the runner it killed cannot report its own death — this is what tells a kill apart from a NO-GO |
-| spec rounds, each round's **size in bytes**, requirement count | `hook_fidelity.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
+| spec rounds, each round's **size in bytes**, requirement count | `hook_spec_gate.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
+| the spec gate's own arithmetic: observations in, **blocking** out, **notes** out | `spec_gate_triage.py`, where the verdict is derived from them | a filter that blocks everything and one that blocks nothing are otherwise indistinguishable without reading a transcript |
 | the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, at the point the judge is actually called | an argument refusal is a caller bug, not an attempt |
-| tests before and after | `hook_fidelity.sh` (first spec write) and `hook_verifier.sh` (handover) | counted **the same static way at both ends**, so the delta is a real delta and not two counting methods |
+| tests before and after | `hook_spec_gate.sh` (first spec write) and `hook_verifier.sh` (handover) | counted **the same static way at both ends**, so the delta is a real delta and not two counting methods |
 | **which stage found each defect** | `verifier_review.sh`, `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
 | which skills each stage actually loaded | `hook_skill_load.sh`, `hook_ponytail.sh` | an instruction to load a skill is not a load |
 
@@ -521,7 +733,7 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
 The chain can be walked by hand, one stage at a time, or driven by `commands/avenger-run.md`, which
 makes the **main session** the orchestrator (a subagent has no Task tool, so it cannot spawn stages —
 only the main thread can). Position comes from `scripts/pipeline_state.py`, which reads the artifacts
-on disk (`fidelity_verdict`, `review_status`, `status`, `verdict.json`) and returns the single stage
+on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`) and returns the single stage
 the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
 for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
 runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified

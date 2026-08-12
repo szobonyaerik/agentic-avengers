@@ -40,8 +40,8 @@ deleted; the read directives changed.**
   checked, and `skills/phase-handover` tells the writer the length the task warrants outright.
 - `work_kind` rides in **the spec's own frontmatter**; `task-analysis.md` is read once, by the
   Solution Architect. **Never send a reader to another document for a single field.**
-- `overview.md` gains a stable `## Contracts and Decisions` header. **Spec-review reads the header;
-  the spec writer still reads the whole file.**
+- `overview.md` gains a stable `## Contracts and Decisions` header. **The spec gate and the human
+  spec-review read the header; the spec writer still reads the whole file.**
 - `test-mapping.md` is **the table**; mutation evidence, route-back history, build order and
   deviations move to `test-evidence.md`, read **on route-back only**.
 - `verdict.json` archives a superseded attempt to `verdict-attempt-<n>.json` instead of nesting it,
@@ -53,7 +53,11 @@ deleted; the read directives changed.**
   to carry the line; whether they belong on the read path is issue #29. This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
   `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
-  removed read. **Change the directive at the table, never one caller at a time.** Every entry also
+  removed read. **That check is one-directional** — it catches a removed read coming back, never a
+  stage instructed to read something the table does not declare, so the table is not self-verifying
+  and an undeclared reader leaves it incomplete rather than wrong (which is how the human
+  spec-review's two reads went undeclared). **Change the directive at the table, never one caller at
+  a time.** Every entry also
   names the template or stage instruction that makes its writer emit the line: declaring a reader is
   not the same as instructing anyone to write it down, and three artifact classes shipped with the
   first and not the second.
@@ -71,30 +75,71 @@ elsewhere, one drove test design across three phases. It is not where economisin
 A phase is an independently verifiable slice holding one or more numbered specs `<n>.<k>`; requirement
 ids are `R<n>.<k>.<m>`. **The Verifier runs once per phase**, after every spec in it is green.
 
-### 3. Composed quality wall (per spec)
-Both gates, in order: (1) automated **Fidelity Gate** on spec write → sets `fidelity_verdict`; NO-GO
-routes back. (2) **spec-review** → sets `review_status: approved`, in either **HITL** mode
-(`/spec-review` grill-me) or **automated** mode (`/spec-review --auto` / `SPEC_REVIEW_MODE=auto`, a
-cross-family AI reviewer). A spec reaches the implementer only when `fidelity_verdict != NO-GO` AND
-`review_status: approved`. Both gates are also what pre-agrees the **seams** the tests get written at.
-The Fidelity Gate is this repo's only automated model gate and is the main deliberate divergence from
-`klm-agentic-pipeline`, which has no such gate.
+### 3. The quality wall (per spec): ONE machine gate, then one human
+There used to be **two** model gates here — an automated Fidelity Gate and the automated half of
+spec-review — asking overlapping questions of the same document at the same moment. In phase 8 a spec
+passed one and **failed the other on byte-identical text**. Both told their reviewer to judge
+*"without charity … assume gaps until the spec proves otherwise"* and both ended *"when unsure between
+REVIEW and NO-GO, choose NO-GO"*, over seven dimensions all asking "is everything covered?" with **no
+size ceiling, requirement cap or cost dimension anywhere**. The only response available to a rejected
+spec is more text: spec 8.0 grew 25k → 51k characters and 8.2 grew 40k → 57k across four rejected
+rounds, until the gate flagged them for excess surface.
 
-Spec-review also carries the pipeline's **only cost gate**, in two parts. Mechanically,
-`scripts/subprocess_check.py` walks `tests/` for spawners lacking
-`@pytest.mark.subprocess("<why>")` — it runs on every spec write in **both** modes via
-`hook_spec_review.sh`, no model, and it is the only stage that can see cost at all, since fidelity,
-cross-family review and verification all read for *correctness* and an expensive test is not
-incorrect. Deliberately not a wall-clock budget: seven runs of one unchanged suite spanned 66.43s to
-137.76s, so a runtime gate would fail green suites at random. By judgement, the checklist asks what a
-requirement's tests will cost before approving it. A project whose tests are not at `tests/` points
-the check at them with **`SUBPROC_CHECK_PATHS`**; an absent root scans nothing, which is CLEAN but
-always said on stderr rather than passing invisibly.
+They are now **one gate** (`scripts/hook_spec_gate.sh`), built as **report-everything, then triage**,
+with the verdict taken out of the model's hands entirely:
+
+1. **Observe** (`prompts/spec-gate-observe.md`) — reports every observation, with **no verdict
+   pressure**. It answers with `observations`, never `verdict`; it is told it is not a gate and it
+   cannot block. A reviewer told to be conservative follows that literally, so the conservatism is
+   removed from the pass that reads. It is handed a `## CONTEXT (reference only)` block
+   (`scripts/spec_gate_context.py`) carrying **exactly** what the read path grants it — the
+   overview's `## Contracts and Decisions` section and the *immediately prior* phase's contract card
+   (bounded by the read path's own `HANDOVER_MAX_BYTES`, since that cap is enforced diff-scoped and
+   an oversized pre-rule handover is counted rather than blocked; a truncated card says so),
+   never the whole overview and never `handover-archive.md`. Without it half of `contradiction` is
+   undetectable, and a closed set of four with an unobservable member is three items and a claim;
+   absent context is normal, named on stderr, and never fails the gate.
+2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation against
+   the closed set. Its tie-break is the reverse of the old one: **when unsure, it is a note.**
+3. **Decide** (`scripts/spec_gate_triage.py`) — derives the verdict deterministically. **No model
+   decides whether a spec is blocked.**
+
+**The blocking set is CLOSED — exactly four things block:** a **missing requirement**, an internal
+**contradiction**, an **untestable criterion**, an **unhandled critical edge case**. Everything else
+is a **note**; **notes never block** and land in the spec's known-open list (`spec-notes.md`, read
+once by the implementer). It is closed *mechanically*: a category the table does not know is a hard
+failure naming what was invented, never a judgement call — guessing "blocking" reinstates the ratchet
+and guessing "note" deletes a finding. A fifth category is a deliberate edit to
+`spec_gate_triage.BLOCKING`.
+
+**Requirements are capped at 12 per spec, counted before the gate runs, as a SPLIT TRIGGER.**
+`scripts/requirement_cap.py` runs ahead of any paid call, so an over-cap spec costs nothing; over the
+cap it **splits** into siblings `<n>.<k>` under the same phase, each independently gated. **The gate
+never rejects a spec for being large** — a rejection for size is one more thing to grow around.
+
+The stamp is `spec_gate: pending | approved | blocked`, read in exactly one place
+(`scripts/spec_gate_state.py`, which also derives the legacy `fidelity_verdict` so existing specs
+still read correctly). `review_status` survives and means only what it now is: a **human** sign-off
+from `/spec-review` grill-me, written by no model except under `SPEC_REVIEW_MODE=auto`, where the
+machine gate is the whole wall because nobody is there. A spec reaches the implementer only when
+`spec_gate: approved` AND `review_status: approved`. One machine gate plus one human is not two
+rubrics; two rubrics was the defect. The hook makes **two** provider calls, and `gate_timeouts.py`
+sizes its budget for two — a budget sized for one is the 120s-hook-around-a-300s-call defect exactly.
+
+The spec gate also carries the pipeline's **only cost gate**, in two parts. Mechanically,
+`scripts/subprocess_check.py` walks `tests/` for spawners lacking `@pytest.mark.subprocess("<why>")`
+— it runs on every spec write in **both** modes via `hook_spec_gate.sh`, no model, and it is the only
+stage that can see cost at all, since the observe pass, cross-family review and verification all read
+for *correctness* and an expensive test is not incorrect. Deliberately not a wall-clock budget: seven
+runs of one unchanged suite spanned 66.43s to 137.76s, so a runtime gate would fail green suites at
+random. A project whose tests are not at `tests/` points the check at them with
+**`SUBPROC_CHECK_PATHS`**; an absent root scans nothing, which is CLEAN but always said on stderr
+rather than passing invisibly.
 
 **A spec already approved and implemented is re-gated on its changes only.** Unchanged text was
 passed by this gate before and is not a finding — one spec drew REVIEW, REVIEW, then a NO-GO naming
 requirements the same model had approved twice, unchanged. `scripts/spec_gate_cache.py` keeps the
-body each gate last **approved** — a rejection records its hash, its verdict and its report but never
+body the gate last **approved** — a rejection records its hash, its verdict and its report but never
 replaces that reference, since rejected text is not approved text; the hook hands the reviewer a
 `## CHANGES SINCE APPROVAL` diff, and with no kept body gates the whole spec. A full re-gate is still owed when the diff changes the requirement
 set, Scope, Interfaces / contracts, `work_kind`, or any `binding:`, and when the Verifier routed the
@@ -137,6 +182,129 @@ re-authoring it; characterize only genuine gaps at critical seams) · **refactor
 parity, no port; an intentional behavior change is greenfield work with its own requirement). Plus
 **e2e-author**, not selected by `work_kind` — the implementer runs it once per feature, after the
 final phase is green.
+
+### 4c. The Verifier, narrowed — and its loop capped
+A scout measured **all 46** Verifier findings across 8 phases of one feature. **Keep it, narrow it.**
+Only **3 of 46** were user-visible defects no other stage could have found — but **two of those were
+plaintext-credential leaks**, found by planting an adversarial value and executing it against a real
+Postgres, and that is what buys the stage. So it keeps exactly three jobs: **coverage judged per
+`binding:`**, **reading a green suite for gamed tests**, and **adversarial execution on secrets,
+resource lifetimes and concurrency invariants**.
+
+**Its bookkeeping is now a script.** **12 of 46 (26%)** were about the pipeline's own gate stamps,
+traceability rows and spec headings — 45% on the worst phase, where **attempts 2 and 5 produced
+nothing else**, ~70 minutes and ~410k tokens for four stamp-freshness observations. All of it was
+mechanically decidable. `scripts/verifier_precheck.py` decides it for zero tokens: every requirement
+id appears in some `test-mapping.md` row for its phase (`binding: none` exempt by construction), the
+gate stamp is fresh for every spec, and every spec still has its `## Acceptance criteria` heading.
+That defect recurred **twice, six attempts apart, in one phase**, because nothing checked it
+continuously — so it runs on **every commit**, and, like every other check here, **diff-scoped**: the
+phases that commit touches from `gate_ci.sh`, the whole phase at handover from `hook_verifier.sh`,
+and everything under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer
+repo's CI over locked phases nobody touched, which is the hostage failure the scoping removes; when
+git cannot say what changed, nothing is enforced and the check says so out loud.
+
+**Verification is capped at 3 attempts per phase, and route-backs are bundled.** **16 of 20
+re-attempts were the Verifier routing back to itself**, and one phase's new-finding series was
+6, 2, 8, 4, 2, 1, 0, 6 — a gate disclosing a subset of what it could already see, one full
+re-verification at a time. `scripts/verifier_attempts.py` stops the loop and prints the series so a
+trickle is visible in the number. At the cap the remainder is **carried as known-open in
+`handover.md`, waived explicitly, or escalated**; a fourth attempt is not one of the three. The trade
+is named: some findings are carried rather than fixed. It is enforced in `hook_verifier.sh` and in
+`gate_ci.sh --full` — enforcement that only an in-session hook can apply stops existing the moment
+the phase is driven any other way — and `GATE_BYPASS` is honoured through the same audited `fail()`
+path as every other blocking check.
+
+The cap is on the **loop**, not the phase, and "resolved" is read the way the verdict schema defines
+it: a `pass` whose findings are all **`fixed` or waived** clears, because *waive the remainder* is one
+of the three remedies the cap's own message prescribes and the Verifier records a waiver by leaving
+the finding in place with `break_glass`. Read as "the findings array is empty", the check could not be
+satisfied by its own prescribed remedy, and CI stayed red with nothing left that could clear it. The
+rule is not restated: `verifier_attempts.py` imports `open_findings` from `verifier_bundle_scope`,
+which already owns it. What still stops is a verdict of **`fail`** at or past the cap — which is what
+refuses a further attempt. **Its exit 1 means the cap and nothing else**: an uncaught exception exits
+1 too, so an unreadable `attempt` field once arrived at the hook *as* a cap and prescribed three
+remedies that could not repair a malformed file. Every unexpected failure exits 2 with its own cause,
+per §6's rule that a stop names which.
+
+The **Breaker stays separate** and is never folded into verification: it found phase 8's credential
+leaks by *constructing inputs*, which is a different instrument from reading a test set.
+
+### 4d. Amendments — change a verified phase without re-verifying all of it
+The pipeline had no concept of a correction, so any change to a verified phase re-opened the whole
+phase. One measured phase ran **eight** verification attempts; rounds 3 through 8 were that shape.
+
+An **amendment** (`scripts/amendments.py`, ledger at `amendments.json` beside `verdict.json`) names
+the requirement ids a post-verification change touched. **Only those re-verify**, carrying their own
+evidence, and the verdict reads *verified at attempt N, plus amendments A1..An* — `amendments` is the
+one extension to the frozen verdict schema, made at the schema, and it holds **ids only**.
+
+- **Batched at phase close.** Ordinary amendments accumulate and re-verify together, once. Six
+  route-backs become one bundled pass.
+- **Security is NEVER batched.** `--security` is owed re-verification immediately: phase 8's
+  credential leak must not wait for a batch, and the cost argument behind batching does not apply to
+  a secret already in a log. A pending amendment on a phase whose verdict *already passes* is owed
+  now too — that verdict is a claim about code that has since changed.
+
+Both are enforced, not asked for: `hook_verifier.sh` and `gate_ci.sh --full` run `amendments.py due`.
+An amendment with no requirement ids is refused — the naming **is** the re-verify scope — and a
+corrupt ledger is an error, never an empty one.
+
+### 4e. Skills are delivered, not requested — pointer plus evidenced load
+The pipeline delegates core behaviour to 13 skills and used to delegate by *asking*: "Load
+`skills/tdd` before you start" is an instruction with no mechanism. Nothing checked, nothing
+recorded, and a stage that skipped one fell back silently. `docs/lessons/` shipped with a complete
+written procedure and **zero invocations** for the same reason.
+
+**What each stage requires is DERIVED from its own `agents/<stage>.md`** — every agent declares its
+skills in one `Required skills` line and `scripts/skill_contract.py` reads them out of it. There is
+no table: a hand-maintained list here was a second statement of a fact the definitions already carry,
+and a second statement of a fact is exactly the promise-versus-enforcement gap this item exists to
+close. Adding `skills/<name>` to that line is enough to make it required, and **only that line
+counts** — a skill an agent names in *prose* is not a requirement. The Verifier's definition names
+`skills/mutation-interpret` to say it applies only when the mutation gate is on, and both
+implementers name `skills/ponytail` to say the hook injects it; read as requirements, that last one
+made `PONYTAIL_OFF=1` a permanent phase wedge. An agent with no such line has an **empty** contract,
+which `required_skills.py verify` reports rather than guessing at.
+
+**The load is OBSERVED, never self-reported.** `scripts/hook_skill_load.sh` seeds each stage's
+contract at `SubagentStart` and flips an entry on a real `Read`/`Skill` of `skills/<name>/SKILL.md`,
+into the per-phase metrics record's `skill_loads[]` — there is deliberately no second evidence file.
+A path that needed the agent to *run a command* to prove it had loaded a skill would be the
+instruction-with-no-mechanism this item exists to fix, one layer up, so no such command exists.
+
+**Delivery is decided by size** (`SKILL_INJECT_MAX_BYTES`, default **8192**), by
+`scripts/hook_skills.sh` on `SubagentStart`. Injecting every body is one way to *guarantee* a load,
+and it costs the same order as the reads the read-path work had just removed — every stage requires
+`pipeline-conventions`, the largest file in `skills/`, on every `avenger-*` spawn. Observation is a
+cheaper way to *detect* a missed load, and a required skill with no observed load blocks the phase
+anyway: **detection beats prevention when both end the same way.** At or under the ceiling a skill is
+**injected whole**, and the injection is **recorded as the load** — an injected skill is never read,
+so without that record the audit would report a false gap on precisely the skills whose load is
+guaranteed. Over it the stage gets a **pointer** — path, size, description — and *opening the file*
+is what records it. `skills/ponytail` is delivered by `hook_ponytail.sh` alone, which records its own
+load; delivering it twice would cost twice and would put the persona back after `PONYTAIL_OFF=1`.
+
+**`skills/ponytail` is evidenced but never REQUIRED**, and that is a decision rather than an
+oversight: it appears on no declared line, so requiring it would make the required set depend on an
+environment variable, and a required set an env var can change is not a contract — a documented off
+switch that can fail an audit is not an off switch. Its absence is still not silent. A stage
+`hook_ponytail.sh` would have reached, with no injection recorded, surfaces as a **NOTE**
+(`required_skills.py`): visible, never a gap, never in the exit code in any mode, and nothing branches
+on it. `PONYTAIL_OFF=1` produces **no note** — an expected absence is not a surprise, and a note that
+fires whenever the switch is used is noise that trains people to ignore notes.
+
+**A pointer is not a suggestion**: `required_skills.py audit` runs at handover (`hook_verifier.sh`)
+and in CI (`gate_ci.sh --full`) and **fails the phase** on a required skill with no observed load.
+Every entry is keyed `<stage>:<skill>`, so the Verifier reading the rulebook is no evidence about the
+implementer. It needs **no session id to be scoped**: the evidence is per-phase by construction, so a
+pointer delivered in phase 1 cannot block phase 8 — `--all` sweeps every phase under `--full`. The
+saving is a **prediction (H9), not a result** — roughly 1M tokens per 8-phase feature with zero
+unrecorded loads, settled in phase 9.
+
+**A required skill that is missing or unreadable is a loud BLOCKER** in the injected context, recorded
+`loaded: false`: an absent required skill is not a lighter version of the rules, it is no rules.
+`SKILLS_OFF=1` kills it; everything else fails closed and delivers nothing.
 
 ### 4a. Tiered binding decides what gets a test; tests are integration-level by default
 Every requirement declares a **`binding:`** — `e2e` (an end user can observe it → carried by a
@@ -199,8 +367,8 @@ avenger stage does: lint, docs, push, PR, CI. Its pipeline agent is pinned to An
 (`.no-mistakes.yaml`, plus `agent_args_override` in `~/.no-mistakes/config.yaml`), a **deliberate
 divergence** from the cross-family rule: it runs in the daemon's own disposable worktree with no
 shared context with the stage that wrote the code, so it decorrelates *context* while accepting
-shared *family* blind spots. It is not a break-glass bypass, and every **per-phase** gate (fidelity,
-spec-review, verifier) stays cross-family. While a run is active it owns both findings and fixes, so
+shared *family* blind spots. It is not a break-glass bypass, and every **per-phase** gate (the spec
+gate, the verifier) stays cross-family. While a run is active it owns both findings and fixes, so
 the route-back-to-implementer rule is suspended for its duration.
 
 It is wired as **`/avenger-run` §4a**, before the retrospective triage so that what it catches feeds
@@ -208,7 +376,7 @@ the retrospective — a defect the ship gate finds that no avenger stage covers 
 observation the pipeline gets about itself. **It runs under `--auto` too**, and the only thing
 `--auto` changes is `ask-user`: the gate drives its own `auto-fix`/`no-op` findings, but an
 `ask-user` finding **halts the run** with the finding recorded verbatim, the same way `--auto`
-already halts on a spec-review NO-GO — no-mistakes marks a finding `ask-user` because it challenges
+already halts on a blocked spec — no-mistakes marks a finding `ask-user` because it challenges
 the user's deliberate intent or changes product behaviour, so an unattended run must not answer it.
 `--ship-yes` (valid only with `--auto`) passes `--yes` to no-mistakes and resolves those too: standing,
 per-run consent, deliberately not the default. So an `--auto` run **can** push and open a PR — the
@@ -253,16 +421,18 @@ gate model to be named as missing cases, and the phase routes back to the implem
 `cosmic-ray baseline` first: a mutant counts as killed whenever the test command fails, so a broken
 suite would otherwise score a perfect 1.0.
 
-**Mutation is optional and OFF by default**: `MUTATION_POLICY` = `off` (default) · `advisory` (runs
-and reports the score + survivors, never blocks) · `enforce` (fails closed). It is an *extra* signal,
-**not** the independence mechanism — that is the Verifier's test-quality review. When off, no mutation
-tool runs anywhere. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
+**Mutation is `advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: runs and reports the
+score + survivors, **never blocks**) · `enforce` (fails closed) · `off` (no mutation tool runs
+anywhere). It was off; it is on because it is deterministic, diff-scoped, needs no model below the
+threshold, and every non-discriminating test this project has caught was caught by it. Advisory never
+blocks, so the cost of that default being wrong is a line of output. It is still an *extra* signal,
+**not** the independence mechanism — that is the Verifier's test-quality review. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
 `cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
 
 ### 6a. Gates fire on "done", not on every edit
 The implementer runs a red → green loop, so red is an expected state throughout a build. Gates trigger
 on a spec reaching `status: done` (smoke-check the phase suite; model called only on failure) and on
-`handover.md` — never per code edit. **No model runs in these hooks** except the Fidelity Gate: the
+`handover.md` — never per code edit. **No model runs in these hooks** except the spec gate: the
 Verifier is an *agent* that runs in chat and commits `verdict.json`, and the hook only checks that
 artifact exists and passes. Mechanical gates in hooks and CI; model gates in chat. The implementer's
 own `pytest tests/<feature>/<n>-<slug>/` is the inner loop: free, no model call. A gate also never re-judges an unchanged spec —
@@ -350,9 +520,10 @@ new gate is instrumented by existing. `record_spec_round` is idempotent by **con
 rebuildable gate cache), so any caller may report any spec write. A seeded skill requirement never
 overwrites an observed load, in either hook order. Points: gate calls + causes (`gate_runner.py`) ·
 a harness-killed gate (the hook's own signal trap, since the runner it killed cannot speak) · spec
-rounds, byte size and requirement count (`hook_fidelity.sh`) · the verification attempt **count**
-(`verifier_review.sh`) · tests before/after, counted the *same static way* at both ends
-(`hook_fidelity.sh`, `hook_verifier.sh`) · **which stage found each defect** (`verifier_review.sh`,
+rounds, byte size and requirement count (`hook_spec_gate.sh`) · the spec gate's own arithmetic —
+observations in, blocking out, notes out (`spec_gate_triage.py`, where the verdict is derived) ·
+the verification attempt **count** (`verifier_review.sh`) · tests before/after, counted the *same
+static way* at both ends (`hook_spec_gate.sh`, `hook_verifier.sh`) · **which stage found each defect** (`verifier_review.sh`,
 `hook_mutation.sh`, and `pipeline_metrics.py defect` for stages no script sees) · which skills each
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A

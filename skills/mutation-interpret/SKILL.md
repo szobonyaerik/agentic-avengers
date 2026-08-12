@@ -1,21 +1,29 @@
 ---
 name: mutation-interpret
-description: How to run and interpret the OPTIONAL mutation gate per language when a project has turned it on. Off by default and most teams leave it off; it is an extra signal, not the pipeline's independence mechanism (that is the Verifier's test-quality review). Use only when MUTATION_POLICY is enforce or advisory.
+description: How to run and interpret the mutation gate per language. It runs in `advisory` mode by default - deterministic, diff-scoped, and never blocking - and it is an extra signal, not the pipeline's independence mechanism (that is the Verifier's test-quality review). Use whenever MUTATION_POLICY is advisory or enforce.
 ---
 
 # mutation-interpret
 
-The mutation gate is **optional and off by default** — most teams never turn it on. It is an *extra*
-signal of test strength, **not** the independence mechanism: independence comes from the Verifier
-reading the implementer's tests for anti-patterns. Only run anything in this skill when a project has
-explicitly set `MUTATION_POLICY` to `enforce` or `advisory`. When it is `off`, run **no** mutation
-tool anywhere.
+The mutation gate runs in **`advisory` mode by default**: it computes the score, reports the score
+and its survivors, and **never blocks**. It is an *extra* signal of test strength, **not** the
+independence mechanism — independence comes from the Verifier reading the implementer's tests for
+anti-patterns.
+
+It used to be off by default. It is on because it is deterministic (`scripts/mutation_score.py`,
+never a model), diff-scoped (`cr-filter-git`), costs no model call below the threshold, and **every
+non-discriminating test this project has caught was caught by it** — including two in one phase that
+neither the spec gate nor a green 281-test suite surfaced. Advisory never blocks, so the cost of that
+default being wrong is a line of output.
+
+Run this skill whenever `MUTATION_POLICY` is `advisory` or `enforce`. When it is `off`, run **no**
+mutation tool anywhere.
 
 **When enabled: mutation score, not coverage, is the stop signal.** Coverage says a line ran; mutation
 says a test would *notice* if that line were wrong.
 
 ## Gate policy — `MUTATION_POLICY`
-The gate has one control, the `MUTATION_POLICY` **environment variable**, default **off**. Both
+The gate has one control, the `MUTATION_POLICY` **environment variable**, default **advisory**. Both
 readers (`scripts/hook_mutation.sh` and `scripts/gate_ci.sh`) source `scripts/load_env.sh`, so a
 project sets it in its `.env` at the repo root; a real exported variable or a CI value always wins
 over the file. For CI, add it to the `env:` block of `.github/workflows/pipeline-gates.yml`. There is

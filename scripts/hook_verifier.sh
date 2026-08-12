@@ -6,7 +6,11 @@
 # in-chat on a cross-family model, reads the phase's tests for the anti-patterns in skills/tdd, and
 # persists docs/features/<f>/phases/<n>-<slug>/verdict.json. Model-based gates run in chat; mechanical
 # gates run in hooks and CI, which only check the committed artifacts. (pipeline-conventions: "Where
-# the models run".) The one exception in this repo is the Fidelity Gate, which is a model hook.
+# the models run".) The one exception in this repo is the spec gate, which is a model hook.
+#
+# This hook also runs the Verifier's MECHANICAL pre-check (scripts/verifier_precheck.py) and the
+# amendment obligation (scripts/amendments.py due), because both are decidable without a model and
+# 26% of everything the Verifier raised across one measured feature was that class.
 #
 # Why not on every src/ edit: the implementer runs a red -> green loop, so red IS an expected state
 # throughout a build. Firing per edit stopped the agent to route a failure back to itself.
@@ -93,8 +97,48 @@ fi
 
 [ "$TRIGGER" = "handover" ] || exit 0
 
+PHASE_DIR="$(dirname "$FILE")"
+
+# The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
+# untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
+# is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
+# script can do: coverage judged per `binding:`, reading a green suite for gamed tests, and
+# adversarial execution against secrets, resource lifetimes and concurrency invariants.
+if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
+  fail "verifier:precheck" \
+    "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
+    "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
+fi
+
+# Required skills a stage was owed and was never observed loading. A pointer is the cheap half of
+# delivery — it saves injecting a large skill body on every spawn — and this audit is the other half:
+# without it a pointer is exactly the "load skills/tdd before you start" instruction-with-no-mechanism
+# that the delivery was introduced to replace. A phase does not close over an unobserved required
+# load. Fail closed; the script names the stage and the skill.
+#
+# SCOPED TO THE PHASE IN FLIGHT, and it needs no session id to be: the evidence lives in the
+# per-phase metrics record and `hook_skill_load.sh` writes nothing when no phase is in flight, so a
+# pointer delivered in phase 1 cannot block phase 8 by construction. Same "you are responsible for
+# what you change" rule as verifier_precheck above. `gate_ci.sh --full` sweeps every phase.
+if ! python3 "$SD/required_skills.py" audit; then
+  fail "verifier:skills" \
+    "verifier: a stage in this phase required a skill and no load of it was ever observed." \
+    "Open the named SKILL.md in that stage — reading it is what records the load — or re-run the" \
+    "stage: a stage that never loaded its rules did not run under them."
+fi
+
+# Amendments owed re-verification NOW: every security-relevant one, always, plus any pending one on
+# a phase whose verdict already passes. Batching is a cost optimisation and it does not apply to a
+# credential already exposed.
+if ! python3 "$SD/amendments.py" due "$PHASE_DIR"; then
+  fail "verifier:amendments" \
+    "verifier: this phase has amendments owed re-verification (named above). Re-verify the" \
+    "requirement ids they name — not the whole phase — then close each with" \
+    "scripts/amendments.py close <phase-dir> <A-id> --evidence <path>."
+fi
+
 # Handover: the Verifier agent must already have run and left a passing verdict.
-VERDICT="$(dirname "$FILE")/verdict.json"
+VERDICT="$PHASE_DIR/verdict.json"
 if [ ! -f "$VERDICT" ]; then
   fail "verifier:no-verdict" \
     "verifier: no verdict.json next to $FILE." \
@@ -128,6 +172,30 @@ case "$V" in
     fi
     exit 0 ;;
   fail)
+    # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts
+    # measured across one feature were the Verifier routing back to itself. This used to be
+    # `|| true` — a cap that printed a notice and then routed back anyway, which is a limit that
+    # never fires while reading as one that does, and it would have made H4's
+    # `verification_attempts` metric look bounded by a bound that did nothing.
+    #
+    # The route-back below is deliberately NOT reached at the cap: the three honest remedies are to
+    # carry the remainder as known-open in handover.md, waive it explicitly, or escalate. Break-glass
+    # still applies through fail(), because escapable and audited beats a hard wedge.
+    python3 "$SD/verifier_attempts.py" check "$PHASE_DIR"; cap_rc=$?
+    if [ "$cap_rc" -eq 1 ]; then
+      fail "verifier:attempt-cap" \
+        "verifier: the verification loop is at its cap (the series is above) — a further attempt is" \
+        "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, waive them explicitly" \
+        "(scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to a human."
+    elif [ "$cap_rc" -ne 0 ]; then
+      # Exit 2 is an ERROR, not the cap, and it carries its own tag so the override log can tell the
+      # two apart. Deliberately no cap guidance here: carrying, waiving or escalating cannot repair
+      # an unreadable record, and printing those remedies for it is how a crash came to read as a
+      # verdict in the first place.
+      fail "verifier:attempt-cap-unreadable" \
+        "verifier: the attempt cap could not be DECIDED (cause above) — this is not the cap itself." \
+        "A cap that cannot be read bounds nothing, so this fails closed. Fix what it named."
+    fi
     fail "verifier" "verifier: verdict.json is 'fail' — route back per its findings:" \
       "$(jq -r '.routed[]? | "  - \(.to): \(.reason) (\(.spec_id // "-")) finding \(.finding_id)"' "$VERDICT" 2>/dev/null)" ;;
   *)

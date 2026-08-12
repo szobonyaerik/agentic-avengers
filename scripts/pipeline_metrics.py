@@ -70,9 +70,16 @@ REQUIREMENT_ID = re.compile(r"\bR\d+\.\d+\.\d+\b")
 TEST_FUNCTION = re.compile(r"^\s*(?:async\s+)?def\s+test_", re.MULTILINE)
 
 #: Which rubric a gate is judging against says which stage made the call, with no caller to ask.
+#:
+#: The spec gate's two passes are TWO STAGES here, never one. Collapsing them would hide the exact
+#: number the ratchet fix is judged by — how many observations the observe pass produced against how
+#: many the triage pass turned into blockers — and a filter that blocks everything would then be
+#: indistinguishable from one that blocks nothing. `tests/test_pipeline_metrics.py` holds this map
+#: exhaustive over the rubrics `prompts/` actually ships, so a rubric added later cannot land with
+#: its calls recorded under a name derived from its filename by accident.
 RUBRIC_STAGE = {
-    "fidelity-rubric.md": "fidelity",
-    "spec-review-rubric.md": "spec-review",
+    "spec-gate-observe.md": "spec-gate-observe",
+    "spec-gate-triage.md": "spec-gate-triage",
     "verifier-review.md": "verifier",
 }
 
@@ -99,6 +106,15 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
 #: trap, because the runner it killed never gets to say anything. A 120s hook around a 300s call
 #: read for a day as a model size ceiling; this is the record that tells those apart.
 HOOK_KILLED = "hook-killed"
+
+#: What a pass that ANSWERED but reached no verdict records. The spec gate's observe pass replies
+#: with `observations` and is told it cannot block; `spec_gate_triage.py` derives the verdict from
+#: what it reported. That is neither a failure (nothing went wrong) nor a NO-GO (no judgement was
+#: made), and `_outcome` would call an empty verdict NO-GO — a rejection this pass never issued,
+#: landing in the ledger on every spec write. Deliberately an EXISTING token rather than a new one:
+#: firstmate owns the record's vocabulary, the `stage` field already says which pass this was, and
+#: inventing a value the writer might refuse would lose the row entirely to the fail-open path.
+NO_VERDICT = "REVIEW"
 
 #: Free text in the record stays one line and bounded — `note` is context, not a transcript.
 NOTE_LIMIT = 300
@@ -204,12 +220,20 @@ def record_gate_call(
     cause: str | None = None,
     detail: str | None = None,
     provider: str | None = None,
+    note: str | None = None,
+    stage: str | None = None,
 ) -> bool:
     """Record one call to a judging model, with its measured latency and its outcome.
 
     `latency_ms` is the OBSERVED wall clock of the call — not the configured timeout, and not what
     the tooling claimed. The two diverged by an order of magnitude once, and that divergence is why
     the field exists.
+
+    `stage` is normally read off the rubric, which is what makes a new gate instrumented by
+    existing. It is passed explicitly only where there is no rubric to read: a hook recording the
+    gate it just killed, and the deterministic decide step. Those calls still belong to a named
+    stage — the spec gate makes two provider calls, and "which of them was killed" is the whole
+    reason the record is kept.
 
     Returns False, quietly, whenever the call could not be attributed to a phase (a `--selftest`,
     a gate run outside the artifact tree) or the record could not be written.
@@ -221,7 +245,10 @@ def record_gate_call(
         phase = resolve_phase(spec_path, target, rubric)
         if phase is None:
             return False
-        stage = stage_from_rubric(rubric)
+        # `AVENGER_METRICS_STAGE` still wins: it is the operator's override, and a caller-supplied
+        # name is a default for the no-rubric case, not a way around it.
+        stage = (os.environ.get("AVENGER_METRICS_STAGE") or "").strip() or stage or \
+            stage_from_rubric(rubric)
         spec = resolve_spec(spec_path, target)
         record = sink.show(phase)
         attempt = _attempt(record, stage, spec)
@@ -241,10 +268,47 @@ def record_gate_call(
             note=_clean(
                 f"provider={provider or '?'}"
                 + (f" cause={cause} {detail}" if cause else "")
+                + (f" {note}" if note else "")
             ),
         )
     except Exception as exc:  # noqa: BLE001 — measurement never propagates a failure
         sink.note(f"gate call not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
+#: The stage that decides a spec gate's verdict. It is a stage in the ledger even though no model
+#: runs in it — the whole point of the redesign is that a SCRIPT derives the verdict — so it gets a
+#: row like any other gate outcome, with the model named as what it actually is.
+TRIAGE_DECIDE_STAGE = "spec-gate-decide"
+TRIAGE_DECIDE_MODEL = "none (scripts/spec_gate_triage.py)"
+
+
+def record_triage_decision(
+    *, spec_path: str | None, observations: int, blocking: int, notes: int, approved: bool
+) -> bool:
+    """Record the filter's own arithmetic: what it saw, what it blocked on, what it noted.
+
+    This is the number the ratchet fix is judged by. The two model passes report and classify; this
+    is the count of how many observations survived as blockers, and it belongs in the ledger rather
+    than in a log, because a filter that blocks everything and a filter that blocks nothing are
+    otherwise indistinguishable without reading transcripts.
+
+    Deliberately an ordinary `gate_calls` row on existing keys, not a new one: firstmate owns the
+    record's shape and this repo owns no part of it, so the counts ride in `note` — bounded free
+    text that is already there — under a stage of its own.
+    """
+    try:
+        return record_gate_call(
+            model=TRIAGE_DECIDE_MODEL,
+            rubric=None,
+            stage=TRIAGE_DECIDE_STAGE,
+            target=spec_path,
+            latency_ms=0,
+            verdict="GO" if approved else "NO-GO",
+            note=f"observations={observations} blocking={blocking} notes={notes}",
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the gate it measures
+        sink.note(f"triage decision not recorded: {type(exc).__name__}: {exc}")
         return False
 
 
@@ -700,6 +764,7 @@ def _dispatch(args: argparse.Namespace) -> None:
         record_gate_call(
             model=args.model,
             rubric=None,
+            stage=args.stage,
             target=args.spec_path or args.phase_dir,
             cause=HOOK_KILLED,
             detail="the harness killed the hook while the gate was still running",

@@ -45,8 +45,10 @@ from proc_group import run_bounded  # noqa: E402
 # recorded — once, rather than once per caller. Measurement, never a gate: `record_gate_call`
 # swallows its own failures, and a runtime without the metrics modules simply records nothing.
 try:
-    from pipeline_metrics import record_gate_call
+    from pipeline_metrics import NO_VERDICT, record_gate_call
 except ImportError:  # pragma: no cover - vendored without the metrics modules
+    NO_VERDICT = "REVIEW"
+
     def record_gate_call(**_kwargs):
         return False
 
@@ -253,8 +255,14 @@ def call_opencode(model, system, user):
     return opencode_text(result.stdout) or result.stdout
 
 
-def extract_verdict(raw):
-    """Find the {'verdict': ...} object in arbitrary provider output."""
+def extract_verdict(raw, key="verdict"):
+    """Find the first {`key`: ...} object in arbitrary provider output.
+
+    `key` is a parameter because not every pass answers with a verdict. The spec gate's OBSERVE pass
+    deliberately has no verdict to give — it reports observations and a later pass classifies them —
+    so it identifies its reply by `observations` instead. Hunting for a `verdict` key in a reply that
+    was told never to produce one would fail as `no-verdict` on a perfectly good answer.
+    """
     for text in (raw, raw.replace('\\"', '"').replace('\\n', '\n')):
         for m in re.finditer(r"\{", text):
             depth = 0
@@ -265,7 +273,7 @@ def extract_verdict(raw):
                         obj = json.loads(text[m.start():i + 1])
                     except json.JSONDecodeError:
                         break
-                    if isinstance(obj, dict) and "verdict" in obj:
+                    if isinstance(obj, dict) and key in obj:
                         return obj
                     break
     return None
@@ -289,6 +297,11 @@ def main():
                     help="write the full parsed verdict object to PATH (machine-readable). "
                          "Used by the Verifier review, which needs the findings array, not just "
                          "the verdict token.")
+    ap.add_argument("--json-key", default="verdict", metavar="KEY",
+                    help="the key identifying the model's reply object (default 'verdict'). Any "
+                         "other value means this pass reaches NO verdict: the reply is written to "
+                         "--emit-json and the runner exits 0, leaving the decision to the caller. "
+                         "The spec gate's observe pass uses 'observations' for exactly that reason.")
     ap.add_argument("--print-verdict", action="store_true",
                     help="print the raw verdict token (GO/REVIEW/NO-GO) to stdout and exit 0 for any "
                          "reached verdict; the caller decides. Still fails closed (exit 2) on error.")
@@ -333,11 +346,12 @@ def main():
 
         call = call_opencode if args.provider == "opencode" else call_openrouter
         raw = call(args.model, rubric, artifact)
-        verdict = extract_verdict(raw)
+        verdict = extract_verdict(raw, args.json_key)
         if verdict is None:
             raise GateError(
                 "no-verdict",
-                f"{args.provider} replied, but the reply contained no JSON verdict object",
+                f"{args.provider} replied, but the reply contained no JSON object carrying "
+                f"'{args.json_key}'",
                 raw,
             )
     except GateError as e:  # any failure is a hard stop, and it says which failure
@@ -363,6 +377,40 @@ def main():
     # written below, which is after this gate has delivered its answer.
     measured = dict(model=args.model, rubric=args.rubric, target=target, model_family=family,
                     latency_ms=elapsed_ms(), verdict=v, provider=args.provider)
+    if args.json_key != "verdict":
+        # A pass that reaches no verdict cannot pass or fail anything. Persist the reply and let the
+        # caller decide — for the spec gate that is scripts/spec_gate_triage.py, which derives the
+        # verdict from data rather than asking a model for one.
+        #
+        # It is still a paid call, so it is still recorded, and it is recorded under its OWN stage
+        # (the rubric names it: spec-gate-observe, spec-gate-triage). A verdict-less pass folded
+        # into its sibling's row would hide how many observations each half of the gate produced,
+        # which is the exact number the ratchet fix is judged by.
+        if not args.emit_json:
+            print(GateError("config", "--json-key without --emit-json discards the reply").render(),
+                  file=sys.stderr)
+            deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                                model_family=family, latency_ms=elapsed_ms(), cause="config",
+                                detail="--json-key without --emit-json discards the reply",
+                                provider=args.provider)
+            sys.exit(2)
+        try:
+            with open(args.emit_json, "w", encoding="utf-8") as fh:
+                json.dump(verdict, fh, indent=2)
+        except OSError as e:
+            print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
+                  file=sys.stderr)
+            deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                                model_family=family, latency_ms=elapsed_ms(), cause="io",
+                                detail=f"could not write --emit-json {args.emit_json}: {e}",
+                                provider=args.provider)
+            sys.exit(2)
+        # No verdict token to report: the reply answered, so this is not a failure. `verdict=None`
+        # with no `cause` would be recorded as NO-GO, which is a judgement this pass never made.
+        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
+                            model_family=family, latency_ms=elapsed_ms(), verdict=NO_VERDICT,
+                            provider=args.provider)
+        sys.exit(0)
     if args.emit_json:
         # Written before any exit branch: a NO-GO verdict is exactly when the caller most needs the
         # findings. Failing to persist them is itself fail-closed.

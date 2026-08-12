@@ -26,7 +26,7 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
    `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a
    **contract card capped at 6144 bytes** (the rest in `handover-archive.md`, which nothing reads),
-   `work_kind` rides in the spec's own frontmatter, spec-review reads `overview.md`'s
+   `work_kind` rides in the spec's own frontmatter, the spec gate reads `overview.md`'s
    `## Contracts and Decisions` header only, `test-mapping.md` is the table (evidence in
    `test-evidence.md`, read on route-back), and a verified phase's specs leave the read path in
    favour of its card. `scripts/doc_read_path.py` is the table and the check; `check --sources` is
@@ -35,29 +35,77 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `docs/lessons/` is untouched.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
-3. **Composed quality wall (per spec).** Automated Fidelity Gate on spec write (sets `fidelity_verdict`;
-   NO-GO routes back) **and** human grill-me via `@spec-review` (sets `review_status: approved`). A spec
-   reaches the implementer only when `fidelity_verdict != NO-GO` and `review_status: approved`. Both
-   gates are also what pre-agrees the **seams** the tests get written at.
-3a. **Spec-review is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
+3. **The quality wall (per spec): ONE machine gate, then one human.** The spec gate fires on spec
+   write (`scripts/hook_spec_gate.sh`, sets `spec_gate: approved|blocked`) **and** human grill-me via
+   `@spec-review` (sets `review_status: approved`). A spec reaches the implementer only when
+   `spec_gate: approved` and `review_status: approved`. Both are also what pre-agrees the **seams**
+   the tests get written at.
+   It replaced **two** model gates that asked overlapping questions of one document at one moment —
+   a spec once passed one and failed the other on byte-identical text. It runs as
+   **observe → triage → decide**: `prompts/spec-gate-observe.md` reports everything with no verdict
+   to give, `prompts/spec-gate-triage.md` classifies against a **closed** four-item blocking set
+   (missing requirement, contradiction, untestable criterion, unhandled critical edge case), and
+   `scripts/spec_gate_triage.py` derives the verdict — **no model decides whether a spec is blocked**.
+   Everything else is a **note**; notes never block and land in `spec-notes.md`. The observe pass is
+   given a `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) — the overview's
+   `## Contracts and Decisions` section and the immediately prior phase's contract card, and nothing
+   else — because half of `contradiction` is a contract those declare. Absent context is normal and
+   never fails the gate.
+3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
+   *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
+   ever rejects a spec for being large — a rejection for size is one more thing to grow around, and
+   that ratchet took one spec from 25k to 51k characters across four rejected rounds.
+3a. **The spec gate is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
    spawners lacking `@pytest.mark.subprocess("<why>")` — no model, both modes, on every spec write via
-   `hook_spec_review.sh`. It is the only stage that can see cost: fidelity, cross-family review and
+   `hook_spec_gate.sh`. It is the only stage that can see cost: the observe pass, cross-family review and
    verification all read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
    budget on purpose — one unchanged suite measured 66.43s to 137.76s across seven runs.
    `SUBPROC_CHECK_PATHS` points it at the real root when a project's tests are not at `tests/`; an
    absent root is CLEAN but reported on stderr, never a silent pass.
    **A spec already approved and implemented is re-gated on its changes only**; unchanged text was
-   passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body each gate last
+   passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body the gate last
    **approved** (a rejection records its hash, verdict and report, never that reference body) and the
    hook supplies a `## CHANGES SINCE APPROVAL` diff; with none kept, the whole spec is gated.
    A full re-gate is still owed when the requirement set, Scope, Interfaces / contracts, `work_kind`
    or a `binding:` changed, and when the Verifier routed the phase back with a **coverage gap** —
    there the question is what the spec failed to require, so unchanged text is where to look. A
    first gate is always full.
+3c. **Amendments — change a verified phase without re-verifying all of it.**
+   `scripts/amendments.py` records the requirement ids a post-verification change touched; **only
+   those re-verify**, and the verdict reads *verified at attempt N, plus amendments A1..An*
+   (`amendments`, ids only, is the one extension to the frozen verdict schema). Ordinary amendments
+   **batch** to phase close; a `--security` one is **never batched** and is owed immediately, as is
+   any pending amendment on a phase whose verdict already passes. Enforced by `hook_verifier.sh` and
+   `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
+   verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
+3d. **Skills are delivered, not requested — pointer plus evidenced load.**
+   What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
+   restated in a table — a second statement of a fact is what every promise-versus-enforcement gap
+   here turned out to be. The load is **observed**, not self-reported: `hook_skill_load.sh` seeds the
+   contract at `SubagentStart` and flips an entry on a real `Read`/`Skill`, into the per-phase metrics
+   record's `skill_loads[]`. `hook_skills.sh` delivers by size (`SKILL_INJECT_MAX_BYTES`, default
+   8192): at or under it the body is **injected** and the injection is **recorded as the load**; over
+   it the stage gets a **pointer**, and opening the file is what records it. Injecting every body
+   guarantees the load at the same order of cost the read-path work just removed, while observation
+   detects a missed one for nothing — **detection beats prevention when both end the same way**. A
+   pointer is not a suggestion: `required_skills.py audit` runs at handover and in CI and fails the
+   phase on a required skill with no observed load, keyed `<stage>:<skill>` so one stage's load is no
+   evidence about another. It needs no session id: the evidence is per-phase by construction, so
+   phase 1 cannot block phase 8; `--all` sweeps every phase in CI. The saving is a **prediction
+   (H9)**, not a result. A required skill that is missing is a **loud blocker** in the injected
+   context, never a silent fallback. `SKILLS_OFF=1` disables it.
+
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
    `@avenger-verifier` passes it; from then they are **locked** and weakening one needs
-   re-verification (adding is always allowed). Because the code's author wrote its judge, the
+   re-verification (adding is always allowed). **The Verifier is narrowed to three jobs** — coverage
+   per `binding:`, reading a green suite for gamed tests, and adversarial execution on secrets,
+   resource lifetimes and concurrency invariants — because 26% of its measured findings were
+   bookkeeping about its own stamps, which `scripts/verifier_precheck.py` now decides mechanically on
+   every commit, diff-scoped to the phases that commit touches (the whole phase at handover, and
+   everything under `gate_ci.sh --full`). **Verification is capped at 3 attempts per phase** (`verifier_attempts.py`): 16 of
+   20 measured re-attempts were the Verifier routing back to itself. At the cap, carry the remainder
+   as known-open, waive it, or escalate. Because the code's author wrote its judge, the
    **tests get read** over a bounded review set — tests mapped to the phase ∪ test files it changed,
    plus directly referenced helpers — for tautological / implementation-coupled / missing-negative
    patterns, and `wrong-gamed test` / `coverage gap` route back alongside `code`. `@avenger-verifier`
@@ -107,7 +155,7 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
    missing cases and the phase routes back to the implementer. Not 100% on purpose. Baseline-guarded:
    a failing suite would otherwise score 1.0, since a mutant counts as killed whenever tests fail.
-   **Optional and OFF by default**: `MUTATION_POLICY` = `off` (default) · `advisory` (reports, never
+   **`advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: reports, never
    blocks) · `enforce` (fails closed). An extra signal, **not** the independence mechanism — that is
    the Verifier's test-quality review. When off, no mutation tool runs anywhere.
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
@@ -159,8 +207,8 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 @avenger-task-analyst "<feature brief>"   # sets work_kind: greenfield|migration|refactor
 @avenger-solution-architect
 @avenger-implementation-planner           # phases, each with candidate specs <n>.<k>
-@avenger-spec-writer                      # writes specs/<n>.<k>-<subslug>/spec.md -> fidelity gate runs
-/spec-review <spec>               # HITL grill-me; add --auto (or SPEC_REVIEW_MODE=auto) for automated review -> flips review_status: approved
+@avenger-spec-writer                      # writes specs/<n>.<k>-<subslug>/spec.md -> the spec gate runs
+/spec-review <spec>               # HITL grill-me -> flips review_status: approved (under --auto / SPEC_REVIEW_MODE=auto the gate carries it)
 # per phase, in dependency order, per spec:
 @avenger-backend-architect <spec>         # or @avenger-frontend-developer
                                           # writes tests + code test-first (mode by work_kind),
@@ -204,7 +252,11 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 ## Environment
 | var | default | effect |
 |---|---|---|
-| `MUTATION_POLICY` | `off` | `off` (skip) \| `advisory` (report only) \| `enforce` (fail closed) |
+| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip) |
+| `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
+| `GATE_TRIAGE_MODEL` | `deepseek/deepseek-chat` | the spec gate's cheaper triage pass; must not be the author's family |
+| `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
+| `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |

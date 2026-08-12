@@ -25,6 +25,13 @@ Two checks keep the declaration true rather than aspirational:
                    `handover-archive.md`, fails here rather than being discovered by the next
                    measurement.
 
+`check --sources` guards **one direction only**: a read this table REMOVED cannot come back. It says
+nothing about the inverse - a stage instructed to read something that `READ_PATH` never declares. So
+the table is not self-verifying, and an instructed-but-undeclared reader makes it *incomplete* rather
+than wrong, which is harder to notice. The human spec-review survived exactly that way: it was
+reading `overview.md`'s header and the prior phase's card per spec, on nobody's `readers:` line.
+Adding a reader here is how that is fixed; bending the prose to match a silent table is not.
+
 The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
 one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
 you change** - the same rule `scripts/verifier_bundle_scope.py` (the verifier bundle),
@@ -79,7 +86,8 @@ READ_PATH: dict[str, dict] = {
         "readers": [
             "avenger-implementation-planner @ once",
             "avenger-spec-writer @ per spec (whole)",
-            "spec-review @ per spec (## Contracts and Decisions header only)",
+            "spec gate @ per spec (## Contracts and Decisions header only)",
+            "spec-review (human grill) @ per spec (## Contracts and Decisions header only)",
             "e2e-author @ once, at feature close (the goal)",
         ],
         "extent": "whole | header",
@@ -94,13 +102,46 @@ READ_PATH: dict[str, dict] = {
         "written_by": "avenger-spec-writer",
         "emitted_by": "docs/templates/spec.template.md",
         "readers": [
-            "fidelity gate @ on write",
-            "spec-review @ per spec",
+            "spec gate @ on write (observe pass, then triage pass for context)",
             "implementer @ once, its own spec",
             "verifier bundle @ per phase, changed specs only",
         ],
         "extent": "whole",
         # Leaves the read path when its phase verifies: later phases read the contract card.
+        # It used to be read by TWO model gates on every write — the Fidelity Gate and the automated
+        # half of spec-review — asking overlapping questions of the same bytes at the same moment.
+        # They are one gate now, and its two passes read different things: the observe pass reads the
+        # spec, the triage pass reads the OBSERVATIONS plus the spec for context.
+    },
+    "spec-notes.md": {
+        "written_by": "spec gate",
+        "emitted_by": "docs/templates/spec-notes.template.md",
+        "readers": ["implementer @ once, before building its own spec"],
+        "extent": "whole",
+        # The known-open list: observations the gate recorded and deliberately did not block on.
+        # It is a SIDECAR rather than a section of spec.md on purpose — the spec is read whole by its
+        # implementer and bundled to the verifier, so notes appended to it would ride on every one of
+        # those reads and grow the artifact the requirement cap exists to bound.
+        "named_only_by": {
+            "agents/avenger-spec-writer.md",
+            "agents/avenger-backend-architect.md",
+            "agents/avenger-frontend-developer.md",
+            "skills/pipeline-conventions/SKILL.md",
+            "skills/spec-review-checklist/SKILL.md",
+            "commands/spec-review.md",
+        },
+    },
+    "amendments.json": {
+        "written_by": "orchestrator / verifier (scripts/amendments.py)",
+        "emitted_by": "docs/templates/amendments.template.json",
+        "readers": [
+            "avenger-verifier @ per phase, to scope the re-verify set",
+            "phase-handover @ per phase",
+        ],
+        "extent": "whole",
+        # A post-verification change and the requirement ids it touched. It is small by construction
+        # — ids, a reason, a status — and it is what stops a one-line correction costing a full
+        # verification round, which is what rounds 3 through 8 of one measured phase were.
     },
     "test-mapping.md": {
         "written_by": "implementer",
@@ -152,7 +193,8 @@ READ_PATH: dict[str, dict] = {
         "emitted_by": "docs/templates/handover.template.md",
         "readers": [
             "avenger-spec-writer @ per spec, prior phases' cards",
-            "spec-review @ per spec, the immediately prior phase's card",
+            "spec gate @ per spec, the immediately prior phase's card (CONTEXT, never gated)",
+            "spec-review (human grill) @ per spec, the immediately prior phase's card",
             "e2e-author @ once, at feature close",
         ],
         "extent": "card",

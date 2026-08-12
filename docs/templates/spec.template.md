@@ -7,9 +7,16 @@ work_kind: greenfield    # <!-- greenfield | migration | refactor — the implem
                          #      CARRIED HERE, not looked up in task-analysis.md: a stage that fires
                          #      per spec must never open a second document for one field. -->
 status: draft
-review_status: pending   # <!-- only the human reviewer sets this to 'approved', after grill-me -->
+spec_gate: pending       # <!-- pending | approved | blocked — THE machine gate, set by
+                         #      scripts/hook_spec_gate.sh. It replaced `fidelity_verdict` and the
+                         #      automated half of spec-review: two rubrics asking overlapping
+                         #      questions of these same bytes at the same moment, which once passed
+                         #      one and failed the other on byte-identical text. -->
+review_status: pending   # <!-- only the human reviewer sets this to 'approved', after grill-me.
+                         #      Under SPEC_REVIEW_MODE=auto the gate carries it, because in an
+                         #      unattended run the machine gate is the whole wall. -->
 criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase -->
-readers: fidelity gate @ on write; spec-review @ per spec; implementer @ once; verifier bundle @ changed specs only
+readers: spec gate @ on write; implementer @ once; verifier bundle @ changed specs only
 ---
 
 # <Spec title>
@@ -27,7 +34,13 @@ readers: fidelity gate @ on write; spec-review @ per spec; implementer @ once; v
 <!-- what this spec delivers, and explicitly what it does NOT -->
 
 ## Requirements
-<!-- A SINGLE verifiable behavior each; not a bundle. Every one declares a `binding:`, which decides
+<!-- AT MOST 12. The cap is counted by scripts/requirement_cap.py BEFORE any model sees this spec,
+     and over it the spec SPLITS into siblings <n>.<k> — it is never rejected for being large. That
+     order matters: the gate this replaced had no size ceiling anywhere, so the only response
+     available to a rejected spec was more text, and one spec went 25k -> 51k characters across four
+     rejected rounds.
+
+     A SINGLE verifiable behavior each; not a bundle. Every one declares a `binding:`, which decides
      whether and where it is verified:
        e2e         — an end user can observe it. Carried by a JOURNEY below, never its own test.
        integration — visible ONLY under concurrency, fault injection, or schema migration. Gets its

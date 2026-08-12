@@ -12,8 +12,8 @@
 # so a phase is judged on the code it actually changed, not the whole package.
 #
 # MUTATION_POLICY selects how much authority the verdict has (pipeline-conventions: "Gates"):
-#   off (DEFAULT)  - skipped entirely; no mutation tool runs anywhere. Most teams leave it here.
-#   advisory       - runs everything and reports the score and the missing cases, but never blocks.
+#   off            - skipped entirely; no mutation tool runs anywhere.
+#   advisory (DEFAULT) - runs everything and reports the score and the missing cases, never blocks.
 #   enforce        - below threshold or unscorable STOPS the phase.
 # Mutation is an EXTRA signal, not the pipeline's independence mechanism — independence is the
 # Verifier's test-quality review (agents/avenger-verifier.md). Only `enforce` fails closed.
@@ -31,12 +31,15 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 MUTATION_MIN_SCORE="${MUTATION_MIN_SCORE:-0.85}"
-MUTATION_POLICY="${MUTATION_POLICY:-off}"
+# Default `advisory`, matching gate_ci.sh — the two must not disagree about what runs. Advisory
+# reports the score and its survivors and never blocks; it is an extra deterministic signal, not the
+# independence mechanism. `off` stays available and runs no mutation tool anywhere.
+MUTATION_POLICY="${MUTATION_POLICY:-advisory}"
 
 case "$MUTATION_POLICY" in
   enforce|advisory) ;;
   off)
-    echo "mutation: skipped (MUTATION_POLICY=off, the default). Independence rests on the Verifier's test-quality review." >&2
+    echo "mutation: skipped (MUTATION_POLICY=off). Independence rests on the Verifier's test-quality review." >&2
     exit 0 ;;
   *)
     echo "mutation: MUTATION_POLICY='$MUTATION_POLICY' is not one of enforce|advisory|off (fail closed)" >&2
@@ -76,6 +79,79 @@ trap cleanup EXIT
 # first, or every bypassed run leaks its work dir.
 bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 
+# A hook the harness kills leaves no verdict, no report and no cause — and the run reads that absence
+# as the gate having objected. Say so instead, exactly as scripts/hook_spec_gate.sh does. This
+# matters more now that the policy defaults to `advisory`: every internal failure path already exits
+# 0 under advisory, and a kill must not be the one that blocks a phase the gate never judged.
+#
+# SAY IT FIRST, then clean up. The message is split from the exit precisely so nothing can run before
+# it: a harness that follows SIGTERM with a SIGKILL on a short grace would otherwise kill this hook
+# mid-cleanup and the line would never be emitted, which is indistinguishable from the objection it
+# exists to deny.
+announce_kill() {
+  if [ "$MUTATION_POLICY" = "advisory" ]; then
+    echo "mutation [advisory]: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2
+    echo "  The gate did not answer; advisory never blocks." >&2
+    return 0
+  fi
+  echo "mutation: HOOK KILLED by the harness (signal) — this is NOT a gate verdict. The gate did not answer." >&2
+}
+exit_killed() {
+  cleanup; trap - EXIT
+  [ "$MUTATION_POLICY" = "advisory" ] && exit 0
+  exit 2
+}
+on_kill() { announce_kill; exit_killed; }
+trap on_kill TERM INT
+
+# bash defers a trap until the running FOREGROUND command returns, so a long child must run in the
+# background and be waited on — otherwise the kill is reported only after the call it was killed for
+# has finished, which is the same defect the spec gate's run_pass exists to avoid. Every cosmic-ray
+# invocation here can outlive the hook's budget, so all of them go through this.
+#
+# The child is launched into its OWN SESSION and killed by PROCESS GROUP. `cosmic-ray exec` is a CLI
+# that spawns workers which run the test suite, and signalling the direct child alone leaves those
+# workers running — the exact leak scripts/proc_group.py was written for, where a reported 300s
+# timeout was measured against 569s, 3818s and 4276s of real activity. That module is NOT reused here
+# because it owns the whole call lifecycle (it captures output, applies its own timeout and returns a
+# ChildResult), while this hook must stream into $TMP and die on a signal delivered from outside by a
+# bash trap. So only its primitive is applied — same session-per-child, same SIGTERM, grace, SIGKILL
+# order, same TERM_GRACE_S — and this comment is the statement that a second, narrower use of the
+# pipeline's own primitive lives here.
+TERM_GRACE_S=5
+
+signal_child_group() {
+  local pgid="$1"
+  [ -n "$pgid" ] || return 0
+  kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
+}
+
+reap_child_group() {
+  local pgid="$1"
+  [ -n "$pgid" ] || return 0
+  local waited=0
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  # Unconditional, as in proc_group.py: a group whose leader exited still has members, so "the child
+  # is gone" is never evidence that the work stopped.
+  kill -KILL "-$pgid" 2>/dev/null || true
+}
+
+run_child() {
+  # os.setsid() then exec: the backgrounded pid IS the new session and group leader, so `kill -<pid>`
+  # reaches every worker it spawns. `setsid(1)` is not on macOS, which is why this is done in python.
+  python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" >>"$TMP" 2>&1 &
+  local pid=$!
+  # Signal, SAY IT, then wait out the grace and escalate. The grace poll is up to TERM_GRACE_S of
+  # `sleep`, so announcing after it puts a five-second window between the signal and the one line
+  # whose absence reads as a gate objection — and a harness KILL inside that window loses it.
+  trap 'signal_child_group "'"$pid"'"; announce_kill; reap_child_group "'"$pid"'"; exit_killed' TERM INT
+  wait "$pid"; local rc=$?
+  trap on_kill TERM INT
+  return "$rc"
+}
+
 # Every stopping condition funnels through here so `advisory` cannot be forgotten at one of them.
 # $1 = bypass tag, $2 = what went wrong (already printed in detail by the caller).
 stop_or_report() {
@@ -101,24 +177,24 @@ fi
 # already broken (a collection error, say), every mutant is killed and the score is a perfect 1.0.
 # A broken suite would otherwise score better than a real one. Verified: with an import error in the
 # suite, all 7 fixture mutants reported 'killed'. No kill means anything until the baseline is green.
-if ! cosmic-ray baseline "$SCOPED" >>"$TMP" 2>&1; then
+if ! run_child cosmic-ray baseline "$SCOPED"; then
   echo "mutation: baseline FAILED — the suite does not pass on unmutated code, so every mutant" >&2
   echo "would score as killed. Refusing to score (fail closed). Fix the suite first:" >&2
   tail -5 "$TMP" >&2
   stop_or_report "mutation:baseline-failed" "baseline failed, so no mutant result is meaningful"
 fi
 
-if ! cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+if ! run_child cosmic-ray init "$SCOPED" "$SESSION"; then
   echo "cosmic-ray init errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray init errored"
 fi
 # Diff-scope: mark every mutant outside the phase's diff as skipped. mutation_score.py excludes
 # skipped mutants from the denominator (cosmic-ray's own cr-rate would count them as kills).
-if [ -n "$FILTER_BASE" ] && ! cr-filter-git --config "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+if [ -n "$FILTER_BASE" ] && ! run_child cr-filter-git --config "$SCOPED" "$SESSION"; then
   echo "cr-filter-git errored (fail closed) — refusing to mutate unscoped:" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:filter-errored" "cr-filter-git errored, scope unknown"
 fi
-if ! cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+if ! run_child cosmic-ray exec "$SCOPED" "$SESSION"; then
   echo "cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray exec errored"
 fi

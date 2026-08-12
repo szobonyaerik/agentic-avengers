@@ -25,9 +25,10 @@ write no production code.
    in the project, then to `.env` **only if one does not already exist** — check first, never
    overwrite a live `.env`. Tell the user what they must fill in: `OPENROUTER_API_KEY`, and
    `GATE_PROVIDER=openrouter` (without it `gate_runner.py` defaults to the `opencode` CLI and the
-   key is ignored). Warn that `GATE_MODEL` and `VERIFIER_GATE_MODEL` must not share
-   `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. Every gate loads this file via
-   `scripts/load_env.sh`; the real environment always wins over it.
+   key is ignored). Warn that `GATE_MODEL` (the spec gate's observe pass), `GATE_TRIAGE_MODEL` (its
+   triage pass) and `VERIFIER_GATE_MODEL` must not share `AUTHOR_FAMILY` — a same-family gate exits
+   2, fail-closed. Every gate loads this file via `scripts/load_env.sh`; the real environment always
+   wins over it.
 
 2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to
    `.no-mistakes.yaml` in the project **only if one does not already exist** — check first, never

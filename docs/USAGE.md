@@ -39,7 +39,7 @@ lavish-axi --version                              # plan-approval stop (§3) + r
 > executing a literal placeholder as a shell command at the ship gate.
 
 > **Cross-family invariant:** gates must run on a different vendor family than the author. Build agents
-> = anthropic; fidelity gate = DeepSeek; verifier/mutation/spec-review = Gemini. If a gate model shares
+> = anthropic; the spec gate's observe pass = Gemini and its triage pass = DeepSeek; verifier = Gemini. If a gate model shares
 > `AUTHOR_FAMILY`, it stops (fail closed).
 
 ---
@@ -102,19 +102,28 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 2. @avenger-solution-architect        -> overview.md
 3. @avenger-implementation-planner    -> plan.md   (phases, each with candidate specs <n>.<k>)
 4. @avenger-spec-writer               -> phases/1-endpoint/specs/1.1-health/spec.md
-      • On write, the Fidelity Gate fires automatically (cross-family). NO-GO -> back to spec-writer.
+      • On write, the spec gate fires automatically (scripts/hook_spec_gate.sh). Before any model
+        call, two mechanical checks run: the requirement cap (over 12 the spec SPLITS into siblings,
+        it is never rejected for size) and scripts/subprocess_check.py, which flags any test that
+        spawns a process without @pytest.mark.subprocess("<why>"). Register that marker in the
+        project's pytest config and point SUBPROC_CHECK_PATHS at your tests if they are not at
+        tests/ (skills/tdd).
+      • Then the gate itself: observe -> triage -> decide, and it stamps spec_gate: approved|blocked.
+        blocked -> back to spec-writer. Exactly four things block: a missing requirement, a
+        contradiction, an untestable criterion, an unhandled critical edge case. Everything else is a
+        NOTE, which blocks nothing and lands in spec-notes.md beside the spec, read once by the
+        implementer.
       • The spec lands with review_status: pending.
 
 5. /spec-review docs/features/health-endpoint/phases/1-endpoint/specs/1.1-health/spec.md
-      • First, no model: scripts/subprocess_check.py flags any test that spawns a process without
-        @pytest.mark.subprocess("<why>"). Register that marker in the project's pytest config and
-        point SUBPROC_CHECK_PATHS at your tests if they are not at tests/ (skills/tdd).
+      • The machine gate already ran on the write; this command does not re-run it and runs no
+        second rubric. It reads spec_gate first and stops if it is blocked.
       • You are grilled ONE question at a time against the spec-review checklist, each with a
         recommendation. Answer them; when the bar is met it sets review_status: approved.
       • Re-reviewing a spec that is already approved AND implemented covers its DIFF only
         (skills/spec-review-checklist names what still warrants a full pass).
-      • Implementation does NOT start until review_status: approved AND fidelity_verdict != NO-GO.
-        Those two gates are what pre-agree the seams the tests get written at.
+      • Implementation does NOT start until review_status: approved AND spec_gate: approved.
+        That wall is what pre-agrees the seams the tests get written at.
 
 # per spec in the phase:
 6. @avenger-backend-architect <spec>  -> tests/1-endpoint/ + test-mapping.md + src/...
@@ -130,7 +139,14 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
         mapped to the phase plus the test files it changed, and their direct helpers. A gamed test
         (tautological / implementation-coupled / missing-negative) fails the phase even when green.
       • Writes docs/features/<feat>/phases/1-endpoint/verdict.json. On pass the phase's tests LOCK.
-      • Mutation only if MUTATION_POLICY is advisory|enforce (default off).
+      • Mutation runs by default in ADVISORY mode: it reports the score and its survivors and
+        never blocks. MUTATION_POLICY=enforce blocks; MUTATION_POLICY=off runs nothing.
+      • Its BOOKKEEPING is a script, not a finding: scripts/verifier_precheck.py decides untraced
+        ids, stale gate stamps and missing headings on every commit, over the phases that commit
+        touches — the whole phase at handover, and everything under `gate_ci.sh --full`. 26% of this
+        stage's measured findings used to be that class.
+      • The loop is CAPPED at 3 attempts (scripts/verifier_attempts.py). At the cap: carry the
+        remainder as known-open in handover.md, waive it, or escalate.
 
 8. @avenger-handover 1-endpoint
       • Writes the phase's CONTRACT CARD, handover.md — binding contracts, decisions, artifact
@@ -139,7 +155,8 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • Mirrors the verdict + any waived findings into handover.md. The hook checks verdict.json is
         present and passing; it never calls a model.
 
-9. Ship: git commit (pre-commit floor runs fidelity on staged specs + tests) -> PR (CI floor: + mutation).
+9. Ship: git commit (pre-commit floor checks staged specs' gate stamps + requirement cap + tests)
+   -> PR (CI floor: + verifier pre-check + amendments + mutation).
 ```
 
 ---
@@ -158,26 +175,27 @@ export SPEC_REVIEW_MODE=auto        # set BEFORE launching Claude Code / opencod
 ```
 
 What happens in auto mode:
-- A cross-family AI reviewer (Gemini) runs `prompts/spec-review-rubric.md` — the same checklist a human
-  would defend.
-- **GO / REVIEW** → it stamps `review_status: approved` and the chain continues to the implementer.
-- **NO-GO** → `review_status` stays `pending`, it prints the findings, and routes back to
-  `avenger-spec-writer`. It is a real second opinion, **not** a rubber stamp.
-- Any error (missing key, same-family model, no verdict) → **fails closed**, no approval.
+- Nothing extra runs. **The spec gate already ran on the spec's write** — observe, triage, decide —
+  and under `SPEC_REVIEW_MODE=auto` it stamps `review_status: approved` itself, because in an
+  unattended run the machine gate is the whole wall. `/spec-review --auto` only reports where the
+  spec stands.
+- **approved** → the chain continues to the implementer.
+- **blocked** → `review_status` stays `pending`, the gate's findings are printed, and it routes back
+  to `avenger-spec-writer`. Exactly four things can block: a missing requirement, a contradiction, an
+  untestable criterion, an unhandled critical edge case. Everything else was a **note** — recorded in
+  `spec-notes.md` beside the spec, blocking nothing.
+- Any error (missing key, same-family model, no verdict, an invented triage category) → **fails
+  closed**, no approval.
 
 **opencode equivalent** (no slash commands there): set `SPEC_REVIEW_MODE=auto` and the plugin
-(`.opencode/plugin/pipeline-gates.ts`) does it on spec write. To run it by hand against one spec:
-```bash
-python3 "$AV/scripts/gate_runner.py" \
-  --rubric "$AV/prompts/spec-review-rubric.md" \
-  --model google/gemini-3.1-pro-preview --author-family anthropic --print-verdict \
-  --target <spec.md>
-# GO/REVIEW -> edit the spec's `review_status: pending` to `approved`; NO-GO -> fix the spec.
-```
+(`.opencode/plugin/pipeline-gates.ts`) runs `scripts/hook_spec_gate.sh` on spec write, exactly as
+Claude Code's hook does — the gates have one implementation. To re-run it by hand against one spec,
+write the spec again; the gate skips an unchanged body by design, so an edit is what re-gates it.
 
 > **HITL vs automated, when?** Use HITL for high-stakes or ambiguous specs where you want a human to
-> own the judgment; use automated for throughput once you trust the checklist. Both write the same
-> `review_status: approved` and both are cross-family + fail-closed — the only difference is who answers.
+> own the judgment; use automated for throughput. The machine gate is identical in both — the only
+> difference is whether a human also signs off, or the gate carries `review_status` because nobody
+> is there.
 
 ---
 
@@ -197,8 +215,9 @@ python3 "$AV/scripts/gate_runner.py" \
   asking you to keep it on one line. The Verifier's per-finding waiver
   (`verdict.json` `break_glass` + `waiver_reason`) is logged through that same writer, so a
   multi-paragraph waiver reason is safe too.
-- **Gate model**: gates default to a decorrelated deepseek (fidelity) / gemini (verifier, mutation,
-  spec-review) mix. Set `GATE_MODEL=<id>` to route **every** gate to one model, e.g.
+- **Gate models**: decorrelated by default — `GATE_MODEL` (gemini) runs the spec gate's **observe**
+  pass, `GATE_TRIAGE_MODEL` (deepseek) runs its cheaper **triage** pass, and `VERIFIER_GATE_MODEL`
+  (gemini) runs the Verifier's test-quality review. Set `GATE_MODEL=<id>` to route the observe pass, e.g.
   `export GATE_MODEL=opencode-go/deepseek-v4-pro` (OpenCode's DeepSeek V4 Pro, provider `opencode`).
   Keep `AUTHOR_FAMILY` a different family than `GATE_MODEL` or the gate fails closed.
 - **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` maps the Claude model tiers to

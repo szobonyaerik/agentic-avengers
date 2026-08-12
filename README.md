@@ -1,7 +1,7 @@
 # agentic-avengers · plan-build-verify
 
 A spec-driven, test-first agentic development pipeline that runs under **Claude Code** and
-**opencode**. Specialised agents plan a feature; a **composed quality wall** (an automated fidelity
+**opencode**. Specialised agents plan a feature; a **quality wall** (one automated spec
 gate *and* a grill-me review) decides whether each spec is ready; the implementer then builds it
 **test-first**, one vertical slice at a time; and every phase is verified once — by a fresh
 cross-family model that reviews the tests as well as running them, plus cosmic-ray mutation — before
@@ -51,9 +51,12 @@ flowchart TD
 
     subgraph phase ["per phase — specs iterate · the verifier runs once, after all specs are green"]
         sw["spec-writer"] -.-> swA[/"spec.md · R n.k.m + binding: e2e|integration|none"/]
-        sw --> fg{"fidelity gate?<br/>automated · cross-family"}
-        fg -->|"NO-GO"| sw
-        fg -->|"GO / REVIEW"| sr{"spec approved?<br/>subprocess cost check + grill-me + checklist<br/>re-gate = diff only"}
+        sw --> cap{"requirement cap?<br/>mechanical · before any model"}
+        cap -->|"over 12 — SPLIT, never a rejection"| sw
+        cap -->|"at or under"| fg{"spec gate<br/>observe → triage → decide<br/>closed blocking set · cross-family"}
+        fg -->|"blocked (1 of 4 things)"| sw
+        fg -.->|"notes — never block"| notes[/"spec-notes.md · known-open"/]
+        fg -->|"approved"| sr{"human sign-off?<br/>grill-me + checklist<br/>re-gate = diff only"}
         sr -->|"rework"| sw
         sr -->|"approved"| impl["backend / frontend implementer<br/>writes tests + code · test-first · skills-tdd"]
         impl -.-> implA[/"tests + src + test-mapping.md (the table) + test-evidence.md (route-back only)"/]
@@ -65,7 +68,8 @@ flowchart TD
     ver -->|"senior override"| bg[/"break-glass · gate-overrides.log · bypassed on PR"/]
     ver -->|"code issue · wrong test · coverage gap"| impl
     ver -.-> verA[/"verdict.json · findings + waivers"/]
-    ver -->|"pass — TESTS LOCK"| mut{"mutation · optional<br/>off (default) / advisory / enforce"}
+    ver -->|"capped at 3 attempts — then carry / waive / escalate"| stop
+    ver -->|"pass — TESTS LOCK"| mut{"mutation<br/>advisory (default) / enforce / off"}
     mut -->|"survivors · enforce only"| impl
     mut --> brk["breaker<br/>optional · critical paths"]
     brk -->|"counterexample"| impl
@@ -84,16 +88,24 @@ PLAN
 
 PER PHASE (specs iterate; the verifier runs once, after all specs are green)
   spec-writer         -> .../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md
-  QUALITY WALL (per spec, both gates)
-    1. Automated Fidelity Gate (cross-family)   NO-GO -> back to spec-writer     [this repo only]
+  QUALITY WALL (per spec): ONE machine gate, then one human
+    0. MECHANICAL, before any model call:
+         - requirement cap (scripts/requirement_cap.py): over 12 the spec SPLITS into siblings.
+           Never a rejection — a rejection for size is one more thing for a spec to grow around.
+         - the only COST gate (scripts/subprocess_check.py): a test that spawns a process needs
+           @pytest.mark.subprocess("<why>")
+    1. THE SPEC GATE (cross-family, two passes, one verdict)   blocked -> back to spec-writer
+         observe  (prompts/spec-gate-observe.md)  reports everything, has NO verdict to give
+         triage   (prompts/spec-gate-triage.md)   classifies against a CLOSED set, cheaper model
+         decide   (scripts/spec_gate_triage.py)   derives the verdict — no model decides this
+       Exactly four things block: missing requirement · contradiction · untestable criterion ·
+       unhandled critical edge case. Everything else is a NOTE; notes never block and land in
+       spec-notes.md. An already-approved, already-implemented spec is re-gated on its DIFF only.
     2. Human spec review -> sets review_status: approved
-         HITL:      /spec-review <spec>            (grill-me, one question at a time)
-         Automated: /spec-review <spec> --auto     (SPEC_REVIEW_MODE=auto)
-       + the only COST gate, mechanical, no model, both modes: scripts/subprocess_check.py
-         (a test that spawns a process needs @pytest.mark.subprocess("<why>"))
-       + an already-approved, already-implemented spec is re-gated on its DIFF only
-    A spec reaches the implementer only when fidelity_verdict != NO-GO AND review_status: approved.
-    Those two gates are also what pre-agrees the SEAMS the tests will be written at.
+         /spec-review <spec>   (grill-me, one question at a time)
+         under --auto / SPEC_REVIEW_MODE=auto the machine gate carries it — nobody is there
+    A spec reaches the implementer only when spec_gate: approved AND review_status: approved.
+    That wall is also what pre-agrees the SEAMS the tests will be written at.
 
   backend/frontend implementer -> tests/<feat>/<n>-<slug>/<n>.<k>-<subslug>/ + src/
                  + that spec's test-mapping.md (the TABLE) and test-evidence.md
@@ -112,7 +124,7 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
                  route-backs: code | wrong-gamed test | coverage gap -> implementer
   PASS -> THE PHASE SUITE LOCKS (locked-after-verify). Weakening a test then needs re-verification;
           adding one a later gate demands is always allowed.
-  mutation (optional; MUTATION_POLICY off by default | advisory | enforce)
+  mutation (MUTATION_POLICY advisory by default — runs, reports, never blocks | enforce | off)
                  an extra signal, NOT the independence mechanism
   breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
   handover -> .../phases/<n>-<slug>/handover.md   CONTRACT CARD, hard cap 6144 bytes
@@ -157,12 +169,12 @@ That means the author of the code also authors its judge, so two controls buy th
 ### Relationship to `klm-agentic-pipeline`
 This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares its semantics. Known
 intended differences: this one runs on **Claude Code + opencode** rather than GitHub Copilot; it adds
-the automated **Fidelity Gate**; it keeps a **feature-level e2e** stage and **spec-isolation-review**;
+the automated **spec gate**; it keeps a **feature-level e2e** stage and **spec-isolation-review**;
 and its mutation gate has a **deterministic, diff-scoped scorer** (`scripts/mutation_score.py` +
 `cr-filter-git`).
 
 Two further mechanisms live here whose status against the sibling is **unconfirmed**: the mechanical
-**subprocess cost gate** (`scripts/subprocess_check.py`, run from the spec-review hook in both modes)
+**subprocess cost gate** (`scripts/subprocess_check.py`, run from the spec-gate hook in both modes)
 and **diff-scoped re-gating** of a spec already approved and implemented. Whether
 `klm-agentic-pipeline` has either was not checkable from this repository, so this list is not a
 completeness claim in either direction — a divergence absent from it is not thereby drift.
@@ -198,7 +210,8 @@ agentic-avengers/
 │                          pipeline-retrospective, e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
-├── prompts/               fidelity-rubric.md, spec-review-rubric.md, project-setup.md
+├── prompts/               spec-gate-observe.md, spec-gate-triage.md, verifier-review.md,
+│                          project-setup.md
 ├── docs/templates/        spec / plan / overview / task-analysis / handover (+ archive) /
 │                          test-mapping / test-evidence / verdict templates
 ├── docs/rubrics/          overview + plan rubrics
@@ -212,7 +225,22 @@ agentic-avengers/
 │   │                          and the metrics writers that share its headroom
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
-│   ├── gate_ci.sh             git/CI floor entry point (fidelity + tests + read path + cosmic-ray + break-glass)
+│   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
+│   │                          + read path + verifier pre-check + amendments + cosmic-ray + break-glass)
+│   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
+│   ├── spec_gate_state.py     the one place a spec's gate stamp is read (legacy stamps included)
+│   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
+│   ├── spec_notes.py          the known-open list: notes that never block, read once by the implementer
+│   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
+│   ├── verifier_precheck.py   the Verifier's bookkeeping, mechanically, on every commit over what
+│   │                          the diff touches (whole phase at handover; everything under --full)
+│   ├── verifier_attempts.py   the 3-attempt cap on the verification loop, and the finding series
+│   ├── required_skills.py     delivery + the blocking audit; WHICH skills is derived from each
+│   │                          agent's own definition (skill_contract.py). Small ones injected
+│   │                          whole, large ones a pointer (SKILL_INJECT_MAX_BYTES); `audit`
+│   │                          fails a phase on a required skill with no OBSERVED load. The
+│   │                          evidence is per-phase, so phase 1 cannot block phase 8
+│   │                          (`--all` sweeps every phase, under `gate_ci.sh --full`)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
 │   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
 │   │                          diff-scoped; and `--sources`, so a removed read cannot come back)

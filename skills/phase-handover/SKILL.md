@@ -59,11 +59,24 @@ says `verdict: pass` — which is what locks the phase suite (`pipeline-conventi
 *locked-after-verify*). If it isn't green, stop and report what's outstanding instead of writing a
 handover.
 
-Mirror the gate record out of `verdict.json`:
+**No amendment is owed re-verification.** `python3 scripts/amendments.py due <phase-dir>` must exit
+0. A phase does not close over a pending security amendment, nor over a pending ordinary one on a
+phase whose verdict already passes — that verdict is a claim about code that has since changed.
+`scripts/hook_verifier.sh` enforces this on the handover write, so a card written over one will not
+land.
+
+Mirror the gate record out of `verdict.json` and `amendments.json`:
+- **Amendments folded into this phase** — one line each: id, the requirement ids it touched, and
+  whether it was security-relevant. The verdict's own `amendments` array carries the ids; the card is
+  where a later phase sees that the phase moved after it was first verified.
+- **Findings carried as known-open at the verification attempt cap** — one line each, with the
+  finding id. The cap (3 attempts, `scripts/verifier_attempts.py`) means some findings are carried
+  rather than fixed, and this card is the only place that stays visible. A carried finding recorded
+  nowhere is the cap turning into silent attrition.
 - `verdict: pass` with `bypassed: true` means the phase passed only because findings were **waived**.
   Name each waived finding (id / who / when / reason) — a visible bypass, never a silent green.
   One line per finding on the card; the reasoning, if any, goes in the archive.
-- Mutation is **off by default**. If it ran (`MUTATION_POLICY` = `advisory`/`enforce`), record the
+- Mutation is **`advisory` by default** — it runs and reports, and never blocks. If it ran, record the
   score and the policy on the frontmatter line; if it did not, write `n/a (off)` rather than leaving
   it blank.
 
@@ -113,7 +126,7 @@ status: green
 next: <next-phase-slug | e2e | ship>
 verdict: pass | pass (bypassed) | fail
 mutation: n/a (off) | <score> (policy advisory|enforce)
-readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
+readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; spec-review (human grill) @ the immediately prior card; e2e-author @ feature close
 ---
 ## Phase <phase> — contract card
 
@@ -164,7 +177,7 @@ status: green
 next: 2-analysis
 verdict: pass
 mutation: n/a (off)
-readers: avenger-spec-writer @ per spec (prior cards); spec-review @ the immediately prior card; e2e-author @ feature close
+readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediately prior card; spec-review (human grill) @ the immediately prior card; e2e-author @ feature close
 ---
 ## Phase 1-webhook — contract card
 
