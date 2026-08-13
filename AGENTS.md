@@ -141,7 +141,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    detects a missed one for nothing — **detection beats prevention when both end the same way**. A
    pointer is not a suggestion: `required_skills.py audit` runs at handover and in CI and fails the
    phase on a required skill with no observed load, keyed `<stage>:<skill>` so one stage's load is no
-   evidence about another. It needs no session id: the evidence is per-phase by construction, so
+   evidence about another. Claude Code additionally asks it **per stage at `SubagentStop`**
+   (`hook_skill_audit.sh`, `audit --stage`) so the gap is answerable by opening one file instead of
+   refusing a contract card; **opencode has no such event**, so here the close-time audit is the only
+   one, and it is unchanged. It needs no session id: the evidence is per-phase by construction, so
    phase 1 cannot block phase 8; `--all` sweeps every phase in CI. The saving is a **prediction
    (H9)**, not a result. A required skill that is missing is a **loud blocker** in the injected
    context, never a silent fallback. `SKILLS_OFF=1` disables it.
@@ -328,6 +331,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this` exceeds it — raise it and raise `hooks/hooks.json` with it |
 | `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
 | `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
+| `SKILL_AUDIT_OFF` | unset | `1` disables the per-stage `SubagentStop` skill audit (`scripts/hook_skill_audit.sh`); the close-time audit at handover and in CI is unaffected |
 
 ## Maintaining this file
 

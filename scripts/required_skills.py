@@ -65,7 +65,29 @@ Usage:
                                                  (exit 1 when one does not)
     required_skills.py audit                     exit 1 when a stage in the phase in flight required
                                                  a skill and no load was observed
+    required_skills.py audit --stage <stage>     the same, for ONE stage — asked at the moment that
+                                                 stage finishes (scripts/hook_skill_audit.sh)
     required_skills.py audit --all               the same over every phase with a record
+
+## WHEN the audit is asked, and why it is asked twice
+
+It used to be asked in two places, both of them at the end: the handover hook and CI. Measured on
+clickup-agents phase 10, `avenger-spec-writer` had never loaded `skills/spec-review-checklist`, and
+the phase learned it at the contract card — with every spec written, gated, reviewed and
+implemented. That is the most expensive moment available, and it is also the moment the remedy stops
+existing: "open the file in that stage" cannot be done by a stage that finished days ago, so a
+genuine requirement arrived as a blocker on an artifact that did not cause it.
+
+The requirement itself is not the defect. `agents/avenger-spec-writer.md` makes that checklist the
+standard its Phase/Spec summaries are held to, so the load is genuinely owed; and phase 9 measured
+13 of 13 required loads evidenced by observation rather than self-report, which is the property this
+audit protects. What was wrong was the placement: the omission should stop the STAGE that owes it,
+while it can still answer, not the card that closes over it.
+
+So `--stage` asks the same question at `SubagentStop`, and the close-time audit stays exactly as it
+was. It is a backstop, not a duplicate: opencode has no such event and the main thread reaches no
+`SubagentStop` either, so a phase driven those ways is still covered. Nothing about what counts as a
+gap changes in either place.
 """
 
 from __future__ import annotations
@@ -126,7 +148,7 @@ def ponytail_expected(stage: str) -> bool:
     return bool(stage) and bool(pattern.search(stage))
 
 
-def ponytail_notes(record: dict | None) -> list[str]:
+def ponytail_notes(record: dict | None, stage: str | None = None) -> list[str]:
     """One NOTE per stage that was expected to receive ponytail and has no record of it.
 
     **A note, never a gap.** `skills/ponytail` is deliberately outside every declared contract:
@@ -148,6 +170,10 @@ def ponytail_notes(record: dict | None) -> list[str]:
     stages_in_record = {
         entry.get("stage") for entry in loads if isinstance(entry, dict) and entry.get("stage")
     }
+    if stage:
+        # A stage-scoped audit answers about one stage; another stage's note there is noise, and a
+        # note nobody asked for is how notes stop being read.
+        stages_in_record &= {metrics.observing_stage(stage)}
     return [
         f"{stage} was expected to be injected with skills/ponytail and no injection was recorded. "
         f"This is a NOTE, not a gap: ponytail is never required and never blocks. It means this "
@@ -227,8 +253,16 @@ def phases_with_records(root: Path | None = None) -> list[str]:
     return sorted(found)
 
 
-def audit_gaps(record: dict | None) -> list[str]:
-    """One line per required skill in `record` with no observed load.
+def audit_gaps(record: dict | None, stage: str | None = None) -> list[str]:
+    """One line per required skill in `record` with no observed load, optionally for ONE stage.
+
+    `stage` narrows the scope and nothing else — same rows, same test, same wording. It exists
+    because the question "did this stage get what it was owed?" is answerable at the moment that
+    stage runs, and answering it there is the difference between opening one file and re-opening a
+    closed phase. The stage name is normalised through `observing_stage`, the same function that
+    wrote the rows: `SubagentStop` reports `plan-build-verify:avenger-spec-writer` where the record
+    holds `avenger-spec-writer`, and a scoped audit that matched neither would answer about nobody
+    while reporting itself clean.
 
     Two things are a gap, and they are the same gap wearing different clothes:
 
@@ -243,15 +277,19 @@ def audit_gaps(record: dict | None) -> list[str]:
     looseness to guard against here - the Verifier loading `pipeline-conventions` writes
     `avenger-verifier:pipeline-conventions` and says nothing about the implementer's row.
     """
+    wanted = metrics.observing_stage(stage) if stage else None
     gaps: list[str] = []
     for entry in (record or {}).get("skill_loads") or []:
         if not entry.get("required") or entry.get("loaded"):
             continue
-        stage = entry.get("stage") or "?"
+        if wanted is not None and entry.get("stage") != wanted:
+            continue
+        entry_stage = entry.get("stage") or "?"
         skill = entry.get("skill") or "?"
         gaps.append(
-            f"{stage} required skills/{skill} and no load was ever observed. A required skill with "
-            f"no evidence of a load is a stage running on whatever the model already believed — "
+            f"{entry_stage} required skills/{skill} and no load was ever observed. A required "
+            f"skill with no evidence of a load is a stage running on whatever the model already "
+            f"believed — "
             f"read skills/{skill}/SKILL.md in that stage, or re-run it: a stage that never loaded "
             f"its rules did not run under them."
         )
@@ -283,7 +321,7 @@ def missing(root: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _audit(all_phases: bool) -> int:
+def _audit(all_phases: bool, stage: str | None = None) -> int:
     """Fail closed on a required skill with no observed load, over the scope asked for."""
     if os.environ.get("SKILLS_OFF", "").strip() == "1":
         # Delivery is off, so nothing was ever handed to a stage to load. Auditing the residue of
@@ -306,6 +344,8 @@ def _audit(all_phases: bool) -> int:
         current = metrics.current_phase()
         scope = [current] if current else []
         mode = f"the phase in flight ({current})" if current else "no phase in flight"
+    if stage:
+        mode = f"{mode}, {stage} only"
     if not scope:
         # Per-phase by construction: with no phase there is no record and no scope. Nothing is
         # enforced and the check says so, rather than falling back to enforcing everything.
@@ -316,8 +356,8 @@ def _audit(all_phases: bool) -> int:
     notes: list[str] = []
     for phase in scope:
         record = sink.show(phase)
-        gaps += [f"phase {phase}: {gap}" for gap in audit_gaps(record)]
-        notes += [f"phase {phase}: {note}" for note in ponytail_notes(record)]
+        gaps += [f"phase {phase}: {gap}" for gap in audit_gaps(record, stage)]
+        notes += [f"phase {phase}: {note}" for note in ponytail_notes(record, stage)]
 
     # Printed before the verdict and outside it. Notes never reach the exit code, in any mode.
     for note in notes:
@@ -349,6 +389,10 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("--root", default=Path(__file__).resolve().parent.parent, type=Path)
     p_audit = sub.add_parser("audit")
     p_audit.add_argument("--all", action="store_true", help="every phase with a record")
+    p_audit.add_argument(
+        "--stage",
+        help="only this stage's contract, for the audit at the moment that stage finishes",
+    )
     args = parser.parse_args(argv)
 
     if args.action == "for":
@@ -372,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{stage}\t{','.join(annotated)}")
         return OK
     if args.action == "audit":
-        return _audit(args.all)
+        return _audit(args.all, args.stage)
 
     silent = undeclared(args.root)
     gaps = missing(args.root)

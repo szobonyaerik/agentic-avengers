@@ -13,7 +13,14 @@ This asserts the verdict shows evidence of the review having happened:
   1. the verdict value is one gate_runner and the rubric agree on,
   2. the report is non-empty,
   3. the report or a finding names at least one file from the review set,
-  4. the report does not itself say the review was partial.
+  4. the report's PROSE does not itself say the review was partial.
+
+(3) and (4) pull against each other, and (4) is where that showed: (3) requires the report to name
+the files it reviewed, so a marker matched as a bare substring is matched against filenames the
+rubric obliged the model to write down. A phase-10 review naming `test_r10_3_8_message_truncation.py`
+was refused as truncated while being complete, and neither remedy this check prescribes can rename a
+file the report is required to name. So (4) reads prose only — see `_NON_PROSE`. The markers, the
+negation lookback and the verdict are unchanged; only the region scanned is.
 
 (3) is the load-bearing one: a verdict that names nothing it was given is one that could have been
 written without opening the bundle. `prompts/verifier-review.md` requires the report to name every
@@ -39,6 +46,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 from gate_runner import VERDICT_OK
@@ -70,6 +78,28 @@ _NEGATION_WINDOW = 16
 _NEGATIONS = ("not ", "n't ", "no ")
 _CLAUSE_BOUNDARIES = ".;!?\n"
 
+#: Regions of a report that are NOT the model talking about its own read: a code span, a filename or
+#: path, a `snake_case` symbol. A marker here is the name of a thing under review, not a claim about
+#: the bundle — and this document is *required* by `prompts/verifier-review.md` to list the name of
+#: every file it reviewed, so a bare substring scan over it asks a report to avoid vocabulary the
+#: rubric obliges it to use. Measured: a complete phase-10 review was refused because one reviewed
+#: file was `test_r10_3_8_message_truncation.py`, and neither prescribed remedy could clear it —
+#: re-running reproduces it and a split review set still has to name the file.
+#:
+#: Nothing here is a *general* prose filter; it is three shapes English confessions never take. An
+#: extension never ends an English word, a model admitting it saw half the bundle does not put the
+#: admission in backticks, and an identifier carries an underscore BETWEEN two word characters.
+#: That last one is stated precisely on purpose: these reports are markdown, where `_word_` is
+#: emphasis, not a symbol — a leading or trailing underscore is punctuation the writer put around a
+#: sentence word, so `_truncated_` is prose and must stay readable, while `test_r10_3_8` and
+#: `_prose_of` are names and are blanked. "the bundle was truncated", "truncated/partial read",
+#: "TRUNCATED bundle" all survive untouched.
+_NON_PROSE = re.compile(
+    r"`[^`]*`"                            # a code span
+    r"|[\w./\\-]*\w\.[A-Za-z]\w{0,7}\b"   # something.ext, with or without a leading path
+    r"|\b\w+_\w+\b"                       # snake_case — an underscore between two word characters
+)
+
 
 class SubstanceError(Exception):
     """The verdict does not evidence a completed review. Always fail closed on this."""
@@ -84,15 +114,44 @@ def _text_of(verdict: dict) -> str:
     return "\n".join(parts).lower()
 
 
-def self_reported_partial(report: str) -> str | None:
+def _blank(text: str, span: tuple[int, int]) -> str:
+    """`text` with `span` replaced by spaces. Offsets are preserved deliberately: the negation
+    lookback reads backwards by character, so shortening the string would let a blanked filename
+    pull an unrelated clause into a marker's window."""
+    start, end = span
+    return text[:start] + " " * (end - start) + text[end:]
+
+
+def _prose_of(lowered: str, review_set: Sequence[str] = ()) -> str:
+    """The report with every non-prose region blanked out — see `_NON_PROSE`.
+
+    The review set is blanked first and literally, because it is the one set of names this document
+    is *obliged* to contain: a file the rubric made the report name is never evidence about how much
+    of the bundle the model saw, whatever shape its name happens to have.
+    """
+    names = {str(item).lower() for item in review_set if item}
+    names |= {Path(name).name for name in names}
+    for name in sorted(names, key=len, reverse=True):
+        start = 0
+        while (idx := lowered.find(name, start)) != -1:
+            lowered = _blank(lowered, (idx, idx + len(name)))
+            start = idx + len(name)
+    return _NON_PROSE.sub(lambda m: " " * len(m.group(0)), lowered)
+
+
+def self_reported_partial(report: str, review_set: Sequence[str] = ()) -> str | None:
     """The marker by which the report claims it saw only part of the bundle, or None.
 
     Deliberately scoped to `report` — the model's self-report about the bundle. A finding's
     target/detail/instruction is prose *about the code under review*, where these substrings are
     ordinary vocabulary ("test_parse covers only part of R1.2.4's criteria") rather than a
     completeness claim, so matching there deleted legitimate NO-GOs and their findings.
+
+    And scoped, within the report, to its PROSE: a marker inside a filename, a path or a code
+    identifier is a name, not a claim. Nothing about which reports are refused changes — the same
+    seven markers, the same negation lookback, the same verdict — only where the text is read.
     """
-    lowered = report.lower()
+    lowered = _prose_of(report.lower(), review_set)
     for marker in PARTIAL_MARKERS:
         start = 0
         while (idx := lowered.find(marker, start)) != -1:
@@ -122,7 +181,7 @@ def assert_substance(verdict: dict, review_set: list[str]) -> None:
     if not report.strip():
         raise SubstanceError("empty report: a verdict with no reasoning is not a review")
 
-    marker = self_reported_partial(report)
+    marker = self_reported_partial(report, review_set)
     if marker is not None:
         raise SubstanceError(
             f"the report says the review was partial ({marker!r}). A partial review is an "

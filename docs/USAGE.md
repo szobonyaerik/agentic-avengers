@@ -231,5 +231,10 @@ write the spec again; the gate skips an unchanged body by design, so an edit is 
   review adds two of its own: a review set over `VERIFIER_SRC_LIMIT` (refused before the model is
   called) and a verdict that shows no sign of having read the set. Neither is worked around by
   dropping files — see `skills/verifier-triage`.
+- **A subagent is sent back at its own stop** - that's the per-stage skill audit
+  (`scripts/hook_skill_audit.sh` on `SubagentStop`), asking the same question the close-time audit
+  asks, early enough that the remedy is opening the named `SKILL.md` in that stage. It never stops
+  the same agent twice and it fails open; `SKILL_AUDIT_OFF=1` disables it, leaving the close-time
+  audit at handover and in CI. See `skills/pipeline-conventions`.
 - **Regenerate after editing canonical sources**: `python3 scripts/sync_opencode.py` (agents/skills).
   The opencode plugin and `AGENTS.md` are hand-maintained.
