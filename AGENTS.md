@@ -74,8 +74,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    mechanism, shared by the read-path check, the verifier pre-check and the cost gate; an unknowable
    scope enforces nothing and says so), **shipped** (`status: done` — the remedy no longer exists, and
    a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
-   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
-   `subprocess-cost` — and an unknown rule is a hard failure naming what was invented. Every exception
+   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
+   named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
    all, and named on stderr when it applies. **A phase closed with a recorded exception is CLOSED**,
    so `scripts/pipeline_state.py` walks past it instead of parking there forever.

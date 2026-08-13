@@ -143,7 +143,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/applicability.py" record <phase-dir> \
   --rule spec-review --subject <n>.<k>-<subslug> --reason-file <file> --recorded-by <who>
 ```
 
-Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `subprocess-cost`; one rule and one
+Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`; one rule and one
 subject each, audited to `gate-overrides.log`. `--from-phase <n>` steps over earlier phases for one
 invocation without recording anything, and names what it skipped.
 

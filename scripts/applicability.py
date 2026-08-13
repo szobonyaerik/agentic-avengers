@@ -79,14 +79,20 @@ FILENAME = "exceptions.json"
 
 #: The CLOSED set of rules an exception may cover, and what each one means. A rule outside it is a
 #: hard error naming what was invented — the same discipline `spec_gate_triage.BLOCKING` runs on, and
-#: for the same reason: guessing either way corrupts the record. A sixth entry is a deliberate edit
-#: here, made together with the call site that reads it.
+#: for the same reason: guessing either way corrupts the record.
+#:
+#: **Every entry here is read by a named call site** — the first three by `pipeline_state.py`, the
+#: fourth by `requirement_cap.py`. That is the same rule this module states about a ledger entry: one
+#: nothing reads is an exception that does not exist, and it would be discovered as a phase wedged on
+#: a rule someone believed was waived. So a fifth entry is a deliberate edit here **together with the
+#: call site that reads it**, never ahead of one. The cost gate is deliberately absent: it needs the
+#: *untouched* evidence, not this one, and a rule nothing consults would be a promise with no
+#: mechanism behind it.
 RULES: dict[str, str] = {
     "spec-gate": "the machine spec gate's approval of a spec",
     "spec-review": "the human spec-review sign-off on a spec",
     "verdict": "the Verifier's passing verdict for a phase",
     "requirement-cap": "the requirement cap's split trigger on a spec",
-    "subprocess-cost": "the undeclared-subprocess cost gate on a test file",
 }
 
 #: Every document the read-path table governs declares who reads it, in the document. JSON has no

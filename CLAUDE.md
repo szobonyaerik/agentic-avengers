@@ -174,8 +174,8 @@ loud) · **shipped** (the artifact's own stamps say the pipeline is past it — 
 cannot split, and **a rule whose remedy is unavailable is not a gate, it is a wedge**) · **excepted**
 (a disclosed exception on the phase's ledger, `exceptions.json` beside `verdict.json`).
 
-The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
-`subprocess-cost` — and a rule outside it is a hard failure naming what was invented, never a silent
+The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each one read
+by a named call site — and a rule outside it is a hard failure naming what was invented, never a silent
 no-op: a ledger entry nothing reads is an exception that does not exist. An exception is **narrow**
 (one rule, one subject, one phase), **audited or not recorded** (through `bypass_log.sh` into
 `gate-overrides.log`, and a failure to log records nothing), and **never silent** — a resolver that

@@ -384,8 +384,8 @@ python3 scripts/applicability.py list <phase-dir>
 python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-clickup-client
 ```
 
-- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
-  `subprocess-cost`. A rule outside it is a hard error naming what was invented, never a silent
+- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap` — and every
+  one of them is read by a named call site. A rule outside it is a hard error naming what was invented, never a silent
   no-op: a ledger entry nothing reads is an exception that does not exist, and it would surface as a
   phase wedged on a rule everybody believed was waived. A sixth is a deliberate edit to
   `applicability.RULES` together with the call site that reads it.
