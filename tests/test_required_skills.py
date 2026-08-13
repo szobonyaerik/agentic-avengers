@@ -469,6 +469,65 @@ def test_the_audit_is_phase_scoped_without_any_session_id(measured, monkeypatch)
     assert main(["audit", "--all"]) == 1, "--full still sweeps every phase"
 
 
+# ── the audit is also askable ONE STAGE at a time, at the moment that stage ran ──
+#
+# Measured on clickup-agents phase 10: `avenger-spec-writer` never loaded
+# `skills/spec-review-checklist`, and the phase learned it at the contract card — the most expensive
+# moment available, with every spec already written, gated and implemented. The requirement is
+# genuine (the spec writer's own definition makes that checklist the standard its summaries are held
+# to), so the answer is not to stop requiring it: it is to ask the same question at the point the
+# stage runs, where the remedy is opening one file. Same gap, same wording, same exit code —
+# narrower scope.
+
+
+def test_a_stage_scoped_audit_reports_only_that_stages_gap() -> None:
+    record = {"skill_loads": [
+        {"id": "avenger-spec-writer:spec-review-checklist", "stage": "avenger-spec-writer",
+         "skill": "spec-review-checklist", "required": True, "loaded": False},
+        {"id": "avenger-backend-architect:tdd", "stage": "avenger-backend-architect",
+         "skill": "tdd", "required": True, "loaded": False},
+    ]}
+    scoped = audit_gaps(record, stage="avenger-spec-writer")
+    assert len(scoped) == 1 and "spec-review-checklist" in scoped[0]
+    assert len(audit_gaps(record)) == 2, "the unscoped audit is unchanged"
+
+
+def test_a_stage_scoped_audit_reads_the_plugin_spelling_of_a_stage() -> None:
+    """`SubagentStop` reports `plan-build-verify:avenger-spec-writer` where the record holds the bare
+    name. Two spellings of one stage would make the scoped audit silently answer about nobody."""
+    record = {"skill_loads": [
+        {"id": "avenger-spec-writer:spec-review-checklist", "stage": "avenger-spec-writer",
+         "skill": "spec-review-checklist", "required": True, "loaded": False},
+    ]}
+    assert audit_gaps(record, stage="plan-build-verify:avenger-spec-writer")
+
+
+def test_a_stage_scoped_audit_is_clean_for_a_stage_that_owes_nothing(measured, monkeypatch) -> None:
+    """The point of the scope: another stage's gap is not this stage's event, and must not stop it."""
+    project, env, _ = measured
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.delenv("SKILLS_OFF", raising=False)
+    import metrics_sink
+    import pipeline_metrics
+
+    monkeypatch.setattr(metrics_sink, "_writer_unusable", False)
+    pipeline_metrics.record_skill_load(
+        "01", stage="avenger-spec-writer", skill="spec-review-checklist", evidence="", loaded=False
+    )
+
+    assert main(["audit", "--stage", "avenger-spec-writer"]) == 1
+    assert main(["audit", "--stage", "avenger-verifier"]) == 0
+    assert main(["audit"]) == 1, "the close-time backstop still sees it"
+
+    pipeline_metrics.record_skill_load(
+        "01", stage="avenger-spec-writer", skill="spec-review-checklist",
+        evidence="Read skills/spec-review-checklist/SKILL.md",
+    )
+    assert main(["audit", "--stage", "avenger-spec-writer"]) == 0, "opening the file clears it"
+
+
 def test_the_audit_honours_the_off_switch(measured, monkeypatch) -> None:
     """Delivery off means nothing was handed to a stage; auditing earlier residue would block a
     phase for a mechanism the operator switched off."""

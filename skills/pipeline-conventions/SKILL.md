@@ -586,6 +586,20 @@ phase anyway, so **detection beats prevention when both end the same way**:
   Keyed `<stage>:<skill>`, so a load by the Verifier says nothing about whether the implementer
   loaded it.
 
+**The same question is asked at the STAGE BOUNDARY, where the remedy still exists.** Asked only at
+close, a genuine requirement arrives as a blocker on the artifact that did not cause it: one measured
+phase learned at its contract card that `avenger-spec-writer` had never loaded
+`skills/spec-review-checklist`, with every spec already written, gated, reviewed and implemented —
+and "open the file in that stage" is not available to a stage that ended days ago. So
+`scripts/hook_skill_audit.sh` runs `audit --stage <stage>` at **`SubagentStop`**, returning the
+finishing stage to work over its own unanswered contract. **Same judgement, earlier question**: the
+same `audit_gaps`, the same wording, the same exit code, narrower scope. It **never blocks twice**
+for one stop (`stop_hook_active` says it out loud and lets the stage go), and — alone among the
+hooks here — it **fails open**, because it is the early copy of a check that still blocks at close;
+an unreadable payload, a foreign agent, no phase or no writer lets the stage finish. The close-time
+audit is **not** replaced: opencode has no `SubagentStop` and the main thread reaches none either.
+`SKILL_AUDIT_OFF=1` disables the early audit alone.
+
 **The audit needs no session id to be scoped.** The evidence is per-phase by construction —
 `hook_skill_load.sh` records nothing when no phase is in flight — so a pointer delivered in phase 1
 cannot block phase 8, with no run-scoping machinery at all. The handover audit reads the phase in

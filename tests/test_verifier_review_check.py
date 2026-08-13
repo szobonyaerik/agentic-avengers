@@ -136,6 +136,72 @@ def test_a_bare_no_negation_is_not_a_partial_self_report() -> None:
     assert_substance(v, REVIEW_SET)
 
 
+# ── a marker in a FILENAME is not a self-report ──────────────────────────────
+#
+# Measured on clickup-agents phase 10: the rubric requires the report to name every file it
+# reviewed, one of those files was `test_r10_3_8_message_truncation.py`, and a complete review was
+# refused because a reviewed filename contains `truncat`. Neither remedy the refusal prescribes can
+# clear it — re-running reproduces it, and splitting the review set still has to name the file. The
+# marker must be matched against the report's PROSE, never as a bare substring over a document the
+# rubric requires to list filenames.
+
+TRUNCATION_SET = [
+    "tests/clickup-agents/10-messages/test_r10_3_8_message_truncation.py",
+    "tests/clickup-agents/10-messages/test_auth.py",
+]
+
+
+def test_a_complete_review_naming_a_file_named_for_truncation_passes() -> None:
+    """The phase-10 refusal, and it is deterministic for any repo with `truncat` in a test name."""
+    v = verdict(
+        report="Reviewed test_r10_3_8_message_truncation.py (positive and negative cases both "
+        "assert on the seam) and test_auth.py (no implementation coupling). Review complete."
+    )
+    assert_substance(v, TRUNCATION_SET)
+
+
+def test_a_marker_inside_a_path_or_an_identifier_is_not_a_self_report() -> None:
+    """Same substring, three non-prose positions: a path, a code span, a bare snake_case symbol."""
+    v = verdict(
+        report="Reviewed tests/clickup-agents/10-messages/test_r10_3_8_message_truncation.py; "
+        "`truncate_message` is exercised through the handler, and test_r10_3_8_message_truncation "
+        "asserts the negative case. test_auth.py is fine. Nothing was withheld from me.",
+    )
+    assert_substance(v, TRUNCATION_SET)
+
+
+def test_a_finding_naming_the_truncation_file_still_passes() -> None:
+    """A NO-GO whose findings are about that file must not be deleted either — the findings are the
+    route-back, and losing them costs the whole verification attempt."""
+    v = verdict(
+        verdict="NO-GO",
+        report="Reviewed test_r10_3_8_message_truncation.py and test_auth.py in full.",
+        findings=[
+            {
+                "kind": "wrong test",
+                "target": "tests/clickup-agents/10-messages/test_r10_3_8_message_truncation.py",
+                "instruction": "test_truncation_applied asserts on the helper, not the seam.",
+            }
+        ],
+    )
+    assert_substance(v, TRUNCATION_SET)
+
+
+def test_a_genuinely_truncated_review_is_still_refused_when_a_file_is_named_for_truncation() -> None:
+    """The guard the fix must not trade away: the same report, plus a prose confession, is refused.
+
+    This is the RED half of the pair. It fails the moment `truncat` stops being matched in prose —
+    which is what deleting the marker, or masking the whole report because a review-set name
+    appears in it, would do.
+    """
+    v = verdict(
+        report="Reviewed test_r10_3_8_message_truncation.py and test_auth.py. The bundle was "
+        "truncated at the source limit, so I judged only what I was shown."
+    )
+    with pytest.raises(SubstanceError, match="partial"):
+        assert_substance(v, TRUNCATION_SET)
+
+
 def test_a_partial_self_report_after_an_unrelated_negation_is_still_refused() -> None:
     """The negation lookback stops at the clause boundary, so a nearby 'no' in a different sentence
     cannot launder a genuine partial self-report into a denial of one."""

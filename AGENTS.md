@@ -141,7 +141,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    detects a missed one for nothing — **detection beats prevention when both end the same way**. A
    pointer is not a suggestion: `required_skills.py audit` runs at handover and in CI and fails the
    phase on a required skill with no observed load, keyed `<stage>:<skill>` so one stage's load is no
-   evidence about another. It needs no session id: the evidence is per-phase by construction, so
+   evidence about another. Claude Code additionally asks it **per stage at `SubagentStop`**
+   (`hook_skill_audit.sh`, `audit --stage`) so the gap is answerable by opening one file instead of
+   refusing a contract card; **opencode has no such event**, so here the close-time audit is the only
+   one, and it is unchanged. It needs no session id: the evidence is per-phase by construction, so
    phase 1 cannot block phase 8; `--all` sweeps every phase in CI. The saving is a **prediction
    (H9)**, not a result. A required skill that is missing is a **loud blocker** in the injected
    context, never a silent fallback. `SKILLS_OFF=1` disables it.

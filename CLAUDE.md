@@ -352,6 +352,15 @@ fires whenever the switch is used is noise that trains people to ignore notes.
 
 **A pointer is not a suggestion**: `required_skills.py audit` runs at handover (`hook_verifier.sh`)
 and in CI (`gate_ci.sh --full`) and **fails the phase** on a required skill with no observed load.
+**It is also asked at the stage boundary**, where the remedy still exists: asked only at close, a
+genuine requirement lands on the artifact that did not cause it — one measured phase learned at its
+contract card that `avenger-spec-writer` had never loaded `skills/spec-review-checklist`, every spec
+already written, gated and implemented, and "open the file in that stage" is unavailable to a stage
+that has ended. `scripts/hook_skill_audit.sh` runs `audit --stage <stage>` at **`SubagentStop`**:
+same `audit_gaps`, same wording, same exit code, narrower scope, and it returns the stage to work
+rather than refusing a card. It **never blocks twice** for one stop and **fails open** — it is the
+early copy of a check that still blocks at close, which is why the close-time audit stays (opencode
+and the main thread reach no `SubagentStop`). `SKILL_AUDIT_OFF=1` disables the early one alone.
 Every entry is keyed `<stage>:<skill>`, so the Verifier reading the rulebook is no evidence about the
 implementer. It needs **no session id to be scoped**: the evidence is per-phase by construction, so a
 pointer delivered in phase 1 cannot block phase 8 — `--all` sweeps every phase under `--full`. The
