@@ -387,8 +387,9 @@ python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-cl
 - **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap` — and every
   one of them is read by a named call site. A rule outside it is a hard error naming what was invented, never a silent
   no-op: a ledger entry nothing reads is an exception that does not exist, and it would surface as a
-  phase wedged on a rule everybody believed was waived. A sixth is a deliberate edit to
-  `applicability.RULES` together with the call site that reads it.
+  phase wedged on a rule everybody believed was waived. A fifth is a deliberate edit to
+  `applicability.RULES` together with the call site that reads it — `subprocess-cost` was dropped
+  from the set for exactly that reason: the cost gate uses the *untouched* evidence, not this one.
 - **An exception is narrow.** One rule, one subject, one phase. It is not `GATE_BYPASS`: a
   break-glass waives one gate call in one session, an exception is durable state about work that has
   shipped.
