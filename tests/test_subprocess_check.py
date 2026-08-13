@@ -7,8 +7,14 @@ because every one of those stages reads for correctness and none of them can see
 So the dangerous direction here is a MISS, and most of these pin "must still be flagged" cases —
 including the aliasing forms an author reaches for without meaning to evade anything
 (`import subprocess as sp`, `from subprocess import run`).
+
+The scope cases below pin the OTHER dangerous direction, which this check met on its first real
+repository: it refused every spec write of a phase over 17 undeclared spawners in locked phase-1 and
+phase-7 tests that the phase had never opened. Both directions matter — a spawner in a file this
+change touched must still block, and one in a file it did not must not.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,10 +30,43 @@ from subprocess_check import (  # noqa: E402
     scan_source,
 )
 
+SPAWNER = "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n"
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_project_dir(monkeypatch):
+    """The diff scope is rooted at $CLAUDE_PROJECT_DIR, which a session running these tests exports.
+
+    Left inherited, every scope case would silently answer about THIS repository instead of its own
+    fixture — a green suite measuring the wrong tree.
+    """
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
 
 def violations(source: str) -> list[str]:
     """The rendered reason of each violation found in one test module."""
     return [v.reason for v in scan_source(source, Path("tests/test_x.py"))]
+
+
+@pytest.mark.subprocess(
+    "the diff scope is whatever git reports, and a stubbed git would only ever test the stub"
+)
+def git_repo(root: Path) -> Path:
+    """A real repository, because git is the authority for what this change touched."""
+    for args in (
+        ("init", "-q"),
+        ("config", "user.email", "pipeline@example.com"),
+        ("config", "user.name", "pipeline"),
+        ("commit", "-q", "--allow-empty", "-m", "root"),
+    ):
+        subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
+    return root
+
+
+@pytest.mark.subprocess("commits the fixture so a later edit is what the diff reports")
+def git_commit(root: Path) -> None:
+    for args in (("add", "-A"), ("commit", "-q", "-m", "fixture")):
+        subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
 
 
 class TestDetection:
@@ -252,6 +291,7 @@ class TestCli:
 
     def test_the_env_override_picks_the_test_root(self, tmp_path, monkeypatch):
         """A project whose tests live at packages/api/tests/ must be able to point the gate there."""
+        git_repo(tmp_path)
         self.write(
             tmp_path,
             "packages/api/tests/test_a.py",
@@ -273,6 +313,7 @@ class TestCli:
         assert main([str(tmp_path / "tests")]) == CLEAN
 
     def test_without_the_override_the_default_root_is_tests(self, tmp_path, monkeypatch):
+        git_repo(tmp_path)
         self.write(
             tmp_path, "tests/test_a.py", "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n"
         )
@@ -296,3 +337,78 @@ class TestCli:
             "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n",
         )
         assert main([str(tmp_path / "tests")]) == VIOLATIONS
+
+
+class TestScope:
+    """The applicability boundary: this change answers for the files it touched, and no others.
+
+    Both directions are dangerous and both are pinned. Under-scoping is the hostage failure that
+    refused every spec write of one measured phase over 17 spawners in locked phases nobody had
+    opened; over-scoping would silently delete the only cost gate the pipeline has.
+    """
+
+    def write(self, root: Path, relative: str, source: str) -> Path:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+        return path
+
+    def test_a_spawner_in_an_untouched_file_does_not_block(self, tmp_path, monkeypatch, capsys):
+        """The measured defect: 17 spawners in locked phases refused every spec write."""
+        git_repo(tmp_path)
+        self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)
+        git_commit(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        assert main([]) == CLEAN
+        assert "NOT enforced" in capsys.readouterr().err
+
+    def test_a_spawner_in_a_touched_file_still_blocks(self, tmp_path, monkeypatch):
+        """The reason the check exists. Scoping must not become "never enforce"."""
+        git_repo(tmp_path)
+        self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)   # untracked = touched
+        monkeypatch.chdir(tmp_path)
+        assert main([]) == VIOLATIONS
+
+    def test_all_enforces_the_whole_tree(self, tmp_path, monkeypatch):
+        git_repo(tmp_path)
+        self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)
+        git_commit(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        assert main(["--all"]) == VIOLATIONS
+
+    def test_an_unknowable_scope_enforces_nothing_and_says_so(self, tmp_path, monkeypatch, capsys):
+        """Not a git repository: falling back to enforcing everything is the hostage failure."""
+        self.write(tmp_path, "tests/test_a.py", SPAWNER)
+        monkeypatch.chdir(tmp_path)
+        assert main([]) == CLEAN
+        err = capsys.readouterr().err
+        assert "unknowable" in err and "--all" in err
+
+    def test_an_unreadable_untouched_file_does_not_fail_the_gate(self, tmp_path, monkeypatch):
+        """A syntax error in a locked phase's test is fail-closed for whoever changes THAT file."""
+        git_repo(tmp_path)
+        self.write(tmp_path, "tests/locked/test_broken.py", "def test_a(:\n")
+        git_commit(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        assert main([]) == CLEAN
+
+    def test_an_unreadable_touched_file_still_fails_closed(self, tmp_path, monkeypatch):
+        git_repo(tmp_path)
+        self.write(tmp_path, "tests/locked/test_broken.py", "def test_a(:\n")
+        monkeypatch.chdir(tmp_path)
+        assert main([]) == ERROR
+
+    def test_paths_named_on_the_command_line_are_enforced_whole(self, tmp_path, monkeypatch):
+        """An explicit path is a caller asking for that path, not for the diff."""
+        git_repo(tmp_path)
+        self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)
+        git_commit(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        assert main([str(tmp_path / "tests")]) == VIOLATIONS
+
+    def test_the_mode_is_always_printed(self, tmp_path, monkeypatch, capsys):
+        """A silent fallback is how a check comes to mean something other than what it says."""
+        git_repo(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        main([])
+        assert "scope" in capsys.readouterr().err

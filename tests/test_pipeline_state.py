@@ -312,3 +312,150 @@ def test_plan_without_recognisable_headings_keeps_folder_walk_behaviour(tmp_path
     feature = finished_phase(tmp_path)
     (feature / "plan.md").write_text("---\nfeature: demo\n---\n\nfreeform prose, no headings\n")
     assert next_stage(tmp_path, "demo").stage == "e2e-author"
+
+
+# --- the applicability boundary: a phase closed with a recorded exception is CLOSED ---------------
+#
+# Measured: phase 8 of one feature closed under a captain-ordered cap with two specs never
+# review-stamped and a `fail` verdict nobody re-ran, all of it disclosed in prose. The resolver read
+# the missing stamps as unfinished work and parked there, so `/avenger-run --auto` could not start a
+# phase from that moment on. The two obvious remedies — stamping a human sign-off nobody gave, or
+# claiming a machine verdict nobody obtained — are the "looks fine" class this pipeline removes, so
+# the exception is recorded as STATE and read here.
+
+
+def record(phase_dir: Path, rule: str, subject: str, monkeypatch=None) -> None:
+    """Write one exception straight to the ledger — the audit path has its own tests."""
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    target = phase_dir / "exceptions.json"
+    ledger = json.loads(target.read_text()) if target.is_file() else {"exceptions": []}
+    ledger["exceptions"].append(
+        {
+            "id": f"X{len(ledger['exceptions']) + 1}",
+            "rule": rule,
+            "subject": subject,
+            "reason": "captain-ordered cap; disclosed in the phase handover",
+            "recorded_by": "captain",
+            "recorded_at": "2026-08-09T00:00:00Z",
+        }
+    )
+    target.write_text(json.dumps(ledger))
+
+
+def test_an_unreviewed_spec_still_parks_without_an_exception(tmp_path: Path) -> None:
+    """The direction that must not move: an absent sign-off is owed work until it is disclosed."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    assert next_stage(tmp_path, "demo").stage == "spec-review"
+
+
+def test_a_recorded_spec_review_exception_lets_the_resolver_move_on(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    record(feature / "phases" / "1-core", "spec-review", "1.1-a")
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "handover.md").write_text("done\n")
+    assert next_stage(tmp_path, "demo").stage == "e2e-author"
+
+
+def test_an_exception_covers_only_the_spec_it_names(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    write_spec(feature, "1-core", "1.2-b", review_status="pending", status="done")
+    record(feature / "phases" / "1-core", "spec-review", "1.1-a")
+    state = next_stage(tmp_path, "demo")
+    assert state.stage == "spec-review" and state.spec == "1.2-b"
+
+
+def test_an_exception_covers_only_the_rule_it_names(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", spec_gate="pending", review_status="pending", status="done")
+    record(feature / "phases" / "1-core", "spec-review", "1.1-a")
+    assert next_stage(tmp_path, "demo").stage == "spec-gate"
+
+
+def test_a_failing_verdict_can_be_closed_by_a_recorded_exception(tmp_path: Path) -> None:
+    feature = finished_phase(tmp_path)
+    write_verdict(feature, "1-core", "fail")
+    assert next_stage(tmp_path, "demo").stage == "implementer"
+    record(feature / "phases" / "1-core", "verdict", "1-core")
+    assert next_stage(tmp_path, "demo").stage == "e2e-author"
+
+
+def test_an_exception_applied_is_named_on_stderr(tmp_path: Path, capsys) -> None:
+    """An exception that applied silently would be the bypass the ledger exists to replace."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    record(feature / "phases" / "1-core", "spec-review", "1.1-a")
+    next_stage(tmp_path, "demo")
+    err = capsys.readouterr().err
+    assert "spec-review" in err and "captain" in err
+
+
+def test_an_unreadable_ledger_grants_nothing_and_says_so(tmp_path: Path, capsys) -> None:
+    """Under-report: a ledger nobody can parse must not delete a stage."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    (feature / "phases" / "1-core" / "exceptions.json").write_text("{not json")
+    assert next_stage(tmp_path, "demo").stage == "spec-review"
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_from_phase_enters_at_a_named_phase(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    write_spec(feature, "2-next", "2.1-a", spec_gate="pending")
+    assert next_stage(tmp_path, "demo").stage == "spec-review"
+    assert next_stage(tmp_path, "demo", from_phase=2).stage == "spec-gate"
+
+
+def test_from_phase_names_what_it_stepped_over(tmp_path: Path, capsys) -> None:
+    """It records nothing and judges nothing, so it must not be quiet about that."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    write_spec(feature, "2-next", "2.1-a", spec_gate="pending")
+    next_stage(tmp_path, "demo", from_phase=2)
+    assert "1-core" in capsys.readouterr().err
+
+
+def entered_over_an_unfinished_phase(tmp_path: Path) -> Path:
+    """Phase 1 owes spec-review; phase 2 is verified and handed over."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    write_spec(feature, "2-next", "2.1-a", review_status="approved", status="done")
+    write_verdict(feature, "2-next", "pass")
+    (feature / "phases" / "2-next" / "handover.md").write_text("done\n")
+    return feature
+
+
+def test_from_phase_claims_nothing_feature_wide_over_a_phase_it_skipped(tmp_path: Path) -> None:
+    """`done`/`e2e-author` here would drive an --auto run to feature close over an unfinished phase."""
+    entered_over_an_unfinished_phase(tmp_path)
+    state = next_stage(tmp_path, "demo", from_phase=2)
+    assert state.stage == "unknown"
+    assert "1-core" in state.reason
+
+
+def test_from_phase_does_not_report_done_once_e2e_exists(tmp_path: Path) -> None:
+    feature = entered_over_an_unfinished_phase(tmp_path)
+    (feature / "e2e-mapping.md").write_text("mapped\n")
+    assert next_stage(tmp_path, "demo", from_phase=2).stage == "unknown"
+
+
+def test_from_phase_does_not_answer_the_plan_vs_disk_question(tmp_path: Path) -> None:
+    """A planned phase nobody specced is a feature-wide claim too, and it is not this walk's to make."""
+    feature = entered_over_an_unfinished_phase(tmp_path)
+    (feature / "plan.md").write_text(PLAN_WITH_PHASES)
+    assert next_stage(tmp_path, "demo", from_phase=2).stage == "unknown"
+
+
+def test_entering_past_every_phase_on_disk_claims_nothing(tmp_path: Path) -> None:
+    """`--from-phase 99` examines nothing at all; `done` would be a verdict over the whole feature."""
+    entered_over_an_unfinished_phase(tmp_path)
+    assert next_stage(tmp_path, "demo", from_phase=99).stage == "unknown"
+
+
+def test_from_phase_that_skips_nothing_still_resolves_the_feature(tmp_path: Path) -> None:
+    """The narrowing is what forbids a feature-wide answer, not the flag being present."""
+    finished_phase(tmp_path)
+    assert next_stage(tmp_path, "demo", from_phase=1).stage == "e2e-author"

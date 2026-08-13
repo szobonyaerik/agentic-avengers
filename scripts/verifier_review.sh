@@ -189,8 +189,11 @@ EOF_MAPS
 } >"$BUNDLE"
 
 # --- measurement (never a gate) ------------------------------------------------------------------
-# One attempt is counted here, at the point the judge is actually about to be called — an argument
-# refusal or an over-limit set above is a caller bug, not a verification attempt. The phase dir is
+# The attempt this run belongs to is DERIVED here from verdict.json and its archives, not counted per
+# invocation. This script runs more than once inside one attempt — a timed-out cross-family call, a
+# diagnostic retry — and one measured phase recorded 8 against a real attempt of 1 and a cap of 3
+# that had never fired. Retries are still visible: gate_calls[] carries one entry per call with its
+# failure_cause. The phase dir is
 # exported because gate_runner is handed a temp BUNDLE and can derive nothing from it; the spec path
 # is unset for the opposite reason, so a value inherited from a spec hook cannot mis-attribute this
 # call to a spec. Both fail open: `|| true`, over a sink that swallows its own failures.

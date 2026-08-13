@@ -232,6 +232,9 @@ agentic-avengers/
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
 │   ├── spec_notes.py          the known-open list: notes that never block, read once by the implementer
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
+│   ├── applicability.py       the one boundary every mechanical check binds on: OPEN it blocks,
+│   │                          CLOSED it counts and names (untouched | shipped | excepted). Owns
+│   │                          the diff scope and the per-phase exceptions.json ledger
 │   ├── verifier_precheck.py   the Verifier's bookkeeping, mechanically, on every commit over what
 │   │                          the diff touches (whole phase at handover; everything under --full)
 │   ├── verifier_attempts.py   the 3-attempt cap on the verification loop, and the finding series

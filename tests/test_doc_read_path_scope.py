@@ -77,11 +77,12 @@ def test_an_unchanged_non_conforming_artifact_does_not_block(tmp_path: Path) -> 
 
 
 def test_it_is_counted_on_stderr_and_the_exit_code_is_still_zero(tmp_path: Path, capsys) -> None:
+    """In the boundary's ONE spelling — out of scope must read the same in every check on it."""
     write_card(repo(tmp_path), over_cap())
     commit_all(tmp_path)
     assert main(["check", str(tmp_path)]) == 0
     err = capsys.readouterr().err
-    assert "1 pre-existing artifact(s)" in err
+    assert "[doc_read_path] 1 finding(s) NOT enforced" in err
     assert "over the handover cap" in err
 
 
@@ -89,7 +90,7 @@ def test_nothing_is_said_when_all_the_history_conforms(tmp_path: Path, capsys) -
     write_card(repo(tmp_path), "short")
     commit_all(tmp_path)
     assert check_artifacts(tmp_path) == []
-    assert "pre-existing" not in capsys.readouterr().err
+    assert "NOT enforced" not in capsys.readouterr().err
 
 
 # --- but what this session touched still blocks ---------------------------------------------------

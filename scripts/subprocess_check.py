@@ -25,9 +25,20 @@ Deliberately NOT a wall-clock budget. Seven runs of one unchanged suite spanned 
 one machine — a 2.1x swing with zero code change — so a runtime gate would fail green suites at
 random and teach everyone to bypass it. This counts something that does not move with machine load.
 
+**It is diff-scoped**, on the applicability boundary (`scripts/applicability.py`): a spawner in a file
+this change touches blocks; one in a file it does not is COUNTED and NAMED, never blocked. This ran
+repository-wide when it shipped, and the first phase to meet it on a real repository was refused
+EVERY spec write over 17 undeclared spawners in locked phase-1 and phase-7 tests that the phase had
+never opened — the gate rejected before any model saw a body, and the only way forward was a logged
+break-glass over work nobody was doing. That is the hostage failure, and it is the same rule
+`doc_read_path.py`, `verifier_precheck.py`, the verifier bundle, the spec re-gate cache and the
+mutation gate already run on. `--all` audits the whole tree; it is deliberately NOT wired into CI,
+because a full audit on every commit would reinstate the hostage one layer out. When git cannot say
+what changed the scope is unknowable, so nothing is enforced and the check says so out loud.
+
 Exit codes:
-    0  CLEAN       — no undeclared spawner.
-    1  VIOLATIONS  — at least one; each is printed as `path:line: reason`.
+    0  CLEAN       — no undeclared spawner in scope.
+    1  VIOLATIONS  — at least one in scope; each is printed as `path:line: reason`.
     2  ERROR       — a file could not be read or parsed. Fail closed: a file the checker cannot
                      read is a file it cannot clear.
 
@@ -39,6 +50,7 @@ Point it at the real root with `SUBPROC_CHECK_PATHS` (os.pathsep-separated) when
 
 Usage:
     subprocess_check.py [path ...]        # default: $SUBPROC_CHECK_PATHS, else tests/
+    subprocess_check.py --all             # enforce every file, not only the ones this change touches
 """
 
 from __future__ import annotations
@@ -49,6 +61,10 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import applicability  # noqa: E402
 
 CLEAN = 0
 VIOLATIONS = 1
@@ -233,24 +249,28 @@ def scan_source(source: str, path: Path) -> list[Violation]:
     return sorted(found, key=lambda v: v.line)
 
 
-def scan_path(root: Path) -> tuple[list[Violation], list[str], list[Path]]:
+def scan_path(root: Path) -> tuple[list[Violation], list[tuple[Path, str]], list[Path]]:
     """Scan one file or directory tree.
 
-    Returns (violations, unreadable-file errors, absent roots). An absent root is not an error — a
-    project with no tests yet must still be able to write a spec — but it is reported, because a
-    gate that reads nothing and says nothing is indistinguishable from a gate that passed.
+    Returns (violations, unreadable files as (path, why), absent roots). An absent root is not an
+    error — a project with no tests yet must still be able to write a spec — but it is reported,
+    because a gate that reads nothing and says nothing is indistinguishable from a gate that passed.
+
+    An unreadable file carries its own path because the applicability boundary applies to it too: a
+    syntax error in a locked phase's test is fail-closed for whoever changes that file, not for every
+    spec written anywhere in the repository afterwards.
     """
     if not root.exists():
         return [], [], [root]
     files = sorted(root.rglob("*.py")) if root.is_dir() else [root]
 
     found: list[Violation] = []
-    errors: list[str] = []
+    errors: list[tuple[Path, str]] = []
     for path in files:
         try:
             found.extend(scan_source(path.read_text(encoding="utf-8"), path))
         except (OSError, SyntaxError, UnicodeDecodeError) as exc:
-            errors.append(f"{path}: {exc}")
+            errors.append((path, str(exc)))
     return found, errors, []
 
 
@@ -264,6 +284,48 @@ def requested_paths(argv_paths: list[Path]) -> list[Path]:
     return [Path(p) for p in DEFAULT_PATHS]
 
 
+@dataclass(frozen=True)
+class Enforcement:
+    """What this run may block on, and the mode it decided that in.
+
+    `paths is None` means every file it scanned. `unknowable` is deliberately distinct from an empty
+    scope: a clean working tree legitimately touches nothing, while git being unable to answer is a
+    check that did not run — and the two must not print the same sentence.
+    """
+
+    paths: set[Path] | None
+    mode: str
+    unknowable: bool = False
+
+    def binds(self, path: Path) -> bool:
+        return self.paths is None or applicability.touched(path, self.paths)
+
+
+def enforcement_scope(explicit: bool, enforce_all: bool) -> Enforcement:
+    """Decide what this run may block on.
+
+    Three modes, the same three every scoped check in this pipeline has: `--all` audits everything,
+    paths named on the command line are enforced whole because the caller named them, and the
+    default — the spec gate's own call — is scoped to what this change touched. The mode is always
+    printed: a silent fallback is how a check comes to mean something other than what its caller
+    believes.
+    """
+    if enforce_all:
+        return Enforcement(None, "--all: every file scanned")
+    if explicit:
+        return Enforcement(None, "the paths named on the command line")
+    root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or ".")
+    scope = applicability.changed_paths(root)
+    if scope is None:
+        return Enforcement(
+            set(),
+            f"git cannot say what changed under {root}, so the scope is unknowable and nothing is "
+            f"enforced. Run `--all` for a full audit.",
+            unknowable=True,
+        )
+    return Enforcement(scope, "diff-scoped: the files this change touches")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Scan the requested paths and return the gate's exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -274,10 +336,16 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help=f"files or directories (default: ${PATHS_ENV}, else {DEFAULT_PATHS[0]})",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="enforce_all",
+        help="enforce every file scanned, not only the ones this change touches (full audit)",
+    )
     args = parser.parse_args(argv)
 
     found: list[Violation] = []
-    errors: list[str] = []
+    errors: list[tuple[Path, str]] = []
     absent: list[Path] = []
     for path in requested_paths(args.paths):
         path_found, path_errors, path_absent = scan_path(Path(path))
@@ -291,16 +359,38 @@ def main(argv: list[str] | None = None) -> int:
             f"${PATHS_ENV} if this project's tests live elsewhere.",
             file=sys.stderr,
         )
-    for error in errors:
-        print(f"[subprocess_check] unreadable: {error}", file=sys.stderr)
-    for violation in found:
+
+    enforcement = enforcement_scope(bool(args.paths), args.enforce_all)
+    print(f"  subprocess check scope — {enforcement.mode}", file=sys.stderr)
+
+    blocking = [v for v in found if enforcement.binds(v.path)]
+    blocking_errors = [(p, e) for p, e in errors if enforcement.binds(p)]
+
+    for path, error in blocking_errors:
+        print(f"[subprocess_check] unreadable: {path}: {error}", file=sys.stderr)
+    for violation in blocking:
         print(f"[subprocess_check] {violation.render()}", file=sys.stderr)
 
-    if errors:
+    # Counted and named. This is the whole point of the boundary: 17 spawners in locked phases
+    # nobody had touched refused every spec write of a phase that had not opened one of them.
+    carried = (len(found) - len(blocking)) + (len(errors) - len(blocking_errors))
+    applicability.report_unenforced(
+        "subprocess_check",
+        carried,
+        "undeclared spawner(s) or unreadable file(s) the scope did not cover"
+        + (
+            " (the scope is unknowable, so nothing was enforced)"
+            if enforcement.unknowable
+            else " in files this change did not touch — they are checked when you next change "
+            "them, and `--all` audits them now"
+        ),
+    )
+
+    if blocking_errors:
         return ERROR
-    if found:
+    if blocking:
         print(
-            f"[subprocess_check] {len(found)} undeclared subprocess call(s). Each one costs a "
+            f"[subprocess_check] {len(blocking)} undeclared subprocess call(s). Each one costs a "
             "process launch on every run of the suite.",
             file=sys.stderr,
         )

@@ -34,8 +34,10 @@ Adding a reader here is how that is fixed; bending the prose to match a silent t
 
 The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
 one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
-you change** - the same rule `scripts/verifier_bundle_scope.py` (the verifier bundle),
-`scripts/spec_gate_cache.py` (spec re-gates) and the mutation gate (`cr-filter-git`) already run on.
+you change** - it is the applicability boundary (`scripts/applicability.py`, which owns the
+`changed_paths` mechanism this imports), and the same rule `scripts/verifier_bundle_scope.py` (the
+verifier bundle), `scripts/spec_gate_cache.py` (spec re-gates) and the mutation gate
+(`cr-filter-git`) already run on.
 The fifth mechanism in one system does not get to invent a different one, and unlike a
 grandfathering list or a marker file it needs no maintenance and cannot rot as new artifact kinds
 appear. It is also what lets a repository upgrade: history it has not touched is visible without
@@ -55,10 +57,16 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The diff scope is ONE mechanism and `applicability.py` owns it — this check was simply the first to
+# need it. Imported rather than kept here, and re-exported for the callers that already ask this
+# module for it: a second copy of a rule is the copy that goes blind.
+from applicability import changed_paths, report_unenforced  # noqa: E402,F401  (re-exported)
 
 # --- the table -----------------------------------------------------------------------------------
 # extent: whole | header | table | card | none. `none` means the document is written but no stage is
@@ -142,6 +150,19 @@ READ_PATH: dict[str, dict] = {
         # A post-verification change and the requirement ids it touched. It is small by construction
         # — ids, a reason, a status — and it is what stops a one-line correction costing a full
         # verification round, which is what rounds 3 through 8 of one measured phase were.
+    },
+    "exceptions.json": {
+        "written_by": "orchestrator / captain (scripts/applicability.py)",
+        "emitted_by": "docs/templates/exceptions.template.json",
+        "readers": [
+            "pipeline_state.py @ per phase, resolving the next stage",
+            "requirement_cap.py @ per spec write",
+            "phase-handover @ per phase",
+        ],
+        "extent": "whole",
+        # A disclosed exception to ONE mechanical rule, for ONE subject. Small by construction — a
+        # rule, a subject, who recorded it and why — and it is what lets a phase closed under a
+        # captain-ordered cap be read as CLOSED rather than parking the resolver forever.
     },
     "test-mapping.md": {
         "written_by": "implementer",
@@ -287,48 +308,6 @@ UNENFORCED_LABELS = {
 }
 
 
-def _git(root: Path, *args: str) -> list[str] | None:
-    """git's answer as lines, or None when it has none - no repo, no git, a command that failed."""
-    try:
-        proc = subprocess.run(
-            ["git", *args], cwd=str(root), capture_output=True, text=True, check=False
-        )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    return [line for line in proc.stdout.splitlines() if line.strip()]
-
-
-def changed_paths(root: Path) -> set[Path] | None:
-    """Absolute paths the current diff touches, or None when the scope is unknowable.
-
-    The union of what is modified against HEAD, what is staged, and what is untracked - so an
-    artifact written this session is in scope from the moment it exists, before any commit.
-
-    Every command is pinned to **toplevel-relative** output and joined to the toplevel, because the
-    three do not share a path convention on their own: `ls-files` prints cwd-relative names, and
-    `diff` prints cwd-relative ones under `diff.relative`. Combining them as if they agreed makes an
-    untracked artifact resolve to a path that matches nothing whenever `root` is below the git root -
-    and the guard then stops guarding without saying anything, which is worse than not having it.
-    """
-    toplevel = _git(root, "rev-parse", "--show-toplevel")
-    if not toplevel:
-        return None
-    base = Path(toplevel[0]).resolve()
-    changed: set[Path] = set()
-    for args in (
-        ("diff", "--name-only", "--no-relative", "HEAD"),
-        ("diff", "--cached", "--name-only", "--no-relative", "--diff-filter=ACM"),
-        ("ls-files", "--others", "--exclude-standard", "--full-name"),
-    ):
-        lines = _git(root, *args)
-        if lines is None:
-            return None
-        changed.update((base / line).resolve() for line in lines)
-    return changed
-
-
 def _artifact_problems(path: Path, spec: dict) -> list[tuple[str, str]]:
     """Every way one artifact breaks the read path, as (category, message)."""
     problems: list[tuple[str, str]] = []
@@ -378,17 +357,20 @@ def _artifact_problems(path: Path, spec: dict) -> list[tuple[str, str]]:
 
 
 def _report_unenforced(count: int, breakdown: Counter) -> None:
-    """Say how much history predates the rule. Visibility without coercion: never an exit code."""
-    if not count:
-        return
+    """Say how much history predates the rule, in the boundary's ONE spelling.
+
+    The sentence belongs to `applicability.report_unenforced` — out of scope must look the same,
+    and different from clean, in every check on this boundary. Only the breakdown is this check's
+    own, so only the breakdown is passed. Visibility without coercion: never an exit code.
+    """
     parts = ", ".join(
         f"{n} {UNENFORCED_LABELS.get(category, category)}"
         for category, n in sorted(breakdown.items())
     )
-    print(
-        f"[doc_read_path] {count} pre-existing artifact(s) predate this rule and are not enforced: "
-        f"{parts} - they are checked when you next change them.",
-        file=sys.stderr,
+    report_unenforced(
+        "doc_read_path",
+        count,
+        f"{parts} - they are checked when you next change them, and `check --all` audits them now",
     )
 
 

@@ -154,7 +154,11 @@ Three consequences worth stating outright:
   spawners without `@pytest.mark.subprocess("<why>")`. It runs on every spec write in **both** modes
   via `scripts/hook_spec_gate.sh`, over `$SUBPROC_CHECK_PATHS` when a project's tests are not at
   `tests/` — an absent root scans nothing, which is CLEAN but always reported on stderr, never a
-  silent pass. Deliberately **not** a wall-clock budget — seven runs of one
+  silent pass. **It is diff-scoped** on the applicability boundary below: a spawner in a file this
+  change touched blocks, one in a file it did not is counted and named. Repository-wide, it refused
+  *every* spec write of one measured phase over 17 spawners in locked phases nobody had opened.
+  `--all` audits the whole tree and is deliberately not wired into CI, where it would reinstate the
+  same hostage one layer out. Deliberately **not** a wall-clock budget — seven runs of one
   unchanged suite spanned 66.43s to 137.76s on one machine, so a runtime gate would fail green suites
   at random and teach everyone to bypass it.
 
@@ -210,6 +214,14 @@ Three consequences worth stating outright:
   **before** any paid call, so an over-cap spec costs nothing — and the gate rubrics are told never
   to reject a spec for being large, because **a rejection for size is one more thing to grow
   around**.
+
+  **The cap binds a spec that can still be split** (the applicability boundary below). A spec stamped
+  `status: done` has shipped: its ids are already pointed at by test-mapping rows, verdict findings
+  and prior handovers, so the split is unavailable and the count is *counted and named* instead of
+  blocking. Two shipped specs of one measured feature declared 30 and 29 requirements against the cap
+  of 12, and no verdict of any kind was reachable for them. It is not an escape hatch for a draft:
+  `status: done` is stamped by the implementer, and it is what fires the phase suite and the
+  traceability pre-check, both of which a draft claiming to be done fails loudly.
 
 - **Human spec review (per spec)** — a human runs `grill-me` against the spec using
   `spec-review-checklist`, then sets `review_status: approved`. `review_status` now means only that:
@@ -334,6 +346,77 @@ Three consequences worth stating outright:
     worktree with no shared context with the stage that wrote the code, so it decorrelates *context*
     while accepting shared *family* blind spots. The per-phase gates — the spec gate,
     verifier — are unaffected and stay cross-family.
+
+## The applicability boundary — what a mechanical rule may bind
+
+**A mechanical rule binds what is still OPEN. What is CLOSED it may count and name, never block.**
+`scripts/applicability.py` is the one module that decides which, and every check on this boundary
+speaks the same sentence when it counted instead of blocking.
+
+Every check here was added after the tree it runs on, and without this each one asks *"does the whole
+repository satisfy a rule we added later?"* rather than *"does what this change is responsible for
+satisfy it?"*. Measured in one run of one feature, that difference produced three blocks in a single
+phase — the stage resolver parked forever on a phase closed under a disclosed captain-ordered cap so
+`--auto` could not start a phase at all; the requirement cap fired on two locked implemented specs
+whose only prescribed remedy is a SPLIT a shipped spec cannot take, so **no verdict of any kind was
+reachable for them, ever**; and the cost gate refused every spec write over 17 undeclared spawners in
+locked phase-1 and phase-7 tests the phase had never opened. Three defects, one shape.
+
+Closed has exactly **three evidences**, and a call site never invents a fourth:
+
+1. **untouched** — the current change does not touch it (`changed_paths`, git). This is the rule
+   `verifier_bundle_scope.py`, `spec_gate_cache.py`, `doc_read_path.py`, `verifier_precheck.py` and
+   the mutation gate already ran before it had a name. **When git cannot say what changed the scope
+   is unknowable, so nothing is enforced and the check says so out loud** — falling back to enforcing
+   everything is the hostage failure the scoping removes.
+2. **shipped** — the artifact's own stamps say the pipeline is past it. A spec stamped `status: done`
+   has been implemented, so splitting it would renumber ids that `test-mapping.md` rows,
+   `verdict.json` findings and prior handovers already point at. **A rule whose remedy is unavailable
+   is not a gate, it is a wedge.**
+3. **excepted** — a disclosed exception on the phase's ledger (`exceptions.json`, beside
+   `verdict.json`), naming the rule, the subject, who recorded it and why.
+
+```bash
+# prose belongs in a file the command reads — the reason is author-written prose
+python3 scripts/applicability.py record <phase-dir> --rule spec-review --subject 8.1-clickup-client \
+  --reason-file <file> --recorded-by captain
+python3 scripts/applicability.py list <phase-dir>
+python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-clickup-client
+```
+
+- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap` — and every
+  one of them is read by a named call site. A rule outside it is a hard error naming what was invented, never a silent
+  no-op: a ledger entry nothing reads is an exception that does not exist, and it would surface as a
+  phase wedged on a rule everybody believed was waived. A fifth is a deliberate edit to
+  `applicability.RULES` together with the call site that reads it — `subprocess-cost` was dropped
+  from the set for exactly that reason: the cost gate uses the *untouched* evidence, not this one.
+- **An exception is narrow.** One rule, one subject, one phase. It is not `GATE_BYPASS`: a
+  break-glass waives one gate call in one session, an exception is durable state about work that has
+  shipped.
+- **Audited or not recorded.** Every one is written to `gate-overrides.log` through
+  `scripts/bypass_log.sh` as it is recorded, and an exception that could not be logged is not
+  recorded at all — the writer **exits 2 when the append fails** (an unwritable root, a read-only
+  mount, a full disk), because an exit code that cannot distinguish "logged" from "not logged" makes
+  every caller's fail-closed check decorative. **2 and not merely non-zero**: every break-glass
+  caller hands off with `exec bypass_log.sh …`, so the writer's code becomes the hook's, and 1 is
+  not blocking to the harness — an unlogged override that lets the write through is the same silent
+  pass with an extra step. **A resolver that applies one says so on stderr.**
+- **Carried on the phase's contract card.** Recording an exception is manual and nothing creates the
+  entry, so a forgotten one is invisible until a later phase wedges on it. `skills/phase-handover`
+  lists the phase's open exceptions on the card, which is what puts an omission in front of the next
+  phase.
+- **An unreadable ledger grants nothing** and says so — the same under-report bias the resolver runs
+  on everywhere else.
+
+**This is what stops a captain-ordered close from wedging the run.** A phase closed with a recorded
+exception is CLOSED, not incomplete, so `scripts/pipeline_state.py` walks past it. The two remedies
+that do not need it — stamping a human sign-off nobody gave, or claiming a machine verdict nobody
+obtained — are the "looks fine" class this pipeline exists to remove. `pipeline_state.py --from-phase
+<n>` is the blunt companion: it enters at a named phase, records nothing, judges nothing, and names
+every phase it stepped over. Because it judges nothing, it also **answers nothing feature-wide**: with
+any phase stepped over it reports stage `unknown` rather than `done`, `e2e-author` or a missing
+planned phase, all of which are claims about phases it did not open. Prefer the ledger, which fixes
+the cause.
 
 ## Amendments — changing a verified phase without re-verifying all of it
 
@@ -665,7 +748,7 @@ seeded skill requirement never overwrites an observed load, whichever order the 
 | a gate the harness **killed** mid-call | the hook's own signal trap | the runner it killed cannot report its own death — this is what tells a kill apart from a NO-GO |
 | spec rounds, each round's **size in bytes**, requirement count | `hook_spec_gate.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
 | the spec gate's own arithmetic: observations in, **blocking** out, **notes** out | `spec_gate_triage.py`, where the verdict is derived from them | a filter that blocks everything and one that blocks nothing are otherwise indistinguishable without reading a transcript |
-| the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, at the point the judge is actually called | an argument refusal is a caller bug, not an attempt |
+| the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, **derived from `verdict.json` and its archives** — never counted per invocation | that script runs several times inside one attempt (a timed-out call, a diagnostic retry); one phase recorded **8** against a real attempt of 1 and a cap of 3 that had never fired, and read against that cap the number says the cap failed. Retries stay visible in `gate_calls[]` with their `failure_cause` — only the attribution was wrong. Repeated calls converge |
 | tests before and after | `hook_spec_gate.sh` (first spec write) and `hook_verifier.sh` (handover) | counted **the same static way at both ends**, so the delta is a real delta and not two counting methods |
 | **which stage found each defect** | `verifier_review.sh`, `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
 | which skills each stage actually loaded | `hook_skill_load.sh`, `hook_ponytail.sh` | an instruction to load a skill is not a load |
@@ -733,8 +816,8 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
 The chain can be walked by hand, one stage at a time, or driven by `commands/avenger-run.md`, which
 makes the **main session** the orchestrator (a subagent has no Task tool, so it cannot spawn stages —
 only the main thread can). Position comes from `scripts/pipeline_state.py`, which reads the artifacts
-on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`) and returns the single stage
-the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
+on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`, `exceptions.json`)
+and returns the single stage the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
 for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
 runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified
 phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose

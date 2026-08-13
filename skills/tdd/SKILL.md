@@ -65,6 +65,12 @@ and a subprocess is not incorrect. It
 scans `$SUBPROC_CHECK_PATHS` (os.pathsep-separated), falling back to `tests/`; set it in the
 project's `.env` when the tests are elsewhere, or the gate scans nothing and says so on stderr.
 
+**It blocks on the files this change touched.** A spawner in a test you did not open is counted and
+named, never blocking — repository-wide, it refused every spec write of one measured phase over 17
+undeclared spawners in locked phases nobody was working on. So declaring one is a thing you do for
+your own tests as you write them, and `subprocess_check.py --all` is how you audit the rest
+deliberately.
+
 ## `test-mapping.md` is a table; the evidence lives beside it
 
 `test-mapping.md` carries **the table and nothing else** — requirement id, test names, `level`, one

@@ -41,6 +41,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 - Mutation: n/a (off) | <score> (policy <enforce|advisory>)
 - Bypasses: none | <scope> / who / when / reason   <!-- copy FROM gate-overrides.log; only scripts/bypass_log.sh writes it -->
 - Amendments: none | <A-id> <R ids touched> [security]   <!-- ids from amendments.json; this is where a later phase sees the phase moved after it was first verified -->
+- Exceptions: none | <X-id> <rule> / <subject> — <one clause>   <!-- ids, rule and subject from exceptions.json (`applicability.py list <phase-dir>`); the reason prose stays there and in gate-overrides.log. Recording an exception is MANUAL, so a forgotten one is invisible until a later phase wedges on it; this line is what puts it in front of the next phase. -->
 - Carried known-open: none | <finding-id> <one line>   <!-- verification is capped at 3 attempts, so some findings are CARRIED rather than fixed. This card is the only place they stay visible; a carried finding recorded nowhere is the cap turning into silent attrition. -->
 
 ## Artifacts
