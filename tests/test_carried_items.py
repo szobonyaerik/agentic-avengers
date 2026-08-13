@@ -114,6 +114,37 @@ def test_template_placeholder_rows_are_not_items(tmp_path: Path) -> None:
     assert present and not items and not says_none
 
 
+def test_angle_brackets_outside_the_id_cell_do_not_erase_the_row(tmp_path: Path) -> None:
+    """Placeholder-ness is judged on the ID CELL, where the template's `OBS-<n>` lives. Reading them
+    anywhere in the row dropped real items - a claim about `<slug>`, a path under
+    `docs/features/<feature>/`, a title naming `Map<String,X>` - and a dropped row is never owed to
+    the next phase, which is the silent loss this module exists to remove."""
+    directory = phase(
+        feature(tmp_path), "8-a",
+        "| id | kind | title | where |\n|---|---|---|---|\n"
+        "| FWD-1 | forward-claim | `<slug>` reaches the route unencoded | this card |\n"
+        "| OBS-2 | open-finding | Map<String,X> key collision | docs/features/<feature>/x.md |",
+    )
+    items, says_none, present = carried_items.declared(directory)
+    assert present and not says_none
+    assert [i.id for i in items] == ["FWD-1", "OBS-2"]
+
+
+def test_a_three_column_pre_rule_row_reports_its_title_not_its_pointer(tmp_path: Path) -> None:
+    """Every card written before the `kind` column exists is `| id | title | pointer |`. Assuming the
+    second cell is always a kind named the pointer as the item, in the very message the next phase's
+    spec writer is asked to act on."""
+    directory = phase(
+        feature(tmp_path), "8-a",
+        "| id | title | where |\n|---|---|---|\n"
+        "| OBS-1 | rate limiter has no negative case | verdict.json#observations[1] |",
+    )
+    items, _says_none, _present = carried_items.declared(directory)
+    assert [(i.kind, i.title) for i in items] == [
+        ("item", "rate limiter has no negative case")
+    ]
+
+
 def test_an_emphasised_id_is_still_an_item(tmp_path: Path) -> None:
     """A writer who bolds or code-quotes the id has written a real item. Going blind on it would drop
     it silently - the failure `requirement_cap.py` had when a table-formatted spec counted zero."""
@@ -189,6 +220,102 @@ def test_a_gap_in_phase_numbering_does_not_lose_the_prior_card(tmp_path: Path) -
     root = feature(tmp_path)
     phase(root, "2-a", TABLE)
     assert [i.id for i in carried_items.owed(phase(root, "4-c", "none"))] == ["OBS-1", "FWD-1"]
+
+
+# --- the last card, which has no successor to owe -------------------------------------------------
+
+LAST_CARD = """---
+feature: demo
+phase: {phase}
+stage: handover
+next: {next}
+readers: avenger-spec-writer @ per spec
+---
+# Phase {phase} - contract card
+
+## Open items
+{items}
+
+## Next phase
+> {next}
+"""
+
+FORWARD = "| id | kind | title | where |\n|---|---|---|---|\n| FWD-1 | forward-claim | {t} | {w} |"
+
+
+def last_phase(root: Path, slug: str, items: str, nxt: str = "e2e") -> Path:
+    directory = root / slug
+    directory.mkdir(exist_ok=True)
+    (directory / "handover.md").write_text(
+        LAST_CARD.format(phase=slug, items=items, next=nxt), encoding="utf-8"
+    )
+    return directory
+
+
+@pytest.mark.parametrize("nxt", ["e2e", "ship"])
+def test_a_last_card_forward_claim_that_names_an_issue_passes(tmp_path: Path, nxt: str) -> None:
+    directory = last_phase(
+        feature(tmp_path), "9-b",
+        FORWARD.format(t="ids reach the path unencoded", w="filed as #41"), nxt=nxt,
+    )
+    assert carried_items.unfiled(directory) == []
+    assert run("filed", str(directory)) == 0
+
+
+def test_a_last_card_forward_claim_naming_no_issue_does_not_close(tmp_path: Path, capsys) -> None:
+    """The last card is the one place the answer-every-row obligation binds nobody, so it is exactly
+    where the hole this module closes would reopen."""
+    directory = last_phase(
+        feature(tmp_path), "9-b", FORWARD.format(t="ids reach the path unencoded", w="this card"),
+    )
+    assert [i.id for i in carried_items.unfiled(directory)] == ["FWD-1"]
+    assert run("filed", str(directory)) == 1
+    err = capsys.readouterr().err
+    assert "FWD-1" in err and "issue" in err
+
+
+def test_an_issue_url_counts_as_naming_one(tmp_path: Path) -> None:
+    directory = last_phase(
+        feature(tmp_path), "9-b",
+        FORWARD.format(t="ids reach the path unencoded",
+                       w="https://github.com/o/r/issues/41"),
+    )
+    assert carried_items.unfiled(directory) == []
+
+
+def test_a_non_last_card_may_carry_a_bare_forward_claim(tmp_path: Path) -> None:
+    """It is owed to its successor, not to ship - and answering it there is the ordinary path."""
+    directory = last_phase(feature(tmp_path), "8-a", FORWARD.format(t="x", w="this card"),
+                           nxt="9-b")
+    assert carried_items.unfiled(directory) == []
+    assert run("filed", str(directory)) == 0
+
+
+def test_a_last_card_with_no_forward_claim_owes_nothing(tmp_path: Path) -> None:
+    """An `OBS-<n>` open finding on the last card is deliberately out of scope: the cap already made
+    it visible, and widening this presence check into one would be a second obligation nobody asked
+    for."""
+    directory = last_phase(
+        feature(tmp_path), "9-b",
+        "| id | kind | title | where |\n|---|---|---|---|\n"
+        "| OBS-1 | open-finding | rate limiter | verdict.json |",
+    )
+    assert carried_items.unfiled(directory) == []
+    assert run("filed", str(directory)) == 0
+
+
+def test_a_pre_rule_card_with_no_next_field_owes_nothing(tmp_path: Path) -> None:
+    """Nothing here may hard-fail a repository over history it has not touched."""
+    directory = phase(feature(tmp_path), "9-b", FORWARD.format(t="x", w="this card"))
+    assert carried_items.card_next(directory) is None
+    assert carried_items.unfiled(directory) == []
+    assert run("filed", str(directory)) == 0
+
+
+def test_the_ci_sweep_holds_the_last_cards_claims_too(tmp_path: Path) -> None:
+    root = git_repo(tmp_path)
+    last_phase(feature(root), "1-only", FORWARD.format(t="x", w="this card"))
+    assert any("FWD-1" in line for line in carried_items.check(root))
 
 
 # --- discharging ----------------------------------------------------------------------------------
@@ -320,11 +447,20 @@ def test_check_over_a_tree_with_no_cards_is_clean_and_says_so(tmp_path: Path, ca
 
 # --- it is enforced, not asked for ------------------------------------------------------------------
 
-def test_the_in_session_hook_holds_both_obligations() -> None:
+def test_the_in_session_hook_holds_every_obligation() -> None:
     """A rule only CI applies arrives after the phase has already closed."""
     text = (ROOT / "scripts" / "hook_verifier.sh").read_text(encoding="utf-8")
     assert "carried_items.py" in text
-    assert "declared" in text and "due" in text
+    for action in ("declared", "due", "filed"):
+        assert f"carried_items.py\" {action}" in text, f"the hook does not run `{action}`"
+
+
+def test_the_hook_tells_an_undecidable_check_apart_from_an_owed_item() -> None:
+    """A corrupt ledger prescribed `discharge`, which cannot repair malformed JSON. Exit 1 is the
+    obligation and anything else is a cause of its own - the rule the attempt cap in the same file
+    already follows."""
+    text = (ROOT / "scripts" / "hook_verifier.sh").read_text(encoding="utf-8")
+    assert "carried-undecidable" in text and "could not be DECIDED" in text
 
 
 def test_ci_sweeps_it_too() -> None:

@@ -386,6 +386,10 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
   belonging further out is declined and **re-carried on that phase's own card**, which is how a claim
   about phases 9-12 survives without being owed to all four at once. The **spec writer** discharges,
   being the first stage that can turn a claim into a requirement.
+- **The last card's forward claims name an ISSUE**, since no phase follows it to answer them: a card
+  whose `next:` is `e2e` or `ship` does not close while a `forward-claim` row carries no `#<number>`
+  or issue URL. A presence check and nothing more - whether a claim was worth carrying is not a
+  gate's question.
 - Ids are **scoped by the card that declared them**, so the ids already in use keep working. Which
   card is in force is `spec_gate_context.prior_phase`'s decision, imported rather than re-derived:
   this ledger and the spec gate's CONTEXT block must not disagree about which phase came before.

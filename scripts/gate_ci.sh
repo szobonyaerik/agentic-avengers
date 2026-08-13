@@ -133,8 +133,17 @@ fi
 #      its CI over cards written before the rule existed - the hostage failure the scoping removes.
 #      Nothing is lost: the hook holds the phase being CLOSED, which is a phase the diff touches by
 #      construction. `carried_items.py check --all` is there for anyone who wants the audit.
-echo "• carried items: forward-looking claims declared, and the previous phase's answered"
-python3 "$SCRIPT_DIR/carried_items.py" check --root "$ROOT" || record_fail "carried-items"
+#
+#      Exit 1 is the obligation; anything else could not DECIDE it, and the two are recorded under
+#      different names - a run naming the wrong cause sends the fix at the wrong thing.
+echo "• carried items: claims declared, the previous phase's answered, the last card's filed"
+python3 "$SCRIPT_DIR/carried_items.py" check --root "$ROOT"
+carried_rc=$?
+if [ "$carried_rc" -eq 1 ]; then
+  record_fail "carried-items"
+elif [ "$carried_rc" -ne 0 ]; then
+  record_fail "carried-items:undecidable"
+fi
 
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted

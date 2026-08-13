@@ -149,16 +149,47 @@ fi
 # a phase whose verdict is `fail`, or which is at the attempt cap, is already not closing, and
 # reporting an undeclared items section at that moment would answer a question nobody asked while
 # hiding the one that stopped the phase.
+#
+# Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it, and the two carry
+# different tags and different messages. Collapsed into one, a corrupt carried.json was reported as
+# an unanswered item and prescribed `discharge` - a remedy that cannot repair malformed JSON. Same
+# rule the attempt cap below already follows, and the one CLAUDE.md § Gates states as "every stop
+# names which".
 carried_items_gate () {
-  if ! python3 "$SD/carried_items.py" declared "$PHASE_DIR"; then
+  local rc
+  python3 "$SD/carried_items.py" declared "$PHASE_DIR"; rc=$?
+  if [ "$rc" -eq 1 ]; then
     fail "verifier:carried-undeclared" \
       "verifier: this phase's contract card does not say what it carries forward (named above)." \
       "Write the section - a row per item with a stable id, or an explicit \`none\` row. Silence is" \
       "not none, and a prediction left in prose is owed to nobody."
+  elif [ "$rc" -ne 0 ]; then
+    fail "verifier:carried-undecidable" \
+      "verifier: what this phase carries forward could not be DECIDED (cause above) - this is not a" \
+      "missing section, and writing one will not fix it. A check that cannot be read enforces" \
+      "nothing, so this fails closed. Fix what it named."
   fi
-  if ! python3 "$SD/carried_items.py" due "$PHASE_DIR"; then
+  python3 "$SD/carried_items.py" due "$PHASE_DIR"; rc=$?
+  if [ "$rc" -eq 1 ]; then
     fail "verifier:carried" \
       "verifier: items the previous phase carried forward have no answer in this phase (named above)."
+  elif [ "$rc" -ne 0 ]; then
+    fail "verifier:carried-undecidable" \
+      "verifier: whether the previous phase's items are answered could not be DECIDED (cause above)" \
+      "- this is not an unanswered item, and \`discharge\` cannot repair it. Fix what it named."
+  fi
+  # The LAST card has no successor, so the obligation above binds nobody on it - the one place this
+  # rule would reopen the hole it closes. There a forward claim must name an issue reference instead:
+  # a presence check, never a judgement about whether the claim was worth carrying.
+  python3 "$SD/carried_items.py" filed "$PHASE_DIR"; rc=$?
+  if [ "$rc" -eq 1 ]; then
+    fail "verifier:carried-unfiled" \
+      "verifier: this is the LAST phase's card and it carries a forward claim no later phase can" \
+      "answer (named above). Add an issue reference to that row - \`#<number>\` or an issue URL."
+  elif [ "$rc" -ne 0 ]; then
+    fail "verifier:carried-undecidable" \
+      "verifier: whether the last card's forward claims are filed could not be DECIDED (cause" \
+      "above). Fix what it named."
   fi
 }
 

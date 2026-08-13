@@ -43,7 +43,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -53,6 +52,7 @@ sys.path.insert(0, str(HERE))
 # The authorities. Imported, never copied: `BLOCKING` is the table the verdict is derived from and
 # `cap()` is the number counted before any model runs. A literal restatement of either here is the
 # second copy this module exists to avoid.
+from md_section import slice_section  # noqa: E402
 from requirement_cap import cap  # noqa: E402
 from spec_gate_triage import BLOCKING, NOTE  # noqa: E402
 
@@ -99,20 +99,15 @@ def prompts_dir() -> Path:
 def section(text: str, heading: str) -> str | None:
     """The body under a markdown heading, up to the next heading of the same or shallower level.
 
-    Same rule `requirement_cap.requirements_section` and `spec_gate_context.contracts_section`
-    already use, and for the same reason: a subsection under the heading belongs to it, so ending at
-    any deeper heading would silently truncate the section to nothing - which is the partial render
-    this module refuses to produce.
+    The slicing is `md_section.slice_section`'s, shared with `requirement_cap.requirements_section`
+    and `spec_gate_context.contracts_section`: a subsection under the heading belongs to it, so
+    ending at any deeper heading would silently truncate the section to nothing - which is the
+    partial render this module refuses to produce. The policy that stays here is that an EMPTY
+    section is treated exactly like a missing one, because an empty brief claiming to be the gate's
+    rubric is the drifted copy.
     """
-    start = re.search(
-        rf"^(\#{{1,6}})[ \t]*{re.escape(heading)}[ \t]*$", text, re.IGNORECASE | re.MULTILINE
-    )
-    if not start:
-        return None
-    rest = text[start.end():]
-    end = re.compile(rf"^#{{1,{len(start.group(1))}}}[ \t]+", re.MULTILINE).search(rest)
-    body = (rest[: end.start()] if end else rest).strip()
-    return body or None
+    found = slice_section(text, heading)
+    return None if found is None else (found[1].strip() or None)
 
 
 def lifted(root: Path | None = None) -> list[tuple[str, str, str]]:

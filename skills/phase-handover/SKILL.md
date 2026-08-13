@@ -197,6 +197,12 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
   declined there and **re-carried on that phase's own card** - that is how a claim about phases 9-12
   survives without being owed to all four at once.
 
+- **On the LAST card there is no next phase, so a forward claim must name an ISSUE.** If your `next:`
+  is `e2e` or `ship`, nobody inherits this table, and a claim owed to nobody is the state phase 8's
+  prediction was in. Put an issue reference on the row - `#<number>` or an issue URL - and the phase
+  closes; `python3 scripts/carried_items.py filed <phase-dir>` is what checks it. It is a presence
+  check: nothing judges whether the claim was worth carrying.
+
 An id belongs to the card that declared it, so `OBS-1` here and `OBS-1` on the next phase's card are
 different items; the ids you already use keep working. Never write a prediction into the summary, a
 decision line or the archive instead: the archive is off the read path, so a claim put there is a
@@ -288,8 +294,9 @@ is usually two lines here plus a link, not four pages.
 summary, the binding-contracts table, the decisions list, the artifact links, the phase's Verifier
 verdict (plus any waived findings), the mutation line, an **Open items section that says what this
 phase carries forward or explicitly says `none`**, and a `next` value (a phase slug, `e2e` if this
-was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean, and both
-`python3 scripts/carried_items.py declared <phase-dir>` and `… due <phase-dir>` exit 0.
+was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean, and
+`python3 scripts/carried_items.py declared <phase-dir>`, `… due <phase-dir>` and
+`… filed <phase-dir>` all exit 0.
 
 **And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
 codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you

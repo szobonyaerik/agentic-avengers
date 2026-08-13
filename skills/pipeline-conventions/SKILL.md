@@ -503,6 +503,11 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
   requirement, `tested`, or `declined` with a stated reason. **`declined` is a real answer**; an item
   that belongs further out is declined and **re-carried on that phase's own card**, which is how a
   claim about phases 9-12 survives without being owed to all four at once.
+- **The LAST card has no successor, so its forward claims must name an ISSUE REFERENCE** (`#<number>`
+  or an issue URL) - a card whose `next:` is `e2e` or `ship` does not close otherwise. It is the one
+  place the obligation above binds nobody, so it is exactly where this hole would reopen; the check
+  (`carried_items.py filed`) asks only whether the row names an issue, never whether the claim was
+  worth carrying.
 - The **spec writer** is the stage that discharges, because it is the first that can turn a claim
   into a requirement. Discharging as `built` means a requirement states the behaviour, with its own
   id and `binding:` - not a sentence in Scope mentioning it.

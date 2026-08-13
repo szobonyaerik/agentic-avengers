@@ -31,6 +31,12 @@ forward-looking claims alongside open findings, and makes it binding**:
    `declined` and **re-carried on this phase's own card**, which is what makes a multi-phase claim
    survive without being owed to every phase at once.
 
+3. **Filed, on the LAST card.** The final phase has no successor, so obligation 2 has nobody to bind
+   and its forward claims would be owed to no one - the one card where the hole this module closes
+   would reopen. A card whose `next:` is `e2e` or `ship` must therefore name an **issue reference**
+   on every `forward-claim` row. That is a presence check and nothing more: whether the claim was
+   worth carrying is not this check's business, and never a model's.
+
 An id is scoped by the phase directory that declared it, so `OBS-1` on phase 8's card and `OBS-1` on
 phase 9's are different items and the ids already in use keep working unchanged.
 
@@ -47,6 +53,8 @@ Usage:
     carried_items.py discharge <phase-dir> <item-id> --as built|tested|declined
                                             [--by <spec/test/requirement>] [--reason-file <f>]
     carried_items.py due <phase-dir>        exit 1 when any owed item is undischarged
+    carried_items.py filed <phase-dir>      exit 1 when a forward claim on the LAST card names no
+                                            issue. Clean for every card that has a successor.
     carried_items.py check [--root .] [--all]
                                             both obligations over every phase, for CI. Diff-scoped
                                             by default; `--all` audits every phase.
@@ -66,6 +74,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from doc_read_path import changed_paths  # noqa: E402
+from md_section import slice_section  # noqa: E402
 from spec_gate_context import layout, prior_phase  # noqa: E402
 
 OK = 0
@@ -83,6 +92,25 @@ SECTION_HEADING = "Open items"
 #: two: an item that must not be built in this phase still has to be looked at and dismissed on the
 #: record, which is the whole difference between this and a prediction written into prose.
 DISCHARGES = ("built", "tested", "declined")
+
+#: The `kind` column's known values. A row that names one has that kind; a card on the older
+#: three-column layout has no kind column at all and its second cell is the title, not a kind.
+KINDS = ("open-finding", "forward-claim")
+
+#: The forward-looking half - the kind obligation 3 applies to.
+FORWARD_KIND = "forward-claim"
+
+#: A card with one of these as its frontmatter `next:` has no successor phase. `skills/phase-handover`
+#: already requires the value, so this needs no new marker and no scan for the highest phase number.
+LAST_CARD_NEXT = ("e2e", "ship")
+
+#: The card's frontmatter `next:` value.
+NEXT_FIELD = re.compile(r"^next:[ \t]*(.+?)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+
+#: What counts as NAMING AN ISSUE, in one constant so widening it later is a single deliberate edit
+#: rather than a regex hunt: a `#<number>` token, or an issue URL (GitHub, GitLab and the rest all
+#: put `/issues/<number>` in the path). It is a presence test over the row's text and nothing more.
+ISSUE_REFERENCE = re.compile(r"#\d+|https?://\S+/issues/\d+", re.IGNORECASE)
 
 #: An item id: something a later phase can grep for. `OBS-1`, `FWD-2`, `CARRY-8.1` all qualify; a
 #: template placeholder (`OBS-<n>`) does not, and neither does a prose fragment.
@@ -114,6 +142,14 @@ class Item(NamedTuple):
     kind: str
     title: str
     phase: str
+    row: str = ""
+
+    def is_forward(self) -> bool:
+        return self.kind.strip(EMPHASIS).lower() == FORWARD_KIND
+
+    def names_an_issue(self) -> bool:
+        """Whether the row names an issue reference. Presence only - it reads nothing into the text."""
+        return bool(ISSUE_REFERENCE.search(self.row))
 
     def describe(self) -> str:
         return f"  {self.id} [{self.kind}] ({self.phase}): {self.title}"
@@ -131,21 +167,42 @@ def section_body(text: str, heading: str = SECTION_HEADING) -> str | None:
     """The body under the card's items heading, up to the next heading of the same or shallower level.
 
     The template writes it as `## Open items` and `skills/phase-handover` renders it as `### Open
-    items`, so the level is read from whatever the card actually used rather than pinned.
+    items`, so the level is read from whatever the card actually used rather than pinned - which is
+    `md_section.slice_section`'s rule, shared with the three other readers of a named section here.
+    An empty section is an empty body, never None: a card that has the heading and says nothing under
+    it is the "silence is not none" case, and it must reach `parse_items`, not read as no section.
     """
-    start = re.search(
-        rf"^(\#{{1,6}})[ \t]*{re.escape(heading)}[ \t]*$", text, re.IGNORECASE | re.MULTILINE
-    )
-    if not start:
-        return None
-    rest = text[start.end():]
-    end = re.compile(rf"^#{{1,{len(start.group(1))}}}[ \t]+", re.MULTILINE).search(rest)
-    return rest[: end.start()] if end else rest
+    found = slice_section(text, heading)
+    return None if found is None else found[1]
 
 
 def _is_placeholder(cells: list[str]) -> bool:
-    """A row straight out of the template, never a real item."""
-    return any("<" in cell or ">" in cell for cell in cells)
+    """A row straight out of the template, never a real item.
+
+    Judged on the ID CELL ALONE. The template's placeholders (`OBS-<n>`, `FWD-<n>`) live there, and
+    reading angle brackets anywhere in the row discarded real items whose title or detail cell held
+    them - `<slug>` reaches the route unencoded, `docs/features/<feature>/...`, `Map<String,X>`. Such
+    a row then never reached `owed()` and the next phase was never asked about it, which is precisely
+    the silent loss this module exists to remove; if it was the card's only row the card also read as
+    saying nothing at all, and the gate blocked over a row plainly on the page.
+    """
+    return bool(cells) and ("<" in cells[0] or ">" in cells[0])
+
+
+def _kind_and_title(cells: list[str]) -> tuple[str, str]:
+    """(kind, title) for one row, on the current four-column layout OR the older three-column one.
+
+    Every pre-rule card on disk is `| OBS-1 | title | verdict.json#observations[0] |`, with no kind
+    column. Assuming the kind is always the second cell reported the title as the kind and the
+    pointer as the title, so the very line the next phase's spec writer is asked to act on named the
+    pointer as the item. The blocking behaviour never depended on it - the id does - but a message
+    that misnames what it is about is one the reader has to go and re-derive.
+    """
+    if len(cells) >= 4:
+        return (cells[1] or "item"), cells[2]
+    if len(cells) == 3 and cells[1].strip(EMPHASIS).lower() in KINDS:
+        return cells[1], cells[2]
+    return "item", (cells[1] if len(cells) > 1 else "")
 
 
 def parse_items(body: str, phase: str) -> tuple[list[Item], bool]:
@@ -172,9 +229,8 @@ def parse_items(body: str, phase: str) -> tuple[list[Item], bool]:
             continue
         if set(identifier) <= {"-", ":", " "} or not ITEM_ID.match(identifier):
             continue
-        kind = cells[1] if len(cells) > 2 else "item"
-        title = cells[2] if len(cells) > 2 else (cells[1] if len(cells) > 1 else "")
-        items.append(Item(identifier, kind or "item", title, phase))
+        kind, title = _kind_and_title(cells)
+        items.append(Item(identifier, kind, title, phase, line.strip()))
     return items, says_none
 
 
@@ -211,6 +267,40 @@ def owed(phase_dir: Path) -> list[Item]:
         return []
     items, _says_none, _present = declared(previous)
     return items
+
+
+def card_next(phase_dir: Path) -> str | None:
+    """This card's frontmatter `next:` value, lowercased, or None when it has none.
+
+    A card with no `next:` at all - every pre-rule card - is simply not known to be a last card, and
+    owes nothing here. Nothing may hard-fail a repository over history it has not touched.
+    """
+    try:
+        text = (Path(phase_dir) / "handover.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    found = NEXT_FIELD.search(text)
+    return found.group(1).strip().strip(EMPHASIS).lower() if found else None
+
+
+def unfiled(phase_dir: Path) -> list[Item]:
+    """Forward claims on a LAST card that name no issue reference. Empty for every other card.
+
+    The last card is the one place with no successor and therefore no backstop, which is exactly
+    where the hole this module closes would reopen: `owed()` reads the immediately prior card, so a
+    claim written on the final phase's card is owed to nobody. Filing it as an issue is the only
+    thing that outlives the feature.
+
+    This is a PRESENCE check, the same kind as everything else here. It never asks whether a claim is
+    worth carrying, important, duplicated, or something that should have been built - that judgement
+    belongs to a human, not to a gate at feature close, and certainly not to a model.
+    """
+    if card_next(phase_dir) not in LAST_CARD_NEXT:
+        return []
+    items, _says_none, present = declared(phase_dir)
+    if not present:
+        return []
+    return [item for item in items if item.is_forward() and not item.names_an_issue()]
 
 
 def path_for(phase_dir: Path) -> Path:
@@ -298,8 +388,17 @@ def undischarged(phase_dir: Path) -> list[Item]:
     return [item for item in owed(phase_dir) if item.id not in answered]
 
 
+def _unfiled_line(phase_dir: Path, item: Item) -> str:
+    return (
+        f"{phase_dir}/handover.md: {item.id} is a forward claim on the LAST card (next: "
+        f"{card_next(phase_dir)}), so no later phase is owed it - {item.title}. Add an issue "
+        f"reference to that row (#<number>, or an issue URL); filing it is the only thing that "
+        f"outlives the feature."
+    )
+
+
 def phase_problems(phase_dir: Path) -> list[str]:
-    """Both obligations for one closed phase, as lines. Empty means clean."""
+    """All three obligations for one closed phase, as lines. Empty means clean."""
     out: list[str] = []
     items, says_none, present = declared(phase_dir)
     if not present:
@@ -314,6 +413,8 @@ def phase_problems(phase_dir: Path) -> list[str]:
         )
     for item in undischarged(phase_dir):
         out.append(f"{phase_dir}: {item.id} ({item.phase}) has no answer here - {item.title}")
+    for item in unfiled(phase_dir):
+        out.append(_unfiled_line(phase_dir, item))
     return out
 
 
@@ -379,10 +480,27 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The CLI. **Exit 1 means the obligation, and exit 2 means it could not be DECIDED.**
+
+    Collapsing the two is how a corrupt `carried.json` came to be answered with `run discharge` - a
+    remedy that cannot repair malformed JSON - so an unexpected failure exits 2 with its own cause
+    rather than escaping as a traceback and an exit 1 that reads as an owed item.
+    """
+    try:
+        return _dispatch(_parse(argv))
+    except CarriedError as exc:
+        print(f"[carried_items] {exc}", file=sys.stderr)
+        return ERROR
+    except Exception as exc:  # noqa: BLE001 - an undecidable check is never an owed item
+        print(f"[carried_items] the check could not be decided: {exc!r}", file=sys.stderr)
+        return ERROR
+
+
+def _parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
 
-    for name in ("declared", "list", "due"):
+    for name in ("declared", "list", "due", "filed"):
         p = sub.add_parser(name)
         p.add_argument("phase_dir", type=Path)
 
@@ -404,14 +522,45 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--root", default=".", type=Path)
     p_check.add_argument("--all", action="store_true", help="every phase, not just changed ones")
 
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
+
+def _filed(phase_dir: Path) -> int:
+    """The last card's forward claims, each naming an issue - or exit 1 naming the rows that do not.
+
+    A card that is not a last card, a card with no forward claims and a pre-rule card with no
+    section all pass, and the clean answer says which on stderr rather than passing invisibly.
+    """
+    nxt = card_next(phase_dir)
+    remaining = unfiled(phase_dir)
+    if not remaining:
+        why = (
+            "every forward claim on it names an issue"
+            if nxt in LAST_CARD_NEXT
+            else "not a last card, so its claims are owed to the phase after it"
+        )
+        print(f"[carried_items] {phase_dir} (next: {nxt or 'unset'}) - {why}.", file=sys.stderr)
+        return OK
+    print(
+        f"{len(remaining)} forward claim(s) on this phase's card name no issue, and this is the LAST "
+        f"card - `next: {nxt}`, so no later phase is owed them. A claim owed to "
+        f"nobody is how a correct, specific, actionable prediction became nothing:",
+        file=sys.stderr,
+    )
+    for item in remaining:
+        print(item.describe(), file=sys.stderr)
+    print(
+        "  Answer each one: add an issue reference to its row on handover.md - `#<number>` or an "
+        "issue URL. Filing it is the only thing that outlives the feature; nothing here judges "
+        "whether the claim was worth carrying.",
+        file=sys.stderr,
+    )
+    return OWED
+
+
+def _dispatch(args: argparse.Namespace) -> int:
     if args.action == "check":
-        try:
-            problems = check(args.root, enforce_all=args.all)
-        except CarriedError as exc:
-            print(f"[carried_items] {exc}", file=sys.stderr)
-            return ERROR
+        problems = check(args.root, enforce_all=args.all)
         if not problems:
             return OK
         print(
@@ -424,51 +573,49 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  x {line}", file=sys.stderr)
         return OWED
 
-    try:
-        if args.action == "declared":
-            items, says_none, present = declared(args.phase_dir)
-            if not present:
-                print(
-                    f"[carried_items] {args.phase_dir}/handover.md has no `## {SECTION_HEADING}` "
-                    f"section. A phase states what it carries forward - a row per item, or an "
-                    f"explicit `none`. Silence is not `none`: a prediction written into prose is "
-                    f"exactly what shipped as a defect one phase later.",
-                    file=sys.stderr,
-                )
-                return OWED
-            if not items and not says_none:
-                print(
-                    f"[carried_items] {args.phase_dir}/handover.md has a `## {SECTION_HEADING}` "
-                    f"section with neither an item nor an explicit `none` row. Say which.",
-                    file=sys.stderr,
-                )
-                return OWED
-            for item in items:
-                print(item.describe())
-            return OK
+    if args.action == "declared":
+        items, says_none, present = declared(args.phase_dir)
+        if not present:
+            print(
+                f"[carried_items] {args.phase_dir}/handover.md has no `## {SECTION_HEADING}` "
+                f"section. A phase states what it carries forward - a row per item, or an "
+                f"explicit `none`. Silence is not `none`: a prediction written into prose is "
+                f"exactly what shipped as a defect one phase later.",
+                file=sys.stderr,
+            )
+            return OWED
+        if not items and not says_none:
+            print(
+                f"[carried_items] {args.phase_dir}/handover.md has a `## {SECTION_HEADING}` "
+                f"section with neither an item nor an explicit `none` row. Say which.",
+                file=sys.stderr,
+            )
+            return OWED
+        for item in items:
+            print(item.describe())
+        return OK
 
-        if args.action == "list":
-            for item in owed(args.phase_dir):
-                print(item.describe())
-            return OK
+    if args.action == "list":
+        for item in owed(args.phase_dir):
+            print(item.describe())
+        return OK
 
-        if args.action == "discharge":
-            reason = None
-            if args.reason_file:
-                try:
-                    reason = Path(args.reason_file).read_text(encoding="utf-8")
-                except OSError as exc:
-                    print(f"[carried_items] cannot read the reason file: {exc}", file=sys.stderr)
-                    return ERROR
-            record = discharge(args.phase_dir, args.item_id, args.how, args.by, reason)
-            print(f"{record['item']} discharged as {record['as']}")
-            return OK
+    if args.action == "filed":
+        return _filed(args.phase_dir)
 
-        remaining = undischarged(args.phase_dir)
-    except CarriedError as exc:
-        print(f"[carried_items] {exc}", file=sys.stderr)
-        return ERROR
+    if args.action == "discharge":
+        reason = None
+        if args.reason_file:
+            try:
+                reason = Path(args.reason_file).read_text(encoding="utf-8")
+            except OSError as exc:
+                print(f"[carried_items] cannot read the reason file: {exc}", file=sys.stderr)
+                return ERROR
+        record = discharge(args.phase_dir, args.item_id, args.how, args.by, reason)
+        print(f"{record['item']} discharged as {record['as']}")
+        return OK
 
+    remaining = undischarged(args.phase_dir)
     if not remaining:
         return OK
     print(

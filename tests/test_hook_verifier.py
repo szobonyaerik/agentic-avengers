@@ -215,6 +215,32 @@ def test_a_card_that_says_nothing_about_what_it_carries_does_not_close(project: 
     assert "does not say what it carries forward" in result.stderr
 
 
+LAST_CARD = (
+    "---\nnext: e2e\nreaders: x\n---\n# handover\n\n## Open items\n"
+    "| id | kind | title | where |\n|---|---|---|---|\n"
+    "| FWD-1 | forward-claim | caller-supplied ids reach the path unencoded | %s |\n"
+)
+
+
+def test_the_last_phase_does_not_close_over_a_forward_claim_owed_to_nobody(project: Path) -> None:
+    """`next: e2e` means no phase follows to answer this row, so the claim has to be filed. Asserted
+    through the real hook: a rule only its unit test knows about is the promise-with-no-mechanism
+    this whole change removes."""
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project, card=LAST_CARD % "this card")
+
+    assert result.returncode == 2
+    assert "FWD-1" in result.stderr
+    assert "issue reference" in result.stderr
+
+
+def test_naming_an_issue_on_that_row_lets_the_last_phase_close(project: Path) -> None:
+    attempts(project, [(1, 0, "pass")])
+
+    assert run_hook(project, card=LAST_CARD % "filed as #41").returncode == 0
+
+
 def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(project: Path) -> None:
     """It runs inside the `pass` branch on purpose. A phase at the attempt cap is already not
     closing, and answering an unasked question there would hide the one that stopped it."""
