@@ -66,7 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # The diff scope is ONE mechanism and `applicability.py` owns it — this check was simply the first to
 # need it. Imported rather than kept here, and re-exported for the callers that already ask this
 # module for it: a second copy of a rule is the copy that goes blind.
-from applicability import changed_paths  # noqa: E402,F401  (re-exported)
+from applicability import changed_paths, report_unenforced  # noqa: E402,F401  (re-exported)
 
 # --- the table -----------------------------------------------------------------------------------
 # extent: whole | header | table | card | none. `none` means the document is written but no stage is
@@ -357,17 +357,20 @@ def _artifact_problems(path: Path, spec: dict) -> list[tuple[str, str]]:
 
 
 def _report_unenforced(count: int, breakdown: Counter) -> None:
-    """Say how much history predates the rule. Visibility without coercion: never an exit code."""
-    if not count:
-        return
+    """Say how much history predates the rule, in the boundary's ONE spelling.
+
+    The sentence belongs to `applicability.report_unenforced` — out of scope must look the same,
+    and different from clean, in every check on this boundary. Only the breakdown is this check's
+    own, so only the breakdown is passed. Visibility without coercion: never an exit code.
+    """
     parts = ", ".join(
         f"{n} {UNENFORCED_LABELS.get(category, category)}"
         for category, n in sorted(breakdown.items())
     )
-    print(
-        f"[doc_read_path] {count} pre-existing artifact(s) predate this rule and are not enforced: "
-        f"{parts} - they are checked when you next change them.",
-        file=sys.stderr,
+    report_unenforced(
+        "doc_read_path",
+        count,
+        f"{parts} - they are checked when you next change them, and `check --all` audits them now",
     )
 
 

@@ -107,6 +107,12 @@ class TestShipped:
         spec.write_text("---\nfeature: demo\nstatus: pending\n---\n\nstatus: done\n")
         assert not spec_shipped(spec)
 
+    def test_a_spec_with_no_frontmatter_at_all_has_not_shipped(self, tmp_path):
+        """A loose split reads the whole body as a header, so prose alone would ship the spec."""
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Spec\n\nstatus: done\n")
+        assert not spec_shipped(spec)
+
     def test_an_unreadable_spec_has_not_shipped(self, tmp_path):
         """Under-report: the rule keeps binding when the evidence cannot be read."""
         assert not spec_shipped(tmp_path / "nothing.md")
@@ -157,6 +163,19 @@ class TestRecording:
         """Fail closed: no log, no ledger entry."""
         target = phase(tmp_path)
         monkeypatch.setattr(applicability, "__file__", str(tmp_path / "elsewhere" / "x.py"))
+        with pytest.raises(ApplicabilityError):
+            record_exception(target, "spec-review", "8.1", "because", "captain")
+        assert not (target / "exceptions.json").exists()
+
+    def test_nothing_is_recorded_when_the_audit_APPEND_fails(self, tmp_path, monkeypatch):
+        """The writer running is not the guarantee — the record landing is.
+
+        A present writer whose append cannot land (an unwritable root, a read-only mount, a full
+        disk) leaves durable ledger state with no line in gate-overrides.log, which is exactly the
+        silent bypass the ledger replaces.
+        """
+        target = phase(tmp_path)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "no-such-root"))
         with pytest.raises(ApplicabilityError):
             record_exception(target, "spec-review", "8.1", "because", "captain")
         assert not (target / "exceptions.json").exists()

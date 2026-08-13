@@ -185,7 +185,8 @@ applies one names it on stderr. An unreadable ledger grants nothing and says so.
 captain-ordered close wedging every later phase. The two remedies that do not need this — stamping a
 human sign-off nobody gave, or claiming a machine verdict nobody obtained — are the "looks fine" class
 PR 28 removed. `pipeline_state.py --from-phase <n>` is the blunt companion: it records nothing, judges
-nothing, and names every phase it stepped over.
+nothing, names every phase it stepped over, and — because it judges nothing — answers nothing
+feature-wide over them: with any phase skipped the stage is `unknown`, never `done` or `e2e-author`.
 
 ### 4. The implementer writes the tests, test-first — and they lock at the Verifier
 The **implementer** writes both the tests and the code, in a red → green loop (`skills/tdd`, vendored

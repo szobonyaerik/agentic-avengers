@@ -214,3 +214,29 @@ def test_waiver_and_gate_bypass_share_one_log(project: Path) -> None:
     assert len(lines) == 2
     assert all(line.split("\t")[-1].startswith("reason: ") for line in lines)
     assert [line.count("\t") for line in lines] == [3, 4]
+
+
+def test_an_append_that_cannot_land_exits_non_zero_and_says_so(project: Path) -> None:
+    """Exit 0 must mean the record was written.
+
+    Every caller — the hook bypass, the CI bypass, the Verifier's waiver, an applicability
+    exception — decides whether the override is sanctioned from this exit code alone. An unwritable
+    destination that still answered 0 is an override nobody logged, reported as audited.
+    """
+    proc = subprocess.run(
+        ["bash", str(BYPASS_LOG), "fidelity"],
+        cwd=project,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project / "no-such-root"),
+            "GATE_BYPASS": "the docs gate is stale",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode != 0
+    assert "NOT LOGGED" in proc.stderr
+    assert not (project / "no-such-root").exists()

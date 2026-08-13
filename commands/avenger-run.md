@@ -145,7 +145,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/applicability.py" record <phase-dir> \
 
 Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`; one rule and one
 subject each, audited to `gate-overrides.log`. `--from-phase <n>` steps over earlier phases for one
-invocation without recording anything, and names what it skipped.
+invocation without recording anything, and names what it skipped. It never answers a feature-wide
+question over them: with any phase stepped over the stage is `unknown` — not a stage to act on, but
+the resolver saying the walk was narrowed. Re-run without it, or record the exception, before
+treating a feature as finished.
 
 Map the stage to a subagent and invoke it with the feature id, the artifact paths, and the resolver's
 `reason` as context:

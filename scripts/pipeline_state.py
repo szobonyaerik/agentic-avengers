@@ -24,8 +24,11 @@ or obtaining a machine verdict that was never obtained — are the "looks fine" 
 exists to remove, and the ledger is what makes neither necessary.
 
 `--from-phase` is the blunt companion to that: it enters at a named phase, skipping everything
-below it. It records nothing and judges nothing, so it says loudly which phases it skipped. Prefer
-the ledger — it fixes the cause; this only steps over it for one invocation.
+below it. It records nothing and judges nothing, so it says loudly which phases it skipped **and it
+never answers a feature-wide question over them** — with any phase stepped over, `done`, `e2e-author`
+and "the plan promises a phase nobody specced" are all claims about work this walk did not look at,
+so the stage is `unknown` and the reason says why. Prefer the ledger — it fixes the cause; this only
+steps over it for one invocation.
 
     python3 scripts/pipeline_state.py <feature-id> [--root .] [--from-phase N]
 """
@@ -316,10 +319,16 @@ def _missing_planned_phase(feature_dir: Path, phases: list[Path]) -> State | Non
     return None
 
 
-def _entered_at(phases: list[Path], from_phase: int | None) -> list[Path]:
-    """The phases to walk, honouring `--from-phase`. Never silent about what it stepped over."""
+def _entered_at(
+    phases: list[Path], from_phase: int | None
+) -> tuple[list[Path], list[str]]:
+    """The phases to walk and the ones stepped over, honouring `--from-phase`.
+
+    Never silent about what it stepped over, and the skipped list is returned as well as printed:
+    a stage the caller acts on must be derivable from what was actually examined.
+    """
     if from_phase is None:
-        return phases
+        return phases, []
     kept = [p for p in phases if _numeric_key(p.name)[0] >= from_phase]
     skipped = [p.name for p in phases if p not in kept]
     print(
@@ -328,7 +337,7 @@ def _entered_at(phases: list[Path], from_phase: int | None) -> list[Path]:
         + (f": {', '.join(skipped)}" if skipped else ""),
         file=sys.stderr,
     )
-    return kept
+    return kept, skipped
 
 
 def next_stage(root: Path, feature: str, from_phase: int | None = None) -> State:
@@ -352,12 +361,28 @@ def next_stage(root: Path, feature: str, from_phase: int | None = None) -> State
             stage="spec-writer",
             reason="plan.md has no phases on disk yet",
         )
-    walked = _entered_at(phases, from_phase)
+    walked, skipped = _entered_at(phases, from_phase)
 
     for phase in walked:
         pending = _phase_state(feature, phase)
         if pending is not None:
             return pending
+
+    # Everything below here is a claim about the FEATURE — a planned phase nobody specced, the e2e
+    # suite, `done` — and every one of them is false about a phase this invocation never opened.
+    # `--from-phase` judges nothing, so it may not answer them: an orchestrator reading `done` from a
+    # walk that skipped an unfinished phase 1 would drive the feature straight to close.
+    if skipped:
+        return State(
+            feature=feature,
+            stage="unknown",
+            reason=(
+                f"every phase examined from {from_phase} on is green, but "
+                f"{len(skipped)} earlier phase(s) were not examined ({', '.join(skipped)}), so "
+                f"nothing feature-wide is claimed. Re-run without --from-phase, or record the "
+                f"exception that closes those phases (scripts/applicability.py record)"
+            ),
+        )
 
     # Every phase folder on disk is green — but the plan may promise more. Without this check the
     # resolver skipped straight to e2e/done after the last *existing* phase, silently dropping every

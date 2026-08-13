@@ -394,7 +394,14 @@ python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-cl
   shipped.
 - **Audited or not recorded.** Every one is written to `gate-overrides.log` through
   `scripts/bypass_log.sh` as it is recorded, and an exception that could not be logged is not
-  recorded at all. **A resolver that applies one says so on stderr.**
+  recorded at all — the writer **exits non-zero when the append fails** (an unwritable root, a
+  read-only mount, a full disk), because an exit code that cannot distinguish "logged" from "not
+  logged" makes every caller's fail-closed check decorative. **A resolver that applies one says so
+  on stderr.**
+- **Carried on the phase's contract card.** Recording an exception is manual and nothing creates the
+  entry, so a forgotten one is invisible until a later phase wedges on it. `skills/phase-handover`
+  lists the phase's open exceptions on the card, which is what puts an omission in front of the next
+  phase.
 - **An unreadable ledger grants nothing** and says so — the same under-report bias the resolver runs
   on everywhere else.
 
@@ -403,7 +410,10 @@ exception is CLOSED, not incomplete, so `scripts/pipeline_state.py` walks past i
 that do not need it — stamping a human sign-off nobody gave, or claiming a machine verdict nobody
 obtained — are the "looks fine" class this pipeline exists to remove. `pipeline_state.py --from-phase
 <n>` is the blunt companion: it enters at a named phase, records nothing, judges nothing, and names
-every phase it stepped over. Prefer the ledger, which fixes the cause.
+every phase it stepped over. Because it judges nothing, it also **answers nothing feature-wide**: with
+any phase stepped over it reports stage `unknown` rather than `done`, `e2e-author` or a missing
+planned phase, all of which are claims about phases it did not open. Prefer the ledger, which fixes
+the cause.
 
 ## Amendments — changing a verified phase without re-verifying all of it
 

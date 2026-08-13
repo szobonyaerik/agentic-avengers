@@ -65,10 +65,16 @@ phase whose verdict already passes — that verdict is a claim about code that h
 `scripts/hook_verifier.sh` enforces this on the handover write, so a card written over one will not
 land.
 
-Mirror the gate record out of `verdict.json` and `amendments.json`:
+Mirror the gate record out of `verdict.json`, `amendments.json` and `exceptions.json`:
 - **Amendments folded into this phase** — one line each: id, the requirement ids it touched, and
   whether it was security-relevant. The verdict's own `amendments` array carries the ids; the card is
   where a later phase sees that the phase moved after it was first verified.
+- **Open exceptions this phase closed under** — one line each: id, rule, subject and a one-clause
+  reason (`python3 scripts/applicability.py list <phase-dir>`). Ids and a clause, never the reason
+  prose — that lives in `exceptions.json` and `gate-overrides.log`, and the card is capped. An
+  exception says a rule the pipeline would otherwise owe is not owed for this phase, and **recording
+  one is manual**: nothing creates the entry, so a forgotten one stays invisible until a later phase
+  wedges on it. Carrying them forward is what puts that in front of the next phase instead.
 - **Findings carried as known-open at the verification attempt cap** — one line each, with the
   finding id. The cap (3 attempts, `scripts/verifier_attempts.py`) means some findings are carried
   rather than fixed, and this card is the only place that stays visible. A carried finding recorded
@@ -83,7 +89,7 @@ Mirror the gate record out of `verdict.json` and `amendments.json`:
 ## Inputs
 - The finished phase (`<feature>`, `<phase>` slug).
 - The phase plan — **the next phase's entry only**, to find what comes next.
-- `verdict.json` for the phase.
+- `verdict.json` for the phase, and `exceptions.json` beside it when the phase has one.
 - The phase's specs and `test-mapping.md` files — for the contracts they settled, not to summarise.
 
 ## Procedure

@@ -71,6 +71,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import spec_gate_state  # noqa: E402
+
 OK = 0
 NOT_EXCEPTED = 1
 ERROR = 2
@@ -171,7 +175,11 @@ def touched(path: Path, scope: set[Path]) -> bool:
 def spec_shipped(spec_path: Path) -> bool:
     """Whether a spec has been implemented, and is therefore past the point of being re-authored.
 
-    Read from `status: done` in the spec's own frontmatter, and deliberately from nothing else. That
+    Read from `status: done` in the spec's own frontmatter, and deliberately from nothing else —
+    through `spec_gate_state.frontmatter`, the repository's one strict reader of a spec's stamps. A
+    second, looser parse here would answer a different question than the resolver does: split on the
+    first `\n---` a spec happens to contain, a spec with **no** frontmatter at all reads its whole
+    body as a header, so prose saying `status: done` would ship it. That
     stamp is what says the implementer finished against this text: the tests exist, the code exists,
     and the phase's suite has run green over both. Splitting it into siblings afterwards would
     renumber requirement ids that `test-mapping.md` rows, `verdict.json` findings and every prior
@@ -188,12 +196,7 @@ def spec_shipped(spec_path: Path) -> bool:
         text = Path(spec_path).read_text(encoding="utf-8")
     except OSError:
         return False
-    head, _, _ = text.partition("\n---")
-    for line in head.splitlines():
-        key, sep, value = line.partition(":")
-        if sep and key.strip() == "status":
-            return value.split("#")[0].strip() == "done"
-    return False
+    return spec_gate_state.frontmatter(text).get("status") == "done"
 
 
 # --- evidence 3: excepted ------------------------------------------------------------------------

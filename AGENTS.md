@@ -68,17 +68,6 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    absent root is CLEAN but reported on stderr, never a silent pass. **It is diff-scoped** (3e):
    repository-wide it refused every spec write of one phase over 17 undeclared spawners in locked
    tests nobody had opened. `--all` audits the tree, deliberately not from CI.
-3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
-   counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
-   call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`
-   mechanism, shared by the read-path check, the verifier pre-check and the cost gate; an unknowable
-   scope enforces nothing and says so), **shipped** (`status: done` — the remedy no longer exists, and
-   a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
-   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
-   named call site — and an unknown rule is a hard failure naming what was invented. Every exception
-   is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
-   all, and named on stderr when it applies. **A phase closed with a recorded exception is CLOSED**,
-   so `scripts/pipeline_state.py` walks past it instead of parking there forever.
    **A spec already approved and implemented is re-gated on its changes only**; unchanged text was
    passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body the gate last
    **approved** (a rejection records its hash, verdict and report, never that reference body) and the
@@ -87,6 +76,22 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    or a `binding:` changed, and when the Verifier routed the phase back with a **coverage gap** —
    there the question is what the spec failed to require, so unchanged text is where to look. A
    first gate is always full.
+3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
+   counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
+   call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`
+   mechanism, shared by the read-path check, the verifier pre-check and the cost gate; an unknowable
+   scope enforces nothing and says so), **shipped** (`status: done` in the spec's frontmatter, read
+   through `spec_gate_state` like every other stamp — the remedy no longer exists, and
+   a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
+   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
+   named call site — and an unknown rule is a hard failure naming what was invented. Every exception
+   is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
+   all, and named on stderr when it applies — and `bypass_log.sh` **exits non-zero when it cannot
+   append**, so an override nobody could log is not an override. **A phase closed with a recorded
+   exception is CLOSED**, so `scripts/pipeline_state.py` walks past it instead of parking there
+   forever. `pipeline_state.py --from-phase <n>` steps over earlier phases for one invocation and
+   answers **nothing feature-wide** over them: with any phase skipped the stage is `unknown`, never
+   `done` or `e2e-author`.
 3c. **Amendments — change a verified phase without re-verifying all of it.**
    `scripts/amendments.py` records the requirement ids a post-verification change touched; **only
    those re-verify**, and the verdict reads *verified at attempt N, plus amendments A1..An*

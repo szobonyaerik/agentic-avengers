@@ -406,6 +406,26 @@ def test_every_document_names_the_source_that_makes_its_writer_declare_readers()
         )
 
 
+def test_every_ledger_the_card_is_declared_to_read_is_one_it_is_told_to_read() -> None:
+    """`check --sources` is one-directional: it catches a removed read coming back, never a reader
+    declared for a stage nobody instructed. `exceptions.json` shipped declaring `phase-handover`
+    while neither the skill nor the template mentioned it, which is a promise with no mechanism —
+    the same defect class as a rule no call site reads.
+    """
+    skill = (REPO / "skills" / "phase-handover" / "SKILL.md").read_text(encoding="utf-8")
+    template = (REPO / "docs" / "templates" / "handover.template.md").read_text(encoding="utf-8")
+    for name, spec in READ_PATH.items():
+        if not name.endswith(".json"):
+            continue
+        if not any("phase-handover" in reader for reader in spec.get("readers", [])):
+            continue
+        assert name in skill, f"{name} declares phase-handover as a reader; the skill never names it"
+        assert name in template, (
+            f"{name} declares phase-handover as a reader, and the card template gives it no line "
+            f"to carry — a declared reader nobody instructed reads nothing"
+        )
+
+
 def test_every_shipped_markdown_template_declares_readers_in_its_own_frontmatter() -> None:
     """A template that mentions `readers:` only in prose teaches a document that fails the check."""
     for name, spec in READ_PATH.items():

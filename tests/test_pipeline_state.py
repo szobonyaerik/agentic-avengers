@@ -416,3 +416,46 @@ def test_from_phase_names_what_it_stepped_over(tmp_path: Path, capsys) -> None:
     write_spec(feature, "2-next", "2.1-a", spec_gate="pending")
     next_stage(tmp_path, "demo", from_phase=2)
     assert "1-core" in capsys.readouterr().err
+
+
+def entered_over_an_unfinished_phase(tmp_path: Path) -> Path:
+    """Phase 1 owes spec-review; phase 2 is verified and handed over."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
+    write_spec(feature, "2-next", "2.1-a", review_status="approved", status="done")
+    write_verdict(feature, "2-next", "pass")
+    (feature / "phases" / "2-next" / "handover.md").write_text("done\n")
+    return feature
+
+
+def test_from_phase_claims_nothing_feature_wide_over_a_phase_it_skipped(tmp_path: Path) -> None:
+    """`done`/`e2e-author` here would drive an --auto run to feature close over an unfinished phase."""
+    entered_over_an_unfinished_phase(tmp_path)
+    state = next_stage(tmp_path, "demo", from_phase=2)
+    assert state.stage == "unknown"
+    assert "1-core" in state.reason
+
+
+def test_from_phase_does_not_report_done_once_e2e_exists(tmp_path: Path) -> None:
+    feature = entered_over_an_unfinished_phase(tmp_path)
+    (feature / "e2e-mapping.md").write_text("mapped\n")
+    assert next_stage(tmp_path, "demo", from_phase=2).stage == "unknown"
+
+
+def test_from_phase_does_not_answer_the_plan_vs_disk_question(tmp_path: Path) -> None:
+    """A planned phase nobody specced is a feature-wide claim too, and it is not this walk's to make."""
+    feature = entered_over_an_unfinished_phase(tmp_path)
+    (feature / "plan.md").write_text(PLAN_WITH_PHASES)
+    assert next_stage(tmp_path, "demo", from_phase=2).stage == "unknown"
+
+
+def test_entering_past_every_phase_on_disk_claims_nothing(tmp_path: Path) -> None:
+    """`--from-phase 99` examines nothing at all; `done` would be a verdict over the whole feature."""
+    entered_over_an_unfinished_phase(tmp_path)
+    assert next_stage(tmp_path, "demo", from_phase=99).stage == "unknown"
+
+
+def test_from_phase_that_skips_nothing_still_resolves_the_feature(tmp_path: Path) -> None:
+    """The narrowing is what forbids a feature-wide answer, not the flag being present."""
+    finished_phase(tmp_path)
+    assert next_stage(tmp_path, "demo", from_phase=1).stage == "e2e-author"
