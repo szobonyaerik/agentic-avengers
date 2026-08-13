@@ -12,7 +12,22 @@ The bias here is to under-report progress. When a stamp is missing or unreadable
 it is reported as still owing work, because the cost of re-running a stage is a wasted call, while
 the cost of skipping one is an ungated spec reaching the implementer.
 
-    python3 scripts/pipeline_state.py <feature-id> [--root .]
+**That bias has one honest limit, and it is the applicability boundary** (`scripts/applicability.py`).
+A phase can close with a **disclosed exception**: a captain-ordered cap, a gate that could not be
+reached, a stage deliberately not run — recorded on the phase's `exceptions.json` ledger, naming the
+rule, the subject, who decided it and why. Read as an absent stamp, that is indistinguishable from
+unfinished work: one measured feature closed phase 8 that way and this resolver parked on spec 8.1
+forever, so `/avenger-run --auto` could not start a phase again from the moment phase 8 closed.
+**A phase closed with a recorded exception is CLOSED**, and it is read here as closed. The two
+remedies that do not need this — stamping `review_status: approved` for a human sign-off nobody gave,
+or obtaining a machine verdict that was never obtained — are the "looks fine" class this pipeline
+exists to remove, and the ledger is what makes neither necessary.
+
+`--from-phase` is the blunt companion to that: it enters at a named phase, skipping everything
+below it. It records nothing and judges nothing, so it says loudly which phases it skipped. Prefer
+the ledger — it fixes the cause; this only steps over it for one invocation.
+
+    python3 scripts/pipeline_state.py <feature-id> [--root .] [--from-phase N]
 """
 
 from __future__ import annotations
@@ -27,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import amendments  # noqa: E402
+import applicability  # noqa: E402
 import spec_gate_state  # noqa: E402
 
 FEATURE_ORDER: tuple[tuple[str, str], ...] = (
@@ -103,6 +119,34 @@ def _ordered_dirs(parent: Path) -> list[Path]:
     )
 
 
+def _excepted(phase: Path, rule: str, subject: str) -> bool:
+    """Whether this phase records a disclosed exception to `rule` for `subject`.
+
+    An exception that applied silently would be the bypass this ledger exists to replace, so every
+    one it applies is named on stderr — stdout carries the JSON the orchestrator parses.
+
+    A ledger this cannot read grants NOTHING and says so. That is the same under-report bias the rest
+    of the resolver runs on: the cost of re-running a stage is a wasted call, and the cost of
+    skipping one on a file nobody could parse is a stage silently deleted.
+    """
+    try:
+        record = applicability.excepted(phase, rule, subject)
+    except applicability.ApplicabilityError as exc:
+        print(
+            f"pipeline-state: {phase.name} has an exception ledger this cannot read ({exc}). "
+            f"No exception is granted — the stage below is still owed.",
+            file=sys.stderr,
+        )
+        return False
+    if record is None:
+        return False
+    print(
+        f"pipeline-state: {phase.name} — `{rule}` is not owed for {subject}: {record.describe()}",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
     """The stage this spec still owes, or None when it is implemented and green."""
     spec_file = spec / "spec.md"
@@ -125,13 +169,13 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
     }
 
     gate = spec_gate_state.status(fields)
-    if gate == spec_gate_state.PENDING:
-        return State(
-            stage="spec-gate",
-            reason=f"{spec.name} has not been through the spec gate",
-            **common,
-        )
-    if gate == spec_gate_state.BLOCKED:
+    if gate != spec_gate_state.APPROVED and not _excepted(phase, "spec-gate", spec.name):
+        if gate == spec_gate_state.PENDING:
+            return State(
+                stage="spec-gate",
+                reason=f"{spec.name} has not been through the spec gate",
+                **common,
+            )
         return State(
             stage="spec-writer",
             reason=f"{spec.name} was blocked by the spec gate",
@@ -140,7 +184,9 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
 
     # The human sign-off is a separate question from the machine gate, and it is the only thing
     # `review_status` still means. Under SPEC_REVIEW_MODE=auto the gate stamps it itself.
-    if fields.get("review_status") != "approved":
+    if fields.get("review_status") != "approved" and not _excepted(
+        phase, "spec-review", spec.name
+    ):
         return State(
             stage="spec-review", reason=f"{spec.name} is not approved", **common
         )
@@ -190,7 +236,7 @@ def _phase_state(feature: str, phase: Path) -> State | None:
     common = {"feature": feature, "phase": phase.name, "criticality": criticality}
 
     verdict = _verdict(phase)
-    if verdict != "pass":
+    if verdict != "pass" and not _excepted(phase, "verdict", phase.name):
         if verdict == "fail":
             return State(
                 stage="implementer",
@@ -270,7 +316,22 @@ def _missing_planned_phase(feature_dir: Path, phases: list[Path]) -> State | Non
     return None
 
 
-def next_stage(root: Path, feature: str) -> State:
+def _entered_at(phases: list[Path], from_phase: int | None) -> list[Path]:
+    """The phases to walk, honouring `--from-phase`. Never silent about what it stepped over."""
+    if from_phase is None:
+        return phases
+    kept = [p for p in phases if _numeric_key(p.name)[0] >= from_phase]
+    skipped = [p.name for p in phases if p not in kept]
+    print(
+        f"pipeline-state: entering at phase {from_phase} — {len(skipped)} earlier phase(s) were "
+        f"NOT examined and nothing about them is claimed"
+        + (f": {', '.join(skipped)}" if skipped else ""),
+        file=sys.stderr,
+    )
+    return kept
+
+
+def next_stage(root: Path, feature: str, from_phase: int | None = None) -> State:
     """Resolve the one stage `feature` owes next, walking phases in dependency order.
 
     Raises:
@@ -291,8 +352,9 @@ def next_stage(root: Path, feature: str) -> State:
             stage="spec-writer",
             reason="plan.md has no phases on disk yet",
         )
+    walked = _entered_at(phases, from_phase)
 
-    for phase in phases:
+    for phase in walked:
         pending = _phase_state(feature, phase)
         if pending is not None:
             return pending
@@ -323,10 +385,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("feature", help="feature id under docs/features/")
     parser.add_argument("--root", default=".", help="repository root (default: cwd)")
+    parser.add_argument(
+        "--from-phase",
+        type=int,
+        default=None,
+        help="enter at this phase number, skipping every earlier phase. Records nothing and judges "
+        "nothing; the phases it steps over are named on stderr. Prefer an exception on the phase's "
+        "ledger (scripts/applicability.py), which fixes the cause instead of stepping over it.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        print(next_stage(Path(args.root), args.feature).as_json())
+        print(next_stage(Path(args.root), args.feature, args.from_phase).as_json())
     except FeatureNotFoundError as exc:
         print(f"pipeline-state: {exc}", file=sys.stderr)
         return 1

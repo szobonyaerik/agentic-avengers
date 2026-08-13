@@ -354,13 +354,58 @@ def test_the_decide_step_records_from_where_the_verdict_is_derived(stub_sink, mo
 # --- verification attempts, suite size, phase boundaries --------------------------------------------
 
 
-def test_each_verification_attempt_is_counted(stub_sink):  # noqa: F811
-    project, store, _ = stub_sink
-    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+def verdict_at(phase_dir: Path, attempt: int, name: str = "verdict.json") -> None:
+    """The Verifier's own record, which is where the attempt number lives."""
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    (phase_dir / name).write_text(
+        json.dumps({"phase": phase_dir.name, "attempt": attempt, "verdict": "fail"}),
+        encoding="utf-8",
+    )
 
-    assert metrics.open_verification_attempt(phase_dir) == 1
-    assert metrics.open_verification_attempt(phase_dir) == 2
-    assert stored(store, "08")["verification_attempts"] == 2
+
+def test_the_attempt_is_derived_from_the_verdict_record_not_counted_per_call(stub_sink):  # noqa: F811
+    """The measured defect: 8 recorded — three timed-out review calls plus five diagnostic
+    retries — against a `verdict.json` correctly reading `attempt: 1` and a cap of 3 that had never
+    fired. Read against that cap the number says the cap failed. Repeated calls must converge."""
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+
+    assert metrics.open_verification_attempt(str(phase_dir)) == 1
+    assert metrics.open_verification_attempt(str(phase_dir)) == 1
+    assert metrics.open_verification_attempt(str(phase_dir)) == 1
+    assert stored(store, "08")["verification_attempts"] == 1
+
+
+def test_the_next_attempt_follows_the_verdict_on_record(stub_sink):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    verdict_at(phase_dir, 2)
+
+    assert metrics.open_verification_attempt(str(phase_dir)) == 3
+    assert stored(store, "08")["verification_attempts"] == 3
+
+
+def test_archived_attempts_count_towards_it(stub_sink):  # noqa: F811
+    """The archives are how the cap counts, so they are how the metric counts."""
+    project, _, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    verdict_at(phase_dir, 1, "verdict-attempt-1.json")
+    verdict_at(phase_dir, 2, "verdict-attempt-2.json")
+    verdict_at(phase_dir, 3)
+
+    assert metrics.open_verification_attempt(str(phase_dir)) == 4
+
+
+def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_sink):  # noqa: F811
+    """Measurement fails open: an unreadable record leaves the stored value alone."""
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text("{not json", encoding="utf-8")
+
+    assert metrics.open_verification_attempt(str(phase_dir)) is None
+    assert not (store / "phase-08.json").exists()
 
 
 def test_the_suite_is_counted_the_same_way_at_both_ends(stub_sink):  # noqa: F811

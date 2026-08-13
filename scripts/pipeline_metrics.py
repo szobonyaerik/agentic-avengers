@@ -27,7 +27,7 @@ record converges instead of double-counting a round.
 CLI, for the shell emission points (all fail open, all exit 0):
     pipeline_metrics.py spec-round <spec.md>
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
-    pipeline_metrics.py verifier-attempt <phase-dir>
+    pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
     pipeline_metrics.py verifier-findings <phase-dir> <verifier-review.json>
     pipeline_metrics.py mutation-survivors <phase-dir> <mutation-score.json>
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import metrics_sink as sink  # noqa: E402
 import skill_contract  # noqa: E402
+import verifier_attempts  # noqa: E402
 from spec_gate_cache import keep, normalized, previous, split_spec  # noqa: E402
 
 #: `docs/features/<feature>/phases/<n>-<slug>/…` — the phase number is in the path, so no stage has
@@ -403,13 +404,33 @@ def _spec_rounds(record: dict | None) -> int:
 
 
 def open_verification_attempt(phase_dir: str) -> int | None:
-    """Count one more verification attempt, whatever verdict it goes on to reach."""
+    """The verification ATTEMPT this run belongs to, derived from the verdict record on disk.
+
+    It used to increment on every invocation of `verifier_review.sh`, which is not the same thing
+    and reads as if it were. One measured phase recorded **8** — three cross-family review calls that
+    timed out plus five diagnostic retries — while `verdict.json` correctly said `attempt: 1` and the
+    real three-attempt cap sat at 1 of 3, never fired. Read against a cap of 3, that number says the
+    cap failed and a declared hypothesis was disproved. Both would have been false, and the metric is
+    the only thing that said so.
+
+    So the attempt comes from where the cap gets it: `verifier_attempts.current()`, over
+    `verdict.json` and the `verdict-attempt-<n>.json` archives the Verifier writes. This run is the
+    one after the last one on record, and **repeated invocations converge** on that same number
+    rather than accumulating — which is the producer contract firstmate's record requires, and
+    exactly what a retry must not disturb.
+
+    Retries and provider failures are not lost, they are attributed correctly: `gate_calls[]` already
+    carries one entry per call with its `failure_cause`, written by `gate_runner.py`. Only the
+    attribution was wrong. No field is added — firstmate owns that schema.
+
+    An unreadable verdict record leaves the derivation to the record already stored, which is a
+    measurement failing open exactly like every other one here.
+    """
     try:
         phase = resolve_phase(phase_dir)
         if phase is None:
             return None
-        record = sink.show(phase)
-        attempt = int((record or {}).get("verification_attempts") or 0) + 1
+        attempt = verifier_attempts.current(Path(phase_dir)) + 1
         sink.set_fields(phase, verification_attempts=attempt)
         return attempt
     except Exception as exc:  # noqa: BLE001
@@ -715,7 +736,10 @@ def _build_parser() -> argparse.ArgumentParser:
     killed.add_argument("--phase-dir")
     killed.add_argument("--model", default=os.environ.get("GATE_MODEL", "unknown"))
 
-    attempt = sub.add_parser("verifier-attempt", help="count one verification attempt")
+    attempt = sub.add_parser(
+        "verifier-attempt",
+        help="print the verification ATTEMPT this run belongs to, derived from verdict.json",
+    )
     attempt.add_argument("phase_dir")
 
     findings = sub.add_parser("verifier-findings", help="record the review's findings as defects")

@@ -68,7 +68,8 @@ sys.path.insert(0, str(HERE))
 # held its own copy of the declaration regex, and both copies went blind on table-formatted specs at
 # the same moment: the cap read `0/12` and this check reported zero ids owed a trace, so it passed
 # vacuously on the very spec it exists to hold. A second copy of a rule is the copy that drifts.
-from doc_read_path import changed_paths  # noqa: E402
+# The diff scope comes from `applicability.py`, which owns the whole boundary this check sits on.
+from applicability import changed_paths, touched  # noqa: E402
 from requirement_cap import declared_bindings  # noqa: E402
 
 ACCEPTANCE_HEADING = re.compile(r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE)
@@ -188,12 +189,7 @@ def changed_phase_dirs(root: Path) -> list[Path] | None:
     scope = changed_paths(Path(root))
     if scope is None:
         return None
-    touched: list[Path] = []
-    for phase in phase_dirs(root):
-        resolved = phase.resolve()
-        if any(changed == resolved or resolved in changed.parents for changed in scope):
-            touched.append(phase)
-    return touched
+    return [phase for phase in phase_dirs(root) if touched(phase, scope)]
 
 
 def main(argv: list[str] | None = None) -> int:

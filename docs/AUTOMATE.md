@@ -83,8 +83,11 @@ So the orchestrator is **`commands/avenger-run.md`**, which turns the main sessi
 orchestrator. It is not the "static list of stages" this file previously dismissed: it branches on
 gate verdicts and retries, because the routing lives in the command body and the *position* comes from
 `scripts/pipeline_state.py` — a deterministic resolver that reads spec frontmatter stamps
-(`spec_gate`, `review_status`, `status`), `verdict.json` and `amendments.json`, and returns the one stage the
-feature owes next. Artifacts are the state, so a run resumes across `/clear`, compaction, or a new
+(`spec_gate`, `review_status`, `status`), `verdict.json`, `amendments.json` and `exceptions.json`, and
+returns the one stage the feature owes next. A phase closed with a **recorded exception**
+(`scripts/applicability.py`) is read as CLOSED rather than incomplete — without that, one phase closed
+under a disclosed captain-ordered cap parked the resolver forever and `--auto` could not start a phase
+again. `--from-phase <n>` enters at a named phase and names every phase it stepped over. Artifacts are the state, so a run resumes across `/clear`, compaction, or a new
 session.
 
 What it does beyond the flow above:

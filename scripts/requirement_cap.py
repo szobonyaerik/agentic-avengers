@@ -19,6 +19,24 @@ That distinction is the whole design:
 Twelve is the cap (`SPEC_REQUIREMENT_MAX` overrides it). It is a budget, not a discovery: it is the
 number at which one spec still reads as one increment.
 
+**The cap binds a spec that can still be split.** That is the applicability boundary
+(`scripts/applicability.py`), and it is not a softening of the rule - it is what makes the rule a
+gate rather than a wedge. A spec stamped `status: done` has been implemented: its requirement ids
+are already pointed at by `test-mapping.md` rows, by `verdict.json` findings and by prior handovers,
+and dividing it into siblings would renumber all of them. The only remedy this check prescribes is
+therefore unavailable, and a check whose remedy is unavailable cannot be answered at all - two
+shipped specs of one measured feature declared 30 and 29 requirements against a cap of 12, so **no
+verdict of any kind was reachable for them, ever**. Over the cap, a shipped spec is COUNTED and
+NAMED and never blocked; a spec still being written is blocked and split exactly as before. The cap
+measurably removed spec-size growth and it keeps doing so, because growth happens while a spec is
+being written and that is precisely where it still binds.
+
+It is not an escape hatch for a draft: `status: done` is stamped by the implementer, not the writer,
+and it is what fires `hook_verifier.sh` (the phase suite must pass) and `verifier_precheck.py` (every
+requirement id owed a trace must have one). A draft claiming to be done fails both, loudly. A
+recorded `requirement-cap` exception on the phase's ledger is the explicit second route, for a spec
+that must be excused by decision rather than by evidence.
+
 ## How requirements are counted
 
 A **declaration** is a line whose first content is a requirement id (`R<n>.<k>.<m>`), reached through
@@ -72,6 +90,10 @@ import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import applicability  # noqa: E402
 
 WITHIN = 0
 OVER = 1
@@ -255,6 +277,36 @@ def split_message(spec: Path, ids: list[str], limit: int, scope: str) -> str:
     )
 
 
+def unenforceable(spec: Path) -> str | None:
+    """Why the cap cannot bind this spec, or None when it binds.
+
+    Two evidences, both from the applicability boundary: the spec has **shipped** (its remedy no
+    longer exists), or the phase records a disclosed **exception** for this rule and this spec.
+
+    An unreadable ledger grants nothing and says so — under-report, exactly as the resolver does.
+    """
+    if applicability.spec_shipped(spec):
+        return (
+            "it is stamped `status: done`, so it has been implemented and the SPLIT this check "
+            "prescribes would renumber requirement ids that test-mapping rows, verdict findings "
+            "and prior handovers already point at"
+        )
+    try:
+        phase_dir = spec.resolve().parents[2]   # specs/<n>.<k>-<sub>/spec.md -> the phase directory
+    except IndexError:
+        return None
+    try:
+        record = applicability.excepted(phase_dir, "requirement-cap", spec.resolve().parent.name)
+    except applicability.ApplicabilityError as exc:
+        print(
+            f"[requirement_cap] {phase_dir.name} has an exception ledger this cannot read ({exc}). "
+            f"No exception is granted.",
+            file=sys.stderr,
+        )
+        return None
+    return f"a recorded exception covers it — {record.describe()}" if record else None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("spec", type=Path)
@@ -284,8 +336,19 @@ def main(argv: list[str] | None = None) -> int:
         print(len(ids))
         return WITHIN
     if len(ids) > limit:
-        print(split_message(args.spec, ids, limit, scope), file=sys.stderr)
-        return OVER
+        why = unenforceable(args.spec)
+        if why is None:
+            print(split_message(args.spec, ids, limit, scope), file=sys.stderr)
+            return OVER
+        # Counted and named, never blocked. The number still has to be visible: a check that goes
+        # quiet on the specs it stopped enforcing is indistinguishable from a check that passed.
+        applicability.report_unenforced(
+            "requirement_cap",
+            1,
+            f"{args.spec} declares {len(ids)} requirements ({scope}) against a cap of {limit}, "
+            f"and {why}",
+        )
+        return WITHIN
     print(f"  requirements: {len(ids)}/{limit} ({scope})", file=sys.stderr)
     return WITHIN
 

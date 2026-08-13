@@ -256,3 +256,86 @@ def test_a_bad_cap_stops_the_check_rather_than_falling_back(
     """Same rule as GATE_CALL_TIMEOUT: a budget believed rather than checked is the defect."""
     monkeypatch.setenv("SPEC_REQUIREMENT_MAX", "lots")
     assert main([str(spec(tmp_path, requirements(3)))]) == 2
+
+
+# ── the applicability boundary: the cap binds a spec that can still be split ──
+#
+# Measured: two shipped specs declared 30 and 29 requirements against a cap of 12, and the only
+# remedy the cap offers is a SPLIT — impossible for a spec already implemented, whose requirement
+# ids are pointed at by test-mapping rows, verdict findings and prior handovers. So no verdict of
+# any kind was reachable for them, ever. A rule whose remedy is unavailable is not a gate.
+
+
+def shipped_spec(tmp_path: Path, body: str, *, status: str = "done") -> Path:
+    """A spec in its real place on disk, so the phase directory (and its ledger) resolve."""
+    spec_dir = tmp_path / "docs" / "features" / "demo" / "phases" / "8-x" / "specs" / "8.1-y"
+    spec_dir.mkdir(parents=True)
+    path = spec_dir / "spec.md"
+    path.write_text(
+        f"---\nfeature: demo\nspec_gate: approved\nstatus: {status}\n---\n\n# Spec\n\n" + body,
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_a_spec_still_being_written_is_still_split(tmp_path: Path) -> None:
+    """The direction that must not move: the cap removed spec-size growth and keeps doing so."""
+    assert main([str(shipped_spec(tmp_path, requirements(30), status="pending"))]) == 1
+
+
+def test_a_shipped_spec_over_the_cap_is_counted_not_blocked(tmp_path: Path, capsys) -> None:
+    assert main([str(shipped_spec(tmp_path, requirements(30)))]) == 0
+    err = capsys.readouterr().err
+    assert "30" in err and "NOT enforced" in err and "status: done" in err
+
+
+def test_a_shipped_spec_within_the_cap_reports_normally(tmp_path: Path, capsys) -> None:
+    assert main([str(shipped_spec(tmp_path, requirements(3)))]) == 0
+    assert "requirements: 3/12" in capsys.readouterr().err
+
+
+def test_a_recorded_exception_excuses_a_spec_that_has_not_shipped(tmp_path: Path, capsys) -> None:
+    """The explicit second route: excused by decision rather than by evidence."""
+    import json
+
+    path = shipped_spec(tmp_path, requirements(30), status="pending")
+    (path.parents[2] / "exceptions.json").write_text(
+        json.dumps({
+            "exceptions": [{
+                "id": "X1",
+                "rule": "requirement-cap",
+                "subject": "8.1-y",
+                "reason": "locked and implemented before the cap landed",
+                "recorded_by": "captain",
+                "recorded_at": "2026-08-09T00:00:00Z",
+            }]
+        })
+    )
+    assert main([str(path)]) == 0
+    assert "X1" in capsys.readouterr().err
+
+
+def test_an_exception_for_another_spec_does_not_excuse_this_one(tmp_path: Path) -> None:
+    import json
+
+    path = shipped_spec(tmp_path, requirements(30), status="pending")
+    (path.parents[2] / "exceptions.json").write_text(
+        json.dumps({
+            "exceptions": [{
+                "id": "X1", "rule": "requirement-cap", "subject": "8.2-other",
+                "reason": "r", "recorded_by": "captain", "recorded_at": "2026-08-09T00:00:00Z",
+            }]
+        })
+    )
+    assert main([str(path)]) == 1
+
+
+def test_an_unreadable_ledger_grants_no_exemption(tmp_path: Path) -> None:
+    path = shipped_spec(tmp_path, requirements(30), status="pending")
+    (path.parents[2] / "exceptions.json").write_text("{not json")
+    assert main([str(path)]) == 1
+
+
+def test_the_count_mode_is_unchanged_for_a_shipped_spec(tmp_path: Path, capsys) -> None:
+    assert main([str(shipped_spec(tmp_path, requirements(30))), "--count"]) == 0
+    assert capsys.readouterr().out.strip() == "30"

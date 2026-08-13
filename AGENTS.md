@@ -55,13 +55,30 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and
    that ratchet took one spec from 25k to 51k characters across four rejected rounds.
+   **It binds a spec that can still be split** (3e): a spec stamped `status: done` has shipped and the
+   split would renumber ids that test-mapping rows and verdict findings already point at, so it is
+   counted and named instead. Two shipped specs declaring 30 and 29 requirements made every verdict
+   unreachable for them, forever.
 3a. **The spec gate is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
    spawners lacking `@pytest.mark.subprocess("<why>")` — no model, both modes, on every spec write via
    `hook_spec_gate.sh`. It is the only stage that can see cost: the observe pass, cross-family review and
    verification all read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
    budget on purpose — one unchanged suite measured 66.43s to 137.76s across seven runs.
    `SUBPROC_CHECK_PATHS` points it at the real root when a project's tests are not at `tests/`; an
-   absent root is CLEAN but reported on stderr, never a silent pass.
+   absent root is CLEAN but reported on stderr, never a silent pass. **It is diff-scoped** (3e):
+   repository-wide it refused every spec write of one phase over 17 undeclared spawners in locked
+   tests nobody had opened. `--all` audits the tree, deliberately not from CI.
+3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
+   counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
+   call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`
+   mechanism, shared by the read-path check, the verifier pre-check and the cost gate; an unknowable
+   scope enforces nothing and says so), **shipped** (`status: done` — the remedy no longer exists, and
+   a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
+   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
+   `subprocess-cost` — and an unknown rule is a hard failure naming what was invented. Every exception
+   is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
+   all, and named on stderr when it applies. **A phase closed with a recorded exception is CLOSED**,
+   so `scripts/pipeline_state.py` walks past it instead of parking there forever.
    **A spec already approved and implemented is re-gated on its changes only**; unchanged text was
    passed before and is not a finding. `scripts/spec_gate_cache.py` keeps the body the gate last
    **approved** (a rejection records its hash, verdict and report, never that reference body) and the

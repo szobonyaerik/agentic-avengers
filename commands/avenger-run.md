@@ -133,6 +133,20 @@ It returns `{stage, phase, spec, spec_path, criticality, reason}` derived from t
 Re-run it after every stage. It is what makes a run resumable across a `/clear`, a compaction, or a
 new session: invoking `/avenger-run <feature-id>` with no brief picks up exactly where it stopped.
 
+**If it parks on a phase that closed with a disclosed exception** — a captain-ordered cap, a stage
+deliberately not run, a gate that could not be reached — record that exception as state rather than
+stamping a sign-off nobody gave or a verdict nobody obtained:
+
+```bash
+# prose belongs in a file the command reads
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/applicability.py" record <phase-dir> \
+  --rule spec-review --subject <n>.<k>-<subslug> --reason-file <file> --recorded-by <who>
+```
+
+Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `subprocess-cost`; one rule and one
+subject each, audited to `gate-overrides.log`. `--from-phase <n>` steps over earlier phases for one
+invocation without recording anything, and names what it skipped.
+
 Map the stage to a subagent and invoke it with the feature id, the artifact paths, and the resolver's
 `reason` as context:
 

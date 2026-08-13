@@ -9,7 +9,8 @@
 #
 #   1. MECHANICAL, no model — undeclared subprocess spawners in tests/ (scripts/subprocess_check.py).
 #      The pipeline's only cost gate: every reading stage judges correctness, and an expensive test
-#      is not incorrect.
+#      is not incorrect. DIFF-SCOPED (scripts/applicability.py): repository-wide it refused every
+#      spec write of one measured phase over 17 spawners in locked phases nobody had opened.
 #   2. MECHANICAL, no model — the requirement cap (scripts/requirement_cap.py). Over the cap the
 #      spec SPLITS. This runs BEFORE any model sees the document, because a rejection for size is
 #      one more thing for a spec to grow around: the two gates it replaced had no size ceiling, no
@@ -62,8 +63,10 @@ python3 "$SD/pipeline_metrics.py" phase-open "$FILE" >/dev/null 2>&1 || true
 
 # --- 1. Mechanical: undeclared subprocess spawners (no model, always) ----------------------------
 # No path argument: the checker resolves its own root from $SUBPROC_CHECK_PATHS, falling back to
-# `tests`. Its output is echoed even on success — the "no such test root" note is exactly the case
-# that must not be silent.
+# `tests`, and scopes enforcement to what this change touched — an argument here would ask it to
+# enforce that path whole, which is the repository-wide behaviour that held a phase hostage to 17
+# spawners in locked tests. Its output is echoed even on success — the "no such test root" note and
+# the scope line are exactly the cases that must not be silent.
 SUBPROC=$(python3 "$SD/subprocess_check.py" 2>&1); subproc_rc=$?
 [ -n "$SUBPROC" ] && echo "$SUBPROC" >&2
 if [ "$subproc_rc" -ne 0 ]; then
