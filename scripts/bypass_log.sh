@@ -8,7 +8,8 @@
 # grammar must be made in BOTH places.
 # from a hook, or a per-finding waiver acknowledged by the Verifier — then exits 0 so the session
 # continues. Never silent, and **exit 0 means the record was written**: an override that could not be
-# appended exits 1, so every caller fails closed on the one thing that makes an override sanctioned.
+# appended exits 2 — the blocking code every caller here already fails closed on — so the one thing
+# that makes an override sanctioned is the one thing that decides whether it proceeds.
 #
 #   usage: bypass_log.sh <gate-name> [finding-id] [waived-by]
 #
@@ -36,12 +37,20 @@ scope="gate:$GATE"
 [ -n "$FINDING" ] && scope="$scope$(printf '\t')finding:$FINDING"
 # The append is the whole guarantee, so its failure is this script's failure. An unwritable log (a
 # read-only mount, a missing $CLAUDE_PROJECT_DIR, a full disk) used to reach `exit 0` and read to
-# every caller as an audited override — the silent bypass the log exists to refuse. Whoever asked
-# for the override is told, and fails closed on the exit code.
+# every caller as an audited override — the silent bypass the log exists to refuse.
+#
+# It exits **2**, this repository's blocking code, and not merely non-zero. Every break-glass caller
+# hands off with `exec "$SD/bypass_log.sh" …` (hook_spec_gate.sh, hook_verifier.sh's fail(),
+# hook_mutation.sh), so this exit code IS the hook's: 1 is not blocking to the harness, and an
+# unlogged override that lets the write through is the same silent pass with an extra step.
+#
+# This message is the whole disclosure — the log line that would have carried it is exactly what
+# could not be written.
 if ! printf '%s\t%s\t%s\treason: %s\n' "$when" "$who" "$scope" "$reason" >> "$LOG"; then
-  echo "✗ NOT LOGGED: could not append to $LOG. An override that is not audited is not an" >&2
-  echo "  override — nothing was recorded, and the gate stands." >&2
-  exit 1
+  echo "✗ NOT LOGGED: could not append to $LOG." >&2
+  echo "  The gate was NOT bypassed and the waiver was NOT recorded: an override that is not" >&2
+  echo "  audited is not an override. Fix the log destination, then override again." >&2
+  exit 2
 fi
 if [ -n "$FINDING" ]; then
   echo "⚠ WAIVED finding '$FINDING' (gate '$GATE') — reason: ${GATE_BYPASS:-}" >&2

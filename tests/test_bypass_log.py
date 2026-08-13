@@ -216,20 +216,15 @@ def test_waiver_and_gate_bypass_share_one_log(project: Path) -> None:
     assert [line.count("\t") for line in lines] == [3, 4]
 
 
-def test_an_append_that_cannot_land_exits_non_zero_and_says_so(project: Path) -> None:
-    """Exit 0 must mean the record was written.
-
-    Every caller — the hook bypass, the CI bypass, the Verifier's waiver, an applicability
-    exception — decides whether the override is sanctioned from this exit code alone. An unwritable
-    destination that still answered 0 is an override nobody logged, reported as audited.
-    """
-    proc = subprocess.run(
+def run_writer(project: Path, root: Path) -> subprocess.CompletedProcess:
+    """The real writer against a chosen $CLAUDE_PROJECT_DIR, status kept rather than raised."""
+    return subprocess.run(
         ["bash", str(BYPASS_LOG), "fidelity"],
         cwd=project,
         env={
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "HOME": str(project),
-            "CLAUDE_PROJECT_DIR": str(project / "no-such-root"),
+            "CLAUDE_PROJECT_DIR": str(root),
             "GATE_BYPASS": "the docs gate is stale",
         },
         capture_output=True,
@@ -237,6 +232,26 @@ def test_an_append_that_cannot_land_exits_non_zero_and_says_so(project: Path) ->
         check=False,
     )
 
-    assert proc.returncode != 0
+
+def test_an_append_that_cannot_land_blocks_with_this_repos_blocking_code(project: Path) -> None:
+    """Exit 0 must mean the record was written — and the failure must actually stop the caller.
+
+    Every break-glass caller hands off with `exec bypass_log.sh …` (hook_spec_gate.sh,
+    hook_verifier.sh's fail(), hook_mutation.sh), so this exit code becomes the hook's, and only 2
+    blocks. Exiting 1 would let the write through with nothing in gate-overrides.log: the silent
+    bypass the log exists to refuse, one layer out.
+    """
+    proc = run_writer(project, project / "no-such-root")
+
+    assert proc.returncode == 2
     assert "NOT LOGGED" in proc.stderr
+    assert "NOT bypassed" in proc.stderr
     assert not (project / "no-such-root").exists()
+
+
+def test_a_logged_override_still_exits_zero_so_the_session_continues(project: Path) -> None:
+    """The success path is unchanged: an audited break-glass is not a block."""
+    proc = run_writer(project, project)
+
+    assert proc.returncode == 0
+    assert (project / "gate-overrides.log").read_text(encoding="utf-8").strip()

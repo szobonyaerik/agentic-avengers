@@ -86,8 +86,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
    named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
-   all, and named on stderr when it applies — and `bypass_log.sh` **exits non-zero when it cannot
-   append**, so an override nobody could log is not an override. **A phase closed with a recorded
+   all, and named on stderr when it applies — and `bypass_log.sh` **exits 2 (blocking) when it
+   cannot append**, so an override nobody could log is not an override. **A phase closed with a recorded
    exception is CLOSED**, so `scripts/pipeline_state.py` walks past it instead of parking there
    forever. `pipeline_state.py --from-phase <n>` steps over earlier phases for one invocation and
    answers **nothing feature-wide** over them: with any phase skipped the stage is `unknown`, never

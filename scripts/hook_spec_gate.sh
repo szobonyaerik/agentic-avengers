@@ -74,8 +74,10 @@ if [ "$subproc_rc" -ne 0 ]; then
     # Log and FALL THROUGH to the rest of the gate. `exec` would end the hook at exit 0 and the
     # model half would never run. GATE_BYPASS is one unscoped variable: setting it here also waives
     # a later block in the same run. That is audited, not silent — each override writes its own
-    # record to gate-overrides.log.
-    "$SD/bypass_log.sh" "spec-gate-subprocess"
+    # record to gate-overrides.log. This is the one caller that does NOT hand off with `exec`, so
+    # it is also the one that has to carry the writer's refusal itself: an unwritable log here would
+    # otherwise fall through into the rest of the gate as an override nobody recorded.
+    "$SD/bypass_log.sh" "spec-gate-subprocess" || exit 2
   elif [ "$subproc_rc" -eq 2 ]; then
     echo "spec-gate: the subprocess check could not read a file under the tests root (named above)" >&2
     echo "  — a file it cannot read is a file it cannot clear, so this fails closed." >&2

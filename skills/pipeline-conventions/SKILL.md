@@ -394,10 +394,12 @@ python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-cl
   shipped.
 - **Audited or not recorded.** Every one is written to `gate-overrides.log` through
   `scripts/bypass_log.sh` as it is recorded, and an exception that could not be logged is not
-  recorded at all — the writer **exits non-zero when the append fails** (an unwritable root, a
-  read-only mount, a full disk), because an exit code that cannot distinguish "logged" from "not
-  logged" makes every caller's fail-closed check decorative. **A resolver that applies one says so
-  on stderr.**
+  recorded at all — the writer **exits 2 when the append fails** (an unwritable root, a read-only
+  mount, a full disk), because an exit code that cannot distinguish "logged" from "not logged" makes
+  every caller's fail-closed check decorative. **2 and not merely non-zero**: every break-glass
+  caller hands off with `exec bypass_log.sh …`, so the writer's code becomes the hook's, and 1 is
+  not blocking to the harness — an unlogged override that lets the write through is the same silent
+  pass with an extra step. **A resolver that applies one says so on stderr.**
 - **Carried on the phase's contract card.** Recording an exception is manual and nothing creates the
   entry, so a forgotten one is invisible until a later phase wedges on it. `skills/phase-handover`
   lists the phase's open exceptions on the card, which is what puts an omission in front of the next

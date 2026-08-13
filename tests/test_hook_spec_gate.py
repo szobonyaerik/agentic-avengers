@@ -258,6 +258,62 @@ def test_an_unchanged_blocked_body_replays_its_block(project: Path) -> None:
     assert calls(project) == before, "a replayed block must not re-roll a fresh verdict"
 
 
+def undeclared_spawner(project: Path) -> Path:
+    """A git repo whose only touched test spawns a process without declaring why."""
+    for args in (
+        ("init", "-q"),
+        ("config", "user.email", "pipeline@example.com"),
+        ("config", "user.name", "pipeline"),
+        ("commit", "-q", "--allow-empty", "-m", "root"),
+    ):
+        subprocess.run(["git", *args], cwd=project, check=True, capture_output=True)
+    tests = project / "phase-tests"
+    tests.mkdir()
+    (tests / "test_spawn.py").write_text(
+        "import subprocess\n\n\ndef test_x():\n    subprocess.run(['true'])\n"
+    )
+    return tests
+
+
+def test_a_break_glass_over_the_cost_gate_that_cannot_be_logged_blocks(project: Path) -> None:
+    """The one break-glass caller that does not `exec` must carry the writer's refusal itself.
+
+    Without it the hook falls straight through into the rest of the gate on an override that
+    reached no line of gate-overrides.log.
+    """
+    tests = undeclared_spawner(project)
+    (project / "gate-overrides.log").mkdir()  # an append to a directory cannot land
+    spec = write_spec(project)
+
+    result = run_hook(
+        project, spec,
+        SUBPROC_CHECK_PATHS=str(tests),
+        GATE_BYPASS="the spawners are in locked tests",
+        STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+
+    assert result.returncode == 2
+    assert "NOT LOGGED" in result.stderr
+    assert calls(project) == [], "the gate proceeded on an unlogged override"
+
+
+def test_a_logged_break_glass_over_the_cost_gate_still_falls_through(project: Path) -> None:
+    """The audited path is unchanged: log it and run the rest of the gate."""
+    tests = undeclared_spawner(project)
+    spec = write_spec(project)
+
+    result = run_hook(
+        project, spec,
+        SUBPROC_CHECK_PATHS=str(tests),
+        GATE_BYPASS="the spawners are in locked tests",
+        STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls(project) == ["observations", "classifications"]
+    assert "spec-gate-subprocess" in (project / "gate-overrides.log").read_text()
+
+
 def test_a_replayed_block_still_honours_break_glass(project: Path) -> None:
     """A bypass silently dropped is the same defect as one silently taken."""
     spec = write_spec(project)
