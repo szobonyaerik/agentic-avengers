@@ -134,6 +134,9 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
                  binding contracts + decisions + artifact links + next phase; mirrors the verdict
                  and any waived findings. Everything else -> handover-archive.md, which NO stage
                  reads. Checked by scripts/doc_read_path.py, not merely asked for.
+                 Its Open items table states what the phase carries forward - a row per item, or an
+                 explicit `none`; SILENCE IS NOT NONE - and on the LAST card a forward claim must
+                 name an issue, since no phase follows to answer it (scripts/carried_items.py).
 
 FEATURE CLOSE (once, after the final phase is green)
   implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md

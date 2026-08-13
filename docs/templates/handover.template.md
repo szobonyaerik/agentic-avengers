@@ -62,7 +62,10 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
      `kind` is `open-finding` (carried at the attempt cap) or `forward-claim` (something a later
      phase must handle). The NEXT phase must answer every row - built, tested, or declined with a
      reason (scripts/carried_items.py) - and does not close until it has.
-     A row, or an explicit `none` row. SILENCE IS NOT NONE, and this section is checked. -->
+     A row, or an explicit `none` row. SILENCE IS NOT NONE, and this section is checked.
+     ON THE LAST CARD (frontmatter `next:` is `e2e` or `ship`) no phase follows to answer these, so
+     every `forward-claim` row must name an ISSUE instead - `#<number>` or an issue URL, anywhere in
+     the row. A presence check and nothing more; this phase does not close without it. -->
 | id | kind | one-line title | where the detail lives |
 |----|------|----------------|------------------------|
 | OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |

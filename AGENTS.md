@@ -123,7 +123,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    row - `built` into a spec requirement, `tested`, or `declined` with a stated reason - before it can
    close. `declined` is a real answer: an item belonging further out is re-carried on that phase's own
    card. The **spec writer** discharges, being the first stage that can turn a claim into a
-   requirement. Ids are scoped by the card that declared them; which card is in force is
+   requirement. **The last card's forward claims name an ISSUE** instead, since no phase follows to
+   answer them: a card whose `next:` is `e2e` or `ship` does not close while a `forward-claim` row
+   carries no `#<number>` or issue URL - a presence check, never a judgement about the claim.
+   Ids are scoped by the card that declared them; which card is in force is
    `spec_gate_context.prior_phase`'s decision, imported rather than re-derived. A pre-rule card with
    no section owes nothing, so a repository upgrades instead of being held hostage.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
