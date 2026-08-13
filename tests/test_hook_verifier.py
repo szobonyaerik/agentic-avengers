@@ -63,9 +63,13 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     (phase_dir(project) / "verdict.json").write_text(json.dumps(verdict))
 
 
-def run_hook(project: Path, **env: str) -> subprocess.CompletedProcess:
+def run_hook(project: Path, card: str = "# handover\n\n## Open items\nnone\n", **env: str
+             ) -> subprocess.CompletedProcess:
     handover = phase_dir(project) / "handover.md"
-    handover.write_text("# handover\n")
+    # A closing phase states what it carries forward, so the card these tests write says `none`
+    # explicitly. `tests/test_carried_items.py` owns that rule; here it is only enough card for the
+    # hook to reach the attempt cap, which is what this file pins.
+    handover.write_text(card)
     return subprocess.run(
         ["bash", str(project / "scripts" / "hook_verifier.sh")],
         input='{"tool_input": {"file_path": "%s"}}' % handover,
@@ -151,3 +155,99 @@ def test_the_cap_is_escapable_and_audited_rather_than_a_hard_wedge(project: Path
 
     assert result.returncode == 0, result.stderr
     assert (project / "gate-overrides.log").is_file()
+
+
+# ── a passing phase does not close over what the previous one carried ────────
+#
+# The other thing this hook now refuses. Phase 8 of one measured feature wrote down that
+# caller-supplied identifiers would become a problem in phases 9 to 12; phase 9 was the first such
+# caller and shipped exactly that defect, past every gate, because the prediction was prose.
+# `tests/test_carried_items.py` owns the rule; what is pinned here is that the hook acts on it, and
+# that it does so WITHOUT masking the stop that would otherwise have fired.
+
+
+def prior_card(project: Path, items: str) -> None:
+    """A phase 0 whose card carries `items`, so 1-demo owes it an answer."""
+    directory = project / "docs" / "features" / "demo" / "phases" / "0-prior"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "handover.md").write_text(
+        f"---\nreaders: x\n---\n# card\n\n## Open items\n{items}\n", encoding="utf-8"
+    )
+
+
+CARRIED = (
+    "| id | kind | title | where |\n|---|---|---|---|\n"
+    "| FWD-1 | forward-claim | caller-supplied ids reach the path unencoded | this card |"
+)
+
+
+def test_a_passing_phase_does_not_close_over_an_undischarged_carried_item(project: Path) -> None:
+    attempts(project, [(1, 0, "pass")])
+    prior_card(project, CARRIED)
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "FWD-1" in result.stderr
+    assert "no answer in this phase" in result.stderr
+
+
+def test_discharging_the_item_lets_the_phase_close(project: Path) -> None:
+    attempts(project, [(1, 0, "pass")])
+    prior_card(project, CARRIED)
+    subprocess.run(
+        [sys.executable, str(project / "scripts" / "carried_items.py"), "discharge",
+         str(phase_dir(project)), "FWD-1", "--as", "built", "--by", "R1.1.3"],
+        check=True, capture_output=True,
+    )
+
+    assert run_hook(project).returncode == 0
+
+
+def test_a_card_that_says_nothing_about_what_it_carries_does_not_close(project: Path) -> None:
+    """Silence is not `none`. A prediction left out of the table is owed to nobody, which is the
+    state phase 8's card was in."""
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project, card="# handover\n\nno items section here\n")
+
+    assert result.returncode == 2
+    assert "does not say what it carries forward" in result.stderr
+
+
+LAST_CARD = (
+    "---\nnext: e2e\nreaders: x\n---\n# handover\n\n## Open items\n"
+    "| id | kind | title | where |\n|---|---|---|---|\n"
+    "| FWD-1 | forward-claim | caller-supplied ids reach the path unencoded | %s |\n"
+)
+
+
+def test_the_last_phase_does_not_close_over_a_forward_claim_owed_to_nobody(project: Path) -> None:
+    """`next: e2e` means no phase follows to answer this row, so the claim has to be filed. Asserted
+    through the real hook: a rule only its unit test knows about is the promise-with-no-mechanism
+    this whole change removes."""
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project, card=LAST_CARD % "this card")
+
+    assert result.returncode == 2
+    assert "FWD-1" in result.stderr
+    assert "issue reference" in result.stderr
+
+
+def test_naming_an_issue_on_that_row_lets_the_last_phase_close(project: Path) -> None:
+    attempts(project, [(1, 0, "pass")])
+
+    assert run_hook(project, card=LAST_CARD % "filed as #41").returncode == 0
+
+
+def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(project: Path) -> None:
+    """It runs inside the `pass` branch on purpose. A phase at the attempt cap is already not
+    closing, and answering an unasked question there would hide the one that stopped it."""
+    attempts(project, [(1, 6, "fail"), (2, 2, "fail"), (3, 8, "fail")])
+    prior_card(project, CARRIED)
+
+    result = run_hook(project, card="# handover\n\nno items section here\n")
+
+    assert "refused" in result.stderr
+    assert "carries forward" not in result.stderr

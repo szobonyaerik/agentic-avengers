@@ -95,6 +95,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
 
+# The same-or-shallower-level section slice, owned in one place. Four modules here read a named
+# markdown section; four copies of the rule is the shape that drifted twice already.
+from md_section import slice_section  # noqa: E402
+
 WITHIN = 0
 OVER = 1
 ERROR = 2
@@ -131,8 +135,6 @@ BINDING = re.compile(r"binding:[ \t`]*([a-z0-9-]+)", re.IGNORECASE)
 #: Any markdown heading. Ends a declaration's continuation block, so a requirement can never inherit
 #: the binding of whatever follows the section it lives in.
 ANY_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]+")
-
-REQUIREMENTS_HEADING = re.compile(r"^(##+)[ \t]*Requirements\b.*$", re.IGNORECASE | re.MULTILINE)
 
 
 def declared_bindings(text: str) -> list[tuple[str, str | None]]:
@@ -189,13 +191,14 @@ def requirements_section(text: str) -> str | None:
     `## Requirements` section. Ending at any `##+` truncated such a section to nothing, and a section
     with no ids in it is not even caught by `unreadable_layout()` - it reads as a clean `0/12`, which
     is the silent-pass failure this whole check exists to prevent.
+
+    That level rule is `md_section.slice_section`'s, not a fourth copy of it. An empty section is an
+    empty string here rather than None: a `## Requirements` heading with nothing under it is a spec
+    with zero requirements, which is within the cap, and only a MISSING heading falls back to
+    scanning the whole body.
     """
-    start = REQUIREMENTS_HEADING.search(text)
-    if not start:
-        return None
-    rest = text[start.end() :]
-    end = re.compile(rf"^#{{1,{len(start.group(1))}}}[ \t]+", re.MULTILINE).search(rest)
-    return rest[: end.start()] if end else rest
+    found = slice_section(text, "Requirements", min_level=2, allow_trailing=True)
+    return None if found is None else found[1]
 
 
 def declared_ids(text: str) -> tuple[list[str], str]:

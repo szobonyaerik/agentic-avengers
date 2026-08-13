@@ -88,6 +88,9 @@ PLAN
 
 PER PHASE (specs iterate; the verifier runs once, after all specs are green)
   spec-writer         -> .../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md
+      primed FIRST with the gate's own rubric (scripts/spec_rubric.py, delivered by
+      scripts/hook_spec_rubric.sh) - one source, never a second copy - and it discharges what the
+      previous phase's card carried (scripts/carried_items.py)
   QUALITY WALL (per spec): ONE machine gate, then one human
     0. MECHANICAL, before any model call:
          - requirement cap (scripts/requirement_cap.py): over 12 the spec SPLITS into siblings.
@@ -131,6 +134,9 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
                  binding contracts + decisions + artifact links + next phase; mirrors the verdict
                  and any waived findings. Everything else -> handover-archive.md, which NO stage
                  reads. Checked by scripts/doc_read_path.py, not merely asked for.
+                 Its Open items table states what the phase carries forward - a row per item, or an
+                 explicit `none`; SILENCE IS NOT NONE - and on the LAST card a forward claim must
+                 name an issue, since no phase follows to answer it (scripts/carried_items.py).
 
 FEATURE CLOSE (once, after the final phase is green)
   implementer (e2e-author mode) -> tests/e2e/<feature>/ + e2e-mapping.md
@@ -226,11 +232,16 @@ agentic-avengers/
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
-│   │                          + read path + verifier pre-check + amendments + cosmic-ray + break-glass)
+│   │                          + read path + verifier pre-check + amendments + carried items
+│   │                          + cosmic-ray + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
 │   ├── spec_gate_state.py     the one place a spec's gate stamp is read (legacy stamps included)
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
 │   ├── spec_notes.py          the known-open list: notes that never block, read once by the implementer
+│   ├── spec_rubric.py         the gate's rubric rendered for the WRITER, from the gate's own
+│   │                          sources - data plus verbatim prompt sections, never a second copy
+│   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
+│   │                          the phase does not close
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
 │   ├── applicability.py       the one boundary every mechanical check binds on: OPEN it blocks,
 │   │                          CLOSED it counts and names (untouched | shipped | excepted). Owns

@@ -50,10 +50,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # drifts.
 from doc_read_path import HANDOVER_MAX_BYTES  # noqa: E402
 
+# The same-or-shallower-level section slice, owned in one place rather than restated per reader.
+from md_section import slice_section  # noqa: E402
+
 #: The stable header the overview carries its binding contracts under.
-CONTRACTS_HEADING = re.compile(
-    r"^(##+)[ \t]*Contracts and Decisions\b.*$", re.IGNORECASE | re.MULTILINE
-)
+CONTRACTS_HEADING = "Contracts and Decisions"
 
 #: A phase directory: `<n>-<slug>`, where `<n>` orders the phases.
 PHASE_DIR = re.compile(r"^(\d+)-")
@@ -82,14 +83,13 @@ def contracts_section(text: str) -> str | None:
     Ends at the next heading of the SAME OR SHALLOWER level, so a contract written under its own
     `### ` subheading stays inside the section rather than truncating it - and the section still
     stops well short of the whole document, which is the extent the read path grants this reader.
+    That level rule is `md_section.slice_section`'s; what stays here is the policy - the heading line
+    is carried into the block, and a section with nothing under it is no context at all.
     """
-    start = CONTRACTS_HEADING.search(text)
-    if not start:
+    found = slice_section(text, CONTRACTS_HEADING, min_level=2, allow_trailing=True)
+    if found is None:
         return None
-    rest = text[start.end():]
-    end = re.compile(rf"^#{{1,{len(start.group(1))}}}[ \t]+", re.MULTILINE).search(rest)
-    body = rest[: end.start()] if end else rest
-    return (start.group(0) + body).strip() or None
+    return "".join(found).strip() or None
 
 
 def overview_contracts(feature_dir: Path) -> str | None:
@@ -109,19 +109,15 @@ class Card(NamedTuple):
     truncated: bool
 
 
-def prior_card(feature_dir: Path, phase: int) -> Card | None:
-    """The immediately prior phase's contract card, bounded by the read path's own cap, or None.
+def prior_phase(feature_dir: Path, phase: int) -> Path | None:
+    """The immediately prior phase's directory, or None when this is the first card-bearing phase.
 
-    "Immediately prior" is the highest phase number below this one that actually has a card, so a
-    feature numbered 1, 2, 4 does not lose its context to a gap - but only ONE card is ever carried.
+    "Immediately prior" is the highest phase number below this one that actually **has a card**, so a
+    feature numbered 1, 2, 4 does not lose its context to a gap - and only ONE phase is ever prior.
 
-    **Bounded by `doc_read_path.HANDOVER_MAX_BYTES`**, imported rather than restated. That cap is
-    what makes a handover a contract card rather than a document, and its own enforcement is
-    diff-scoped, so a pre-rule or hand-edited oversized handover is counted and not blocked. Reading
-    it whole here would prepend all of it to EVERY spec write in the next phase - re-acquiring, for a
-    brand-new reader, precisely the cost the contract card was introduced to remove: one measured
-    handover held 272 KB and cost 485k-1,475k tokens. An over-cap card is carried as its bounded
-    prefix and the truncation is reported, never silent.
+    This is the one owner of that rule. `scripts/carried_items.py` imports it rather than
+    re-deriving it: the carried-items ledger and this CONTEXT block must agree about which card is
+    in force, and two statements of "which phase came before" is the copy that drifts.
     """
     candidates: list[tuple[int, Path]] = []
     for directory in (feature_dir / "phases").glob("*"):
@@ -132,7 +128,25 @@ def prior_card(feature_dir: Path, phase: int) -> Card | None:
             candidates.append((int(number.group(1)), directory))
     if not candidates:
         return None
-    _, directory = max(candidates, key=lambda pair: pair[0])
+    return max(candidates, key=lambda pair: pair[0])[1]
+
+
+def prior_card(feature_dir: Path, phase: int) -> Card | None:
+    """The immediately prior phase's contract card, bounded by the read path's own cap, or None.
+
+    Which phase is prior is `prior_phase`'s decision, not this function's.
+
+    **Bounded by `doc_read_path.HANDOVER_MAX_BYTES`**, imported rather than restated. That cap is
+    what makes a handover a contract card rather than a document, and its own enforcement is
+    diff-scoped, so a pre-rule or hand-edited oversized handover is counted and not blocked. Reading
+    it whole here would prepend all of it to EVERY spec write in the next phase - re-acquiring, for a
+    brand-new reader, precisely the cost the contract card was introduced to remove: one measured
+    handover held 272 KB and cost 485k-1,475k tokens. An over-cap card is carried as its bounded
+    prefix and the truncation is reported, never silent.
+    """
+    directory = prior_phase(feature_dir, phase)
+    if directory is None:
+        return None
     try:
         raw = (directory / "handover.md").read_text(encoding="utf-8")
     except OSError:

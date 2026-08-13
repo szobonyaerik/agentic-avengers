@@ -55,11 +55,23 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 - archive:        docs/features/<feature>/phases/<n>-<slug>/handover-archive.md   <!-- not on the read path -->
 
 ## Open items
-<!-- A table, not a narrative. Measured: of 8 items carried as prose across 53.6 KB, exactly one was
-     ever picked up by a later phase. The id carried them, not the story. -->
-| id | one-line title | where the detail lives |
-|----|----------------|------------------------|
-| OBS-<n> | <title> | verdict.json#observations[<n>] |
+<!-- EVERYTHING THIS PHASE CARRIES FORWARD, INCLUDING WHAT IT PREDICTS. A table, not a narrative:
+     of 8 items carried as prose across 53.6 KB, exactly one was ever picked up by a later phase -
+     the id carried them, not the story. Phase 8 wrote a correct, specific prediction into prose and
+     phase 9 shipped exactly that defect, because prose is owed to nobody.
+     `kind` is `open-finding` (carried at the attempt cap) or `forward-claim` (something a later
+     phase must handle). The NEXT phase must answer every row - built, tested, or declined with a
+     reason (scripts/carried_items.py) - and does not close until it has.
+     A row, or an explicit `none` row. SILENCE IS NOT NONE, and this section is checked.
+     The mirror obligation - how THIS phase answered the PREVIOUS card's rows - is not narrated here:
+     it lives in carried.json beside verdict.json (`scripts/carried_items.py list <phase-dir>`).
+     ON THE LAST CARD (frontmatter `next:` is `e2e` or `ship`) no phase follows to answer these, so
+     every `forward-claim` row must name an ISSUE instead - `#<number>` or an issue URL, anywhere in
+     the row. A presence check and nothing more; this phase does not close without it. -->
+| id | kind | one-line title | where the detail lives |
+|----|------|----------------|------------------------|
+| OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
+| FWD-<n> | forward-claim | <what a later phase must handle, and from which phase it bites> | this card |
 
 ## Next phase
 > <next-phase-slug> — needs from this phase: <the one or two things it depends on>.

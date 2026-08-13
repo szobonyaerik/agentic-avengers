@@ -237,8 +237,22 @@ human to poll and a foreground `poll` would hang the run indefinitely.
    instrument from reading a test set.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
    Read survivors as candidate missing cases. It is still not the independence mechanism.
-3. Then `handover`.
-4. **Phase review gate (`no-mistakes`, review-only)** — see §4c. Runs after the handover commit.
+3. **Carried items** - the handover hook runs **three** carried-items checks and refuses the card if
+   any of them fails, so three separate things can stop this phase closing: the *previous* phase's
+   card has an item with no answer here (`verifier:carried`); this phase's own new card states
+   nothing about what it carries (`verifier:carried-undeclared`) - **silence is not `none`**, and
+   phase 8 wrote a correct, specific prediction into prose that phase 9 then shipped as a defect; or
+   this is a **last** card (`next:` is `e2e` or `ship`) carrying a forward claim with no issue
+   reference on the row (`verifier:carried-unfiled`), since nobody inherits the table at feature
+   close. **`skills/phase-handover` states the checks and their commands** - read the command list
+   there, not here, so this runbook cannot drift from the gate.
+
+   The spec writer discharges the previous card's items while it writes; this step is the check, not
+   the work. An item that belongs to a later phase is **declined here and re-carried on this phase's
+   own card**. A decline reason is author-written prose, so it goes in a file the command reads
+   (§*Break-glass*).
+4. Then `handover`.
+5. **Phase review gate (`no-mistakes`, review-only)** - see §4c. Runs after the handover commit.
 
 ## 4c. Phase review gate (`no-mistakes`, review-only) — after every handover
 

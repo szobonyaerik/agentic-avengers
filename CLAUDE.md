@@ -121,6 +121,20 @@ are already pointed at by test-mapping rows and verdict findings, and the remedy
 shipped specs declaring 30 and 29 requirements made every verdict unreachable, forever. There it is
 counted and named. Growth happens while a spec is being written, which is exactly where it still binds.
 
+**The writer is primed from that same rubric before it writes, from ONE source.** Phase 9 ran
+**fourteen** gate rounds on its first spec and one, three and one on the next three, while total spec
+writes barely moved against phase 8 (16 -> 19): collapsing the gates relocated the work rather than
+reducing it. The writer learned what the collapsed gate blocks by being rejected fourteen times, and
+nothing carried that learning forward, so every phase paid the fourteen again. `scripts/spec_rubric.py`
+renders the brief; `scripts/hook_spec_rubric.sh` delivers it at `SubagentStart`, because "read the
+rubric first" is an instruction with no mechanism. **Nothing in the brief is authored** - every line
+is data read out of the module that decides with it (`spec_gate_triage.BLOCKING`, the requirement
+cap) or a gate-prompt section lifted **verbatim** - and `agents/avenger-spec-writer.md` no longer
+restates any of it. Two copies drift, and a drifted copy is **worse than none**, because the writer
+is then held to a standard nobody applies; so it also **fails closed**, rendering nothing rather than
+half a rubric when a prompt or a section is missing. `SPEC_RUBRIC_OFF=1` disables it; opencode has no
+`SubagentStart` event, so its writer renders the brief from the pointer in the agent prompt.
+
 The stamp is `spec_gate: pending | approved | blocked`, read in exactly one place
 (`scripts/spec_gate_state.py`, which also derives the legacy `fidelity_verdict` so existing specs
 still read correctly). `review_status` survives and means only what it now is: a **human** sign-off
@@ -347,6 +361,52 @@ unrecorded loads, settled in phase 9.
 **A required skill that is missing or unreadable is a loud BLOCKER** in the injected context, recorded
 `loaded: false`: an absent required skill is not a lighter version of the rules, it is no rules.
 `SKILLS_OFF=1` kills it; everything else fails closed and delivers nothing.
+
+### 4f. Carried items - a handover's forward-looking claims are discharged, not merely written
+Phase 8's handover recorded, verbatim, that caller-supplied identifiers would become a problem in
+phases 9 to 12. Phase 9 was the first such caller and **shipped exactly that defect** - a
+user-controlled path segment interpolated unencoded, so a name containing `?` or `#` retargets the
+write - caught by the review gate only after verification had passed. The prediction was correct,
+specific, actionable, and **became nothing**: no spec line, no test, no check. The same phase
+produced the mirror defect, a card asserting a protection its own phase had deleted, which then
+propagated into the next phase's instructions as binding. One direction over-claimed, the other
+under-delivered, and **both passed every check**, because a forward-looking claim was prose.
+
+**The card already had the slot.** `## Open items` has been a table with stable ids since the
+contract card was introduced, for a measured reason: of 8 items carried as prose across 53.6 KB,
+exactly one was ever picked up later - the id carried them, not the story. So nothing new sits beside
+it. That section is **widened to hold forward-looking claims (`FWD-<n>`) alongside findings carried at
+the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, run from
+`hook_verifier.sh` and from `gate_ci.sh` - both paths, for the same reason as the attempt cap.
+
+- **A phase states what it carries**: a row per item, or an explicit `none` row. **Silence is not
+  `none`** - silence is the state phase 8's prediction was written in.
+- **The next phase answers every row and does not close until it has**: `built` into a spec
+  requirement, `tested`, or `declined` with a stated reason. **`declined` is a real answer**; an item
+  belonging further out is declined and **re-carried on that phase's own card**, which is how a claim
+  about phases 9-12 survives without being owed to all four at once. The **spec writer** discharges,
+  being the first stage that can turn a claim into a requirement.
+- **The last card's forward claims name an ISSUE**, since no phase follows it to answer them: a card
+  whose `next:` is `e2e` or `ship` does not close while a `forward-claim` row carries no `#<number>`
+  or issue URL. A presence check and nothing more - whether a claim was worth carrying is not a
+  gate's question.
+- Ids are **scoped by the card that declared them**, so the ids already in use keep working. Which
+  card is in force is `spec_gate_context.prior_phase`'s decision, imported rather than re-derived:
+  this ledger and the spec gate's CONTEXT block must not disagree about which phase came before.
+- The ledger (`carried.json`, beside `verdict.json` in the phase that **acted**) refuses an id the
+  prior card never declared, and a corrupt ledger is an error rather than an empty one. **A pre-rule
+  card with no section owes nothing**, and the CI sweep is **diff-scoped even under `--full`**
+  (deliberately unlike `verifier_precheck`), because this obligation lands on a document class every
+  consumer repo already has on disk - a full audit would fail its CI over cards written before the
+  rule existed. Nothing is lost: the hook holds the phase being *closed*, which the diff touches by
+  construction; `check --all` is the audit. The check runs inside the *passing* branch of the
+  handover gate: a phase at the attempt cap is already not closing, and reporting an undeclared
+  section there would hide what actually stopped it.
+
+**What it does not catch, said rather than implied:** nothing can tell that a claim never written
+down was worth writing, and nothing detects a card over-claiming. The counterweight to that is the
+rule the card already carries - a binding contract names the file that *enforces* it, and a discharge
+names the artifact that answers it. Both are checkable by the next reader; a sentence is not.
 
 ### 4a. Tiered binding decides what gets a test; tests are integration-level by default
 Every requirement declares a **`binding:`** — `e2e` (an end user can observe it → carried by a
