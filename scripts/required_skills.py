@@ -284,11 +284,12 @@ def audit_gaps(record: dict | None, stage: str | None = None) -> list[str]:
             continue
         if wanted is not None and entry.get("stage") != wanted:
             continue
-        stage = entry.get("stage") or "?"
+        entry_stage = entry.get("stage") or "?"
         skill = entry.get("skill") or "?"
         gaps.append(
-            f"{stage} required skills/{skill} and no load was ever observed. A required skill with "
-            f"no evidence of a load is a stage running on whatever the model already believed — "
+            f"{entry_stage} required skills/{skill} and no load was ever observed. A required "
+            f"skill with no evidence of a load is a stage running on whatever the model already "
+            f"believed — "
             f"read skills/{skill}/SKILL.md in that stage, or re-run it: a stage that never loaded "
             f"its rules did not run under them."
         )

@@ -22,6 +22,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,11 @@ from metrics_support import DOUBLE
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "scripts" / "hook_skill_audit.sh"
+ACTIVITY_HOOK = ROOT / "scripts" / "hook_activity.sh"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import pipeline_metrics as metrics  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
     "the subject is a bash SubagentStop hook and its exit code is the whole contract; "
@@ -75,6 +81,7 @@ def stage(tmp_path: Path):
         "AVENGER_METRICS_LOG": str(tmp_path / "diagnostics.log"),
         "DOUBLE_LOG": str(tmp_path / "calls.log"),
         "DOUBLE_STORE": str(store),
+        "ACTIVITY_LOG": str(tmp_path / "activity.jsonl"),
     }
 
     def run(payload: dict, **extra: str) -> subprocess.CompletedProcess:
@@ -100,6 +107,12 @@ def stage(tmp_path: Path):
         )
 
     return run, seed
+
+
+@pytest.fixture
+def activity_log(tmp_path: Path) -> Path:
+    """The same path the `stage` fixture points the hooks at — both derive from `tmp_path`."""
+    return tmp_path / "activity.jsonl"
 
 
 STOP = {"hook_event_name": "SubagentStop", "agent_type": "avenger-spec-writer"}
@@ -161,6 +174,79 @@ def test_it_blocks_at_most_once_per_stop(stage) -> None:
 
     assert result.returncode == 0
     assert "spec-review-checklist" in result.stderr, "still said out loud, just not blocking"
+
+
+def _lifecycle(payload: dict, log: Path) -> None:
+    """The record `hook_activity.sh` writes for `payload` — the real writer, not a reimplementation
+    of it, because the shape of the line is exactly what `observing_stage` reads."""
+    subprocess.run(
+        ["bash", str(ACTIVITY_HOOK)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": os.environ["PATH"], "ACTIVITY_LOG": str(log)},
+    )
+
+
+def test_a_blocked_stop_leaves_the_stage_live_in_the_activity_log(
+    stage, activity_log: Path, monkeypatch
+) -> None:
+    """A refused stop is not a stop, and the log has to say so.
+
+    `hook_activity.sh` has already recorded the stop by the time this hook refuses it, so the log
+    reads as though the stage ended while it is in fact going back to work. `observing_stage` then
+    sees no live subagent and attributes the remedial `Read` of the named SKILL.md to
+    `main-thread` — writing `main-thread:<skill>` and leaving the stage's own row `loaded: false`,
+    so the remedy this hook prescribes cannot clear the gap it prescribed it for.
+    """
+    run, seed = stage
+    seed(loaded=False)
+
+    start = {"hook_event_name": "SubagentStart", "agent_type": "avenger-spec-writer"}
+    _lifecycle(start, activity_log)
+    _lifecycle(STOP, activity_log)
+
+    assert run(STOP).returncode == 2
+
+    monkeypatch.setenv("ACTIVITY_LOG", str(activity_log))
+    assert metrics.observing_stage("") == "avenger-spec-writer"
+
+
+def test_the_real_stop_that_follows_still_balances(
+    stage, activity_log: Path, monkeypatch
+) -> None:
+    """Re-opening the lifecycle must not leave the stage live forever: the next stop closes it, and
+    a stage stuck at live would misattribute every later load in the same log."""
+    run, seed = stage
+    seed(loaded=False)
+
+    _lifecycle({"hook_event_name": "SubagentStart", "agent_type": "avenger-spec-writer"}, activity_log)
+    _lifecycle(STOP, activity_log)
+    assert run(STOP).returncode == 2
+
+    # The stage comes back, still owes the skill, is told once more and finishes.
+    reentry = {**STOP, "stop_hook_active": True}
+    _lifecycle(reentry, activity_log)
+    assert run(reentry).returncode == 0
+
+    monkeypatch.setenv("ACTIVITY_LOG", str(activity_log))
+    assert metrics.observing_stage("") == "main-thread"
+
+
+def test_a_clean_stop_does_not_re_open_the_lifecycle(
+    stage, activity_log: Path, monkeypatch
+) -> None:
+    """Only a refusal re-opens it. A stage that owes nothing has genuinely stopped."""
+    run, seed = stage
+    seed(loaded=True)
+
+    _lifecycle({"hook_event_name": "SubagentStart", "agent_type": "avenger-spec-writer"}, activity_log)
+    _lifecycle(STOP, activity_log)
+    assert run(STOP).returncode == 0
+
+    monkeypatch.setenv("ACTIVITY_LOG", str(activity_log))
+    assert metrics.observing_stage("") == "main-thread"
 
 
 @pytest.mark.parametrize(

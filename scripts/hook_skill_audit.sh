@@ -21,6 +21,15 @@
 #   * IT NEVER BLOCKS TWICE. `stop_hook_active` means this hook already spoke and the stage came
 #     back; blocking again on an unchanged record is a loop, and a loop costs more than the defect.
 #     The second pass still says it out loud, on stderr, and lets the stage finish.
+#   * A BLOCKED STOP IS NOT A STOP. This is the first hook in this repo that can refuse a
+#     `SubagentStop`, and `hook_activity.sh` has already logged that stop by the time it does — so
+#     `.agent-activity.jsonl` says the stage ended while it is in fact still working, and
+#     `pipeline_metrics.observing_stage` then reads no live subagent and attributes the remedial
+#     `Read` of the named SKILL.md to `main-thread`. That writes `main-thread:<skill>` and leaves
+#     the stage's own row `loaded: false`: the prescribed remedy could not clear the gap it was
+#     prescribed for. Refusing the stop therefore re-opens the lifecycle through the log's one
+#     writer, so the record stays true to who is running. The real stop that follows is logged
+#     normally and balances it.
 #   * IT FAILS OPEN, unlike its gate siblings, and deliberately: it is the EARLY copy of a check that
 #     still blocks at close. An unreadable payload, an agent this pipeline does not own, no phase in
 #     flight, no metrics writer — each lets the stage finish, and the close-time audit is what makes
@@ -69,6 +78,13 @@ if [ -n "$REENTRY" ]; then
     "refuse the handover until the named skill is loaded in this stage." >&2
   exit 0
 fi
+
+# The stage is going back to work, so it is live again. Replayed through `hook_activity.sh` rather
+# than written here: that hook is the log's only writer, and it owns ACTIVITY_OFF, ACTIVITY_LOG and
+# rotation. Best-effort by construction — a lost re-open costs an attribution, never the block.
+printf '%s' "$PAYLOAD" \
+  | jq -c '.hook_event_name = "SubagentStart"' 2>/dev/null \
+  | bash "$SD/hook_activity.sh" >/dev/null 2>&1 || true
 
 printf '%s\n' \
   "" \

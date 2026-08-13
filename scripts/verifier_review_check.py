@@ -87,13 +87,17 @@ _CLAUSE_BOUNDARIES = ".;!?\n"
 #: re-running reproduces it and a split review set still has to name the file.
 #:
 #: Nothing here is a *general* prose filter; it is three shapes English confessions never take. An
-#: underscore never appears in a sentence, an extension never ends an English word, and a model
-#: admitting it saw half the bundle does not put the admission in backticks. "the bundle was
-#: truncated", "truncated/partial read", "TRUNCATED bundle" all survive untouched.
+#: extension never ends an English word, a model admitting it saw half the bundle does not put the
+#: admission in backticks, and an identifier carries an underscore BETWEEN two word characters.
+#: That last one is stated precisely on purpose: these reports are markdown, where `_word_` is
+#: emphasis, not a symbol — a leading or trailing underscore is punctuation the writer put around a
+#: sentence word, so `_truncated_` is prose and must stay readable, while `test_r10_3_8` and
+#: `_prose_of` are names and are blanked. "the bundle was truncated", "truncated/partial read",
+#: "TRUNCATED bundle" all survive untouched.
 _NON_PROSE = re.compile(
     r"`[^`]*`"                            # a code span
     r"|[\w./\\-]*\w\.[A-Za-z]\w{0,7}\b"   # something.ext, with or without a leading path
-    r"|\b\w*_\w[\w]*\b"                   # snake_case — an identifier, never an English word
+    r"|\b\w+_\w+\b"                       # snake_case — an underscore between two word characters
 )
 
 

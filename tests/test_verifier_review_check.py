@@ -202,6 +202,38 @@ def test_a_genuinely_truncated_review_is_still_refused_when_a_file_is_named_for_
         assert_substance(v, TRUNCATION_SET)
 
 
+def test_markdown_emphasis_is_prose_not_an_identifier() -> None:
+    """These reports are markdown, where `_word_` is emphasis around a sentence word — not a symbol.
+
+    A snake_case rule that allows a leading or trailing underscore swallows the emphasised word
+    whole, and the confession it emphasises stops being readable. That is a fail-open in the one
+    check this file exists for: the blanking is there to stop names being read as claims, never to
+    stop claims being read at all.
+    """
+    v = verdict(
+        report="Reviewed test_r10_3_8_message_truncation.py and test_auth.py. The bundle was "
+        "_truncated_ at the source limit, so I judged only what I was shown."
+    )
+    with pytest.raises(SubstanceError, match="partial"):
+        assert_substance(v, TRUNCATION_SET)
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        "Reviewed test_r10_3_8_message_truncation.py and test_auth.py in full. Nothing withheld.",
+        "Reviewed test_auth.py and `truncate_message`'s seam via "
+        "test_r10_3_8_message_truncation.py. Complete.",
+        "Reviewed test_auth.py; the private helper _truncate_body is exercised through the "
+        "handler by test_r10_3_8_message_truncation. Review complete.",
+    ],
+)
+def test_an_underscore_between_word_characters_is_still_a_name(report: str) -> None:
+    """The other half of the same rule: narrowing it must not re-open the phase-10 refusal. A
+    filename, a backticked symbol and a leading-underscore identifier all stay blanked."""
+    assert_substance(verdict(report=report), TRUNCATION_SET)
+
+
 def test_a_partial_self_report_after_an_unrelated_negation_is_still_refused() -> None:
     """The negation lookback stops at the clause boundary, so a nearby 'no' in a different sentence
     cannot launder a genuine partial self-report into a denial of one."""
