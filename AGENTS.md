@@ -331,6 +331,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this` exceeds it — raise it and raise `hooks/hooks.json` with it |
 | `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
 | `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
+| `SKILL_AUDIT_OFF` | unset | `1` disables the per-stage `SubagentStop` skill audit (`scripts/hook_skill_audit.sh`); the close-time audit at handover and in CI is unaffected |
 
 ## Maintaining this file
 
