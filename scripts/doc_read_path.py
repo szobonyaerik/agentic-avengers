@@ -164,6 +164,19 @@ READ_PATH: dict[str, dict] = {
         # rule, a subject, who recorded it and why — and it is what lets a phase closed under a
         # captain-ordered cap be read as CLOSED rather than parking the resolver forever.
     },
+    "carried.json": {
+        "written_by": "avenger-spec-writer / implementer (scripts/carried_items.py)",
+        "emitted_by": "scripts/carried_items.py",
+        "readers": [
+            "avenger-spec-writer @ per phase, to see what it still owes an answer to",
+            "phase-handover @ per phase",
+        ],
+        "extent": "whole",
+        # How the PREVIOUS phase's carried items were answered: built, tested, or declined with a
+        # reason. Small by construction - an id, a kind, one pointer - and it is what stops a
+        # handover's forward-looking claim becoming nothing, which is how phase 8's correct,
+        # specific prediction about caller-supplied identifiers shipped as a phase-9 defect.
+    },
     "test-mapping.md": {
         "written_by": "implementer",
         "emitted_by": "docs/templates/test-mapping.template.md",

@@ -15,6 +15,14 @@ from pathlib import Path
 
 import pytest
 
+# The check itself runs in-process below. The only real processes are `git`, and they are the
+# subject: diff scoping is a claim about what git actually reports, so a faked diff would test the
+# fake. Declared per scripts/subprocess_check.py, this pipeline's only cost gate — the helpers sit at
+# module scope, which is the shape that needs a file-wide declaration.
+pytestmark = pytest.mark.subprocess(
+    "the diff scoping is a claim about what git actually reports; a faked diff tests the fake"
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 

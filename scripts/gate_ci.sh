@@ -122,6 +122,20 @@ if [ "$FULL" -eq 1 ]; then
   done < <(find docs/features -type f -name handover.md 2>/dev/null)
 fi
 
+# 1bd) Carried items — a handover's forward-looking claims are owed an answer by the next phase, or
+#      they become nothing. Phase 8 of one measured feature predicted, verbatim, the defect phase 9
+#      then shipped, past every gate, because the prediction was prose. Enforced here as well as in
+#      scripts/hook_verifier.sh for the same reason the attempt cap is: a rule only an in-session
+#      hook applies stops existing the moment the phase is driven another way.
+#
+#      DIFF-SCOPED even under --full, and deliberately unlike verifier_precheck. This obligation
+#      lands on a document class every consumer repo already has on disk, so a full audit would fail
+#      its CI over cards written before the rule existed - the hostage failure the scoping removes.
+#      Nothing is lost: the hook holds the phase being CLOSED, which is a phase the diff touches by
+#      construction. `carried_items.py check --all` is there for anyone who wants the audit.
+echo "• carried items: forward-looking claims declared, and the previous phase's answered"
+python3 "$SCRIPT_DIR/carried_items.py" check --root "$ROOT" || record_fail "carried-items"
+
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
 #      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY

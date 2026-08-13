@@ -59,6 +59,10 @@ says `verdict: pass` — which is what locks the phase suite (`pipeline-conventi
 *locked-after-verify*). If it isn't green, stop and report what's outstanding instead of writing a
 handover.
 
+**No item the previous phase carried is unanswered.** `python3 scripts/carried_items.py due
+<phase-dir>` must exit 0 - see *Open items carry your PREDICTIONS too* below. Discharge them as you
+build; a batch of them discovered at the close is a phase that never read its predecessor's card.
+
 **No amendment is owed re-verification.** `python3 scripts/amendments.py due <phase-dir>` must exit
 0. A phase does not close over a pending security amendment, nor over a pending ordinary one on a
 phase whose verdict already passes — that verdict is a claim about code that has since changed.
@@ -158,8 +162,11 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
      the card is for; omitting one makes this section lie by omission, which is not a saving. -->
 
 ### Open items
-<One line per item, pointing at the structured record. Do not narrate.>
-- OBS-<n> | <one-line title> | verdict.json#observations[<n>]
+<One row per item, pointing at the structured record. Do not narrate. A row, or an explicit `none`.>
+| id | kind | one-line title | where the detail lives |
+|---|---|---|---|
+| OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
+| FWD-<n> | forward-claim | <what a later phase must handle> | this card |
 
 ### Next phase
 <next-phase-slug> — needs from this phase: <the one or two things it depends on>.
@@ -170,6 +177,47 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 **Open items are a table on purpose.** Measured over one feature: of 8 open items carried forward as
 prose across 53.6 KB of *Open Items Phase N Inherits* sections, exactly **one** was ever picked up by
 a later phase. The narrative was not what carried them; the id was.
+
+### Open items carry your PREDICTIONS too, and they are owed an answer
+
+This section is the card's only forward-looking slot, and it is binding. Phase 8 of one feature wrote
+down, verbatim, that caller-supplied identifiers would become a problem in phases 9 to 12. Phase 9 was
+the first such caller and **shipped exactly that defect** - a user-controlled path segment
+interpolated unencoded - because the prediction was prose, and prose is owed to nobody. It was
+correct, specific, actionable, and became nothing: no spec line, no test, no check.
+
+So anything this phase believes a later phase must handle goes in this table as a row with a stable
+id (`FWD-<n>`), beside the findings carried at the attempt cap (`OBS-<n>`). Two rules, both enforced
+by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.sh`:
+
+- **Your own card must state what it carries** - a row per item, or an explicit `none` row.
+  **Silence is not `none`.** A phase does not close on a card that says nothing here.
+- **The next phase must answer every row you leave**, and does not close until it has: `built` into a
+  spec, `tested`, or `declined` with a stated reason. An item that still applies further out is
+  declined there and **re-carried on that phase's own card** - that is how a claim about phases 9-12
+  survives without being owed to all four at once.
+
+An id belongs to the card that declared it, so `OBS-1` here and `OBS-1` on the next phase's card are
+different items; the ids you already use keep working. Never write a prediction into the summary, a
+decision line or the archive instead: the archive is off the read path, so a claim put there is a
+claim nobody will ever be asked about.
+
+Your predecessor's items are the mirror obligation, and you discharge them **as you build**, not at
+close: `python3 scripts/carried_items.py list <this-phase-dir>` shows what you owe, and
+
+```bash
+python3 scripts/carried_items.py discharge <this-phase-dir> <id> --as built --by <spec/requirement/test>
+python3 scripts/carried_items.py discharge <this-phase-dir> <id> --as declined --reason-file <file>
+```
+
+records the answer in `carried.json` beside `verdict.json`. The reason goes in a **file** the command
+reads, never inline on the command line (`pipeline-conventions` § *Gates*).
+
+**What this does not check.** Nothing can tell that a claim you never wrote down was worth writing,
+and nothing here catches the mirror defect - a card asserting a protection its own phase deleted. The
+counterweight to that one is the rule this card already carries: a binding contract names the file
+that *enforces* it, and a discharge names the artifact that answers it. Both are checkable by the
+next reader; a sentence is not.
 
 ### Example (phase `1-webhook`)
 ```markdown
@@ -206,6 +254,11 @@ Phase 2 reads these rows; delivery_id is the dedup key it must not re-create.
 - tests:          tests/clickup-intake/1-webhook/
 - archive:        docs/features/clickup-intake/phases/1-webhook/handover-archive.md   (not on the read path)
 
+### Open items
+| id | kind | one-line title | where the detail lives |
+|---|---|---|---|
+| FWD-1 | forward-claim | task_id reaches the URL path unencoded from phase 2 on | this card |
+
 ### Next phase
 2-analysis — needs from this phase: the persisted task row and delivery_id.
 ```
@@ -233,8 +286,10 @@ is usually two lines here plus a link, not four pages.
 ## Done when
 `handover.md` exists **under 6144 bytes**, with `status: green`, a `readers:` line, a ≤5-line
 summary, the binding-contracts table, the decisions list, the artifact links, the phase's Verifier
-verdict (plus any waived findings), the mutation line, and a `next` value (a phase slug, `e2e` if
-this was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean.
+verdict (plus any waived findings), the mutation line, an **Open items section that says what this
+phase carries forward or explicitly says `none`**, and a `next` value (a phase slug, `e2e` if this
+was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean, and both
+`python3 scripts/carried_items.py declared <phase-dir>` and `… due <phase-dir>` exit 0.
 
 **And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
 codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you

@@ -59,6 +59,16 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    split would renumber ids that test-mapping rows and verdict findings already point at, so it is
    counted and named instead. Two shipped specs declaring 30 and 29 requirements made every verdict
    unreachable for them, forever.
+3g. **The writer is primed from that same rubric, from ONE source.** Phase 9 ran **fourteen** gate
+   rounds on its first spec and one, three and one on the next three, while total spec writes barely
+   moved against phase 8 (16 -> 19) - the writer learned what the gate blocks by being rejected
+   fourteen times, and nothing carried that learning into the next phase. `scripts/spec_rubric.py`
+   renders the brief and `scripts/hook_spec_rubric.sh` delivers it at `SubagentStart`. **Nothing in it
+   is authored**: every line is data read out of the deciding module (`spec_gate_triage.BLOCKING`, the
+   requirement cap) or a gate-prompt section lifted verbatim, and `agents/avenger-spec-writer.md` no
+   longer restates any of it - a drifted second copy is worse than no priming. It fails closed rather
+   than rendering half a rubric. `SPEC_RUBRIC_OFF=1` disables it; opencode has no `SubagentStart`
+   event and renders it from the pointer in the agent prompt.
 3a. **The spec gate is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
    spawners lacking `@pytest.mark.subprocess("<why>")` — no model, both modes, on every spec write via
    `hook_spec_gate.sh`. It is the only stage that can see cost: the observe pass, cross-family review and
@@ -100,6 +110,22 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    any pending amendment on a phase whose verdict already passes. Enforced by `hook_verifier.sh` and
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
+3f. **Carried items - a handover's forward-looking claims are discharged, not merely written.**
+   Phase 8's card recorded, verbatim, that caller-supplied identifiers would become a problem in
+   phases 9-12; phase 9 was the first such caller and **shipped exactly that defect**, past every
+   gate, because the prediction was prose and prose is owed to nobody. The card **already had the
+   slot** - `## Open items`, a table with stable ids - so it is widened to hold forward-looking claims
+   (`FWD-<n>`) beside findings carried at the attempt cap (`OBS-<n>`), and made binding by
+   `scripts/carried_items.py` from `hook_verifier.sh` and from `gate_ci.sh` (diff-scoped even under
+   `--full`, because the rule lands on cards every consumer repo already has; `check --all` audits).
+   A phase states what it carries (a row, or an explicit `none`;
+   **silence is not `none`**), and the next phase answers every
+   row - `built` into a spec requirement, `tested`, or `declined` with a stated reason - before it can
+   close. `declined` is a real answer: an item belonging further out is re-carried on that phase's own
+   card. The **spec writer** discharges, being the first stage that can turn a claim into a
+   requirement. Ids are scoped by the card that declared them; which card is in force is
+   `spec_gate_context.prior_phase`'s decision, imported rather than re-derived. A pre-rule card with
+   no section owes nothing, so a repository upgrades instead of being held hostage.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
    What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
    restated in a table — a second statement of a fact is what every promise-versus-enforcement gap

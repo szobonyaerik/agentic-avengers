@@ -137,6 +137,31 @@ if ! python3 "$SD/amendments.py" due "$PHASE_DIR"; then
     "scripts/amendments.py close <phase-dir> <A-id> --evidence <path>."
 fi
 
+# The forward-looking half of the contract card. A handover that PREDICTS a problem and is answered
+# by nobody is not a record, it is a note to itself: phase 8 wrote down that caller-supplied
+# identifiers would become a problem in phases 9-12, and phase 9 - the first such caller - shipped
+# exactly that defect, past every gate. So the card's own `## Open items` section must state what it
+# carries (a row, or an explicit `none`), and every item the PREVIOUS phase carried must have an
+# answer here: built, tested, or declined with a reason.
+#
+# Deliberately NOT run beside the amendment obligation above, and the difference is the message. This
+# is the last thing between a PASSING phase and its close, so it runs inside the `pass` branch below:
+# a phase whose verdict is `fail`, or which is at the attempt cap, is already not closing, and
+# reporting an undeclared items section at that moment would answer a question nobody asked while
+# hiding the one that stopped the phase.
+carried_items_gate () {
+  if ! python3 "$SD/carried_items.py" declared "$PHASE_DIR"; then
+    fail "verifier:carried-undeclared" \
+      "verifier: this phase's contract card does not say what it carries forward (named above)." \
+      "Write the section - a row per item with a stable id, or an explicit \`none\` row. Silence is" \
+      "not none, and a prediction left in prose is owed to nobody."
+  fi
+  if ! python3 "$SD/carried_items.py" due "$PHASE_DIR"; then
+    fail "verifier:carried" \
+      "verifier: items the previous phase carried forward have no answer in this phase (named above)."
+  fi
+}
+
 # Handover: the Verifier agent must already have run and left a passing verdict.
 VERDICT="$PHASE_DIR/verdict.json"
 if [ ! -f "$VERDICT" ]; then
@@ -170,6 +195,7 @@ case "$V" in
         "A green suite the implementer wrote is not evidence. Run scripts/verifier_review.sh over the" \
         "bounded review set on a cross-family model, then record its scope and findings in verdict.json."
     fi
+    carried_items_gate
     exit 0 ;;
   fail)
     # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts

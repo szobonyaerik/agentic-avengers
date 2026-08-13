@@ -27,6 +27,7 @@ You receive an implementation plan (from the Planner) and produce **one-or-more 
 3. **Study the codebase**: gather concrete details — existing interfaces, patterns, real file paths.
 4. **Write the spec file(s)** for the spec(s) you've been asked to produce (all of a phase up front, or just the current spec) at `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`, using the phase/spec numbers and slugs from the plan and following the contract below.
 5. **Hold coherence**: honor the plan's "Notes for the Spec Writer", and for phase 2+ don't contradict any contract a prior phase's **contract card** (`handover.md` — the card is the whole file, capped at 6 KB) marked delivered. **Read the cards, not the prior phases' specs.** A phase the Verifier passed is locked and settled, and its contracts are on its card by construction; re-reading its specs is the largest avoidable read in this stage (`pipeline-conventions`: *The document read path*).
+6. **Discharge what the previous phase carried forward** - see below. Do it while you write, not at the close.
 
 ## Output location — one file per numbered spec
 
@@ -129,28 +130,57 @@ one spec passed one and failed the other on byte-identical text. There is now **
 Until both hold, do not hand off. (The tests lock later, when the Verifier passes the phase:
 `pipeline-conventions`: *locked-after-verify*.)
 
-### What can and cannot block you
+### You are given the gate's rubric BEFORE you write - read it
 
-**Exactly four things block**, and nothing else: a **missing requirement**, an internal
-**contradiction**, an **untestable criterion**, an **unhandled critical edge case**. Everything else
-the gate notices is a **note** — recorded in `spec-notes.md` beside your spec, read once by the
-implementer, and **blocking nothing**. A note is not a lesser rejection and does not escalate next
-round.
+What blocks a spec, what is only a note, and where size is decided are **delivered to you at spawn**
+by `scripts/hook_spec_rubric.sh`, rendered from the gate's own sources by
+`scripts/spec_rubric.py`. Read that brief before you write the first requirement.
 
-**Answer a block by fixing the named defect, not by writing more.** The gate this replaced said
-"when unsure, choose NO-GO", and the measured result was one spec growing 25k -> 51k characters
-across four rejected rounds. If a block does not name something an implementer cannot proceed past,
-say so rather than padding the spec.
+It is not restated here, and it must never be. One measured phase spent **fourteen** gate rounds on
+its first spec and one, three and one on the next three: the writer learned the standard by being
+rejected fourteen times, and nothing carried that learning into the next phase, so every phase paid
+the fourteen again. A second copy of the rubric would drift from the one the gate judges by - and a
+drifted copy is worse than none, because you would then be primed against a standard nobody is
+applying. The brief is generated from `scripts/spec_gate_triage.py` (the closed blocking set),
+`scripts/requirement_cap.py` (the count), and the two gate prompts verbatim.
 
-### The requirement cap: 12, and the remedy is a SPLIT
+If it was not delivered - no `SubagentStart` event, `SPEC_RUBRIC_OFF=1`, or opencode, which has no
+such event - render it yourself before you write:
 
-`scripts/requirement_cap.py` counts your declared requirement ids **before any model sees the spec**.
-Over 12 (`SPEC_REQUIREMENT_MAX`), the spec **splits** into siblings `<n>.<k>` under the same phase —
-each independently gated, implemented and traced, with requirement ids moving to the spec they
-belong to. Split on the seam the requirements already group around.
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/spec_rubric.py"
+```
 
-**No gate will ever reject your spec for being large**, and none will ask you to shorten it. Size is
-settled here, mechanically, and a rejection for size would just be one more thing to grow around.
+It fails closed rather than emitting half a rubric. If it cannot render, say so in your handoff
+rather than writing unprimed and quietly.
+
+## The previous phase's carried items are yours to answer
+
+The prior phase's contract card carries an **Open items** table - findings carried at the attempt cap
+(`OBS-<n>`) and **forward-looking claims** about what a later phase must handle (`FWD-<n>`). You are
+the first stage that can turn one into something real, so it is your obligation, and the phase does
+not close while one is unanswered (`scripts/carried_items.py`, enforced by
+`scripts/hook_verifier.sh` and by `gate_ci.sh`).
+
+This is not bookkeeping. Phase 8 of one feature wrote down that caller-supplied identifiers would
+become a problem in phases 9 to 12; phase 9 was the first such caller and **shipped exactly that
+defect**, because the prediction reached no spec, no test and no check.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" list <phase-dir>      # what you owe
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" discharge <phase-dir> <id> \
+    --as built --by "R<n>.<k>.<m> in <spec path>"                                 # or --as tested
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" discharge <phase-dir> <id> \
+    --as declined --reason-file <file>
+```
+
+**`declined` is a real answer**, not an escape: an item that belongs to a later phase is declined
+here and re-carried on *this* phase's card, which is how a claim about phases 9-12 survives without
+being owed to all four at once. What is not an answer is silence. The reason goes in a **file** the
+command reads, never inline (`pipeline-conventions` § *Gates*).
+
+Discharging as `built` means a requirement in one of your specs states the behaviour - with its own
+id and its own `binding:`, like any other. It does not mean a sentence in Scope mentioning it.
 
 ## Guidelines
 

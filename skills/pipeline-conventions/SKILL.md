@@ -223,6 +223,23 @@ Three consequences worth stating outright:
   `status: done` is stamped by the implementer, and it is what fires the phase suite and the
   traceability pre-check, both of which a draft claiming to be done fails loudly.
 
+  **The writer is primed from this same rubric before it writes, from ONE source.** Phase 9 of one
+  feature ran **fourteen** rounds on its first spec and one, three and one on the next three, while
+  total spec writes barely moved against phase 8 (16 -> 19): collapsing two gates into one did not
+  reduce the work, it relocated it. The writer learned what the collapsed gate blocks by being
+  rejected fourteen times, and **nothing carried that learning into the next phase**, so every phase
+  paid the fourteen again. `scripts/spec_rubric.py` renders the brief and
+  `scripts/hook_spec_rubric.sh` delivers it at `SubagentStart` - a hook, for the reason every other
+  delivery here is one: "read the rubric first" is an instruction with no mechanism.
+  **Nothing in that brief is authored.** Every line is either data read out of the module that
+  decides with it (`spec_gate_triage.BLOCKING`, the requirement cap) or a section of a gate prompt
+  lifted **verbatim**, and `agents/avenger-spec-writer.md` no longer restates any of it. That is the
+  whole design constraint: a second copy drifts, and a drifted copy is **worse than no priming**,
+  because the writer is then held to a standard nobody is applying. For the same reason it **fails
+  closed** - a missing prompt or a renamed section renders nothing and says so, rather than half a
+  rubric. `SPEC_RUBRIC_OFF=1` disables it; opencode has no `SubagentStart` event, so its writer gets
+  the pointer from the agent prompt line and renders the brief itself.
+
 - **Human spec review (per spec)** — a human runs `grill-me` against the spec using
   `spec-review-checklist`, then sets `review_status: approved`. `review_status` now means only that:
   a **human** sign-off, written by no model except in unattended mode, where `SPEC_REVIEW_MODE=auto`
@@ -453,6 +470,64 @@ An amendment with no requirement ids is refused — the naming **is** the scope 
 it owes, so an unnamed one narrows verification to nothing while claiming to have narrowed it. A
 corrupt ledger is an error, never an empty one: reading it as "no amendments" would silently drop a
 pending security re-verification.
+
+## Carried items - a handover's forward-looking claims are discharged, not merely written
+
+Phase 8 of one measured feature recorded, verbatim, that caller-supplied identifiers would become a
+problem in phases 9 to 12. Phase 9 was the first such caller and **shipped exactly that defect** - a
+user-controlled path segment interpolated unencoded, so a name containing `?` or `#` retargets the
+write - and the review gate caught it only after verification had already passed. The prediction was
+correct, specific, actionable, and **became nothing**: no spec line, no test, no check. The same
+phase produced the mirror defect, a card asserting a protection its own phase had deleted, which
+then propagated into the next phase's instructions as binding. One direction over-claimed, the other
+under-delivered, and **both passed every check**, because a forward-looking claim was prose and prose
+is owed to nobody.
+
+**The contract card already had the slot** - `## Open items`, a table with stable ids, kept as a
+table for a measured reason (of 8 items carried as prose across 53.6 KB, exactly one was ever picked
+up later; the id carried them, not the story). So nothing new sits beside it. That section is
+**widened to hold forward-looking claims (`FWD-<n>`) alongside findings carried at the attempt cap
+(`OBS-<n>`), and made binding** by `scripts/carried_items.py`, run from `scripts/hook_verifier.sh`
+and from `gate_ci.sh` - the same both-paths rule as the attempt cap, since a rule only an in-session
+hook applies stops existing the moment the phase is driven another way.
+
+```bash
+python3 scripts/carried_items.py list <phase-dir>          # what this phase owes an answer to
+python3 scripts/carried_items.py discharge <phase-dir> FWD-1 --as built --by "R9.1.4 in <spec>"
+python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --reason-file <file>
+```
+
+- **A phase states what it carries.** Its own card's section holds a row per item or an explicit
+  `none` row. **Silence is not `none`** - silence is the state phase 8's prediction was written in.
+- **The next phase answers every row, and does not close until it has**: `built` into a spec
+  requirement, `tested`, or `declined` with a stated reason. **`declined` is a real answer**; an item
+  that belongs further out is declined and **re-carried on that phase's own card**, which is how a
+  claim about phases 9-12 survives without being owed to all four at once.
+- The **spec writer** is the stage that discharges, because it is the first that can turn a claim
+  into a requirement. Discharging as `built` means a requirement states the behaviour, with its own
+  id and `binding:` - not a sentence in Scope mentioning it.
+- Ids are **scoped by the card that declared them**, so `OBS-1` on two cards is two items and the ids
+  already in use keep working. Which card is in force is `spec_gate_context.prior_phase`'s decision,
+  imported rather than re-derived: this ledger and the spec gate's CONTEXT block must not disagree
+  about which phase came before.
+- The ledger (`carried.json`, beside `verdict.json` in the phase that **acted**) refuses an id the
+  prior card never declared - a typo would otherwise record an answer to a question nobody asked
+  while the real item stayed owed - and a corrupt ledger is an error, never an empty one.
+- **A pre-rule card with no section owes nothing**, so a repository upgrades instead of being held
+  hostage by history it never touched. The CI sweep (`carried_items.py check`) is **diff-scoped even
+  under `--full`**, deliberately unlike `verifier_precheck`: this obligation lands on a document
+  class every consumer repo already has on disk, so a full audit would fail its CI over cards written
+  before the rule existed. Nothing is lost by that - the hook holds the phase being *closed*, which
+  is a phase the diff touches by construction - and `check --all` is there for anyone who wants the
+  audit. The check runs inside the *passing* branch of the handover gate: a phase at the attempt cap
+  is already not closing, and reporting an undeclared section there would answer an unasked question
+  while hiding the one that stopped it.
+
+**What this does not catch**, stated rather than implied: nothing can tell that a claim never written
+down was worth writing, and nothing here detects the mirror defect of a card over-claiming. The
+counterweight to that one is the rule the card already carries - a binding contract names the file
+that *enforces* it, and a discharge names the artifact that answers it. Both are checkable by the
+next reader; a sentence is not.
 
 ## Skills are delivered, not requested — and the load is observed
 

@@ -237,8 +237,22 @@ human to poll and a foreground `poll` would hang the run indefinitely.
    instrument from reading a test set.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
    Read survivors as candidate missing cases. It is still not the independence mechanism.
-3. Then `handover`.
-4. **Phase review gate (`no-mistakes`, review-only)** — see §4c. Runs after the handover commit.
+3. **Carried items** - every item on the *previous* phase's contract card must have an answer here
+   before this phase can close, and the handover hook refuses the card until they do:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" due <phase-dir>
+   ```
+
+   The spec writer discharges these while it writes; this is the check, not the work. A remaining one
+   is answered `--as built|tested --by <spec/requirement/test>` or `--as declined --reason-file <f>` -
+   the reason is author-written prose, so it goes in a file the command reads (§*Break-glass*). An
+   item that belongs to a later phase is **declined here and re-carried on this phase's own card**.
+   The new card then states what *it* carries: a row per item, or an explicit `none`. **Silence is
+   not `none`** - phase 8 wrote a correct, specific prediction into prose and phase 9 shipped exactly
+   that defect.
+4. Then `handover`.
+5. **Phase review gate (`no-mistakes`, review-only)** - see §4c. Runs after the handover commit.
 
 ## 4c. Phase review gate (`no-mistakes`, review-only) — after every handover
 
