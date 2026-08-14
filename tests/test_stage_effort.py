@@ -119,6 +119,74 @@ def test_a_documented_table_with_no_mechanism_behind_it_is_a_failure(tmp_path):
     assert any("declares no `effort:`" in p for p in problems), problems
 
 
+def test_an_unbackticked_row_that_disagrees_is_still_a_failure(tmp_path):
+    """Markup is not the subject. A row means what it says however its author marked it up.
+
+    Requiring backticks on both columns left a documented pair that disagrees with the mechanism
+    free to pass by dropping two characters — the decoration this module exists to end, one escape
+    hatch over.
+    """
+    _tree(tmp_path, effort="low")
+    (tmp_path / "commands" / "run.md").write_text(
+        "## Effort per stage\n\n| Stage | effort |\n|---|---|\n| avenger-x | high |\n"
+    )
+
+    problems = stage_effort.check(tmp_path)
+
+    assert any("says `high`" in p and "declares `low`" in p for p in problems), problems
+
+
+def test_a_bare_level_beside_a_backticked_stage_is_still_compared(tmp_path):
+    """The half-marked-up row: the stage was seen, the level was not, so nothing was compared."""
+    _tree(tmp_path, effort="low")
+    (tmp_path / "commands" / "run.md").write_text(
+        "## Effort per stage\n\n| Stage | effort |\n|---|---|\n| `avenger-x` | high |\n"
+    )
+
+    problems = stage_effort.check(tmp_path)
+
+    assert any("says `high`" in p and "declares `low`" in p for p in problems), problems
+
+
+def test_a_row_naming_several_stages_in_one_cell_is_not_read_as_a_ghost_stage(tmp_path):
+    """The live runbook pairs two stages in one cell; a cell is only a token when it is one."""
+    _tree(tmp_path, effort="low")
+    (tmp_path / "agents" / "avenger-y.md").write_text(
+        "---\nname: avenger-y\neffort: low\n---\n\nbody\n"
+    )
+    (tmp_path / "commands" / "run.md").write_text(
+        "## Effort per stage\n\n| Stage | effort |\n|---|---|\n"
+        "| `avenger-x`, `avenger-y` | `low` |\n"
+    )
+
+    assert stage_effort.check(tmp_path) == []
+
+
+def test_the_root_mirrors_are_scanned_too(tmp_path):
+    """CLAUDE.md and AGENTS.md are the documents a session actually reads.
+
+    A per-stage table restated there with values no definition declares is the same "table with
+    nothing behind it", one file over from the ones the directory scan covers.
+    """
+    _tree(tmp_path, effort="low")
+    (tmp_path / "CLAUDE.md").write_text(
+        "## Effort per stage\n\n| Stage | effort |\n|---|---|\n| `avenger-x` | `high` |\n"
+    )
+    (tmp_path / "AGENTS.md").write_text("Pass `effort` when you spawn a subagent.\n")
+
+    problems = stage_effort.check(tmp_path)
+
+    assert any(p.startswith("CLAUDE.md:5:") and "says `high`" in p for p in problems), problems
+    assert any(p.startswith("AGENTS.md:1:") and "cannot be obeyed" in p for p in problems), problems
+
+
+def test_an_absent_root_mirror_is_skipped_rather_than_an_error(tmp_path):
+    """A vendored install receives AGENTS.md and no CLAUDE.md; neither absence is a problem."""
+    _tree(tmp_path, effort="low")
+
+    assert stage_effort.check(tmp_path) == []
+
+
 def test_a_row_outside_an_effort_section_is_not_read_as_one(tmp_path):
     """Scoped to sections about effort, so `criticality: high` elsewhere is not a false positive."""
     _tree(tmp_path, effort="low")

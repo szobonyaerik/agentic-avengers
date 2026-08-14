@@ -57,6 +57,14 @@ LEVELS = ("low", "medium", "high", "xhigh", "max")
 #: reason: a claim that came back one caller at a time is caught wherever it was added.
 SOURCE_DIRS = ("agents", "commands", "skills", "prompts")
 
+#: The repo-root mirrors, which live beside those directories rather than inside one. CLAUDE.md is
+#: this repository's own statement that it mirrors the conventions a Claude Code session reads, and
+#: AGENTS.md is opencode's — so a per-stage table restated in either, with values no definition
+#: declares, is the "table with nothing behind it" state one file over from the one the check names.
+#: Kept separate from SOURCE_DIRS rather than overloading it: these are files, those are trees. An
+#: absent one is skipped, never an error — a vendored install receives AGENTS.md and no CLAUDE.md.
+SOURCE_FILES = ("CLAUDE.md", "AGENTS.md")
+
 #: `effort: <level>` on its own line inside a definition's frontmatter. Anchored, so the prose
 #: instruction the guard below refuses cannot be mistaken for the mechanism.
 FRONTMATTER_EFFORT = re.compile(r"^effort:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
@@ -70,8 +78,14 @@ _QUALIFIER = re.compile(r"^.*:")
 _HEADING = re.compile(r"^#{1,6}\s+(.*\S)\s*$")
 _ABOUT_EFFORT = re.compile(r"\beffort\b", re.I)
 
-#: A backticked token, as both the stage column and the level column of such a table spell theirs.
+#: A backticked token, which is how the live table spells both of its columns — but not the only way
+#: a row can be written, so `_row_tokens` reads the plain cells as well.
 _TICKED = re.compile(r"`([^`]+)`")
+
+#: A cell that is a single token, and therefore readable as a stage name or a level. Cells holding
+#: prose (the runbook's `why` column) or several stages (``avenger-x`, `avenger-y``) are not one
+#: token, and reading them as one would invent a stage no definition could ever back.
+_TOKEN = re.compile(r"^[\w.:-]+$")
 
 #: The instruction nothing can obey. Two shapes, both live when this was written:
 #:   "Pass `effort` when you spawn a subagent"      — a parameter the delegation tool does not have
@@ -202,18 +216,40 @@ def _check_documents(root: Path) -> list[str]:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*.md")):
-            rel = path.relative_to(root).as_posix()
-            text = _read(path)
-            problems += _check_rows(rel, text, known, root)
-            problems += _check_instructions(rel, text)
+            problems += _check_document(path.relative_to(root).as_posix(), path, known, root)
+    for name in SOURCE_FILES:
+        path = root / name
+        if path.is_file():
+            problems += _check_document(name, path, known, root)
     return problems
+
+
+def _check_document(rel: str, path: Path, known: set[str], root: Path) -> list[str]:
+    text = _read(path)
+    return _check_rows(rel, text, known, root) + _check_instructions(rel, text)
+
+
+def _row_tokens(row: str) -> list[str]:
+    """Every token a table row offers, from its backticked spans and from its plain cells alike.
+
+    Reading only the backticked spans made the guard a check on markup: a row that dropped two
+    characters was skipped entirely, and one that dropped them from the level column alone was seen
+    but never compared. A row means what it says however its author marked it up.
+    """
+    tokens = list(_TICKED.findall(row))
+    for cell in row.strip().strip("|").split("|"):
+        cell = cell.strip().strip("`*").strip()
+        if cell and _TOKEN.match(cell):
+            tokens.append(cell)
+    return list(dict.fromkeys(tokens))
 
 
 def _check_rows(rel: str, text: str, known: set[str], root: Path) -> list[str]:
     problems: list[str] = []
     for lineno, row in _effort_rows(text):
-        tokens = _TICKED.findall(row)
-        stages = [_QUALIFIER.sub("", t) for t in tokens if _QUALIFIER.sub("", t).startswith("avenger-")]
+        tokens = _row_tokens(row)
+        names = [_QUALIFIER.sub("", t) for t in tokens]
+        stages = list(dict.fromkeys(n for n in names if n in known or n.startswith("avenger-")))
         levels = [t for t in tokens if t.lower() in LEVELS]
         if not stages:
             continue
