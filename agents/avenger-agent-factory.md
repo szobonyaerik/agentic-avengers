@@ -3,6 +3,7 @@ name: avenger-agent-factory
 description: Use when creating or customizing a canonical pipeline agent
 tools: Read, Write, Glob, Grep, Bash
 model: opus
+effort: medium
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/self-improvement` — load each before you start.

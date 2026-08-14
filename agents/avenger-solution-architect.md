@@ -3,6 +3,7 @@ name: avenger-solution-architect
 description: Use when evaluating system architecture and making structural recommendations
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: opus
+effort: medium
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/codemap`, `skills/self-improvement` — load each before you start.

@@ -3,6 +3,7 @@ name: avenger-verifier
 description: Use after every spec in a phase is implemented and green, to independently verify the phase. MUST run on a different model family than the implementer. Passes the phase or routes it back with triage.
 tools: Read, Write, Glob, Grep, Bash
 model: opus
+effort: high
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/verifier-triage`, `skills/tdd`, `skills/self-improvement` — load each before you start.

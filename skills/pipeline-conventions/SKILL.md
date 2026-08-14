@@ -919,6 +919,36 @@ precondition is a clean tree already carrying `tests/e2e/<feature>/`) and the re
 *after* it. **The orchestrator itself never pushes**; the feature-close ship gate above does, in both
 modes. Full detail in `docs/AUTOMATE.md` §2.
 
+## Stage effort is DECLARED in the definition, never handed over at spawn
+
+Each stage's reasoning effort is the `effort:` key in its own `agents/<stage>.md` frontmatter. The
+harness reads that key and applies it when the stage is spawned. **No caller supplies it**, and the
+delegation tool has no parameter that could carry one.
+
+That is the whole rule, and it exists because the opposite was written down for ten phases.
+`commands/avenger-run.md` carried a per-stage effort table, called reasoning effort *"the largest
+lever on cost that does not change what any gate checks"*, and instructed the orchestrator to hand
+each subagent its effort at spawn time. Nothing could obey an instruction naming a parameter that
+does not exist, no phase metrics record ever mentioned effort, and every stage of every phase ran at
+the session default. The largest cost lever the pipeline believed it had had never once been pulled,
+and any past claim that a cheap profile held quality was a claim about a profile that was never in
+force.
+
+`scripts/stage_effort.py check` is what stops that returning, and it runs on every commit through
+`gate_ci.sh`. Three failures, one per way the state comes back: a stage that declares no effort (it
+runs at the session default), a document stating a level the definitions do not or naming a stage no
+definition backs (a table with nothing behind it), and any instruction to hand a stage its effort at
+spawn time. `stage_effort.py table` renders the allocation from the definitions themselves, which is
+the copy the harness reads. **It is not diff-scoped**, for the same reason `doc_read_path.py
+check --sources` is not: these are canonical stage instructions, always open to change, never shipped
+artifacts a later rule would hold hostage. A tree with no `agents/` — a vendored install — is
+reported as *nothing checked* rather than passing invisibly.
+
+Two limits, said rather than implied. **A declared effort is not an observed one**: a model that does
+not support a level is silently downgraded and only the harness sees it. And **opencode does not
+carry this** — `sync_opencode.py` says so on every run rather than emitting a key the provider would
+drop, because a value that looks carried and is not is the same defect one runtime over.
+
 ## Implementer minimalism (`skills/ponytail`)
 
 The implementers — and **only** the implementers — carry a minimalism ladder they climb before writing

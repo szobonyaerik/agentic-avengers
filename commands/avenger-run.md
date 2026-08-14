@@ -169,11 +169,18 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 
 `--from <stage>` overrides the first iteration only; afterwards the resolver drives.
 
-### Effort per stage
+### Effort per stage — declared in the definition, never passed at spawn
 
-Pass `effort` when you spawn a subagent, matched to the work rather than left at the session
-default. Reasoning effort is the largest lever on cost that does not change what any gate checks,
-and spending `high` on a mechanical stage buys nothing measurable.
+**You pass nothing.** Each stage's reasoning effort is declared as `effort:` in its own
+`agents/<stage>.md` frontmatter, and the harness applies it when the stage is spawned. Reasoning
+effort is the largest lever on cost that does not change what any gate checks, and spending `high`
+on a mechanical stage buys nothing measurable — but for ten phases this section instructed the
+orchestrator to *pass* `effort` when it spawned a subagent, and the delegation tool has no such
+parameter. Nothing could obey it, nothing recorded it, and every stage of every phase ran at the
+session default. **A per-stage effort table in a document is decoration; the frontmatter key is the
+mechanism.**
+
+The allocation and the reason for it:
 
 | Stage | effort | why |
 |---|---|---|
@@ -182,13 +189,25 @@ and spending `high` on a mechanical stage buys nothing measurable.
 | `avenger-spec-writer` | `medium` | accuracy holds here, and the gate reads what it writes |
 | `avenger-solution-architect`, `avenger-implementation-planner` | `medium` | shape decisions, reviewed at the plan stop |
 | `avenger-backend-architect`, `avenger-frontend-developer` | `medium` | a red → green loop with a suite as its oracle |
+| `avenger-agent-factory` | `medium` | it authors a grounded copy of an agent, read by a human before use |
 | `avenger-verifier` | `high` | it is the independence, and it reads a green suite for tests that lie |
 | `avenger-breaker` | `high` | it found a credential leak by constructing an input nothing else would |
 | `avenger-bug-hunter` | `high` | diagnosis with no oracle |
 
-This is a starting allocation, not a ceiling: raise a stage's effort when *that stage* has been
-routing back, and say in the retrospective that you did — a stage whose effort had to be raised is
-evidence about the stage, not about the run.
+**This table can no longer drift from what runs.** `scripts/stage_effort.py check` runs on every
+commit through `scripts/gate_ci.sh` and fails on a stage that declares no effort, on a row stating a
+level the definitions do not, on a row naming a stage no definition backs, and on any instruction to
+supply effort at spawn time. `stage_effort.py table` renders the same allocation straight from
+`agents/*.md`, which is the copy the harness actually reads.
+
+This is a starting allocation, not a ceiling: raise a stage's effort by editing that stage's own
+frontmatter when *that stage* has been routing back, and say in the retrospective that you did — a
+stage whose effort had to be raised is evidence about the stage, not about the run.
+
+What is declared is still not proof of what ran: a model that does not support a level is silently
+downgraded, and only the harness sees that. Observing the effort each stage actually ran at is a
+separate, unbuilt half — say so if you retro on effort, rather than reading the declaration as a
+measurement.
 
 The companion instruction to this table — *remove explicit self-verification scaffolding where the
 model already verifies unprompted* — **found nothing to remove**. No agent, skill, command or prompt
@@ -231,7 +250,8 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 ## 4. After the Verifier passes a phase
 
 1. **Breaker** — only if the resolver reports `criticality: critical` for the phase. Invoke
-   `plan-build-verify:avenger-breaker` at `effort: high`. A counterexample routes back to the
+   `plan-build-verify:avenger-breaker` — it runs at the effort its own definition declares, which
+   you neither pass nor override. A counterexample routes back to the
    implementer to **add** a test (the suite is locked; additions only). **It is never folded into
    verification**: it found phase 8's credential leaks by constructing inputs, which is a different
    instrument from reading a test set.

@@ -3,6 +3,7 @@ name: avenger-frontend-developer
 description: Use when implementing frontend specs and building responsive UI
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+effort: medium
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/tdd`, `skills/self-improvement` — load each before you start.

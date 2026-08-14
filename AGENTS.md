@@ -288,6 +288,15 @@ Build agents use OpenRouter model ids set in `scripts/sync_opencode.py` (`MODEL_
 once with OpenRouter (`opencode auth login`) or export `OPENROUTER_API_KEY`. The gate models
 (DeepSeek/Gemini) are called by `gate_runner.py` via `OPENROUTER_API_KEY`.
 
+**Reasoning effort is not carried to opencode, and that is deliberate.** Each canonical stage
+declares an `effort:` key in its `agents/<stage>.md` frontmatter, which Claude Code reads and applies
+at spawn (`scripts/stage_effort.py`, checked on every commit by `gate_ci.sh`). `sync_opencode.py`
+does not transpile it and says so on every run: the option that would carry reasoning effort to an
+OpenRouter-hosted model is provider-specific and unverified here, and emitting a key the provider
+drops would look like the lever was pulled while it was not. **On opencode every stage runs at the
+session/provider default** — which is exactly what the whole pipeline did for ten phases while a
+table in the runbook said otherwise, and is why this is written down rather than left to be found.
+
 ## Regenerate after editing canonical files
 The canonical agents live in `agents/` and skills in `skills/`. After changing either:
 ```

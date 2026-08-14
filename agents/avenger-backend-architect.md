@@ -3,6 +3,7 @@ name: avenger-backend-architect
 description: Use when implementing backend specs and shipping code
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+effort: medium
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/tdd`, `skills/self-improvement` — load each before you start.

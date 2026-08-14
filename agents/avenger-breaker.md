@@ -3,6 +3,7 @@ name: avenger-breaker
 description: Use on critical/security paths after tests are green to find counterexamples beyond the test set.
 tools: Read, Write, Glob, Grep, Bash
 model: opus
+effort: high
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/self-improvement` — load each before you start.

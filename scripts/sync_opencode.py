@@ -109,6 +109,17 @@ def main():
 
     pruned = prune(out_dir, generated)
 
+    # Said out loud, every run, rather than left to be discovered: the canonical `effort:` key is a
+    # Claude Code mechanism and is NOT carried here. opencode passes unrecognised agent options
+    # straight through to the provider, and the key that would carry reasoning effort to
+    # OpenRouter-hosted Anthropic models is provider-specific and unverified in this repo. Emitting a
+    # value the provider drops would look like the lever was pulled while it was not — which is the
+    # exact defect scripts/stage_effort.py exists to end, one runtime over.
+    print(
+        "  note: `effort:` is NOT carried to opencode agents — stage effort is a Claude Code "
+        "mechanism, and on opencode every stage runs at the session/provider default."
+    )
+
     # skills: symlink .opencode/skills -> ../skills (identical SKILL.md, no copy)
     link = os.path.join(ROOT, ".opencode", "skills")
     if not os.path.lexists(link):
