@@ -944,10 +944,16 @@ check --sources` is not: these are canonical stage instructions, always open to 
 artifacts a later rule would hold hostage. A tree with no `agents/` — a vendored install — is
 reported as *nothing checked* rather than passing invisibly.
 
-Two limits, said rather than implied. **A declared effort is not an observed one**: a model that does
-not support a level is silently downgraded and only the harness sees it. And **opencode does not
-carry this** — `sync_opencode.py` says so on every run rather than emitting a key the provider would
-drop, because a value that looks carried and is not is the same defect one runtime over.
+Two limits, said rather than implied. **A declared effort is not an observed one, and nothing here
+observes what ran.** A model that does not support a level is silently downgraded and only the
+harness sees it. This check proves the allocation exists and agrees everywhere it is written down; it
+does **not** prove the lever is pulled, and a retrospective may not read a declaration as a
+measurement. The observed half is tracked as `fm-metrics-stage-efforts-field` — the phase metrics
+record has no field for a resolved effort, firstmate owns that schema, and the design there requires
+`resolved` to come from observation rather than a self-report, exactly as `skill_loads[]` does. And
+**opencode does not carry this** — `sync_opencode.py` says so on every run rather than emitting a key
+the provider would drop, because a value that looks carried and is not is the same defect one runtime
+over.
 
 ## Implementer minimalism (`skills/ponytail`)
 

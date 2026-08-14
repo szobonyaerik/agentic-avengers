@@ -29,9 +29,13 @@ This module owns no allocation of its own. What it owns is the three ways the de
    and it is what made the original table look enforced. Two such instructions were live when this
    was written: "Pass `effort` when you spawn a subagent" and "Invoke … at `effort: high`".
 
-What this module deliberately does NOT claim: that the *resolved* effort matched the declared one at
-runtime. A model that does not support a level is silently downgraded, and only the harness sees
-that. Observing it is `scripts/hook_stage_effort.sh`.
+**What this module does NOT do, stated because the alternative is how the original defect read.** It
+does not observe what any stage actually ran at. A model that does not support a level is silently
+downgraded, and only the harness sees that, so a green `check` says the allocation exists and agrees
+everywhere it is written down — never that the lever was pulled. Nothing here may be read as a
+measurement in a retrospective. The observed half is tracked as `fm-metrics-stage-efforts-field`:
+firstmate's phase metrics record is a closed schema with no field for a resolved effort, and a writer
+that accepted one and dropped it would look fixed, which is worse than the gap.
 
 CLI:
     stage_effort.py table [--root <r>]     the declared allocation, rendered from the definitions

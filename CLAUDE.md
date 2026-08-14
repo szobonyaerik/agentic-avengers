@@ -473,10 +473,18 @@ are canonical stage instructions, always open, never shipped artifacts a later r
 hostage. A tree with no `agents/` - a vendored install - reports **nothing checked** rather than
 passing invisibly.
 
-Two limits, said rather than implied. **A declared effort is not an observed one**: a model that does
-not support a level is silently downgraded and only the harness sees that. And **opencode does not
-carry this** - `sync_opencode.py` says so on every run rather than emitting a key the provider would
-drop, since a value that looks carried and is not is this same defect one runtime over.
+Two limits, said rather than implied. **A declared effort is not an observed one, and nothing here
+observes what ran.** A model that does not support a level is silently downgraded and only the
+harness sees that, so this check proves the allocation exists and agrees everywhere it is written
+down - it does **not** prove the lever is pulled. A retrospective may not read a declaration as a
+measurement. The observed half is tracked as `fm-metrics-stage-efforts-field`, which carries the
+`stage_efforts[]` design and the rule that `resolved` comes from observation and never from a
+self-report, exactly as `skill_loads[]` does; the phase metrics record has no field for it today and
+firstmate owns that schema. It was deferred for **budget**, not because the record is unwanted: a
+writer that accepted an effort and dropped it would look fixed, which is worse than the gap. And
+**opencode does not carry this** - `sync_opencode.py` says so on every run rather than emitting a key
+the provider would drop, since a value that looks carried and is not is this same defect one runtime
+over.
 
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.

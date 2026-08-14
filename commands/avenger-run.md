@@ -204,10 +204,13 @@ This is a starting allocation, not a ceiling: raise a stage's effort by editing 
 frontmatter when *that stage* has been routing back, and say in the retrospective that you did — a
 stage whose effort had to be raised is evidence about the stage, not about the run.
 
-What is declared is still not proof of what ran: a model that does not support a level is silently
-downgraded, and only the harness sees that. Observing the effort each stage actually ran at is a
-separate, unbuilt half — say so if you retro on effort, rather than reading the declaration as a
-measurement.
+**What is declared is not what ran, and nothing here observes what ran.** A model that does not
+support a level is silently downgraded, and only the harness sees that. So this check proves the
+allocation exists and agrees everywhere it is written down — it does **not** prove the lever is
+pulled. Do not read a declaration as a measurement in a retrospective, and do not credit a profile
+to a phase on the strength of this section. The observed half is tracked as
+`fm-metrics-stage-efforts-field`: the phase metrics record has no field for a resolved effort, and
+firstmate owns that schema.
 
 The companion instruction to this table — *remove explicit self-verification scaffolding where the
 model already verifies unprompted* — **found nothing to remove**. No agent, skill, command or prompt
