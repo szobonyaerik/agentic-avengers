@@ -3,6 +3,7 @@ name: avenger-handover
 description: Use when ending a session to document state for the next session
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: haiku
+effort: low
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/phase-handover`, `skills/self-improvement` — load each before you start.

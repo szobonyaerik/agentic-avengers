@@ -42,6 +42,8 @@ When designing agents, follow these principles:
 
 **Model matches task.** Sonnet for execution tasks (implementing, fixing, formatting). Opus for reasoning tasks (planning, architecture, investigation, complex analysis).
 
+**Effort is declared, never passed.** Every agent you author declares an `effort:` key in its frontmatter — `low`, `medium`, `high`, `xhigh` or `max` — matched to the work the same way `model:` is. That key is the mechanism the harness reads at spawn; no caller can hand a stage its effort, so an agent that declares none runs at the session default and `scripts/gate_ci.sh` fails on the next commit.
+
 **Handoffs are workflow glue.** Every agent should know where it sits in the pipeline and where to send work next. Orphan agents (no handoffs) are usually a design smell unless they're truly standalone utilities.
 
 **Ground everything.** Generic instructions like "follow best practices" are useless. "Follow the repository pattern in `src/db/repositories.py` using async sessions" is useful. Read the codebase and reference what you find.

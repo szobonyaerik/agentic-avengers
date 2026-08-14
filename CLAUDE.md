@@ -449,6 +449,43 @@ Excluded from the mutation gate and the phase verifier hook. **Unchanged by §4a
 carry `binding: e2e` requirements are *phase*-level and live with the phase's other tests; this
 feature-level ceiling still applies to `tests/e2e/<feature>/` alone.
 
+### 4g. Stage effort is declared in the definition, never handed over at spawn
+Each stage's reasoning effort is the **`effort:` key in its own `agents/<stage>.md` frontmatter**,
+which the harness reads and applies when the stage is spawned. No caller supplies it, and the
+delegation tool has no parameter that could carry one.
+
+The opposite was written down for ten phases. `commands/avenger-run.md` carried a per-stage effort
+table, called reasoning effort *"the largest lever on cost that does not change what any gate
+checks"*, and told the orchestrator to hand each subagent its effort at spawn. **Nothing could obey
+an instruction naming a parameter that does not exist**: no metrics record ever mentioned effort, and
+every stage of every phase ran at the session default. The largest cost lever the pipeline believed
+it had had never once been pulled, so any past claim that a cheap profile held quality was a claim
+about a profile that was never in force. This is the recurring shape - a document asserting behaviour
+nothing enforces - and the table was one instance of it.
+
+`scripts/stage_effort.py check` runs on every commit through `gate_ci.sh` and fails on each way the
+state returns: a stage declaring **no** effort (it runs at the session default), a document stating a
+level the definitions do not or naming a stage no definition backs (**a table with nothing behind
+it**), and any instruction to hand a stage its effort at spawn. `table` renders the allocation from
+the definitions, which is the copy the harness reads, so the runbook's table can no longer drift from
+what runs. **Not diff-scoped**, for the same reason `doc_read_path.py check --sources` is not: these
+are canonical stage instructions, always open, never shipped artifacts a later rule would hold
+hostage. A tree with no `agents/` - a vendored install - reports **nothing checked** rather than
+passing invisibly.
+
+Two limits, said rather than implied. **A declared effort is not an observed one, and nothing here
+observes what ran.** A model that does not support a level is silently downgraded and only the
+harness sees that, so this check proves the allocation exists and agrees everywhere it is written
+down - it does **not** prove the lever is pulled. A retrospective may not read a declaration as a
+measurement. The observed half is tracked as `fm-metrics-stage-efforts-field`, which carries the
+`stage_efforts[]` design and the rule that `resolved` comes from observation and never from a
+self-report, exactly as `skill_loads[]` does; the phase metrics record has no field for it today and
+firstmate owns that schema. It was deferred for **budget**, not because the record is unwanted: a
+writer that accepted an effort and dropped it would look fixed, which is worse than the gap. And
+**opencode does not carry this** - `sync_opencode.py` says so on every run rather than emitting a key
+the provider would drop, since a value that looks carried and is not is this same defect one runtime
+over.
+
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.
 

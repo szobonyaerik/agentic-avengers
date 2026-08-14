@@ -3,6 +3,7 @@ name: avenger-agent-factory
 description: Use when creating or customizing a canonical pipeline agent
 tools: Read, Write, Glob, Grep, Bash
 model: opus
+effort: medium
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/self-improvement` — load each before you start.
@@ -38,6 +39,8 @@ When designing agents, follow these principles:
 **Tools are permissions.** Only give an agent the tools it needs. A planning agent that can `editFiles` will be tempted to edit. A read-only agent stays in its lane.
 
 **Model matches task.** Sonnet for execution tasks (implementing, fixing, formatting). Opus for reasoning tasks (planning, architecture, investigation, complex analysis).
+
+**Effort is declared, never passed.** Every agent you author declares an `effort:` key in its frontmatter — `low`, `medium`, `high`, `xhigh` or `max` — matched to the work the same way `model:` is. That key is the mechanism the harness reads at spawn; no caller can hand a stage its effort, so an agent that declares none runs at the session default and `scripts/gate_ci.sh` fails on the next commit.
 
 **Handoffs are workflow glue.** Every agent should know where it sits in the pipeline and where to send work next. Orphan agents (no handoffs) are usually a design smell unless they're truly standalone utilities.
 

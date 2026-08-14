@@ -3,6 +3,7 @@ name: avenger-bug-hunter
 description: Use when diagnosing and fixing bugs in the codebase
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+effort: high
 ---
 
 # Bug Hunter

@@ -3,6 +3,7 @@ name: avenger-spec-writer
 description: Use when breaking down implementation plans into precise, per-phase spec files
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+effort: medium
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/spec-review-checklist`, `skills/self-improvement` — load each before you start.

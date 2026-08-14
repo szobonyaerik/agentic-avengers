@@ -232,8 +232,8 @@ agentic-avengers/
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
-│   │                          + read path + verifier pre-check + amendments + carried items
-│   │                          + cosmic-ray + break-glass)
+│   │                          + read path + stage effort + verifier pre-check + amendments
+│   │                          + carried items + cosmic-ray + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
 │   ├── spec_gate_state.py     the one place a spec's gate stamp is read (legacy stamps included)
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
@@ -258,6 +258,13 @@ agentic-avengers/
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
 │   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
 │   │                          diff-scoped; and `--sources`, so a removed read cannot come back)
+│   ├── stage_effort.py        each stage's reasoning effort, read out of the `effort:` key in its
+│   │                          own `agents/<stage>.md` - the key the harness applies at spawn, never
+│   │                          a value a caller passes. `check` (every commit, NOT diff-scoped)
+│   │                          fails on a stage that declares none, a document claiming a level no
+│   │                          definition backs, and any instruction to supply it at spawn time;
+│   │                          `table` renders the allocation. It does NOT observe what a stage ran
+│   │                          at, and opencode does not carry the key at all
 │   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)

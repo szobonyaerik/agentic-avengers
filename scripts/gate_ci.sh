@@ -185,6 +185,19 @@ if ! python3 "$SCRIPT_DIR/doc_read_path.py" $READ_PATH_ARGS "$ROOT"; then
   record_fail "read-path"
 fi
 
+# 1bd) Per-stage reasoning effort — declared where the harness reads it, and nowhere else claimed.
+#      The runbook carried an effort table for ten phases and told the orchestrator to PASS effort at
+#      spawn; the delegation tool has no such parameter, so nothing could obey it and every stage ran
+#      at the session default. The table was the largest cost lever the pipeline believed it had, and
+#      it was decoration. This check is what stops that returning: a stage declaring no effort, a
+#      document stating a pair the definitions do not, and any instruction to hand a stage its effort
+#      at spawn time are each a failure.
+#      NOT diff-scoped, deliberately, and for the same reason `--sources` above is not: these are
+#      canonical stage instructions, which are always open to change, never shipped artifacts a
+#      later rule would hold hostage.
+echo "• stage effort: every stage declares it, and no document claims one nothing applies"
+python3 "$SCRIPT_DIR/stage_effort.py" check --root "$ROOT" || record_fail "stage-effort"
+
 # 1c) Cross-family assertion — on the model that actually FORMS THE JUDGEMENT.
 #     Checking the Verifier agent's own `model:` would be meaningless here: every subagent in this
 #     runtime is Anthropic, so the agent can never differ in family from the implementer. What must be

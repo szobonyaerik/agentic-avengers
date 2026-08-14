@@ -3,6 +3,7 @@ name: avenger-task-analyst
 description: Use when you need to transform raw task descriptions into structured planning prompts
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+effort: low
 ---
 
 > **Required skills.** `skills/pipeline-conventions`, `skills/codemap`, `skills/self-improvement` — load each before you start.
