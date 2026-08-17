@@ -271,6 +271,9 @@ agentic-avengers/
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── pipeline_metrics.py    the emission points: gate calls, spec rounds, defects, skill loads
 │   ├── metrics_sink.py        fail-open bridge to firstmate's per-phase metrics CLI (no schema here)
+│   ├── plugin_release.py      the executing plugin copy vs. the merged repository: `check` (the
+│   │                          /avenger-run preflight: STALE stops a run, UNKNOWN is unenforced)
+│   │                          and `cut`, the one release step into the plugin cache
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
