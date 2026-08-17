@@ -29,7 +29,8 @@ Two rules to respect at the boundary:
 - The layering runs upward too: the pipeline **writes** firstmate's per-phase metrics record as each
   phase runs, through `scripts/metrics_sink.py` → `bin/fm-pipeline-metrics.sh`. Emission is off
   unless that CLI is on the crewmate's `PATH` (or named by `AVENGER_METRICS_CMD`), and a run without
-  it says so once and records nothing — it never fails a phase. Full rule in
+  it says so once and records nothing — it never fails a phase, except `pipeline_metrics.py defect`,
+  which a stage runs directly and which exits **1** when it could not record. Full rule in
   `skills/pipeline-conventions` ("The pipeline measures itself as it runs"); the schema is
   firstmate's `docs/pipeline-metrics.md`.
 - Firstmate hard rule: crewmates never address you directly. Typing into a crewmate window (the

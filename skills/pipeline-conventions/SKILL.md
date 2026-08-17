@@ -821,13 +821,13 @@ that observes it, at the moment it observes it, so a phase that dies mid-run sti
 behind. One phase died and was recovered three times; every recovery would have lost the lot under a
 write-at-the-end design.
 
-**Writing metrics can never fail a phase.** Every failure — no writer configured, an unwritable
-record, a refusal, a hang, a crash — is swallowed, written to `.avenger-metrics.log`, and reported as
-"not recorded". Every metrics CLI call in a hook exits 0 on an emission path. **Measurement, not a
-gate**: a metrics bug that blocked delivery would be a self-inflicted outage in the thing meant to
-make delivery cheaper. An unwritable record makes firstmate's CLI *block* rather than fail, so one
-timeout abandons the writer for the rest of that process — the fail-open property has to hold in wall
-clock, not only in exit codes.
+**Writing metrics can never fail a phase — with one deliberate exception, `defect`, below.** Every
+failure — no writer configured, an unwritable record, a refusal, a hang, a crash — is swallowed,
+written to `.avenger-metrics.log`, and reported as "not recorded". Every metrics CLI call in a hook
+exits 0 on an emission path. **Measurement, not a gate**: a metrics bug that blocked delivery would
+be a self-inflicted outage in the thing meant to make delivery cheaper. An unwritable record makes
+firstmate's CLI *block* rather than fail, so one timeout abandons the writer for the rest of that
+process — the fail-open property has to hold in wall clock, not only in exit codes.
 
 **Emission is attached to the fact, never to the caller.** `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by

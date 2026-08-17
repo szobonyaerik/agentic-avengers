@@ -5,9 +5,12 @@ Three properties are load-bearing and each has its own group below.
 **Emitted during the run.** Nothing here reconstructs anything at the end, so every emission point
 is driven the way its caller drives it and the record is read straight off disk afterwards.
 
-**Never able to fail a phase.** The CLI is asserted to exit 0 with the record unwritable, which is
-the shape a real failure takes: a hook runs `pipeline_metrics.py …` and a non-zero exit there would
-stop the turn.
+**Never able to fail a phase, except `defect`.** The CLI is asserted to exit 0 with the record
+unwritable, which is the shape a real failure takes: a hook runs `pipeline_metrics.py …` and a
+non-zero exit there would stop the turn. `defect` is the deliberate exception and has its own group
+below: a stage runs it directly, off any hook's `|| true`, so an emission it could not write is
+asserted to exit non-zero and say so on stderr — the breaks-the-recorder cases are what prove that
+guard goes red rather than green.
 
 **Attributed to the fact, not to the caller.** A spec round is idempotent by content, so any number
 of callers may report the same write; a seeded skill requirement never overwrites an observed load,

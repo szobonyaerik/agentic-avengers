@@ -248,7 +248,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    observes it, through `scripts/metrics_sink.py` into firstmate's `fm-pipeline-metrics.sh`. The
    schema is theirs (`docs/pipeline-metrics.md`); this repo adds no key and keeps no second store.
    **Measurement, never a gate**: every failure is swallowed and logged to `.avenger-metrics.log`,
-   and no metrics call can fail a phase. Emission attaches to the fact — inside `gate_runner.py`,
+   and no metrics call from a hook can fail a phase (`defect` excepted — see below). Emission
+   attaches to the fact — inside `gate_runner.py`,
    not once per caller — so a new gate is instrumented by existing. Record a defect no script can
    see (Breaker, a probe, running the real path) with `scripts/pipeline_metrics.py defect`, whose
    `--summary` follows rule 10. Off unless `fm-pipeline-metrics.sh` is on `PATH` or
@@ -337,7 +338,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
 | `AVENGER_METRICS_CMD` | looked up on `PATH` | path to firstmate's `fm-pipeline-metrics.sh`; without it a run records no metrics and says so once |
-| `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently |
+| `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently, and is the only thing that keeps `pipeline_metrics.py defect` quiet when it cannot record instead of exiting 1 |
 | `AVENGER_METRICS_PROJECT` | the git repository's name | the record's `project`, which scopes every firstmate lookup |
 | `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this` exceeds it — raise it and raise `hooks/hooks.json` with it |
 | `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
