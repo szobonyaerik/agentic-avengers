@@ -879,8 +879,11 @@ costs real time but must not inflate the product-defect count.
 
 **Off unless a firstmate home is configured.** `fm-pipeline-metrics.sh` must be on `PATH` or named by
 `AVENGER_METRICS_CMD`; without it a run records nothing and **says so once**, because a measurement
-layer quietly doing nothing is the failure the record exists to remove. `AVENGER_METRICS_OFF=1`
-disables it silently. opencode's adapter drives the same `hook_*.sh`, so gate calls, spec rounds and
+layer quietly doing nothing is the failure the record exists to remove. That announcement names the
+state that is actually true, and there are two: **nothing named at all** (not on `PATH`,
+`AVENGER_METRICS_CMD` unset), or **a named path that is not an executable file** — missing, or with
+no exec bit. Reporting the first for the second hands the reader a remedy they already applied.
+`AVENGER_METRICS_OFF=1` disables it silently. opencode's adapter drives the same `hook_*.sh`, so gate calls, spec rounds and
 phase boundaries are recorded there too; it has no subagent-start or read event, so skill loads are
 not.
 
@@ -893,7 +896,9 @@ them is yours to fix.**
 
 - **A writer IS configured and the write failed** (the writer refused, hung, or the record could not
   be written): retryable, and the message says so. Read the `[metrics]` line above it, fix the cause,
-  and re-run the exact command.
+  and re-run the exact command. *Configured* means **named**, not working — a broken
+  `AVENGER_METRICS_CMD` path lands here on purpose, because making that path executable is a remedy
+  that exists and a re-run after it succeeds.
 - **No writer is configured at all** — `fm-pipeline-metrics.sh` is not on `PATH` and
   `AVENGER_METRICS_CMD` is unset: **terminal, and addressed to the operator, not to you.** This is
   the expected state of a standalone install with no firstmate home, it is a standing property of the
