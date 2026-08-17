@@ -881,6 +881,14 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+#: The two markers a stage reads to tell a retryable `defect` failure from a terminal one. NEITHER
+#: CONTAINS THE OTHER, and `tests/test_pipeline_metrics.py` holds them to it: a reader matching the
+#: retryable marker against the terminal message would be told to re-run a command that can only
+#: fail the same way, which is the loop the split exists to end.
+DEFECT_WRITE_FAILED = "DEFECT NOT RECORDED - WRITE FAILED"
+DEFECT_NO_WRITER = "DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED"
+
+
 def _defect_failure_message(args: argparse.Namespace) -> str:
     """What a `defect` that could not be written says, in the two shapes it comes in."""
     lost = (
@@ -890,12 +898,12 @@ def _defect_failure_message(args: argparse.Namespace) -> str:
     )
     if sink.configured():
         return (
-            f"{sink.PREFIX} DEFECT NOT RECORDED: {lost} A metrics writer IS configured for this "
+            f"{sink.PREFIX} {DEFECT_WRITE_FAILED}: {lost} A metrics writer IS configured for this "
             "run, so the write itself failed and the remedy is yours: see the [metrics] diagnostic "
             "above for the cause, fix it, and re-run this exact command."
         )
     return (
-        f"{sink.PREFIX} DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED: {lost} No writer is "
+        f"{sink.PREFIX} {DEFECT_NO_WRITER}: {lost} No writer is "
         "configured for this run: fm-pipeline-metrics.sh is not on PATH and AVENGER_METRICS_CMD is "
         "unset. That is the expected state of a standalone install with no firstmate home, and it "
         "is a standing property of this environment rather than something this command can repair. "

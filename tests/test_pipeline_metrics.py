@@ -662,6 +662,33 @@ def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, m
     assert "AVENGER_METRICS_OFF=1" in result.stderr   # the other reachable resolution, named
 
 
+def test_neither_failure_marker_contains_the_other():
+    """A stage discriminates on these, and substring matching is how it does it."""
+    assert metrics.DEFECT_WRITE_FAILED not in metrics.DEFECT_NO_WRITER
+    assert metrics.DEFECT_NO_WRITER not in metrics.DEFECT_WRITE_FAILED
+
+
+def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(stub_sink, monkeypatch, tmp_path):  # noqa: F811,E501
+    """The one state where "configured" and "resolvable" disagree — and the loop it used to cause.
+
+    `configured()` says yes, so the stage is told to fix the cause and re-run; the cause line it is
+    sent to must therefore name the exec bit, not an unset variable the operator has already set.
+    """
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    inert = tmp_path / "inert-fm-pipeline-metrics.sh"
+    inert.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    inert.chmod(0o600)
+    monkeypatch.setenv("AVENGER_METRICS_CMD", str(inert))
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert metrics.DEFECT_WRITE_FAILED in result.stderr
+    assert "not an executable file" in result.stderr
+    assert "AVENGER_METRICS_CMD is unset" not in result.stderr
+
+
 def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monkeypatch):  # noqa: F811,E501
     """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
     project, _, _ = stub_sink

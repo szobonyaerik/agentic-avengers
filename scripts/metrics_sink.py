@@ -109,6 +109,27 @@ def configured() -> bool:
     return shutil.which("fm-pipeline-metrics.sh") is not None
 
 
+def _unresolvable_reason() -> str:
+    """Why `cli()` resolved to nothing, in the words of the state that is actually true.
+
+    `cli()` returns `None` for two unconfigured shapes, and they have different remedies. Reporting
+    the first for the second is not a cosmetic slip: `pipeline_metrics.py defect` sends its reader to
+    this line for the cause, and a reader told "AVENGER_METRICS_CMD is unset" over a variable they
+    just set has been handed a remedy already applied, so they re-run and get the same pair back.
+    """
+    named = os.environ.get("AVENGER_METRICS_CMD")
+    if named:
+        return (
+            f"AVENGER_METRICS_CMD names {named}, which is not an executable file (it is missing, or "
+            "it has no exec bit) - this run records no pipeline metrics. Make that path executable, "
+            "or point the variable at firstmate's own fm-pipeline-metrics.sh."
+        )
+    return (
+        "fm-pipeline-metrics.sh is not on PATH and AVENGER_METRICS_CMD is unset — this run "
+        "records no pipeline metrics. Set AVENGER_METRICS_CMD to firstmate's copy to enable it."
+    )
+
+
 def enabled() -> bool:
     """Whether a record can be written at all, announcing the answer once if it cannot."""
     global _announced
@@ -118,10 +139,7 @@ def enabled() -> bool:
     # over a writer that IS configured and hung sends the reader to their PATH for a stuck lock.
     if not _announced and not _writer_unusable and os.environ.get("AVENGER_METRICS_OFF") != "1":
         _announced = True
-        note(
-            "fm-pipeline-metrics.sh is not on PATH and AVENGER_METRICS_CMD is unset — this run "
-            "records no pipeline metrics. Set AVENGER_METRICS_CMD to firstmate's copy to enable it."
-        )
+        note(_unresolvable_reason())
     return False
 
 
