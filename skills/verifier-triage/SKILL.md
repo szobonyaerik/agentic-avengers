@@ -161,8 +161,13 @@ command string, so prose that merely *names* a denied command denies the command
 `mutation`, `running-suite`, `probe`, `execution`, `measurement`, `human-review`, `ci`, `other` (which
 then needs `--found-by-note`). Add `--not-real` for a defect in a test, fixture or artifact: it cost
 real time and belongs in the record, but it must not inflate the count of genuine product defects.
-This is measurement, never a gate — the command exits 0 whatever happens, and a phase never waits on
-it.
+This is measurement, but `defect` is the one emission command that is **loud about failing** (issue
+#66): it runs directly rather than from a hook's `|| true`, so an emission that could not be written
+(no writer configured, the writer command missing, a non-zero exit from the writer, an unwritable
+record) exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set (configured
+behaviour, not a failure). Treat that non-zero exit as a real failure: read the `[metrics]` line
+above it, fix the cause, and re-run the exact command - the defect did not land, and `found_by` is
+not recoverable once the phase moves on.
 
 ## The verdict is a persisted artifact
 The verdict is not chat-only. Write it to disk at
