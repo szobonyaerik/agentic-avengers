@@ -14,9 +14,14 @@ leaves its numbers behind. Phase 8 died and was recovered three times; every one
 would have lost the lot under a write-at-the-end design. So each fact is written by the stage that
 sees it, at the moment it sees it, and no stage is trusted to remember anything for later.
 
-**Writing metrics can never fail a phase.** Everything here funnels through `metrics_sink`, which
-swallows every failure and reports it as `False`. This module adds no `sys.exit` of its own on an
-emission path and its CLI exits 0 even when nothing could be written. Measurement, not a gate.
+**Writing metrics can never fail a phase — except the one command nothing wraps in `|| true`.**
+Everything here funnels through `metrics_sink`, which swallows every failure and reports it as
+`False`. Every emission point but one is called from a hook's fail-open path and this module adds no
+`sys.exit` of its own there — its CLI exits 0 even when nothing could be written. `defect` is the
+exception: it is the single field the record exists for, the only one unrecoverable after the run,
+and it is always run directly by a stage rather than from a hook, so nothing else is fail-open on its
+behalf. A `defect` call that could not be written exits 1 and says why on stderr (issue #66) — a
+recorder that quietly does nothing is indistinguishable from one with nothing to record.
 
 Emission is attached to the *fact*, not to the caller. `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
@@ -24,7 +29,7 @@ existing. `record_spec_round` is idempotent by CONTENT — it reuses the shipped
 cache to remember which body it last counted — so any caller may call it on any spec write and the
 record converges instead of double-counting a round.
 
-CLI, for the shell emission points (all fail open, all exit 0):
+CLI, for the shell emission points (all fail open, all exit 0, except `defect` — see above):
     pipeline_metrics.py spec-round <spec.md>
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
     pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
@@ -32,7 +37,7 @@ CLI, for the shell emission points (all fail open, all exit 0):
     pipeline_metrics.py mutation-survivors <phase-dir> <mutation-score.json>
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
     pipeline_metrics.py skill-required --stage <s>
-    pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...
+    pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...   (exits 1 on failure)
     pipeline_metrics.py phase-open <phase-dir>
     pipeline_metrics.py phase-close <phase-dir>
 """
@@ -779,8 +784,15 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dispatch(args: argparse.Namespace) -> None:
-    """Run one CLI command. Prints nothing to stdout except a value the caller asked for."""
+def _dispatch(args: argparse.Namespace) -> bool | None:
+    """Run one CLI command. Prints nothing to stdout except a value the caller asked for.
+
+    Returns whether the record was written, but only `main`'s handling of `defect` reads it. Every
+    other command here is called from a hook's `|| true` fail-open path (`hook_spec_gate.sh`,
+    `hook_verifier.sh`, `hook_mutation.sh`) and must keep exiting 0 no matter what — a non-zero exit
+    there would stop the turn over a missing number. `defect` is the one command a stage runs
+    directly, off that path, specifically so it can be told whether its own catch landed.
+    """
     if args.command == "spec-round":
         value = record_spec_round(args.spec)
         print(value if value is not None else 1)
@@ -809,28 +821,55 @@ def _dispatch(args: argparse.Namespace) -> None:
             print(name)
     elif args.command == "defect":
         phase = _phase_of_ref(args.phase_ref)
-        if phase:
-            record_defect(phase, identifier=args.identifier, summary=args.summary,
-                          found_by=args.found_by, real=not args.not_real,
-                          stage_reached=args.stage_reached, severity=args.severity,
-                          found_by_note=args.found_by_note)
+        if phase is None:
+            sink.note(
+                f"defect {args.identifier} not recorded: --phase-ref {args.phase_ref!r} does not "
+                "resolve to a phase"
+            )
+            return False
+        return record_defect(phase, identifier=args.identifier, summary=args.summary,
+                              found_by=args.found_by, real=not args.not_real,
+                              stage_reached=args.stage_reached, severity=args.severity,
+                              found_by_note=args.found_by_note)
     elif args.command == "phase-open":
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
         record_phase_close(args.phase_dir)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Always 0 on an emission path: a phase must never fail because a number went unrecorded."""
+    """0 on every emission path except `defect`, which is loud on purpose.
+
+    Every other command here runs from a hook's `|| true` fail-open path, so a phase must never fail
+    because a number went unrecorded. `defect` is different: it is the one field the record exists
+    for and the only one unrecoverable after the run (`skills/pipeline-conventions` §6d), and it is
+    always run directly by a stage rather than from a hook — so nothing anywhere is fail-open on its
+    behalf. A recorder that quietly does nothing there is indistinguishable from one with nothing to
+    record, which is exactly the failure this repairs — so an emission that could not be written
+    exits non-zero and says why on stderr, unless the operator explicitly turned emission off via
+    `AVENGER_METRICS_OFF=1`, which is configured behaviour rather than a failure.
+    """
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:   # a usage error is the caller's bug, and is worth the nonzero exit
         return int(exc.code or 2)
     try:
-        _dispatch(args)
+        ok = _dispatch(args)
     except Exception as exc:  # noqa: BLE001 — measurement never fails the thing it measures
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
+        ok = False if args.command == "defect" else None
+    if args.command == "defect" and ok is False and os.environ.get("AVENGER_METRICS_OFF") != "1":
+        print(
+            f"{sink.PREFIX} DEFECT NOT RECORDED: {args.identifier} (found_by={args.found_by}) was "
+            "NOT written to the metrics record. This is the single field the record exists for and "
+            "it cannot be reconstructed once the run is over. See the [metrics] diagnostic above "
+            "for the cause, fix it (commonly: set AVENGER_METRICS_CMD to firstmate's own "
+            "fm-pipeline-metrics.sh), and re-run this exact command.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

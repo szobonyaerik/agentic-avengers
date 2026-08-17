@@ -884,6 +884,15 @@ disables it silently. opencode's adapter drives the same `hook_*.sh`, so gate ca
 phase boundaries are recorded there too; it has no subagent-start or read event, so skill loads are
 not.
 
+**`defect` is the one command that is loud about failing (issue #66).** Every other emission point
+runs from a hook's `|| true` and must stay exit-0 no matter what. `defect` is run directly by the
+stage that caught something, off any hook, so nothing else is fail-open on its behalf — an emission
+that could not be written (no writer configured, the writer command missing, a non-zero exit from the
+writer, an unwritable record) exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is
+set (that is configured behaviour, not a failure). Treat a non-zero exit from `defect` as a real
+failure: read the `[metrics]` line above it, fix the cause, and re-run the exact command — the defect
+did not land, and `found_by` is not recoverable once the phase moves on.
+
 ## Agent tooling
 
 Every canonical agent declares an explicit `tools:` allowlist (`Read, Write, Glob, Grep, Bash`, plus

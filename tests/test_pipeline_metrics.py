@@ -582,6 +582,64 @@ def test_a_usage_error_is_still_a_usage_error():
     assert run_cli("no-such-command").returncode != 0
 
 
+# --- `defect` is the deliberate exception: it must be loud when it fails (issue #66) --------------
+
+
+DEFECT_ARGS = (
+    "defect", "--phase-ref", "docs/features/demo/phases/08-slug",
+    "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+)
+
+
+def test_a_stage_running_as_a_subagent_can_emit_a_defect_with_no_human_intervention(stub_sink):  # noqa: F811,E501
+    """The happy path: a bare CLI invocation, inheriting only the fixture's environment, records."""
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stored(store, "08")["defects"][0]["id"] == "D1"
+
+
+def test_a_defect_that_cannot_be_written_because_the_writer_refuses_fails_loudly(stub_sink, monkeypatch):  # noqa: F811,E501
+    """Break the recorder (the writer exits non-zero) and confirm the guard goes red, not green."""
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("DOUBLE_EXIT", "3")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert "D1" in result.stderr
+    assert not (store / "phase-08.json").exists()
+
+
+def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch):  # noqa: F811
+    """Unset the writer entirely — the "unconfigured" half of the guard, not just "refused"."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")  # no fm-pipeline-metrics.sh reachable by any other name either
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert "D1" in result.stderr
+
+
+def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monkeypatch):  # noqa: F811,E501
+    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
 # --- driven through the real gate runner, which is where every gate call passes -------------------------
 
 #: A provider that answers, and one that refuses for billing reasons — the shape once read as a

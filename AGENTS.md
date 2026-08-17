@@ -252,8 +252,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    not once per caller — so a new gate is instrumented by existing. Record a defect no script can
    see (Breaker, a probe, running the real path) with `scripts/pipeline_metrics.py defect`, whose
    `--summary` follows rule 10. Off unless `fm-pipeline-metrics.sh` is on `PATH` or
-   `AVENGER_METRICS_CMD` names it, and an unconfigured run says so once. Full rule in
-   `skills/pipeline-conventions/SKILL.md`.
+   `AVENGER_METRICS_CMD` names it, and an unconfigured run says so once. **`defect` is the one
+   exception to "never fail a phase"**: it runs directly (never from a hook's `|| true`), so a call
+   that could not be written exits 1 and says why on stderr — treat that as a real failure and
+   re-run it, not as noise (issue #66). Full rule in `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
