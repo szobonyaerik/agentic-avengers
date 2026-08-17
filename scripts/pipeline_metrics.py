@@ -419,6 +419,17 @@ def _spec_rounds(record: dict | None) -> int:
 PLUGIN_VERSION_STAGE = "plugin-version"
 PLUGIN_VERSION_MODEL = "none (scripts/plugin_release.py)"
 
+#: `gate_calls[].verdict` is a CLOSED enum firstmate owns — `GO|REVIEW|NO-GO|error|killed` — and its
+#: writer refuses any row `validate` would refuse. A drift status passed through verbatim ("STALE")
+#: is not in it, so the row is rejected, the refusal is swallowed by the fail-open path every
+#: measurement here runs on, and the executing version ends up recorded NOWHERE, which is the one
+#: thing this row exists to prevent. So the status is MAPPED, and the untranslated token stays in
+#: `note` where free text is allowed: a stale copy reads as the rejection it is, a fresh one as GO,
+#: and an unresolvable comparison as `NO_VERDICT` for the reason that token exists elsewhere in this
+#: file — answered, but no judgement made. A status with no mapping is said out loud rather than
+#: silently re-inventing an out-of-enum verdict.
+PLUGIN_VERSION_VERDICTS = {"fresh": "GO", "stale": "NO-GO", "unknown": NO_VERDICT}
+
 
 def record_plugin_version(phase: str) -> bool:
     """Record which plugin copy actually executed this phase (issue #65).
@@ -439,6 +450,13 @@ def record_plugin_version(phase: str) -> bool:
             f"status={result.status} executing_version={result.executing_version} "
             f"source_version={result.source_version} root={result.executing_root}"
         )
+        verdict = PLUGIN_VERSION_VERDICTS.get(result.status)
+        if verdict is None:
+            sink.note(
+                f"plugin drift status {result.status!r} has no mapped verdict — "
+                f"recorded as {NO_VERDICT}"
+            )
+            verdict = NO_VERDICT
         return sink.add(
             phase,
             "gate_calls",
@@ -449,7 +467,7 @@ def record_plugin_version(phase: str) -> bool:
             model=PLUGIN_VERSION_MODEL,
             model_family=None,
             latency_ms=0,
-            verdict=result.status.upper(),
+            verdict=verdict,
             failure_cause=None,
             note=_clean(note),
         )
@@ -838,6 +856,16 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+class UnresolvablePhaseRef(Exception):
+    """A `--phase-ref` that names no phase — the ARGUMENT is the cause, not the writer.
+
+    Kept distinct from every emission failure because the remedy is: routed through the write-failed
+    shape, a stage is told the write failed and to "re-run this exact command", which can only fail
+    identically, since the command is what is wrong. That is the retry loop the two-shape split
+    exists to end, one cause further out.
+    """
+
+
 def _dispatch(args: argparse.Namespace) -> bool | None:
     """Run one CLI command. Prints nothing to stdout except a value the caller asked for.
 
@@ -880,7 +908,7 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
                 f"defect {args.identifier} not recorded: --phase-ref {args.phase_ref!r} does not "
                 "resolve to a phase"
             )
-            return False
+            raise UnresolvablePhaseRef(args.phase_ref)
         return record_defect(phase, identifier=args.identifier, summary=args.summary,
                               found_by=args.found_by, real=not args.not_real,
                               stage_reached=args.stage_reached, severity=args.severity,
@@ -910,14 +938,24 @@ def main(argv: list[str] | None = None) -> int:
     standalone install, it will fail the same way on every attempt, and a stage told to "fix the
     cause and re-run" there loops instead of working, so that message is terminal, addressed to the
     operator, and says to move on.
+
+    A `--phase-ref` that resolves to no phase is neither of those: nothing about the writer is
+    wrong, the ARGUMENT is. It carries its own marker and exits `USAGE_ERROR` — the code
+    `parse_args` already returns for a caller that typed the command wrong, which is what this is.
+    `AVENGER_METRICS_OFF=1` does not quiet it, for the same reason it does not quiet a parse error:
+    turning emission off is a statement about recording, not a licence to pass an argument that
+    names nothing.
     """
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:   # a usage error is the caller's bug, and is worth the nonzero exit
-        return int(exc.code or 2)
+        return int(exc.code or USAGE_ERROR)
     try:
         ok = _dispatch(args)
+    except UnresolvablePhaseRef:
+        print(_defect_phase_ref_message(args), file=sys.stderr)
+        return USAGE_ERROR
     except Exception as exc:  # noqa: BLE001 — measurement never fails the thing it measures
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
         ok = False if args.command == "defect" else None
@@ -927,21 +965,43 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-#: The two markers a stage reads to tell a retryable `defect` failure from a terminal one. NEITHER
-#: CONTAINS THE OTHER, and `tests/test_pipeline_metrics.py` holds them to it: a reader matching the
-#: retryable marker against the terminal message would be told to re-run a command that can only
-#: fail the same way, which is the loop the split exists to end.
+#: The markers a stage reads to tell a retryable `defect` failure from a terminal one, and both from
+#: a caller that named a phase that does not exist. NO ONE OF THEM CONTAINS ANOTHER, and
+#: `tests/test_pipeline_metrics.py` holds them to it: a reader matching the retryable marker against
+#: either other message would be told to re-run a command that can only fail the same way, which is
+#: the loop this split exists to end.
 DEFECT_WRITE_FAILED = "DEFECT NOT RECORDED - WRITE FAILED"
 DEFECT_NO_WRITER = "DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED"
+DEFECT_BAD_PHASE_REF = "DEFECT NOT RECORDED - UNRESOLVABLE --phase-ref"
+
+#: What a caller that typed the command wrong exits with, whichever layer caught it.
+USAGE_ERROR = 2
 
 
-def _defect_failure_message(args: argparse.Namespace) -> str:
-    """What a `defect` that could not be written says, in the two shapes it comes in."""
-    lost = (
+def _defect_lost(args: argparse.Namespace) -> str:
+    """What every unrecorded `defect` says first, whatever stopped it."""
+    return (
         f"{args.identifier} (found_by={args.found_by}) was NOT written to the metrics record. This "
         "is the single field the record exists for and it cannot be reconstructed once the run is "
         "over."
     )
+
+
+def _defect_phase_ref_message(args: argparse.Namespace) -> str:
+    """What a `defect` whose `--phase-ref` names no phase says: fix the argument, not the writer."""
+    return (
+        f"{sink.PREFIX} {DEFECT_BAD_PHASE_REF}: {_defect_lost(args)} The metrics writer was never "
+        f"reached and nothing about it is known to be wrong: --phase-ref {args.phase_ref!r} does "
+        "not resolve to a phase, so there was no record to write to. The remedy is the ARGUMENT, "
+        "not the writer: re-run with a --phase-ref naming an existing phase directory (or a path "
+        "inside one), such as docs/features/<feature>/phases/<n>-<slug>. DO NOT re-run it "
+        "unchanged - it will fail identically."
+    )
+
+
+def _defect_failure_message(args: argparse.Namespace) -> str:
+    """What a `defect` that could not be written says, in the two shapes it comes in."""
+    lost = _defect_lost(args)
     if sink.configured():
         return (
             f"{sink.PREFIX} {DEFECT_WRITE_FAILED}: {lost} A metrics writer IS configured for this "

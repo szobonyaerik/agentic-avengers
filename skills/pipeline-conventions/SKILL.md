@@ -931,7 +931,13 @@ phase-open, on existing keys rather than a new top-level field: firstmate's metr
 and its producer contract is "add no key" (see "The pipeline measures itself as it runs" above), so
 this is `record_triage_decision`'s precedent applied a second time — the fact firstmate has no field
 for goes into bounded `note` text under a stage of its own (`plugin-version`), not into a field this
-repo invented.
+repo invented. Closed means closed in the row's **values** too: `verdict` is firstmate's enum
+(`GO|REVIEW|NO-GO|error|killed`) and its writer refuses a row `validate` would refuse, so the drift
+status is mapped onto it (`fresh` → GO, `stale` → NO-GO, `unknown` → REVIEW) and kept verbatim in
+`note`. Passed through as its own token, the row is rejected, the refusal is swallowed by the
+fail-open path every measurement runs on, and the executing version is recorded nowhere — which is
+the one thing this row exists to prevent, and is invisible to any test using a double that enforces
+no schema.
 
 **The guard is a preflight, not a hope.** `/avenger-run` §1 runs `plugin_release.py check` before any
 phase executes: `STALE` (the executing copy's content differs from the merged repository) stops the
