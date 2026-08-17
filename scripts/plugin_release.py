@@ -25,6 +25,9 @@ instead of silently overwriting one release with another.
 
 Neither function ever writes to the real cache by default: `cut()` takes `cache_root` as a required
 argument with no implicit fallback to the live path, so a caller has to name where it is writing.
+The `cut` **subcommand** is the one deliberate exception — an operator running the release remedy
+with no `--cache-root` means the live cache, so `main()` falls back to `AVENGER_PLUGIN_CACHE_ROOT`
+/ `DEFAULT_CACHE_ROOT` there, and only there. `check` writes nowhere in either form.
 """
 
 from __future__ import annotations

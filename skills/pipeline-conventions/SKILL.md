@@ -959,9 +959,13 @@ version string alone, because a forgotten version bump would otherwise read as a
 **The release step is one command.** `python3 scripts/plugin_release.py cut --repo <path>
 --cache-root <path>` copies the shipped payload into `<cache-root>/<version>/` and refuses to
 overwrite a version whose content already differs — a version is released once, so a forgotten bump
-fails loudly instead of silently clobbering the previous release under its own number. It never
-writes to a real installation unless a caller names that path explicitly; nothing here does that on
-its own. `tests/test_plugin_release.py` proves the guard both ways — a stale cache against a fixed
+fails loudly instead of silently clobbering the previous release under its own number. Run with
+neither flag it releases the current project into the live cache
+(`AVENGER_PLUGIN_CACHE_ROOT`, default `~/.claude/plugins/cache/erik-tools/plan-build-verify`) —
+that is the point of the command, and it is the one deliberate operator action in this loop. What
+keeps everything *else* off a real installation is that the `cut()` **function** has no default
+`cache_root` at all: no hook, no gate and no test can write there without naming the path, and
+`check` never writes anywhere. `tests/test_plugin_release.py` proves the guard both ways — a stale cache against a fixed
 repo reads `STALE`, the same two trees brought into agreement read `FRESH` — per issue #69's rule
 that a guard is proven by going red before it is proven by going green.
 

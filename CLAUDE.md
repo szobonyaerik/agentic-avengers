@@ -731,5 +731,8 @@ schema is closed (§6d). **Enforced, not folklore:** `/avenger-run` §1 runs `pl
 before any phase executes and stops the run on `STALE` (content hash of the shipped payload differs
 from `AVENGER_SOURCE_REPO`); `UNKNOWN` (unconfigured) is reported, never enforced. **The release step
 is one command** — `plugin_release.py cut --repo <path> --cache-root <path>` — that refuses to
-overwrite a version whose content already differs, and never touches a real installation unless a
-caller names that path. `tests/test_plugin_release.py` proves the guard red before green.
+overwrite a version whose content already differs. With neither flag it releases the current project
+into the live cache (`AVENGER_PLUGIN_CACHE_ROOT`), which is what an operator running the remedy
+wants; what keeps every *other* caller off a real installation is that the `cut()` function has no
+default `cache_root`, and `check` writes nowhere. `tests/test_plugin_release.py` proves the guard red
+before green.
