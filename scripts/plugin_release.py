@@ -153,57 +153,116 @@ def content_hash(root: Path) -> str | None:
     return digest.hexdigest()
 
 
+#: A git call that never answers is the same fact as a git that is not installed: no answer. Both
+#: are `SubprocessError`/`OSError`, and the difference is invisible to every caller here, which
+#: degrades to hashing the working tree. Letting a `TimeoutExpired` escape instead would surface as
+#: an uncaught traceback and exit 1 — the code `main`'s `check` reserves for a confirmed STALE, whose
+#: prescribed remedy (cut a release, restart) cannot repair a stalled git.
+_GIT_UNAVAILABLE = (OSError, subprocess.SubprocessError)
+
+
 def _git(root: Path, *args: str) -> str | None:
-    """One git command's stdout as text, or None when it has none — no repo, no git, or a failed
-    command."""
+    """One git command's stdout as text, or None when it has none — no repo, no git, a failed
+    command, or a call that timed out."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(root), *args], capture_output=True, text=True, timeout=10, check=False,
         )
-    except OSError:
+    except _GIT_UNAVAILABLE:
         return None
     return proc.stdout if proc.returncode == 0 else None
 
 
-def _git_bytes(root: Path, *args: str) -> bytes | None:
-    """Like `_git`, but raw stdout bytes — for blob content, which is not guaranteed to be text."""
+def _git_batch_blobs(root: Path, shas: list[str]) -> list[bytes] | None:
+    """The raw bytes of every blob in `shas`, in that order, read in ONE `git cat-file --batch`.
+
+    One process for the whole payload, not one per file: this runs on the phase-open path inside
+    `hook_spec_gate.sh`, where wall clock is bounded by `gate_timeouts.py`'s
+    `metrics_processes x AVENGER_METRICS_TIMEOUT` model — a per-file loop spends `len(shas)` times
+    the git timeout, which that bound cannot see.
+
+    `--batch` frames each object as `<oid> <type> <size>\\n<content>\\n`, or `<input> missing\\n`
+    for one it cannot resolve. None on any failure to run git, any missing object, or any framing
+    this cannot parse exactly, so a partial read can never masquerade as content.
+    """
+    if not shas:
+        return []
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), *args], capture_output=True, timeout=10, check=False,
+            ["git", "-C", str(root), "cat-file", "--batch"],
+            input=("\n".join(shas) + "\n").encode("utf-8"),
+            capture_output=True, timeout=10, check=False,
         )
-    except OSError:
+    except _GIT_UNAVAILABLE:
         return None
-    return proc.stdout if proc.returncode == 0 else None
+    if proc.returncode != 0:
+        return None
+
+    out = proc.stdout
+    blobs: list[bytes] = []
+    pos = 0
+    for _ in shas:
+        eol = out.find(b"\n", pos)
+        if eol < 0:
+            return None
+        header = out[pos:eol].split(b" ")
+        if len(header) != 3 or header[1] != b"blob":
+            return None  # "missing"/"ambiguous", or a type that is not a file's content
+        try:
+            size = int(header[2])
+        except ValueError:
+            return None
+        start = eol + 1
+        end = start + size
+        if end + 1 > len(out) or out[end:end + 1] != b"\n":
+            return None
+        blobs.append(out[start:end])
+        pos = end + 1
+    return blobs if pos == len(out) else None
 
 
 def _head_content_hash(repo: Path, paths: tuple[str, ...] = PLUGIN_PATHS) -> str | None:
     """A sha256 over the shipped payload as last COMMITTED, computed the SAME WAY `content_hash`
-    hashes a working tree — (relative path, file bytes) pairs — so the two are directly comparable.
-    Reads each tracked file's committed bytes via `git show HEAD:<path>`, never the working tree, so
-    an uncommitted edit can never move this number. Hashing `git ls-tree`'s blob shas instead would
-    be cheaper, but they live in a different hash space than `content_hash`'s file-byte digest and
+    hashes a working tree — (relative path, file bytes) pairs, sorted by path — so the two are
+    directly comparable. The bytes come from git's object store, never the working tree, so an
+    uncommitted edit can never move this number. Hashing `git ls-tree`'s blob shas instead would be
+    cheaper still, but they live in a different hash space than `content_hash`'s file-byte digest and
     would never equal it even for identical content — comparability, not cost, is what matters here.
 
-    None when `repo` is not a git work tree, has no commits yet, or a command fails, so callers fall
-    back to hashing the working tree directly (the only notion of "content" a non-git directory has).
+    `ls-tree` runs WITHOUT `--full-tree` deliberately: `--full-tree` resolves both the pathspec and
+    the emitted paths against the repository root, so a `repo` nested below the git top level (a
+    plugin checkout inside an outer repository) matched NOTHING and hashed the empty set — a hard,
+    unclearable STALE. Plain `ls-tree` under `-C repo` resolves both against `repo` itself, which is
+    also the frame `content_hash` hashes in. `-z` is what stops git C-quoting a path containing a
+    space or a non-ASCII byte, which would otherwise name a file that cannot be read back.
+
+    None when `repo` is not a git work tree, has no commits yet, a command fails, or the listing
+    identifies no file at all, so callers fall back to hashing the working tree directly (the only
+    notion of "content" a non-git directory has). Never a hash of nothing: an empty digest compares
+    unequal to every real tree, which is a false STALE no release can clear.
     """
-    listing = _git(repo, "ls-tree", "-r", "--full-tree", "HEAD", "--", *paths)
+    listing = _git(repo, "ls-tree", "-r", "-z", "HEAD", "--", *paths)
     if listing is None:
         return None
-    tracked: list[str] = []
-    for line in listing.splitlines():
-        if not line.strip():
+    tracked: list[tuple[str, str]] = []
+    for record in listing.split("\0"):
+        if not record.strip():
             continue
-        meta, _, path = line.partition("\t")
+        meta, _, path = record.partition("\t")
         fields = meta.split()
         if len(fields) == 3 and fields[1] == "blob":
-            tracked.append(path)  # a submodule (mode 160000, type commit) is not a file to hash
+            # a submodule (mode 160000, type commit) is not a file to hash
+            tracked.append((path, fields[2]))
+    if not tracked:
+        return None
+
+    tracked.sort()
+    blobs = _git_batch_blobs(repo, [sha for _, sha in tracked])
+    if blobs is None or len(blobs) != len(tracked):
+        return None
 
     digest = hashlib.sha256()
-    for path in sorted(tracked):
-        content = _git_bytes(repo, "show", f"HEAD:{path}")
-        if content is None:
-            return None
+    for (path, _), content in zip(tracked, blobs):
         digest.update(path.encode("utf-8"))
         digest.update(b"\0")
         digest.update(content)
@@ -459,6 +518,25 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
     return updated
 
 
+def _pin_after_copy(pin_path: Path, cache_root: Path, target: Path, version: str, repo: Path) -> int:
+    """`update_pin`, with a write failure re-raised as one that SAYS the payload already landed.
+
+    The registry update is the last step of `cut`, so an `OSError` here (a root-owned or read-only
+    registry) happens after the payload is fully in place. Reported as a bare write error it reads
+    as "the release failed", sending an operator to re-run a copy that already succeeded; what is
+    actually owed is the pin alone.
+    """
+    try:
+        return update_pin(pin_path, cache_root, target, version, repo)
+    except OSError as exc:
+        raise RuntimeError(
+            f"the payload IS released to {target}, but writing the install registry {pin_path} "
+            f"failed: {exc}. Nothing points at the release yet — fix the registry's permissions and "
+            f"re-run `cut` (the copy step is a no-op on unchanged content), or pass --no-pin and "
+            "re-point it by hand."
+        ) from exc
+
+
 def cut(
     repo: Path, cache_root: Path, version: str | None = None, pin_path: Path | None = None
 ) -> Path:
@@ -495,7 +573,7 @@ def cut(
     if target.is_dir():
         if content_hash(target) == new_hash:
             if pin_path is not None:
-                update_pin(pin_path, cache_root, target, version, repo)
+                _pin_after_copy(pin_path, cache_root, target, version, repo)
             return target
         raise FileExistsError(
             f"{target} already holds different content for version {version} — a version is "
@@ -518,7 +596,7 @@ def cut(
     tmp.replace(target)
 
     if pin_path is not None:
-        update_pin(pin_path, cache_root, target, version, repo)
+        _pin_after_copy(pin_path, cache_root, target, version, repo)
 
     return target
 
@@ -585,6 +663,16 @@ def main(argv: list[str] | None = None) -> int:
             target = cut(repo, cache_root, args.version, pin_path=pin_path)
         except (ValueError, FileExistsError, RuntimeError) as exc:
             print(f"[plugin-release] {exc}", file=sys.stderr)
+            return 1
+        except OSError as exc:
+            # Every write past the payload copy is funnelled through `_pin_after_copy`, which
+            # re-raises as RuntimeError above — so a bare OSError here is the copy itself failing,
+            # and the release did NOT land. Said outright rather than left to a traceback.
+            print(
+                f"[plugin-release] could not write the release into {cache_root}: {exc}. The "
+                f"payload was NOT released and the install registry was NOT touched.",
+                file=sys.stderr,
+            )
             return 1
         print(f"[plugin-release] released to {target}")
         return 0

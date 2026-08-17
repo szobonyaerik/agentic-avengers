@@ -18,6 +18,7 @@ Nothing here writes to `~/.claude/plugins/cache/` — every cache root is a `tmp
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -86,15 +87,36 @@ def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def git_repo(root: Path, version: str = "1.0.0") -> Path:
-    """A git-initialized plugin fixture with one commit, for HEAD-vs-working-tree tests."""
-    make_plugin(root, version=version)
+def _git_init(root: Path) -> Path:
+    """An empty git repository with an identity, ready to commit."""
     _run_git(root, "init", "-q")
     _run_git(root, "config", "user.email", "test@example.com")
     _run_git(root, "config", "user.name", "Test")
+    return root
+
+
+def git_repo(root: Path, version: str = "1.0.0") -> Path:
+    """A git-initialized plugin fixture with one commit, for HEAD-vs-working-tree tests."""
+    make_plugin(root, version=version)
+    _git_init(root)
     _run_git(root, "add", "-A")
     _run_git(root, "commit", "-q", "-m", "initial")
     return root
+
+
+def count_git_invocations(monkeypatch: pytest.MonkeyPatch, work) -> tuple[object, int]:
+    """Run `work()` and report how many git subprocesses it actually spawned."""
+    calls: list[list[str]] = []
+    real_run = pr.subprocess.run
+
+    def counting(argv, *args, **kwargs):
+        calls.append(argv)
+        return real_run(argv, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(pr.subprocess, "run", counting)
+        result = work()
+    return result, len(calls)
 
 
 def make_registry(path: Path, plugins: dict) -> Path:
@@ -700,3 +722,208 @@ def test_cli_cut_default_pin_skips_when_no_registry_present(tmp_path):  # noqa: 
     assert result.returncode == 0
     assert "skipping pin update" in result.stderr
     assert not (fake_home / ".claude").exists()  # nothing was ever created under the fake HOME either
+
+
+# --- fix: git failures degrade, one process per comparison, and every path round-trips -------------
+
+
+def test_a_git_call_that_times_out_never_escapes_check(tmp_path, monkeypatch):  # noqa: F811
+    """RED (the bug): `subprocess.run(..., timeout=10)` raises `TimeoutExpired`, a `SubprocessError`
+    and NOT an `OSError`, so a stalled git escaped `check()` as an uncaught traceback — exiting 1,
+    the code `main` reserves for a confirmed STALE, whose prescribed remedy (cut a release, restart)
+    cannot repair a stalled git. GREEN: a hung git is the same fact as no git at all — no answer —
+    and degrades to the working-tree comparison."""
+    repo = git_repo(tmp_path / "repo", version="1.0.0")
+    cached = pr.cut(repo, tmp_path / "cache")
+
+    def hang(argv, *args, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 10)
+
+    monkeypatch.setattr(pr.subprocess, "run", hang)
+
+    result = pr.check(executing=cached, source=repo)
+    assert result.status == "fresh"          # fell back to the working tree, did not raise
+    assert result.dirty is False             # dirty is a claim only a readable git can make
+    assert pr.main(["check", "--executing", str(cached), "--source", str(repo)]) == 0
+
+
+def test_a_git_call_that_times_out_mid_batch_is_not_partial_content(tmp_path, monkeypatch):  # noqa: F811
+    """The listing succeeds and only the blob read stalls: a partial read must never be hashed as
+    if it were the committed content."""
+    repo = git_repo(tmp_path / "repo", version="1.0.0")
+
+    real_run = pr.subprocess.run
+
+    def hang_on_batch(argv, *args, **kwargs):
+        if "cat-file" in argv:
+            raise subprocess.TimeoutExpired(argv, 10)
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(pr.subprocess, "run", hang_on_batch)
+
+    assert pr._head_content_hash(repo) is None
+
+
+def test_head_hash_is_one_batch_process_not_one_per_file(tmp_path, monkeypatch):  # noqa: F811
+    """RED (the bug): one `git show HEAD:<path>` per tracked file — measured at 110 files in this
+    repo — on the phase-open path inside `hook_spec_gate.sh`, whose wall clock `gate_timeouts.py`
+    bounds as `metrics_processes x AVENGER_METRICS_TIMEOUT`. A per-file loop spends `len(files)`
+    times the git timeout, which that bound cannot see. GREEN: two git invocations total (one
+    `ls-tree`, one `cat-file --batch`), no matter how many files there are."""
+    small = git_repo(tmp_path / "small", version="1.0.0")
+    big = git_repo(tmp_path / "big", version="1.0.0")
+    for i in range(40):
+        (big / "prompts" / f"extra-{i:02d}.md").write_text(f"# extra {i}\n", encoding="utf-8")
+    _run_git(big, "add", "-A")
+    _run_git(big, "commit", "-q", "-m", "many files")
+
+    counts = []
+    for repo in (small, big):
+        digest, invocations = count_git_invocations(
+            monkeypatch, lambda repo=repo: pr._head_content_hash(repo)
+        )
+        assert digest is not None
+        counts.append(invocations)
+
+    assert counts == [2, 2], f"expected 2 git invocations regardless of file count, got {counts}"
+
+
+def test_batched_head_hash_equals_the_per_file_git_show_hash(tmp_path):  # noqa: F811
+    """The batch is an optimisation, not a different number: it must stay byte-identical to the
+    per-file computation it replaced, and therefore directly comparable to `content_hash`."""
+    repo = git_repo(tmp_path / "repo", version="1.0.0")
+    listing = _run_git(repo, "ls-tree", "-r", "-z", "HEAD", "--", *pr.PLUGIN_PATHS).stdout
+    paths = sorted(
+        record.partition("\t")[2] for record in listing.split("\0") if record.strip()
+    )
+    reference = hashlib.sha256()
+    for path in paths:
+        blob = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo), "show", f"HEAD:{path}"], capture_output=True, check=True
+        ).stdout
+        reference.update(path.encode("utf-8"))
+        reference.update(b"\0")
+        reference.update(blob)
+        reference.update(b"\0")
+
+    assert pr._head_content_hash(repo) == reference.hexdigest()
+    # and it is the same frame `content_hash` hashes in, on a clean tree
+    assert pr._head_content_hash(repo) == pr.content_hash(repo)
+
+
+def test_a_payload_path_with_a_space_and_non_ascii_round_trips(tmp_path):  # noqa: F811
+    """RED (the bug): without `-z`, git C-quotes any path with a non-ASCII byte —
+    `"docs/templates/caf\\303\\251.md"`, quotes and escapes included — which then names a file that
+    cannot be read back, so the HEAD hash silently returned None and `check` fell back to the
+    working tree: exactly the false-STALE-on-a-dirty-tree behaviour this module exists to remove,
+    with no signal it happened. `docs/templates` is precisely where such a filename appears."""
+    repo = git_repo(tmp_path / "repo", version="1.0.0")
+    (repo / "docs" / "templates" / "a b café.md").write_text("# spaced\n", encoding="utf-8")
+    _run_git(repo, "add", "-A")
+    _run_git(repo, "commit", "-q", "-m", "awkward filename")
+
+    head_hash = pr._head_content_hash(repo)
+    assert head_hash is not None
+    assert head_hash == pr.content_hash(repo)  # the git side saw the same file the filesystem did
+
+    cached = pr.cut(repo, tmp_path / "cache")
+    assert (cached / "docs" / "templates" / "a b café.md").is_file()
+
+    clean = pr.check(executing=cached, source=repo)
+    assert clean.status == "fresh" and clean.dirty is False
+
+    (repo / "docs" / "templates" / "a b café.md").write_text("# edited, uncommitted\n", encoding="utf-8")
+    dirty = pr.check(executing=cached, source=repo)
+    assert dirty.status == "fresh" and dirty.dirty is True  # still HEAD-based, not working-tree
+
+
+def test_a_checkout_nested_below_the_git_top_level_is_not_a_false_stale(tmp_path):  # noqa: F811
+    """RED (the bug): `ls-tree --full-tree` resolves both the pathspec and the emitted paths against
+    the REPOSITORY root, so a plugin checkout one directory below the git top level matched nothing,
+    hashed the empty set, and produced a hard STALE whose only prescribed remedy (`cut` + restart)
+    can never clear it — the applicability-boundary wedge CLAUDE.md §3a exists to prevent. GREEN:
+    without `--full-tree`, `-C repo` resolves both against `repo`, the same frame `content_hash`
+    hashes in."""
+    outer = tmp_path / "outer"
+    (outer / "unrelated").mkdir(parents=True)
+    (outer / "unrelated" / "readme.md").write_text("# not the plugin\n", encoding="utf-8")
+    _git_init(outer)
+    nested = make_plugin(outer / "plugin", version="1.0.0")
+    _run_git(outer, "add", "-A")
+    _run_git(outer, "commit", "-q", "-m", "plugin nested inside an outer repo")
+
+    head_hash = pr._head_content_hash(nested)
+    assert head_hash is not None
+    assert head_hash == pr.content_hash(nested)
+
+    cached = pr.cut(nested, tmp_path / "cache")
+    assert pr.check(executing=cached, source=nested).status == "fresh"
+
+    (nested / "scripts" / "verifier_review_check.py").write_text("PARTIAL = ['wip']\n", encoding="utf-8")
+    result = pr.check(executing=cached, source=nested)
+    assert result.status == "fresh" and result.dirty is True
+
+
+def test_head_hash_is_none_rather_than_a_hash_of_nothing_when_nothing_matches(tmp_path):  # noqa: F811
+    """The backstop behind that root cause, for every other way a listing can come back empty: a
+    sha256 of the empty set compares unequal to every real tree, which is a STALE no release clears.
+    None instead, so the caller degrades to the working-tree comparison."""
+    repo = git_repo(tmp_path / "repo", version="1.0.0")
+
+    assert pr._head_content_hash(repo, paths=("no-such-shipped-dir",)) is None
+
+
+# --- fix: an unwritable cache or registry surfaces this module's error contract, not a traceback ---
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
+def test_cli_cut_reports_an_unwritable_cache_without_a_traceback(tmp_path):  # noqa: F811
+    repo = make_plugin(tmp_path / "repo", version="1.0.0")
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    try:
+        result = run_cli(
+            "cut", "--repo", str(repo), "--cache-root", str(readonly / "cache"), "--no-pin",
+        )
+    finally:
+        readonly.chmod(0o755)
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith("[plugin-release] ")
+    assert "was NOT released" in result.stderr
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
+def test_cli_cut_reports_an_unwritable_registry_and_says_the_payload_landed(tmp_path):  # noqa: F811
+    """`update_pin` writes atomically through a sibling temp file, so an unwritable registry
+    DIRECTORY is the real failure shape. It happens after the payload is fully in place: reported as
+    a bare write error it reads as "the release failed", sending an operator to re-run a copy that
+    already succeeded, when what is actually owed is the pin alone."""
+    repo = make_plugin(tmp_path / "repo", version="1.1.0")
+    cache_root = tmp_path / "cache" / "erik-tools" / "plan-build-verify"
+    old = cache_root / "1.0.0"
+    make_plugin(old, version="1.0.0")
+    pin_dir = tmp_path / "pins"
+    pin_dir.mkdir()
+    registry_path = make_registry(
+        pin_dir / "installed_plugins.json",
+        {"plan-build-verify@erik-tools": [registry_entry(old, "1.0.0")]},
+    )
+    original = registry_path.read_text(encoding="utf-8")
+    pin_dir.chmod(0o555)
+    try:
+        result = run_cli(
+            "cut", "--repo", str(repo), "--cache-root", str(cache_root),
+            "--pin-path", str(registry_path),
+        )
+    finally:
+        pin_dir.chmod(0o755)
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith("[plugin-release] ")
+    assert "payload IS released" in result.stderr
+    assert (cache_root / "1.1.0" / ".claude-plugin" / "plugin.json").is_file()  # it really did land
+    assert registry_path.read_text(encoding="utf-8") == original  # and the pin is untouched
