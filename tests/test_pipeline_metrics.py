@@ -750,6 +750,7 @@ def test_an_unresolvable_phase_ref_is_the_arguments_fault_not_the_writers(stub_s
     assert metrics.DEFECT_WRITE_FAILED not in result.stderr
     assert metrics.DEFECT_NO_WRITER not in result.stderr
     assert "re-run this exact command" not in result.stderr
+    assert "DO NOT re-run it" not in result.stderr   # the OTHER shape's instruction, verbatim
     assert "D1" in result.stderr and "nowhere-in-particular" in result.stderr
     assert not (store / "phase-08.json").exists()
 

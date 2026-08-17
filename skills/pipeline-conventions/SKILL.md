@@ -890,9 +890,9 @@ not.
 **`defect` is the one command that is loud about failing (issue #66).** Every other emission point
 runs from a hook's `|| true` and must stay exit-0 no matter what. `defect` is run directly by the
 stage that caught something, off any hook, so nothing else is fail-open on its behalf — an emission
-that could not be written exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set
-(that is configured behaviour, not a failure). **That exit says one of two things, and only one of
-them is yours to fix.**
+that could not be written exits non-zero and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is
+set (that is configured behaviour, not a failure). **That exit says one of three things, and they do
+not share a remedy or an owner.**
 
 - **A writer IS configured and the write failed** (the writer refused, hung, or the record could not
   be written): retryable, and the message says so. Read the `[metrics]` line above it, fix the cause,
@@ -906,8 +906,17 @@ them is yours to fix.**
   recorded, say so and move on. Under `--auto` it is worth surfacing to the operator rather than
   looping on. The operator's remedies are pointing `AVENGER_METRICS_CMD` at firstmate's own
   `fm-pipeline-metrics.sh`, or `AVENGER_METRICS_OFF=1` to record none deliberately and silently.
+- **`--phase-ref` resolves to no phase** — the writer was never reached and nothing about it is known
+  to be wrong: **the ARGUMENT is what must change.** That is a caller that typed the command wrong,
+  so it exits **2**, the same code `argparse` already returns for one, rather than reporting a write
+  that never happened; re-running the exact command can only fail identically, which is the loop the
+  split exists to end. `AVENGER_METRICS_OFF=1` does not quiet it, for the same reason it does not
+  quiet a parse error: turning emission off is a statement about recording, not a licence to name a
+  phase that does not exist.
 
-Either way the defect did not land, and `found_by` is not recoverable once the phase moves on.
+Each shape opens with its own marker and **no marker contains another**, because that stem is what a
+stage matches on. Whichever fired, the defect did not land, and `found_by` is not recoverable once
+the phase moves on.
 
 **The Verifier's own attribution (`verifier-findings`, from `verifier_review.sh`) stays
 non-blocking** — it runs behind `|| true` and never fails the phase — **but its stderr is not

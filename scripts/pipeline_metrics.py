@@ -23,13 +23,18 @@ and it is always run directly by a stage rather than from a hook, so nothing els
 behalf. A `defect` call that could not be written exits 1 and says why on stderr (issue #66) â€” a
 recorder that quietly does nothing is indistinguishable from one with nothing to record.
 
-That loud exit comes in TWO SHAPES, because one remedy belongs to the stage and the other does not.
-When a writer IS configured and the write failed, the stage can fix the cause and re-run the exact
-command, so the message says so. When NO writer is configured at all - nothing on `PATH`,
+That loud exit comes in THREE SHAPES, because the remedy is a different party's in each. When a
+writer IS configured and the write failed, the stage can fix the cause and re-run the exact command,
+so the message says so (exit 1). When NO writer is configured at all - nothing on `PATH`,
 `AVENGER_METRICS_CMD` unset - that is a standing property of the environment, the expected state of a
 standalone install with no firstmate home, and re-running only fails identically; that message is
 addressed to the operator, says the defect could not be recorded, and tells the stage to move on
-rather than loop. `AVENGER_METRICS_OFF=1` is neither: it is a deliberate choice, and stays silent.
+rather than loop (exit 1). When `--phase-ref` resolves to no phase, nothing about the writer is known
+to be wrong and the ARGUMENT is what must change, so that one exits `USAGE_ERROR` (2), the same code
+a mistyped command already gets. Each shape opens with its own marker and none of the three contains
+another, because that stem is what a stage discriminates on.
+`AVENGER_METRICS_OFF=1` is none of them: it is a deliberate choice, and stays silent - except for the
+bad argument, which it does not quiet, for the same reason it does not quiet a parse error.
 
 Emission is attached to the *fact*, not to the caller. `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
@@ -45,7 +50,8 @@ CLI, for the shell emission points (all fail open, all exit 0, except `defect` â
     pipeline_metrics.py mutation-survivors <phase-dir> <mutation-score.json>
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
     pipeline_metrics.py skill-required --stage <s>
-    pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...   (exits 1 on failure)
+    pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...
+        (exits 1 when the write failed or no writer is configured, 2 when --phase-ref names no phase)
     pipeline_metrics.py phase-open <phase-dir>
     pipeline_metrics.py phase-close <phase-dir>
 """
@@ -839,7 +845,10 @@ def _build_parser() -> argparse.ArgumentParser:
     required.add_argument("--stage", required=True)
 
     defect = sub.add_parser("defect", help="record a defect and what caught it")
-    defect.add_argument("--phase-ref", required=True)
+    defect.add_argument("--phase-ref", required=True,
+                        help="a phase directory, a path inside one, or a bare phase number; one "
+                             "that resolves to no phase exits 2 rather than reporting a failed "
+                             "write, because the argument is what must change")
     defect.add_argument("--id", required=True, dest="identifier")
     defect.add_argument("--summary", required=True)
     defect.add_argument("--found-by", required=True)
@@ -994,8 +1003,8 @@ def _defect_phase_ref_message(args: argparse.Namespace) -> str:
         f"reached and nothing about it is known to be wrong: --phase-ref {args.phase_ref!r} does "
         "not resolve to a phase, so there was no record to write to. The remedy is the ARGUMENT, "
         "not the writer: re-run with a --phase-ref naming an existing phase directory (or a path "
-        "inside one), such as docs/features/<feature>/phases/<n>-<slug>. DO NOT re-run it "
-        "unchanged - it will fail identically."
+        "inside one), such as docs/features/<feature>/phases/<n>-<slug>. Re-running it UNCHANGED "
+        "fails identically."
     )
 
 

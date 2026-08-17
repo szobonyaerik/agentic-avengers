@@ -660,12 +660,17 @@ still leaves its numbers. **Writing metrics can never fail a phase, except `defe
 unwritable record, a refusal, a hang or a crash is swallowed, logged to `.avenger-metrics.log`, and
 reported as "not recorded"; every metrics CLI call in a hook exits 0. `defect` is the one command a
 stage runs directly rather than from a hook's `|| true`, so nothing is fail-open on its behalf: an
-emission it could not write exits **1** and says why on stderr, unless `AVENGER_METRICS_OFF=1`
-(configured behaviour, not a failure). **That exit comes in two shapes, because only one remedy is
-the stage's**: a configured writer that failed the write is retryable and says so, while **no writer
-configured at all** - the documented normal state of a standalone install with no firstmate home - is
-terminal, addressed to the operator, and tells the stage not to retry but to move on, since every
-attempt fails identically. The Verifier's own `verifier-findings` attribution stays non-blocking
+emission it could not write exits non-zero and says why on stderr, unless `AVENGER_METRICS_OFF=1`
+(configured behaviour, not a failure). **That exit comes in three shapes, because no two of them
+share a remedy or an owner**: a configured writer that failed the write is retryable and says so
+(exit 1), while **no writer configured at all** - the documented normal state of a standalone install
+with no firstmate home - is terminal, addressed to the operator, and tells the stage not to retry but
+to move on, since every attempt fails identically (exit 1). The third is neither: **a `--phase-ref`
+that resolves to no phase** never reaches the writer, so reporting it as a failed write sends the
+stage to re-run a command that can only fail the same way; it names the argument as the remedy and
+exits **2**, the code a mistyped command already gets, and `AVENGER_METRICS_OFF=1` does not quiet it
+any more than it quiets a parse error. Each shape opens with its own marker and none contains
+another, because that stem is what a stage matches on. The Verifier's own `verifier-findings` attribution stays non-blocking
 behind `|| true`, but its stderr is no longer discarded: the highest-volume attribution path must not
 drop every defect and look like a run that found none. An unwritable record makes firstmate's CLI
 *block* rather than fail, so one timeout abandons the writer for that process: fail-open has to hold
