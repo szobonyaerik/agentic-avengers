@@ -348,6 +348,8 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
 | `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
 | `SKILL_AUDIT_OFF` | unset | `1` disables the per-stage `SubagentStop` skill audit (`scripts/hook_skill_audit.sh`); the close-time audit at handover and in CI is unaffected |
+| `AVENGER_SOURCE_REPO` | unset | your checkout of this plugin's own repository, for the release-drift guard (`scripts/plugin_release.py check`, issue #65) — without it the guard reports `UNKNOWN` and is not enforced |
+| `AVENGER_PLUGIN_CACHE_ROOT` | `~/.claude/plugins/cache/erik-tools/plan-build-verify` | where `plugin_release.py cut` releases to; always pass `--cache-root` explicitly in tests, never the default |
 
 ## Maintaining this file
 

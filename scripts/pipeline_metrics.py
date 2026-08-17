@@ -63,6 +63,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import metrics_sink as sink  # noqa: E402
+import plugin_release  # noqa: E402
 import skill_contract  # noqa: E402
 import verifier_attempts  # noqa: E402
 from spec_gate_cache import keep, normalized, previous, split_spec  # noqa: E402
@@ -413,6 +414,50 @@ def _spec_rounds(record: dict | None) -> int:
     )
 
 
+#: The stage a plugin-version row belongs to, mirroring `TRIAGE_DECIDE_STAGE`: no model runs here
+#: either, and the row exists so the fact has a place in the ledger rather than nowhere at all.
+PLUGIN_VERSION_STAGE = "plugin-version"
+PLUGIN_VERSION_MODEL = "none (scripts/plugin_release.py)"
+
+
+def record_plugin_version(phase: str) -> bool:
+    """Record which plugin copy actually executed this phase (issue #65).
+
+    Not a new top-level field: firstmate's schema is closed and its producer contract is "add no
+    key" (pipeline-conventions §6d) — a new field is firstmate's decision, not this repo's. This
+    follows the precedent `record_triage_decision` already set for a fact firstmate has no field
+    for: an ordinary `gate_calls` row on EXISTING keys, carrying the detail in `note`, bounded free
+    text the schema already has. `id` is fixed per phase, so a phase that opens its record more than
+    once (a concurrent hook, a resumed run) converges on one row instead of appending duplicates.
+
+    `plugin_release.check()` derives the version from the copy that is actually running — never a
+    static constant a stale cached copy would carry unchanged just the same as a fresh one.
+    """
+    try:
+        result = plugin_release.check()
+        note = (
+            f"status={result.status} executing_version={result.executing_version} "
+            f"source_version={result.source_version} root={result.executing_root}"
+        )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{PLUGIN_VERSION_STAGE}",
+            stage=PLUGIN_VERSION_STAGE,
+            spec=None,
+            attempt=1,
+            model=PLUGIN_VERSION_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=result.status.upper(),
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"plugin version not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 # --- verification attempts, suite size, phase boundaries -----------------------------------------
 
 
@@ -477,6 +522,7 @@ def record_phase_open(phase_dir: str) -> bool:
     phase = resolve_phase(phase_dir)
     if phase is None or not sink.ensure(phase):
         return False
+    record_plugin_version(phase)
     record = sink.show(phase) or {}
     fields: dict[str, object] = {}
     if record.get("opened") is None:

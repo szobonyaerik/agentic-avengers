@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
+import plugin_release  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
     "every emission point writes through a real writer process, which is the whole mechanism"
@@ -439,6 +440,66 @@ def test_opening_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
     metrics.record_phase_open(phase_dir)
 
     assert stored(store, "08")["opened"] == opened
+
+
+# --- plugin version: issue #65, riding on an existing key rather than a new one --------------------
+
+
+def test_phase_open_records_which_plugin_copy_executed(stub_sink, monkeypatch):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    stale = plugin_release.DriftResult(
+        status="stale", executing_version="0.10.2", source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+    )
+    monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
+
+    metrics.record_phase_open(phase_dir)
+
+    calls = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(calls) == 1
+    assert calls[0]["verdict"] == "STALE"
+    assert "executing_version=0.10.2" in calls[0]["note"]
+    assert "source_version=0.10.3" in calls[0]["note"]
+
+
+def test_plugin_version_recording_never_adds_a_new_top_level_field(stub_sink):  # noqa: F811
+    """firstmate's schema is closed and its producer contract is 'add no key'
+    (pipeline-conventions §6d) — a new field is firstmate's decision, not this repo's. This must
+    ride on an existing collection, the way `record_triage_decision` already does."""
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    metrics.record_phase_open(phase_dir)
+
+    record = stored(store, "08")
+    assert "plugin_version" not in record
+    assert any(c["stage"] == metrics.PLUGIN_VERSION_STAGE for c in record["gate_calls"])
+
+
+def test_plugin_version_recording_is_idempotent_across_repeated_opens(stub_sink):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    metrics.record_phase_open(phase_dir)
+    metrics.record_phase_open(phase_dir)
+
+    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(rows) == 1
+
+
+def test_plugin_version_recording_never_fails_the_phase_open(stub_sink, monkeypatch):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("plugin_release blew up")
+
+    monkeypatch.setattr(plugin_release, "check", boom)
+
+    assert metrics.record_phase_open(phase_dir) is True
+    assert stored(store, "08")["opened"] is not None
 
 
 # --- which stage found each defect -------------------------------------------------------------------

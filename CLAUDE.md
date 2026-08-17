@@ -715,3 +715,16 @@ Agents in `agents/` carry pipeline mechanics only; they learn a project's rules 
 `CLAUDE.md`, spec, and `codebase/MOC.md` at run time. Never hardcode one project's stack into a
 canonical agent — use `avenger-agent-factory` to ground a copy per repo. See `examples/jarvis/` for a
 worked example of what grounding looks like.
+
+### 9. Closing the release loop — the executing plugin vs. the merged repository (issue #65)
+Phases run from `$CLAUDE_PLUGIN_ROOT` — a cached release, not this repository — so a merged fix is
+inert for every running phase until someone releases it. **Observed, not assumed:**
+`scripts/plugin_release.py` derives the executing version from `$CLAUDE_PLUGIN_ROOT` itself, never a
+constant a stale copy would carry unchanged, and `record_plugin_version` rides it into the phase's
+`gate_calls[]` at phase-open — an existing key, never a new top-level field, since firstmate's
+schema is closed (§6d). **Enforced, not folklore:** `/avenger-run` §1 runs `plugin_release.py check`
+before any phase executes and stops the run on `STALE` (content hash of the shipped payload differs
+from `AVENGER_SOURCE_REPO`); `UNKNOWN` (unconfigured) is reported, never enforced. **The release step
+is one command** — `plugin_release.py cut --repo <path> --cache-root <path>` — that refuses to
+overwrite a version whose content already differs, and never touches a real installation unless a
+caller names that path. `tests/test_plugin_release.py` proves the guard red before green.

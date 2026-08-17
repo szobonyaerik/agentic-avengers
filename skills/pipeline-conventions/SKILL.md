@@ -914,6 +914,42 @@ non-blocking** — it runs behind `|| true` and never fails the phase — **but 
 discarded.** It is the highest-volume defect-attribution path there is, and a run that dropped every
 verifier-attributed defect must not look like a run that found none.
 
+## Closing the release loop — the executing plugin vs. the merged repository (issue #65)
+
+Phases run from `$CLAUDE_PLUGIN_ROOT`, the plugin release Claude Code cached on install — not this
+repository. A fix merged and reviewed here is inert for every running phase until someone remembers
+to cut a release and refresh that cache; measured directly, the cached copy still carried a defect a
+merged PR had already fixed, and phases kept running against it. "Remember to cut a release" is a
+sentence claiming behaviour nothing enforces, the same class every other rule on this list exists to
+close.
+
+**The version is observed, never assumed.** `scripts/plugin_release.py` derives it from the copy
+that is actually running (`$CLAUDE_PLUGIN_ROOT`, the same variable every hook already resolves its
+own path from) — a static constant would read identically from a fresh copy and a stale one, which
+is exactly the failure mode. `record_plugin_version` rides it into the phase's `gate_calls[]` at
+phase-open, on existing keys rather than a new top-level field: firstmate's metrics schema is closed
+and its producer contract is "add no key" (see "The pipeline measures itself as it runs" above), so
+this is `record_triage_decision`'s precedent applied a second time — the fact firstmate has no field
+for goes into bounded `note` text under a stage of its own (`plugin-version`), not into a field this
+repo invented.
+
+**The guard is a preflight, not a hope.** `/avenger-run` §1 runs `plugin_release.py check` before any
+phase executes: `STALE` (the executing copy's content differs from the merged repository) stops the
+run and names the fix; `UNKNOWN` (no `AVENGER_SOURCE_REPO` configured on this machine) is reported on
+stderr and left unenforced — the same applicability boundary every other check here draws around a
+scope it cannot resolve. Comparison is by content hash of the shipped payload
+(`agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`, `.claude-plugin/`), not by
+version string alone, because a forgotten version bump would otherwise read as a clean release.
+
+**The release step is one command.** `python3 scripts/plugin_release.py cut --repo <path>
+--cache-root <path>` copies the shipped payload into `<cache-root>/<version>/` and refuses to
+overwrite a version whose content already differs — a version is released once, so a forgotten bump
+fails loudly instead of silently clobbering the previous release under its own number. It never
+writes to a real installation unless a caller names that path explicitly; nothing here does that on
+its own. `tests/test_plugin_release.py` proves the guard both ways — a stale cache against a fixed
+repo reads `STALE`, the same two trees brought into agreement read `FRESH` — per issue #69's rule
+that a guard is proven by going red before it is proven by going green.
+
 ## Agent tooling
 
 Every canonical agent declares an explicit `tools:` allowlist (`Read, Write, Glob, Grep, Bash`, plus
