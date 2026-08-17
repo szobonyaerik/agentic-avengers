@@ -161,8 +161,24 @@ command string, so prose that merely *names* a denied command denies the command
 `mutation`, `running-suite`, `probe`, `execution`, `measurement`, `human-review`, `ci`, `other` (which
 then needs `--found-by-note`). Add `--not-real` for a defect in a test, fixture or artifact: it cost
 real time and belongs in the record, but it must not inflate the count of genuine product defects.
-This is measurement, never a gate — the command exits 0 whatever happens, and a phase never waits on
-it.
+This is measurement, but `defect` is the one emission command that is **loud about failing** (issue
+#66): it runs directly rather than from a hook's `|| true`, so an emission that could not be written
+exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set (configured behaviour,
+not a failure). Read which of the two failures it names before doing anything:
+
+- **`DEFECT NOT RECORDED - WRITE FAILED`**, which also says **"re-run this exact command"** - a
+  writer is configured and the write itself failed. Retryable and yours: read the `[metrics]` line
+  above it, fix the cause, and re-run the exact command.
+- **`DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED`**, which also says **"DO NOT re-run it"** -
+  nothing on `PATH`, `AVENGER_METRICS_CMD` unset. **Terminal, and not yours to fix.** It is the
+  expected state of a standalone install with no firstmate home and every retry fails identically,
+  so **do not re-run it**: note in your verdict report that the defect could not be recorded, and
+  carry on. Under `--auto` it is worth surfacing to the operator rather than looping on.
+
+Read the marker to its end, or read the re-run sentence: both messages open `DEFECT NOT RECORDED`,
+so that stem alone decides nothing.
+
+Either way the defect did not land, and `found_by` is not recoverable once the phase moves on.
 
 ## The verdict is a persisted artifact
 The verdict is not chat-only. Write it to disk at

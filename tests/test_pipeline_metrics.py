@@ -5,9 +5,12 @@ Three properties are load-bearing and each has its own group below.
 **Emitted during the run.** Nothing here reconstructs anything at the end, so every emission point
 is driven the way its caller drives it and the record is read straight off disk afterwards.
 
-**Never able to fail a phase.** The CLI is asserted to exit 0 with the record unwritable, which is
-the shape a real failure takes: a hook runs `pipeline_metrics.py …` and a non-zero exit there would
-stop the turn.
+**Never able to fail a phase, except `defect`.** The CLI is asserted to exit 0 with the record
+unwritable, which is the shape a real failure takes: a hook runs `pipeline_metrics.py …` and a
+non-zero exit there would stop the turn. `defect` is the deliberate exception and has its own group
+below: a stage runs it directly, off any hook's `|| true`, so an emission it could not write is
+asserted to exit non-zero and say so on stderr — the breaks-the-recorder cases are what prove that
+guard goes red rather than green.
 
 **Attributed to the fact, not to the caller.** A spec round is idempotent by content, so any number
 of callers may report the same write; a seeded skill requirement never overwrites an observed load,
@@ -580,6 +583,122 @@ def test_the_cli_exits_zero_with_no_writer_at_all(stub_sink, monkeypatch):  # no
 def test_a_usage_error_is_still_a_usage_error():
     """Fail-open covers emission, not a caller that typed the command wrong."""
     assert run_cli("no-such-command").returncode != 0
+
+
+# --- `defect` is the deliberate exception: it must be loud when it fails (issue #66) --------------
+
+
+DEFECT_ARGS = (
+    "defect", "--phase-ref", "docs/features/demo/phases/08-slug",
+    "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+)
+
+
+def test_a_bare_defect_cli_invocation_records_with_no_human_intervention(stub_sink):  # noqa: F811
+    """The happy path: a bare CLI invocation, inheriting only the fixture's environment, records."""
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stored(store, "08")["defects"][0]["id"] == "D1"
+
+
+def test_a_defect_that_cannot_be_written_because_the_writer_refuses_fails_loudly(stub_sink, monkeypatch):  # noqa: F811,E501
+    """Break the recorder (the writer exits non-zero) and confirm the guard goes red, not green."""
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("DOUBLE_EXIT", "3")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert "D1" in result.stderr
+    assert not (store / "phase-08.json").exists()
+
+
+def test_a_writer_that_refuses_is_reported_as_retryable(stub_sink, monkeypatch):  # noqa: F811
+    """A configured writer that failed the write is a cause the stage can fix, so it is told to."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("DOUBLE_EXIT", "3")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert "re-run this exact command" in result.stderr
+    assert "DO NOT re-run" not in result.stderr
+
+
+def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch):  # noqa: F811
+    """Unset the writer entirely — the "unconfigured" half of the guard, not just "refused"."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")  # no fm-pipeline-metrics.sh reachable by any other name either
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert "D1" in result.stderr
+
+
+def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, monkeypatch):  # noqa: F811,E501
+    """The remedy is the operator's, not the stage's: "fix the cause and re-run" here is a loop.
+
+    A standalone install with no firstmate home is the documented normal state of this repo, so the
+    stage has to be able to tell "your write failed, try again" from "nothing can record here".
+    """
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert "NO METRICS WRITER CONFIGURED" in result.stderr
+    assert "DO NOT re-run" in result.stderr
+    assert "re-run this exact command" not in result.stderr
+    assert "AVENGER_METRICS_OFF=1" in result.stderr   # the other reachable resolution, named
+
+
+def test_neither_failure_marker_contains_the_other():
+    """A stage discriminates on these, and substring matching is how it does it."""
+    assert metrics.DEFECT_WRITE_FAILED not in metrics.DEFECT_NO_WRITER
+    assert metrics.DEFECT_NO_WRITER not in metrics.DEFECT_WRITE_FAILED
+
+
+def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(stub_sink, monkeypatch, tmp_path):  # noqa: F811,E501
+    """The one state where "configured" and "resolvable" disagree — and the loop it used to cause.
+
+    `configured()` says yes, so the stage is told to fix the cause and re-run; the cause line it is
+    sent to must therefore name the exec bit, not an unset variable the operator has already set.
+    """
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    inert = tmp_path / "inert-fm-pipeline-metrics.sh"
+    inert.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    inert.chmod(0o600)
+    monkeypatch.setenv("AVENGER_METRICS_CMD", str(inert))
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert metrics.DEFECT_WRITE_FAILED in result.stderr
+    assert "not an executable file" in result.stderr
+    assert "AVENGER_METRICS_CMD is unset" not in result.stderr
+
+
+def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monkeypatch):  # noqa: F811,E501
+    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
 
 
 # --- driven through the real gate runner, which is where every gate call passes -------------------------

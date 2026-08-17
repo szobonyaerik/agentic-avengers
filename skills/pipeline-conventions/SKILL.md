@@ -821,13 +821,13 @@ that observes it, at the moment it observes it, so a phase that dies mid-run sti
 behind. One phase died and was recovered three times; every recovery would have lost the lot under a
 write-at-the-end design.
 
-**Writing metrics can never fail a phase.** Every failure — no writer configured, an unwritable
-record, a refusal, a hang, a crash — is swallowed, written to `.avenger-metrics.log`, and reported as
-"not recorded". Every metrics CLI call in a hook exits 0 on an emission path. **Measurement, not a
-gate**: a metrics bug that blocked delivery would be a self-inflicted outage in the thing meant to
-make delivery cheaper. An unwritable record makes firstmate's CLI *block* rather than fail, so one
-timeout abandons the writer for the rest of that process — the fail-open property has to hold in wall
-clock, not only in exit codes.
+**Writing metrics can never fail a phase — with one deliberate exception, `defect`, below.** Every
+failure — no writer configured, an unwritable record, a refusal, a hang, a crash — is swallowed,
+written to `.avenger-metrics.log`, and reported as "not recorded". Every metrics CLI call in a hook
+exits 0 on an emission path. **Measurement, not a gate**: a metrics bug that blocked delivery would
+be a self-inflicted outage in the thing meant to make delivery cheaper. An unwritable record makes
+firstmate's CLI *block* rather than fail, so one timeout abandons the writer for the rest of that
+process — the fail-open property has to hold in wall clock, not only in exit codes.
 
 **Emission is attached to the fact, never to the caller.** `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
@@ -879,10 +879,40 @@ costs real time but must not inflate the product-defect count.
 
 **Off unless a firstmate home is configured.** `fm-pipeline-metrics.sh` must be on `PATH` or named by
 `AVENGER_METRICS_CMD`; without it a run records nothing and **says so once**, because a measurement
-layer quietly doing nothing is the failure the record exists to remove. `AVENGER_METRICS_OFF=1`
-disables it silently. opencode's adapter drives the same `hook_*.sh`, so gate calls, spec rounds and
+layer quietly doing nothing is the failure the record exists to remove. That announcement names the
+state that is actually true, and there are two: **nothing named at all** (not on `PATH`,
+`AVENGER_METRICS_CMD` unset), or **a named path that is not an executable file** — missing, or with
+no exec bit. Reporting the first for the second hands the reader a remedy they already applied.
+`AVENGER_METRICS_OFF=1` disables it silently. opencode's adapter drives the same `hook_*.sh`, so gate calls, spec rounds and
 phase boundaries are recorded there too; it has no subagent-start or read event, so skill loads are
 not.
+
+**`defect` is the one command that is loud about failing (issue #66).** Every other emission point
+runs from a hook's `|| true` and must stay exit-0 no matter what. `defect` is run directly by the
+stage that caught something, off any hook, so nothing else is fail-open on its behalf — an emission
+that could not be written exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set
+(that is configured behaviour, not a failure). **That exit says one of two things, and only one of
+them is yours to fix.**
+
+- **A writer IS configured and the write failed** (the writer refused, hung, or the record could not
+  be written): retryable, and the message says so. Read the `[metrics]` line above it, fix the cause,
+  and re-run the exact command. *Configured* means **named**, not working — a broken
+  `AVENGER_METRICS_CMD` path lands here on purpose, because making that path executable is a remedy
+  that exists and a re-run after it succeeds.
+- **No writer is configured at all** — `fm-pipeline-metrics.sh` is not on `PATH` and
+  `AVENGER_METRICS_CMD` is unset: **terminal, and addressed to the operator, not to you.** This is
+  the expected state of a standalone install with no firstmate home, it is a standing property of the
+  environment, and re-running fails identically. **Do not retry it** — the defect could not be
+  recorded, say so and move on. Under `--auto` it is worth surfacing to the operator rather than
+  looping on. The operator's remedies are pointing `AVENGER_METRICS_CMD` at firstmate's own
+  `fm-pipeline-metrics.sh`, or `AVENGER_METRICS_OFF=1` to record none deliberately and silently.
+
+Either way the defect did not land, and `found_by` is not recoverable once the phase moves on.
+
+**The Verifier's own attribution (`verifier-findings`, from `verifier_review.sh`) stays
+non-blocking** — it runs behind `|| true` and never fails the phase — **but its stderr is not
+discarded.** It is the highest-volume defect-attribution path there is, and a run that dropped every
+verifier-attributed defect must not look like a run that found none.
 
 ## Agent tooling
 

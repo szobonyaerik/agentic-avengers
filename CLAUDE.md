@@ -656,9 +656,18 @@ their code. No second store, no second format; a missing field is a change to *t
 
 Two properties outrank recording anything, both tested. **Emitted as the run happens** — each fact
 written by the stage that observes it, at the moment it observes it, so a phase that dies mid-run
-still leaves its numbers. **Writing metrics can never fail a phase** — no writer, an unwritable
-record, a refusal, a hang or a crash is swallowed, logged to `.avenger-metrics.log`, and reported as
-"not recorded"; every metrics CLI call in a hook exits 0. An unwritable record makes firstmate's CLI
+still leaves its numbers. **Writing metrics can never fail a phase, except `defect`** — no writer, an
+unwritable record, a refusal, a hang or a crash is swallowed, logged to `.avenger-metrics.log`, and
+reported as "not recorded"; every metrics CLI call in a hook exits 0. `defect` is the one command a
+stage runs directly rather than from a hook's `|| true`, so nothing is fail-open on its behalf: an
+emission it could not write exits **1** and says why on stderr, unless `AVENGER_METRICS_OFF=1`
+(configured behaviour, not a failure). **That exit comes in two shapes, because only one remedy is
+the stage's**: a configured writer that failed the write is retryable and says so, while **no writer
+configured at all** - the documented normal state of a standalone install with no firstmate home - is
+terminal, addressed to the operator, and tells the stage not to retry but to move on, since every
+attempt fails identically. The Verifier's own `verifier-findings` attribution stays non-blocking
+behind `|| true`, but its stderr is no longer discarded: the highest-volume attribution path must not
+drop every defect and look like a run that found none. An unwritable record makes firstmate's CLI
 *block* rather than fail, so one timeout abandons the writer for that process: fail-open has to hold
 in wall clock, not just exit codes.
 
