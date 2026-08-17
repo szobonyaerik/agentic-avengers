@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
+import plugin_release  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
     "every emission point writes through a real writer process, which is the whole mechanism"
@@ -441,6 +442,66 @@ def test_opening_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
     assert stored(store, "08")["opened"] == opened
 
 
+# --- plugin version: issue #65, riding on an existing key rather than a new one --------------------
+
+
+def test_phase_open_records_which_plugin_copy_executed(stub_sink, monkeypatch):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    stale = plugin_release.DriftResult(
+        status="stale", executing_version="0.10.2", source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+    )
+    monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
+
+    metrics.record_phase_open(phase_dir)
+
+    calls = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(calls) == 1
+    assert calls[0]["verdict"] == "NO-GO"
+    assert "executing_version=0.10.2" in calls[0]["note"]
+    assert "source_version=0.10.3" in calls[0]["note"]
+
+
+def test_plugin_version_recording_never_adds_a_new_top_level_field(stub_sink):  # noqa: F811
+    """firstmate's schema is closed and its producer contract is 'add no key'
+    (pipeline-conventions §6d) — a new field is firstmate's decision, not this repo's. This must
+    ride on an existing collection, the way `record_triage_decision` already does."""
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    metrics.record_phase_open(phase_dir)
+
+    record = stored(store, "08")
+    assert "plugin_version" not in record
+    assert any(c["stage"] == metrics.PLUGIN_VERSION_STAGE for c in record["gate_calls"])
+
+
+def test_plugin_version_recording_is_idempotent_across_repeated_opens(stub_sink):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    metrics.record_phase_open(phase_dir)
+    metrics.record_phase_open(phase_dir)
+
+    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(rows) == 1
+
+
+def test_plugin_version_recording_never_fails_the_phase_open(stub_sink, monkeypatch):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("plugin_release blew up")
+
+    monkeypatch.setattr(plugin_release, "check", boom)
+
+    assert metrics.record_phase_open(phase_dir) is True
+    assert stored(store, "08")["opened"] is not None
+
+
 # --- which stage found each defect -------------------------------------------------------------------
 
 
@@ -662,10 +723,51 @@ def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, m
     assert "AVENGER_METRICS_OFF=1" in result.stderr   # the other reachable resolution, named
 
 
-def test_neither_failure_marker_contains_the_other():
+def test_no_failure_marker_contains_another():
     """A stage discriminates on these, and substring matching is how it does it."""
-    assert metrics.DEFECT_WRITE_FAILED not in metrics.DEFECT_NO_WRITER
-    assert metrics.DEFECT_NO_WRITER not in metrics.DEFECT_WRITE_FAILED
+    markers = (metrics.DEFECT_WRITE_FAILED, metrics.DEFECT_NO_WRITER, metrics.DEFECT_BAD_PHASE_REF)
+    assert len(set(markers)) == len(markers)
+    for marker in markers:
+        assert [other for other in markers if marker in other] == [marker]
+
+
+def test_an_unresolvable_phase_ref_is_the_arguments_fault_not_the_writers(stub_sink):  # noqa: F811
+    """A working writer and a --phase-ref that names nothing: neither existing message is true.
+
+    Routed through the write-failed shape, the stage is told the write failed and to re-run this
+    exact command — which can only fail identically, because the command is what is wrong.
+    """
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    result = run_cli(
+        "defect", "--phase-ref", "docs/features/demo/nowhere-in-particular",
+        "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+    )
+
+    assert result.returncode == metrics.USAGE_ERROR
+    assert metrics.DEFECT_BAD_PHASE_REF in result.stderr
+    assert metrics.DEFECT_WRITE_FAILED not in result.stderr
+    assert metrics.DEFECT_NO_WRITER not in result.stderr
+    assert "re-run this exact command" not in result.stderr
+    assert "DO NOT re-run it" not in result.stderr   # the OTHER shape's instruction, verbatim
+    assert "D1" in result.stderr and "nowhere-in-particular" in result.stderr
+    assert not (store / "phase-08.json").exists()
+
+
+def test_an_unresolvable_phase_ref_stays_loud_when_metrics_are_off(stub_sink, monkeypatch):  # noqa: F811,E501
+    """`AVENGER_METRICS_OFF=1` is a choice about RECORDING; it does not make a bad argument fine."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+
+    result = run_cli(
+        "defect", "--phase-ref", "docs/features/demo/nowhere-in-particular",
+        "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+    )
+
+    assert result.returncode == metrics.USAGE_ERROR
+    assert metrics.DEFECT_BAD_PHASE_REF in result.stderr
 
 
 def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(stub_sink, monkeypatch, tmp_path):  # noqa: F811,E501
@@ -832,8 +934,47 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     assert record["specs"][0]["requirements"] == 2
     assert record["spec_rounds"] == 1 and record["verification_attempts"] == 1
     assert record["tests_before"] == 1 and record["tests_after"] == 1
-    assert {c["verdict"] for c in record["gate_calls"]} == {"GO", "killed"}
+    gate_calls = [c for c in record["gate_calls"] if c["stage"] != metrics.PLUGIN_VERSION_STAGE]
+    assert {c["verdict"] for c in gate_calls} == {"GO", "killed"}
     assert record["defects"][0]["found_by"] == "execution"
+
+
+def test_the_plugin_version_row_survives_the_real_writers_closed_verdict_enum(real_sink, monkeypatch):  # noqa: F811,E501
+    """The claim the double cannot make, for the row issue #65 exists to write.
+
+    `gate_calls[].verdict` is a closed enum firstmate owns, and its writer refuses a row `validate`
+    would refuse. A drift status carried through verbatim ("STALE") is not in that enum, so the row
+    was dropped, the refusal was swallowed by the fail-open path, and the executing version was
+    recorded nowhere — invisible to every `stub_sink` test, because the double enforces no schema.
+    """
+    project, home = real_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    stale = plugin_release.DriftResult(
+        status="stale", executing_version="0.10.2", source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+    )
+    monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
+
+    metrics.record_phase_open(str(spec.parents[2]))
+
+    rows = [c for c in stored(home, "08")["gate_calls"]
+            if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "NO-GO"
+    assert "status=stale" in rows[0]["note"] and "executing_version=0.10.2" in rows[0]["note"]
+
+    result = subprocess.run(  # noqa: S603
+        [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_every_drift_status_maps_onto_the_verdict_enum_firstmate_owns():
+    """A status added to `plugin_release` must not silently reintroduce an out-of-enum verdict."""
+    allowed = {"GO", "REVIEW", "NO-GO", "error", "killed"}
+    assert set(metrics.PLUGIN_VERSION_VERDICTS.values()) <= allowed
+    assert set(metrics.PLUGIN_VERSION_VERDICTS) == {"fresh", "stale", "unknown"}
 
 
 def test_a_defect_found_by_other_carries_its_note(real_sink):  # noqa: F811

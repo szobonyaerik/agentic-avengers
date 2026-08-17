@@ -890,9 +890,9 @@ not.
 **`defect` is the one command that is loud about failing (issue #66).** Every other emission point
 runs from a hook's `|| true` and must stay exit-0 no matter what. `defect` is run directly by the
 stage that caught something, off any hook, so nothing else is fail-open on its behalf — an emission
-that could not be written exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set
-(that is configured behaviour, not a failure). **That exit says one of two things, and only one of
-them is yours to fix.**
+that could not be written exits non-zero and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is
+set (that is configured behaviour, not a failure). **That exit says one of three things, and they do
+not share a remedy or an owner.**
 
 - **A writer IS configured and the write failed** (the writer refused, hung, or the record could not
   be written): retryable, and the message says so. Read the `[metrics]` line above it, fix the cause,
@@ -906,13 +906,68 @@ them is yours to fix.**
   recorded, say so and move on. Under `--auto` it is worth surfacing to the operator rather than
   looping on. The operator's remedies are pointing `AVENGER_METRICS_CMD` at firstmate's own
   `fm-pipeline-metrics.sh`, or `AVENGER_METRICS_OFF=1` to record none deliberately and silently.
+- **`--phase-ref` resolves to no phase** — the writer was never reached and nothing about it is known
+  to be wrong: **the ARGUMENT is what must change.** That is a caller that typed the command wrong,
+  so it exits **2**, the same code `argparse` already returns for one, rather than reporting a write
+  that never happened; re-running the exact command can only fail identically, which is the loop the
+  split exists to end. `AVENGER_METRICS_OFF=1` does not quiet it, for the same reason it does not
+  quiet a parse error: turning emission off is a statement about recording, not a licence to name a
+  phase that does not exist.
 
-Either way the defect did not land, and `found_by` is not recoverable once the phase moves on.
+Each shape opens with its own marker and **no marker contains another**, because that stem is what a
+stage matches on. Whichever fired, the defect did not land, and `found_by` is not recoverable once
+the phase moves on.
 
 **The Verifier's own attribution (`verifier-findings`, from `verifier_review.sh`) stays
 non-blocking** — it runs behind `|| true` and never fails the phase — **but its stderr is not
 discarded.** It is the highest-volume defect-attribution path there is, and a run that dropped every
 verifier-attributed defect must not look like a run that found none.
+
+## Closing the release loop — the executing plugin vs. the merged repository (issue #65)
+
+Phases run from `$CLAUDE_PLUGIN_ROOT`, the plugin release Claude Code cached on install — not this
+repository. A fix merged and reviewed here is inert for every running phase until someone remembers
+to cut a release and refresh that cache; measured directly, the cached copy still carried a defect a
+merged PR had already fixed, and phases kept running against it. "Remember to cut a release" is a
+sentence claiming behaviour nothing enforces, the same class every other rule on this list exists to
+close.
+
+**The version is observed, never assumed.** `scripts/plugin_release.py` derives it from the copy
+that is actually running (`$CLAUDE_PLUGIN_ROOT`, the same variable every hook already resolves its
+own path from) — a static constant would read identically from a fresh copy and a stale one, which
+is exactly the failure mode. `record_plugin_version` rides it into the phase's `gate_calls[]` at
+phase-open, on existing keys rather than a new top-level field: firstmate's metrics schema is closed
+and its producer contract is "add no key" (see "The pipeline measures itself as it runs" above), so
+this is `record_triage_decision`'s precedent applied a second time — the fact firstmate has no field
+for goes into bounded `note` text under a stage of its own (`plugin-version`), not into a field this
+repo invented. Closed means closed in the row's **values** too: `verdict` is firstmate's enum
+(`GO|REVIEW|NO-GO|error|killed`) and its writer refuses a row `validate` would refuse, so the drift
+status is mapped onto it (`fresh` → GO, `stale` → NO-GO, `unknown` → REVIEW) and kept verbatim in
+`note`. Passed through as its own token, the row is rejected, the refusal is swallowed by the
+fail-open path every measurement runs on, and the executing version is recorded nowhere — which is
+the one thing this row exists to prevent, and is invisible to any test using a double that enforces
+no schema.
+
+**The guard is a preflight, not a hope.** `/avenger-run` §1 runs `plugin_release.py check` before any
+phase executes: `STALE` (the executing copy's content differs from the merged repository) stops the
+run and names the fix; `UNKNOWN` (no `AVENGER_SOURCE_REPO` configured on this machine) is reported on
+stderr and left unenforced — the same applicability boundary every other check here draws around a
+scope it cannot resolve. Comparison is by content hash of the shipped payload
+(`agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`, `.claude-plugin/`), not by
+version string alone, because a forgotten version bump would otherwise read as a clean release.
+
+**The release step is one command.** `python3 scripts/plugin_release.py cut --repo <path>
+--cache-root <path>` copies the shipped payload into `<cache-root>/<version>/` and refuses to
+overwrite a version whose content already differs — a version is released once, so a forgotten bump
+fails loudly instead of silently clobbering the previous release under its own number. Run with
+neither flag it releases the current project into the live cache
+(`AVENGER_PLUGIN_CACHE_ROOT`, default `~/.claude/plugins/cache/erik-tools/plan-build-verify`) —
+that is the point of the command, and it is the one deliberate operator action in this loop. What
+keeps everything *else* off a real installation is that the `cut()` **function** has no default
+`cache_root` at all: no hook, no gate and no test can write there without naming the path, and
+`check` never writes anywhere. `tests/test_plugin_release.py` proves the guard both ways — a stale cache against a fixed
+repo reads `STALE`, the same two trees brought into agreement read `FRESH` — per issue #69's rule
+that a guard is proven by going red before it is proven by going green.
 
 ## Agent tooling
 

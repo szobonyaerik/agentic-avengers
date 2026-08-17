@@ -38,6 +38,22 @@ Run these before anything else, and stop with the fix if one fails:
   that will halt at the first gate. The key may live in the project `.env`; in a linked worktree that
   gitignored file stays behind in the primary checkout, and `scripts/load_env.sh` deliberately falls
   back to it — check both places before declaring it missing.
+- **The executing plugin is not known-stale against its source repository (issue #65).** Phases run
+  from the copy `$CLAUDE_PLUGIN_ROOT` resolves to — a cached release snapshot, not this repository —
+  so a fix merged and never released is invisible from inside a run. Ask the copy that is actually
+  about to execute, not a constant a stale copy would carry unchanged:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/plugin_release.py" check
+  ```
+
+  Exit `1` (`STALE`) means the executing copy's content differs from the merged repository at
+  `AVENGER_SOURCE_REPO` (or from itself, when this project *is* that repository) — stop, and tell the
+  operator to release before continuing: `python3 scripts/plugin_release.py cut` from the source
+  checkout, then restart Claude Code so the harness re-reads the refreshed cache. `UNKNOWN` (no
+  `AVENGER_SOURCE_REPO` configured on this machine) is not enforced — the check says so on stderr and
+  the run continues — the same applicability boundary every other check in this repo draws around a
+  scope it cannot resolve.
 - **The §4a ship gate's three preconditions — the binary, an initialised repo, and a filled-in
   config.** All three are needed in interactive *and* `--auto` runs, and each is checked by
   *interrogating state*, never by printing advice and hoping:
