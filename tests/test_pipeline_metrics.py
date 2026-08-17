@@ -594,7 +594,7 @@ DEFECT_ARGS = (
 )
 
 
-def test_a_stage_running_as_a_subagent_can_emit_a_defect_with_no_human_intervention(stub_sink):  # noqa: F811,E501
+def test_a_bare_defect_cli_invocation_records_with_no_human_intervention(stub_sink):  # noqa: F811
     """The happy path: a bare CLI invocation, inheriting only the fixture's environment, records."""
     project, store, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
@@ -618,6 +618,18 @@ def test_a_defect_that_cannot_be_written_because_the_writer_refuses_fails_loudly
     assert not (store / "phase-08.json").exists()
 
 
+def test_a_writer_that_refuses_is_reported_as_retryable(stub_sink, monkeypatch):  # noqa: F811
+    """A configured writer that failed the write is a cause the stage can fix, so it is told to."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("DOUBLE_EXIT", "3")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert "re-run this exact command" in result.stderr
+    assert "DO NOT re-run" not in result.stderr
+
+
 def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch):  # noqa: F811
     """Unset the writer entirely — the "unconfigured" half of the guard, not just "refused"."""
     project, _, _ = stub_sink
@@ -629,6 +641,25 @@ def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch)
 
     assert result.returncode != 0
     assert "D1" in result.stderr
+
+
+def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, monkeypatch):  # noqa: F811,E501
+    """The remedy is the operator's, not the stage's: "fix the cause and re-run" here is a loop.
+
+    A standalone install with no firstmate home is the documented normal state of this repo, so the
+    stage has to be able to tell "your write failed, try again" from "nothing can record here".
+    """
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert "NO METRICS WRITER CONFIGURED" in result.stderr
+    assert "DO NOT re-run" in result.stderr
+    assert "re-run this exact command" not in result.stderr
+    assert "AVENGER_METRICS_OFF=1" in result.stderr   # the other reachable resolution, named
 
 
 def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monkeypatch):  # noqa: F811,E501

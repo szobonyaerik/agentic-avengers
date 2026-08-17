@@ -95,6 +95,20 @@ def cli() -> str | None:
     return shutil.which("fm-pipeline-metrics.sh")
 
 
+def configured() -> bool:
+    """Whether a writer is NAMED for this run, whether or not it currently works.
+
+    `cli()` answers "can anything be written right now" and folds four different states into one
+    `None`: emission turned off, no writer anywhere, a named writer that is not executable, and a
+    writer that already proved unusable. Only the second is a standing condition of the environment
+    that the stage running the command cannot repair by trying again - which is the one distinction
+    `pipeline_metrics.py defect` has to draw before telling anyone to re-run it.
+    """
+    if os.environ.get("AVENGER_METRICS_CMD"):
+        return True
+    return shutil.which("fm-pipeline-metrics.sh") is not None
+
+
 def enabled() -> bool:
     """Whether a record can be written at all, announcing the answer once if it cannot."""
     global _announced

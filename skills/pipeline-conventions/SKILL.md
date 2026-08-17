@@ -887,11 +887,27 @@ not.
 **`defect` is the one command that is loud about failing (issue #66).** Every other emission point
 runs from a hook's `|| true` and must stay exit-0 no matter what. `defect` is run directly by the
 stage that caught something, off any hook, so nothing else is fail-open on its behalf — an emission
-that could not be written (no writer configured, the writer command missing, a non-zero exit from the
-writer, an unwritable record) exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is
-set (that is configured behaviour, not a failure). Treat a non-zero exit from `defect` as a real
-failure: read the `[metrics]` line above it, fix the cause, and re-run the exact command — the defect
-did not land, and `found_by` is not recoverable once the phase moves on.
+that could not be written exits **1** and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set
+(that is configured behaviour, not a failure). **That exit says one of two things, and only one of
+them is yours to fix.**
+
+- **A writer IS configured and the write failed** (the writer refused, hung, or the record could not
+  be written): retryable, and the message says so. Read the `[metrics]` line above it, fix the cause,
+  and re-run the exact command.
+- **No writer is configured at all** — `fm-pipeline-metrics.sh` is not on `PATH` and
+  `AVENGER_METRICS_CMD` is unset: **terminal, and addressed to the operator, not to you.** This is
+  the expected state of a standalone install with no firstmate home, it is a standing property of the
+  environment, and re-running fails identically. **Do not retry it** — the defect could not be
+  recorded, say so and move on. Under `--auto` it is worth surfacing to the operator rather than
+  looping on. The operator's remedies are pointing `AVENGER_METRICS_CMD` at firstmate's own
+  `fm-pipeline-metrics.sh`, or `AVENGER_METRICS_OFF=1` to record none deliberately and silently.
+
+Either way the defect did not land, and `found_by` is not recoverable once the phase moves on.
+
+**The Verifier's own attribution (`verifier-findings`, from `verifier_review.sh`) stays
+non-blocking** — it runs behind `|| true` and never fails the phase — **but its stderr is not
+discarded.** It is the highest-volume defect-attribution path there is, and a run that dropped every
+verifier-attributed defect must not look like a run that found none.
 
 ## Agent tooling
 

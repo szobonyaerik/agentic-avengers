@@ -255,8 +255,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `--summary` follows rule 10. Off unless `fm-pipeline-metrics.sh` is on `PATH` or
    `AVENGER_METRICS_CMD` names it, and an unconfigured run says so once. **`defect` is the one
    exception to "never fail a phase"**: it runs directly (never from a hook's `|| true`), so a call
-   that could not be written exits 1 and says why on stderr — treat that as a real failure and
-   re-run it, not as noise (issue #66). Full rule in `skills/pipeline-conventions/SKILL.md`.
+   that could not be written exits 1 and says why on stderr (issue #66). Its message says which of
+   two failures it is: a **configured writer that failed the write** is retryable, so fix the cause
+   and re-run the exact command; **no writer configured at all** (nothing on `PATH`,
+   `AVENGER_METRICS_CMD` unset) is terminal and the operator's to fix, so do NOT re-run it - record
+   that the defect went unrecorded and move on. Full rule in
+   `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:

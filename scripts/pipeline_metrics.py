@@ -23,6 +23,14 @@ and it is always run directly by a stage rather than from a hook, so nothing els
 behalf. A `defect` call that could not be written exits 1 and says why on stderr (issue #66) — a
 recorder that quietly does nothing is indistinguishable from one with nothing to record.
 
+That loud exit comes in TWO SHAPES, because one remedy belongs to the stage and the other does not.
+When a writer IS configured and the write failed, the stage can fix the cause and re-run the exact
+command, so the message says so. When NO writer is configured at all - nothing on `PATH`,
+`AVENGER_METRICS_CMD` unset - that is a standing property of the environment, the expected state of a
+standalone install with no firstmate home, and re-running only fails identically; that message is
+addressed to the operator, says the defect could not be recorded, and tells the stage to move on
+rather than loop. `AVENGER_METRICS_OFF=1` is neither: it is a deliberate choice, and stays silent.
+
 Emission is attached to the *fact*, not to the caller. `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
 existing. `record_spec_round` is idempotent by CONTENT — it reuses the shipped rebuildable gate
@@ -849,6 +857,13 @@ def main(argv: list[str] | None = None) -> int:
     record, which is exactly the failure this repairs — so an emission that could not be written
     exits non-zero and says why on stderr, unless the operator explicitly turned emission off via
     `AVENGER_METRICS_OFF=1`, which is configured behaviour rather than a failure.
+
+    The non-zero exit is one code and two messages, split on whether the remedy is the stage's to
+    apply. A configured writer that refused, hung or could not write is retryable, so that message
+    asks for exactly that. No writer configured anywhere is not: it is the documented state of a
+    standalone install, it will fail the same way on every attempt, and a stage told to "fix the
+    cause and re-run" there loops instead of working, so that message is terminal, addressed to the
+    operator, and says to move on.
     """
     parser = _build_parser()
     try:
@@ -861,16 +876,34 @@ def main(argv: list[str] | None = None) -> int:
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
         ok = False if args.command == "defect" else None
     if args.command == "defect" and ok is False and os.environ.get("AVENGER_METRICS_OFF") != "1":
-        print(
-            f"{sink.PREFIX} DEFECT NOT RECORDED: {args.identifier} (found_by={args.found_by}) was "
-            "NOT written to the metrics record. This is the single field the record exists for and "
-            "it cannot be reconstructed once the run is over. See the [metrics] diagnostic above "
-            "for the cause, fix it (commonly: set AVENGER_METRICS_CMD to firstmate's own "
-            "fm-pipeline-metrics.sh), and re-run this exact command.",
-            file=sys.stderr,
-        )
+        print(_defect_failure_message(args), file=sys.stderr)
         return 1
     return 0
+
+
+def _defect_failure_message(args: argparse.Namespace) -> str:
+    """What a `defect` that could not be written says, in the two shapes it comes in."""
+    lost = (
+        f"{args.identifier} (found_by={args.found_by}) was NOT written to the metrics record. This "
+        "is the single field the record exists for and it cannot be reconstructed once the run is "
+        "over."
+    )
+    if sink.configured():
+        return (
+            f"{sink.PREFIX} DEFECT NOT RECORDED: {lost} A metrics writer IS configured for this "
+            "run, so the write itself failed and the remedy is yours: see the [metrics] diagnostic "
+            "above for the cause, fix it, and re-run this exact command."
+        )
+    return (
+        f"{sink.PREFIX} DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED: {lost} No writer is "
+        "configured for this run: fm-pipeline-metrics.sh is not on PATH and AVENGER_METRICS_CMD is "
+        "unset. That is the expected state of a standalone install with no firstmate home, and it "
+        "is a standing property of this environment rather than something this command can repair. "
+        "DO NOT re-run it - it will fail identically. Move on with the phase. FOR THE OPERATOR: "
+        "point AVENGER_METRICS_CMD at firstmate's own fm-pipeline-metrics.sh to record defects, or "
+        "set AVENGER_METRICS_OFF=1 to record none deliberately and silently. Under --auto this is "
+        "worth surfacing rather than looping on."
+    )
 
 
 if __name__ == "__main__":
