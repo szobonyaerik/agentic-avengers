@@ -486,6 +486,17 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - After each phase has a passing `verdict.json` **and** its `handover.md`, commit everything for that
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
+- **Stamp the phase's close right after that commit, not before.** `handover.md` being *written* is
+  the Verifier's precondition, not the phase landing — an amendment can still reopen it, the Verifier
+  can still route it back, or a suite hang can still block the commit above. `record_phase_close`
+  (issue #46) refuses to write `closed` while anything under the phase directory is uncommitted, so
+  run it only once this commit has actually happened:
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_metrics.py" phase-close \
+    "docs/features/<feature-id>/phases/<n>-<slug>"
+  ```
+  Run directly by you as the orchestrating stage, the same way `defect` is (§6d) — no hook can see
+  this commit land, so no hook can stamp it.
 - **Every `-m` below is a fixed template with only an id and a verdict substituted**, so it stays
   inline: the *prose belongs in a file* rule (`skills/pipeline-conventions`) turns on whether an
   author could have phrased the value differently. Do not improvise a commit subject that quotes what

@@ -62,12 +62,14 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import applicability  # noqa: E402
 import metrics_sink as sink  # noqa: E402
 import plugin_release  # noqa: E402
 import skill_contract  # noqa: E402
@@ -84,11 +86,15 @@ SPEC_IN_PATH = re.compile(r"(?:^|/)specs/(\d{1,2})\.(\d+)-[^/]+")
 #: Requirement ids as pipeline-conventions defines them: `R<n>.<k>.<m>`.
 REQUIREMENT_ID = re.compile(r"\bR\d+\.\d+\.\d+\b")
 
-#: A test function, for the suite-size count. Deliberately a static count rather than a pytest
-#: collection: it never fails on an import error, costs nothing, and — the point — `tests_before`
-#: and `tests_after` are counted the SAME way, so their difference is a real delta and not an
-#: artifact of two different counting methods.
-TEST_FUNCTION = re.compile(r"^\s*(?:async\s+)?def\s+test_", re.MULTILINE)
+#: `pytest --collect-only -q`'s own summary line ("123 tests collected in 0.4s" / "1 test collected
+#: in ..."). `count_tests` parses this rather than counting `def test_` lines statically (issue #46):
+#: a static count gives the number of test FUNCTIONS, while every suite run this pipeline reports —
+#: `hook_verifier.sh`'s own `pytest -q` — reports the number of collected test ITEMS, and a
+#: parametrized function is one `def` and several items. One field, `tests_before`/`tests_after`,
+#: was carrying two different populations under one name (917/973 recorded against 1092/1164
+#: observed in the same phase); this is what makes it the SAME population as the number every
+#: verifier run already prints.
+TESTS_COLLECTED = re.compile(r"^(\d+) tests? collected", re.MULTILINE)
 
 #: Which rubric a gate is judging against says which stage made the call, with no caller to ask.
 #:
@@ -528,17 +534,30 @@ def test_root() -> Path:
 
 
 def count_tests() -> int | None:
-    """Suite size, counted statically. None when there is no test root to count."""
+    """Suite size: the number of items `pytest --collect-only` would run, minus e2e.
+
+    The SAME population `hook_verifier.sh` reports when it runs the phase's suite (`pytest -q`,
+    `--ignore=tests/e2e` on the full-suite fallback) — collected test items, not `def test_` lines
+    (issue #46). None on anything that stops collection from answering — no test root, pytest not on
+    `PATH`, a timeout, an import error — the same "not counted" the prior static count used, so
+    `record_phase_open`/`record_phase_close` still treat a None here as "skip the field", never a 0.
+    """
     root = test_root()
     if not root.is_dir():
         return None
-    total = 0
-    for path in sorted(root.rglob("*.py")):
-        try:
-            total += len(TEST_FUNCTION.findall(path.read_text(encoding="utf-8")))
-        except OSError:
-            continue
-    return total
+    project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [sys.executable, "-m", "pytest", "-q", "--collect-only", "--ignore=tests/e2e", str(root)],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = TESTS_COLLECTED.search(result.stdout)
+    return int(match.group(1)) if match else None
 
 
 def record_phase_open(phase_dir: str) -> bool:
@@ -558,10 +577,43 @@ def record_phase_open(phase_dir: str) -> bool:
     return sink.set_fields(phase, **fields) if fields else True
 
 
+def _phase_landed(phase_dir: Path) -> bool | None:
+    """Whether `phase_dir` has LANDED — nothing under it left uncommitted.
+
+    `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
+    implementation completion understates the phase by verification, route-backs and close — its
+    most expensive stages — and the too-early number is indistinguishable from a good one (issue
+    #46). `handover.md` being written is not landing: it is the Verifier's own precondition, checked
+    by `hook_verifier.sh` *after* this file exists, and a phase can still gain an open amendment, a
+    further Verifier finding, or a blocked handover before its commit happens.
+
+    Landing IS observable, though — `commands/avenger-run.md` §5 commits everything under the phase
+    directory the moment it actually lands — so this checks the one thing every caller can see
+    without being told who they are or when they think they are: `applicability.changed_paths`,
+    reused rather than re-derived so this agrees with every other "what did the diff touch" question
+    in the pipeline. True once nothing under `phase_dir` is modified, staged, or untracked. None when
+    git cannot answer (no repo, no `git` on PATH) — never read as "landed".
+    """
+    scope = applicability.changed_paths(phase_dir)
+    if scope is None:
+        return None
+    return not applicability.touched(phase_dir, scope)
+
+
 def record_phase_close(phase_dir: str) -> bool:
-    """Stamp when the phase landed, the suite it landed with, and the wall clock it took."""
+    """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
+
+    Refuses the write while `phase_dir` is not yet landed (issue #46) — a producer that cannot
+    observe landing must not claim it, and this one now can. Called at the wrong moment, this is a
+    no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on why.
+    """
     phase = resolve_phase(phase_dir)
     if phase is None:
+        return False
+    landed = _phase_landed(Path(phase_dir))
+    if landed is not True:
+        why = "still has uncommitted changes" if landed is False else "git could not say whether it has landed"
+        sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
     record = sink.show(phase) or {}
     closed = _now()
