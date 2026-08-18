@@ -738,11 +738,19 @@ inert for every running phase until someone releases it. **Observed, not assumed
 constant a stale copy would carry unchanged, and `record_plugin_version` rides it into the phase's
 `gate_calls[]` at phase-open — an existing key, never a new top-level field, since firstmate's
 schema is closed (§6d). **Enforced, not folklore:** `/avenger-run` §1 runs `plugin_release.py check`
-before any phase executes and stops the run on `STALE` (content hash of the shipped payload differs
-from `AVENGER_SOURCE_REPO`); `UNKNOWN` (unconfigured) is reported, never enforced. **The release step
-is one command** — `plugin_release.py cut --repo <path> --cache-root <path>` — that refuses to
-overwrite a version whose content already differs. With neither flag it releases the current project
-into the live cache (`AVENGER_PLUGIN_CACHE_ROOT`), which is what an operator running the remedy
-wants; what keeps every *other* caller off a real installation is that the `cut()` function has no
-default `cache_root`, and `check` writes nowhere. `tests/test_plugin_release.py` proves the guard red
+before any phase executes and stops the run on `STALE` (content hash of the shipped payload —
+including `docs/templates/`, not the rest of `docs/` — differs from `AVENGER_SOURCE_REPO`'s
+**committed HEAD**, never its working tree, so an in-progress edit reads as a separate `dirty` flag,
+never as STALE); `UNKNOWN` (no source repository resolvable — `AVENGER_SOURCE_REPO` unset and the
+project's plugin manifest `name` does not match the executing copy's) is reported, never enforced.
+**The release step is one command, not done until a harness would load it** — `plugin_release.py cut
+--repo <path> --cache-root <path>` — that refuses to overwrite a version whose content already
+differs, refuses a payload missing an expected path, and (with no `--no-pin`) re-points the install
+registry (`installed_plugins.json`) at the release, verified by re-reading it back and confirming it
+resolves `plugin_version()` to what was just cut — copying files nothing points at is the defect this issue
+describes, reproduced inside its own fix. With neither `--cache-root` nor `--pin-path` it releases
+the current project into the live cache and registry (`AVENGER_PLUGIN_CACHE_ROOT`/
+`AVENGER_PLUGIN_PIN_PATH`), which is what an operator running the remedy wants; what keeps every
+*other* caller off a real installation is that the `cut()` function has no default `cache_root` or
+`pin_path`, and `check` writes nowhere. `tests/test_plugin_release.py` proves every guard here red
 before green.

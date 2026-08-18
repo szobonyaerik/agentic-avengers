@@ -955,24 +955,48 @@ no schema.
 
 **The guard is a preflight, not a hope.** `/avenger-run` §1 runs `plugin_release.py check` before any
 phase executes: `STALE` (the executing copy's content differs from the merged repository) stops the
-run and names the fix; `UNKNOWN` (no `AVENGER_SOURCE_REPO` configured on this machine) is reported on
+run and names the fix; `UNKNOWN` (no source repository resolvable on this machine) is reported on
 stderr and left unenforced — the same applicability boundary every other check here draws around a
-scope it cannot resolve. Comparison is by content hash of the shipped payload
-(`agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`, `.claude-plugin/`), not by
-version string alone, because a forgotten version bump would otherwise read as a clean release.
+scope it cannot resolve. **Two things resolve a source repository, and nothing else does**:
+`AVENGER_SOURCE_REPO`, the explicit per-machine override; or the project being worked on being this
+plugin's own repository, decided by its `.claude-plugin/plugin.json` `name` matching the EXECUTING
+copy's — not merely by that manifest existing. A consumer using this pipeline to develop *their own*
+Claude Code plugin has `CLAUDE_PROJECT_DIR` pointing at an unrelated plugin repository, and comparing
+the executing release against that payload can never match: a permanent STALE whose prescribed remedy
+cannot clear it, which is the unclearable wedge §3a exists to prevent. So an unrecognised project is
+UNKNOWN — reported, never enforced — exactly like a machine with nothing configured at all, and a
+consumer who wants the guard enforced sets `AVENGER_SOURCE_REPO`. Comparison is by content hash of
+the shipped payload
+(`agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`, `.claude-plugin/`,
+`docs/templates/` — the rest of `docs/` is this repo's own documentation of itself, not payload),
+not by version string alone, because a forgotten version bump would otherwise read as a clean
+release. When the source repository is a git checkout, the comparison reads its COMMITTED `HEAD`,
+never the live working tree — hashing the working tree directly made any in-progress uncommitted
+edit under the shipped payload read as STALE, including during the very session making that edit,
+which would wedge anyone developing this repo and guarantee the guard gets bypassed. An uncommitted
+change is instead surfaced as a separate `dirty` signal on the result (never a fourth status, never
+enough on its own to fail `check`) — a dirty tree and a stale release are two different conditions,
+and conflating them is the same disease this whole fix is about, one level in.
 
-**The release step is one command.** `python3 scripts/plugin_release.py cut --repo <path>
---cache-root <path>` copies the shipped payload into `<cache-root>/<version>/` and refuses to
-overwrite a version whose content already differs — a version is released once, so a forgotten bump
-fails loudly instead of silently clobbering the previous release under its own number. Run with
-neither flag it releases the current project into the live cache
-(`AVENGER_PLUGIN_CACHE_ROOT`, default `~/.claude/plugins/cache/erik-tools/plan-build-verify`) —
-that is the point of the command, and it is the one deliberate operator action in this loop. What
-keeps everything *else* off a real installation is that the `cut()` **function** has no default
-`cache_root` at all: no hook, no gate and no test can write there without naming the path, and
-`check` never writes anywhere. `tests/test_plugin_release.py` proves the guard both ways — a stale cache against a fixed
-repo reads `STALE`, the same two trees brought into agreement read `FRESH` — per issue #69's rule
-that a guard is proven by going red before it is proven by going green.
+**The release step is one command, and it is not done until a harness would actually load it.**
+`python3 scripts/plugin_release.py cut --repo <path> --cache-root <path>` copies the shipped payload
+into `<cache-root>/<version>/`, refuses to overwrite a version whose content already differs (a
+version is released once, so a forgotten bump fails loudly instead of silently clobbering the
+previous release under its own number), and refuses to release a payload missing one of its own
+expected paths (silent breakage nobody notices until a downstream user does). Run with no flags it
+also re-points the install registry (`~/.claude/plugins/installed_plugins.json`,
+`AVENGER_PLUGIN_PIN_PATH`/`DEFAULT_PIN_PATH`) at the new release — copying files into a new cache
+directory nothing points at is not a release, it is the exact defect this issue describes,
+reproduced inside its own fix. The closing check re-reads the registry from disk after writing (not
+the in-memory object) and confirms the pin's `installPath` genuinely resolves `plugin_version()` back
+to the version just released — `cut` cannot report success while the pin does not actually resolve
+to it. `--no-pin` skips the registry entirely; every *other* caller (`cut()` the function, `check`)
+still has no default `cache_root`/`pin_path` of its own — no hook, no gate and no test can touch a
+real installation without naming both paths explicitly. `tests/test_plugin_release.py` proves every
+one of these guards both ways — a stale cache against a fixed repo reads `STALE`, a pin pointed at a
+target whose own manifest does not match the claimed version raises before reporting success, both
+brought into agreement read clean — per issue #69's rule that a guard is proven by going red before
+it is proven by going green.
 
 ## Agent tooling
 
