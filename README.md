@@ -232,10 +232,16 @@ agentic-avengers/
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
-│   │                          + read path + stage effort + verifier pre-check + amendments
-│   │                          + carried items + cosmic-ray + break-glass)
+│   │                          + read path + overview contracts heading + stage effort
+│   │                          + verifier pre-check + amendments + carried items + cosmic-ray
+│   │                          + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
 │   ├── spec_gate_state.py     the one place a spec's gate stamp is read (legacy stamps included)
+│   ├── spec_gate_context.py   the gate's `## CONTEXT (reference only)` block: the overview's
+│   │                          `## Contracts and Decisions` section + the prior phase's card. An
+│   │                          overview missing that heading is DEGRADED, not absent - exit 3, and
+│   │                          the hook folds the banner into the persisted report. `check [--all]`
+│   │                          (diff-scoped, from gate_ci.sh) finds every overview missing it
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
 │   ├── spec_notes.py          the known-open list: notes that never block, read once by the implementer
 │   ├── spec_rubric.py         the gate's rubric rendered for the WRITER, from the gate's own
