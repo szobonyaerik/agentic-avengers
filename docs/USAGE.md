@@ -215,11 +215,16 @@ write the spec again; the gate skips an unchanged body by design, so an edit is 
   asking you to keep it on one line. The Verifier's per-finding waiver
   (`verdict.json` `break_glass` + `waiver_reason`) is logged through that same writer, so a
   multi-paragraph waiver reason is safe too.
-- **Gate models**: decorrelated by default — `GATE_MODEL` (gemini) runs the spec gate's **observe**
-  pass, `GATE_TRIAGE_MODEL` (deepseek) runs its cheaper **triage** pass, and `VERIFIER_GATE_MODEL`
-  (gemini) runs the Verifier's test-quality review. Set `GATE_MODEL=<id>` to route the observe pass, e.g.
-  `export GATE_MODEL=opencode-go/deepseek-v4-pro` (OpenCode's DeepSeek V4 Pro, provider `opencode`).
-  Keep `AUTHOR_FAMILY` a different family than `GATE_MODEL` or the gate fails closed.
+- **Gate models**: three variables, documented together in `docs/templates/env.example` — `GATE_MODEL`
+  (gemini) runs the spec gate's **observe** pass, `GATE_TRIAGE_MODEL` runs its cheaper **triage**
+  pass, and `VERIFIER_GATE_MODEL` (gemini) runs the Verifier's test-quality review. Set
+  `GATE_MODEL=<id>` to route the observe pass, e.g. `export GATE_MODEL=opencode-go/deepseek-v4-pro`
+  (OpenCode's DeepSeek V4 Pro, provider `opencode`). Keep `AUTHOR_FAMILY` a different family than
+  `GATE_MODEL` or the gate fails closed. Left unset, `GATE_TRIAGE_MODEL` now **defaults to
+  `GATE_MODEL`** — the model you already configured and proved reachable — rather than to a
+  hardcoded model on its own provider; it used to default to a bare `deepseek/deepseek-chat`, which
+  resolves to OpenRouter regardless of `GATE_PROVIDER`, so every spec write failed closed on a
+  third, unconfigured provider (issue #48).
 - **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` maps the Claude model tiers to
   OpenRouter ids (`claude-opus-5` / `claude-sonnet-5` / `claude-haiku-4.5`). Re-check these against
   `https://openrouter.ai/api/v1/models` when the tiers move; a stale id fails at request time, not at
