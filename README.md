@@ -71,7 +71,7 @@ flowchart TD
     ver -->|"capped at 3 attempts — then carry / waive / escalate"| stop
     ver -->|"pass — TESTS LOCK"| mut{"mutation<br/>advisory (default) / enforce / off"}
     mut -->|"survivors · enforce only"| impl
-    mut --> brk["breaker<br/>optional · critical paths"]
+    mut --> brk["breaker<br/>critical paths · breaker.json or no close"]
     brk -->|"counterexample"| impl
     brk --> ho["handover"]
     ho -.-> hoA[/"handover.md · contract card, capped at 6144 bytes · rest → handover-archive.md · PROJECT_STATE"/]
@@ -129,7 +129,11 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
           adding one a later gate demands is always allowed.
   mutation (MUTATION_POLICY advisory by default — runs, reports, never blocks | enforce | off)
                  an extra signal, NOT the independence mechanism
-  breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
+  breaker (criticality: critical) -> counterexample -> implementer adds the test, fixes the code
+                 persists breaker.json beside verdict.json - a `clean` verdict naming what it
+                 ATTACKED, or `found` naming its counterexample. A critical phase does not close
+                 without one, and a vacuous record is refused like a missing one
+                 (scripts/breaker_gate.py).
   handover -> .../phases/<n>-<slug>/handover.md   CONTRACT CARD, hard cap 6144 bytes
                  binding contracts + decisions + artifact links + next phase; mirrors the verdict
                  and any waived findings. Everything else -> handover-archive.md, which NO stage
@@ -233,7 +237,7 @@ agentic-avengers/
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
 │   │                          + read path + stage effort + verifier pre-check + amendments
-│   │                          + carried items + cosmic-ray + break-glass)
+│   │                          + carried items + breaker record + cosmic-ray + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
 │   ├── spec_gate_state.py     the one place a spec's gate stamp is read (legacy stamps included)
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
@@ -243,6 +247,10 @@ agentic-avengers/
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
 │   │                          the phase does not close
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
+│   ├── breaker_gate.py        the Breaker's record: a phase declaring `criticality: critical` does
+│   │                          not close without a valid breaker.json (a vacuous one is refused like
+│   │                          a missing one). Authoritative at the handover hook, diff-scoped in CI
+│   │                          (`check --all` audits), and the `stage: breaker` the resolver reports
 │   ├── applicability.py       the one boundary every mechanical check binds on: OPEN it blocks,
 │   │                          CLOSED it counts and names (untouched | shipped | excepted). Owns
 │   │                          the diff scope and the per-phase exceptions.json ledger

@@ -83,8 +83,8 @@ So the orchestrator is **`commands/avenger-run.md`**, which turns the main sessi
 orchestrator. It is not the "static list of stages" this file previously dismissed: it branches on
 gate verdicts and retries, because the routing lives in the command body and the *position* comes from
 `scripts/pipeline_state.py` — a deterministic resolver that reads spec frontmatter stamps
-(`spec_gate`, `review_status`, `status`), `verdict.json`, `amendments.json` and `exceptions.json`, and
-returns the one stage the feature owes next. A phase closed with a **recorded exception**
+(`spec_gate`, `review_status`, `status`), `verdict.json`, `amendments.json`, `exceptions.json` and
+`breaker.json`, and returns the one stage the feature owes next. A phase closed with a **recorded exception**
 (`scripts/applicability.py`) is read as CLOSED rather than incomplete — without that, one phase closed
 under a disclosed captain-ordered cap parked the resolver forever and `--auto` could not start a phase
 again. `--from-phase <n>` enters at a named phase and names every phase it stepped over; with any phase
@@ -97,8 +97,10 @@ What it does beyond the flow above:
   and at each `/spec-review`. `--auto` removes both and sets `SPEC_REVIEW_MODE=auto`.
 - **2 retries per stage**, then halts with the artifact, verdict and route-back reason. Mutation halts
   on the second bounce of the same phase.
-- **Breaker only on `criticality: critical`** (a spec frontmatter field); mutation only per
-  `MUTATION_POLICY`.
+- **Breaker only on `criticality: critical`** (a spec frontmatter field) — and such a phase does not
+  close without the Breaker's `breaker.json` record beside `verdict.json`, so the resolver reports
+  `stage: breaker` until one exists and the handover hook refuses the card without it
+  (`scripts/breaker_gate.py`); mutation only per `MUTATION_POLICY`.
 - **Branches once, commits per verified phase, plus twice at feature close**: the e2e stage's output
   *before* the ship gate, because §4a's precondition is a clean tree that already contains
   `tests/e2e/<feature>/`; then the retrospective artifacts written *after* it, guided by

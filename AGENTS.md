@@ -288,6 +288,9 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 # once all specs in the phase are green:
 @avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
                                           # -> writes verdict.json; on pass the phase's tests LOCK
+@avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
+                                          # then NOT optional: -> writes breaker.json, without which
+                                          # the handover below is refused (see 3h)
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md
 # once the FINAL phase of the feature is green:
 @avenger-backend-architect --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/

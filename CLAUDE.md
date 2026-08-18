@@ -8,7 +8,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
 - Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
-- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `handover.md`, `handover-archive.md`)
+- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `breaker.json`, `handover.md`, `handover-archive.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
 ```yaml
@@ -188,7 +188,7 @@ loud) · **shipped** (the artifact's own stamps say the pipeline is past it — 
 cannot split, and **a rule whose remedy is unavailable is not a gate, it is a wedge**) · **excepted**
 (a disclosed exception on the phase's ledger, `exceptions.json` beside `verdict.json`).
 
-The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each one read
+The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`, each one read
 by a named call site — and a rule outside it is a hard failure naming what was invented, never a silent
 no-op: a ledger entry nothing reads is an exception that does not exist. An exception is **narrow**
 (one rule, one subject, one phase), **audited or not recorded** (through `bypass_log.sh` into
@@ -285,6 +285,19 @@ per §6's rule that a stop names which.
 
 The **Breaker stays separate** and is never folded into verification: it found phase 8's credential
 leaks by *constructing inputs*, which is a different instrument from reading a test set.
+
+**And it now leaves a record, because a stage that emits nothing is indistinguishable from one that
+never ran.** Every phase-8 and phase-9 spec of one measured feature declared `criticality: critical`,
+which is what routes the Breaker; it was owed twice, ran neither time, and left zero trace anywhere in
+that feature's docs or tests, because nothing checked. `scripts/breaker_gate.py` closes that: a phase
+owing a Breaker run does not reach handover without a valid `breaker.json` beside `verdict.json` — a
+`clean` verdict naming what it **attacked**, or a `found` verdict naming its **counterexample**, since
+a vacuous record is refused exactly like a missing one. **`hook_verifier.sh` is the authoritative
+point** (the handover write, unconditional); `gate_ci.sh` is a diff-scoped backstop and
+`pipeline_state.py` is routing, reporting `stage: breaker` so `/avenger-run` acts on the obligation
+rather than a human remembering it. Asked only while the phase is still OPEN (§3a), waivable only
+through the disclosed-exception ledger, `--rule breaker`. Full statement in
+`skills/pipeline-conventions`.
 
 ### 4d. Amendments — change a verified phase without re-verifying all of it
 The pipeline had no concept of a correction, so any change to a verified phase re-opened the whole
