@@ -57,14 +57,14 @@ derive_feature() {
 SLUG="${PHASE:-$(derive_phase "$FILE" || true)}"
 FEATURE="$(derive_feature "$FILE" || true)"
 
-# Measurement, never a gate. A handover being written is the phase landing, so this is where its
-# close, its wall clock and the suite it landed with are stamped — and it is stamped BEFORE the
-# suite runs below, because a phase this hook stops still spent every minute and every test it
-# spent, and those numbers are unrecoverable once the run is over. `set` overwrites, so a handover
-# rewritten after a route-back converges on the last one rather than accumulating.
-if [ "$TRIGGER" = "handover" ]; then
-  python3 "$SD/pipeline_metrics.py" phase-close "$FILE" >/dev/null 2>&1 || true
-fi
+# NOT the close stamp (issue #46). A handover.md being WRITTEN is the Verifier's precondition, not
+# the phase landing — this hook still has to check the suite, the verdict, amendments and carried
+# items below, any of which can still route the phase back. Stamping here recorded `closed` and
+# `elapsed_minutes` for phases that were not, in fact, done: an open amendment, a further Verifier
+# finding, a blocked handover, nothing pushed. `commands/avenger-run.md` §5 stamps the close itself,
+# directly, right after the per-phase commit actually lands — the one moment this hook cannot see.
+# `record_phase_close` also refuses the write itself while the phase directory is still uncommitted,
+# so a caller that got the ordering wrong fails the write rather than recording a false close.
 
 # Layout: tests/<feature>/<n>-<slug>/... ; fall back to tests/<slug> for repos on the older layout.
 TESTPATH=""

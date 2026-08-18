@@ -18,12 +18,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import gate_timeouts  # noqa: E402
 from gate_errors import GateError  # noqa: E402
 from gate_timeouts import (  # noqa: E402
     DEFAULT_CALL_TIMEOUT_S,
     HOOK_HEADROOM_S,
     METRICS_SPAWN,
     call_timeout,
+    collect_processes,
+    collect_timeout,
     gate_calls,
     gate_hooks,
     main,
@@ -242,6 +245,57 @@ def test_a_new_emission_point_moves_the_count_by_itself(tmp_path: Path) -> None:
 
     assert before == 1
     assert metrics_processes(hook, SCRIPTS) == before + 1
+
+
+def test_the_suite_collection_is_charged_to_the_hook_that_can_spawn_it() -> None:
+    """`phase-open` sizes the suite with `pytest --collect-only` — a child whose natural duration
+    is a property of somebody else's test tree, sitting on the spec gate's path. `spec-round` and
+    the kill traps spawn the CLI and collect nothing, so they are not charged a collection."""
+    hook = SCRIPTS / "hook_spec_gate.sh"
+
+    assert collect_processes(hook, SCRIPTS) == 1
+    assert collect_processes(hook, SCRIPTS) < metrics_processes(hook, SCRIPTS)
+
+
+def test_a_new_collection_site_moves_the_count_by_itself(tmp_path: Path) -> None:
+    """Derived, never listed — the same guarantee as the emission-point walk."""
+    hook = tmp_path / "hook_y.sh"
+    hook.write_text('#!/usr/bin/env bash\npython3 "$SD/gate_runner.py"\n', encoding="utf-8")
+    before = collect_processes(hook, SCRIPTS)
+
+    hook.write_text(
+        '#!/usr/bin/env bash\npython3 "$SD/gate_runner.py"\n'
+        'python3 "$SD/pipeline_metrics.py" phase-close "$PHASE"\n',
+        encoding="utf-8",
+    )
+
+    assert before == 0
+    assert collect_processes(hook, SCRIPTS) == 1
+
+
+def test_a_collection_budget_that_eats_the_headroom_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound on the collection is checked against the headroom it spends, not believed. Raising
+    it past what the hook carries is loud rather than a hook killed mid-gate with nothing to show —
+    the exact `120s hook around a 300s call` shape one layer in."""
+    monkeypatch.delenv("AVENGER_METRICS_TIMEOUT", raising=False)
+    monkeypatch.setattr(gate_timeouts, "COLLECT_TIMEOUT_S", HOOK_HEADROOM_S)
+
+    found = violations(HOOKS_JSON, SCRIPTS)
+
+    assert any("HEADROOM EXHAUSTED" in line and "hook_spec_gate.sh" in line for line in found)
+    assert all("suite collections" in line for line in found if "HEADROOM EXHAUSTED" in line)
+
+
+def test_the_shipped_collection_bound_fits_beside_the_writers_it_shares_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both halves of measurement come out of one headroom, so they are checked together."""
+    monkeypatch.delenv("AVENGER_METRICS_TIMEOUT", raising=False)
+    for _, name, _, _ in gate_hooks(HOOKS_JSON, SCRIPTS):
+        assert metrics_worst_case_s(SCRIPTS / name, SCRIPTS) <= HOOK_HEADROOM_S, name
+    assert collect_timeout() > 0
 
 
 def test_a_module_that_reads_the_budget_but_records_nothing_is_not_counted() -> None:

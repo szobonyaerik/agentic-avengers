@@ -28,12 +28,20 @@ did would owe its own accounting.
 
 Metrics emission spends the headroom, so it is asserted here rather than described somewhere:
 
-    metrics processes on the hook's path  x  AVENGER_METRICS_TIMEOUT  <=  HOOK_HEADROOM_S
+    metrics processes x AVENGER_METRICS_TIMEOUT  +  suite collections x COLLECT_TIMEOUT_S
+        <=  HOOK_HEADROOM_S
 
 An unwritable record makes firstmate's CLI BLOCK rather than fail, and the sink's breaker is
 per-process state, so each process on a hook's path can pay the full per-call bound once. The
 process count is DERIVED the same way gate hooks and gate calls are — from what the scripts actually
 spawn and import — so a fourth emission point added to a hook moves this number by itself.
+
+The second term is the same rule applied to the other thing measurement spawns. `phase-open` and
+`phase-close` size the suite by running `pytest --collect-only` (issue #46), which is a child process
+of unbounded natural duration — a large consumer suite with import-time conftest work — sitting on
+the spec gate's hook path. A bound believed rather than checked is the defect this whole module
+exists for, so the bound lives HERE, next to the headroom it spends, and `pipeline_metrics.py` reads
+it from `collect_timeout()` rather than carrying a second copy of the number.
 
 Which hooks are gate hooks is DERIVED, not listed: this walks the `$SD/…`, `$SCRIPT_DIR/…` and
 `${CLAUDE_PLUGIN_ROOT}/scripts/…` references out of each hook script and follows them, so a hook
@@ -135,6 +143,22 @@ METRICS_CLI = "pipeline_metrics.py"
 METRICS_SPAWN = re.compile(
     r"(?:\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts|\$SD|\$SCRIPT_DIR)/" + METRICS_CLI.replace(".", r"\.")
 )
+
+#: The metrics subcommands that size the suite, and so spawn `pytest --collect-only`. Narrower than
+#: `METRICS_SPAWN` on purpose: `spec-round` and the kill traps spawn the CLI and collect nothing, and
+#: charging them a collection would inflate every hook's required budget for work that never runs.
+COLLECT_SPAWN = re.compile(
+    r"(?:\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts|\$SD|\$SCRIPT_DIR)/"
+    + METRICS_CLI.replace(".", r"\.")
+    + r"\"?[ \t]+(?:phase-open|phase-close)\b"
+)
+
+#: Seconds one `pytest --collect-only` may take. Sized so a collection plus the metrics processes on
+#: the same path still fit inside `HOOK_HEADROOM_S` — `violations()` checks that rather than trusting
+#: it. A collection that blows this bound records no suite size, which is the "not counted" the field
+#: already has a meaning for; a collection that blows the HOOK budget records nothing at all and
+#: takes the gate's verdict with it, which is why the smaller bound is the one that has to bind.
+COLLECT_TIMEOUT_S = 60
 
 #: A process that records in-process instead of spawning the CLI imports the metrics module AND
 #: calls one of its `record_*` entry points. Both are required: `gate_timeouts.py` imports the sink
@@ -269,9 +293,47 @@ def metrics_processes(script: Path, scripts_dir: Path, seen: set[str] | None = N
     )
 
 
+def collect_timeout() -> int:
+    """Seconds a suite collection gets, for whoever spawns one inside a hook.
+
+    Public because it is a budget someone else spends: `pipeline_metrics.count_tests` bounds its
+    `pytest --collect-only` with this, so the number the collection is held to and the number this
+    module checks the headroom against cannot be two different numbers.
+    """
+    return COLLECT_TIMEOUT_S
+
+
+def collect_processes(script: Path, scripts_dir: Path, seen: set[str] | None = None) -> int:
+    """How many suite collections one invocation of `script` can spawn.
+
+    Derived from the subcommands the scripts actually run, exactly like `metrics_processes`: a hook
+    that starts opening or closing a phase pays for a collection without anyone remembering to
+    record that here.
+    """
+    seen = set() if seen is None else seen
+    if script.name in seen or not script.is_file():
+        return 0
+    seen.add(script.name)
+    try:
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    return len(COLLECT_SPAWN.findall(text)) + sum(
+        collect_processes(scripts_dir / ref, scripts_dir, seen)
+        for ref in sorted(references(script))
+    )
+
+
 def metrics_worst_case_s(script: Path, scripts_dir: Path) -> int:
-    """The most wall clock measurement can add to one invocation of `script`."""
-    return metrics_processes(script, scripts_dir) * metrics_sink.timeout()
+    """The most wall clock measurement can add to one invocation of `script`.
+
+    Both of the things measurement spawns: the metrics CLI itself, which can block for the full
+    per-call bound once in every process, and the suite collection `phase-open`/`phase-close` run.
+    """
+    return (
+        metrics_processes(script, scripts_dir) * metrics_sink.timeout()
+        + collect_processes(script, scripts_dir) * collect_timeout()
+    )
 
 
 def gate_hooks(hooks_json: Path, scripts_dir: Path) -> list[tuple[str, str, int, int]]:
@@ -317,16 +379,28 @@ def violations(hooks_json: Path, scripts_dir: Path, call_s: int | None = None) -
                 f"({calls} x {inner}s call + {HOOK_HEADROOM_S}s headroom)."
             )
         processes = metrics_processes(scripts_dir / name, scripts_dir)
-        worst = processes * per_call
+        collections = collect_processes(scripts_dir / name, scripts_dir)
+        collected = collections * collect_timeout()
+        worst = processes * per_call + collected
         if worst > HOOK_HEADROOM_S:
+            # What is left for the writers once the collections have taken their share — the number
+            # an operator lowering AVENGER_METRICS_TIMEOUT has to fit under. It can be 0 or less,
+            # in which case no per-call bound helps and the collections are what must move.
+            spare = HOOK_HEADROOM_S - collected
+            remedy = (
+                f"Lower AVENGER_METRICS_TIMEOUT to <= {spare // processes}s, "
+                if processes and spare >= processes
+                else ""
+            )
             out.append(
                 f"HEADROOM EXHAUSTED — {event}/{name}: measurement can add up to {worst}s inside "
                 f"this hook ({processes} metrics processes x {per_call}s "
                 f"AVENGER_METRICS_TIMEOUT, one per process because the sink's breaker is "
-                f"per-process), but the hook budget carries only {HOOK_HEADROOM_S}s of headroom "
-                f"over the {calls} x {inner}s of provider calls. A hung writer would get the hook "
-                f"killed and the gate would report nothing. Lower AVENGER_METRICS_TIMEOUT to <= "
-                f"{HOOK_HEADROOM_S // processes}s, remove an emission point from this hook's path, "
+                f"per-process, plus {collections} suite collections x {collect_timeout()}s "
+                f"COLLECT_TIMEOUT_S), but the hook budget carries only {HOOK_HEADROOM_S}s of "
+                f"headroom over the {calls} x {inner}s of provider calls. A hung writer or a "
+                f"wedged collection would get the hook killed and the gate would report nothing. "
+                f"{remedy}remove an emission point from this hook's path, lower COLLECT_TIMEOUT_S, "
                 f"or raise HOOK_HEADROOM_S and every hooks.json budget with it."
             )
     return out

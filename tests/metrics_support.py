@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -186,6 +187,19 @@ def stored(store_or_home: Path, phase: str) -> dict:
     return json.loads(
         (store_or_home / "data" / "pipeline-metrics" / f"phase-{phase}.json").read_text("utf-8")
     )
+
+
+def git_init(project: Path) -> None:
+    """A real repo at `project` — `record_phase_close`'s landing check needs one to answer at all."""
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=project, check=True)
+
+
+def git_land(project: Path, message: str = "land") -> None:
+    """Commit everything under `project` — what makes a phase directory LANDED for issue #46."""
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=project, check=True)
 
 
 def write_spec(project: Path, phase: int, spec: str, body: str) -> Path:

@@ -29,14 +29,24 @@ from pathlib import Path
 
 import pytest
 
-from metrics_support import read_calls, real_sink, stored, stub_sink, write_spec  # noqa: F401
+from metrics_support import (  # noqa: F401
+    git_init,
+    git_land,
+    read_calls,
+    real_sink,
+    stored,
+    stub_sink,
+    write_spec,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
+import gate_timeouts  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
 import plugin_release  # noqa: E402
+import proc_group  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
     "every emission point writes through a real writer process, which is the whole mechanism"
@@ -413,22 +423,171 @@ def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_
 
 
 def test_the_suite_is_counted_the_same_way_at_both_ends(stub_sink):  # noqa: F811
+    """`count_tests` counts collected pytest ITEMS, not `def test_` lines — issue #46.
+
+    A parametrized function is one `def` and several collected items: the static count the emitter
+    used to write disagreed with every suite run `hook_verifier.sh` itself reports, by exactly that
+    gap (917/973 recorded against 1092/1164 observed in the phase that filed #46). One `def` with
+    three parametrize cases below proves the field now carries the SAME population pytest itself
+    reports, not merely a different but internally-consistent one.
+    """
     project, store, _ = stub_sink
-    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
     tests = project / "tests"
     tests.mkdir()
     (tests / "test_a.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    git_land(project, "open")
 
-    metrics.record_phase_open(phase_dir)
+    metrics.record_phase_open(str(phase_dir))
     (tests / "test_b.py").write_text(
-        "async def test_two():\n    pass\ndef test_three():\n    pass\n", encoding="utf-8"
+        "import pytest\n"
+        "@pytest.mark.parametrize('n', [1, 2, 3])\n"
+        "def test_two(n):\n"
+        "    pass\n",
+        encoding="utf-8",
     )
-    metrics.record_phase_close(phase_dir)
+    (phase_dir / "handover.md").write_text("landed", encoding="utf-8")
+    git_land(project, "close")
+    metrics.record_phase_close(str(phase_dir))
 
     record = stored(store, "08")
-    assert record["tests_before"] == 1 and record["tests_after"] == 3
+    assert record["tests_before"] == 1
+    # 1 pre-existing item + 3 parametrize cases from one `def` — not 2 `def`s.
+    assert record["tests_after"] == 4
     assert record["opened"] is not None and record["closed"] is not None
     assert record["elapsed_minutes"] == 0
+
+
+def test_the_collection_is_bounded_the_way_every_child_on_a_hook_path_is(monkeypatch, tmp_path):
+    """It runs inside `hook_spec_gate.sh`, so it goes through `proc_group.run_bounded`.
+
+    `subprocess.run(cmd, capture_output=True, timeout=…)` stops the process it started and nothing
+    else: xdist workers keep the inherited pipes open and the drain that follows the kill has no
+    bound of its own, which turns the timeout into the unbounded hang that gets the whole hook
+    killed — and a killed spec-gate hook reports no verdict at all.
+    """
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.delenv("SUBPROC_CHECK_PATHS", raising=False)
+    seen = {}
+
+    def fake(cmd, timeout, cwd=None):
+        seen.update(cmd=cmd, timeout=timeout, cwd=cwd)
+        return proc_group.ChildResult(0, "7 tests collected in 0.1s\n", "", 0.1, False)
+
+    monkeypatch.setattr(metrics.proc_group, "run_bounded", fake)
+
+    assert metrics.count_tests() == 7
+    assert seen["timeout"] == gate_timeouts.collect_timeout()
+    assert seen["cwd"] == str(tmp_path)
+
+
+def test_a_wedged_collection_counts_nothing_rather_than_taking_the_hook_with_it(
+    monkeypatch, tmp_path
+):
+    """The smaller bound is the one that has to bind: a collection that blows it leaves the field
+    absent — the meaning "not counted" already had — instead of the hook being killed mid-gate."""
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        metrics.proc_group,
+        "run_bounded",
+        lambda cmd, timeout, cwd=None: proc_group.ChildResult(
+            -9, "300 tests collected in 60s\n", "", 61.0, True
+        ),
+    )
+
+    assert metrics.count_tests() is None
+
+
+def test_the_ignored_e2e_directory_follows_the_test_root(monkeypatch, tmp_path):
+    """`--ignore=tests/e2e` was a literal, so a project pointing `SUBPROC_CHECK_PATHS` at
+    `src/tests` counted `src/tests/e2e` items that the suite run it claims parity with excludes."""
+    (tmp_path / "src" / "tests").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "src/tests")
+    seen = {}
+
+    def fake(cmd, timeout, cwd=None):
+        seen["cmd"] = cmd
+        return proc_group.ChildResult(0, "0 tests collected in 0.1s\n", "", 0.1, False)
+
+    monkeypatch.setattr(metrics.proc_group, "run_bounded", fake)
+    metrics.count_tests()
+
+    assert f"--ignore={tmp_path / 'src' / 'tests' / 'e2e'}" in seen["cmd"]
+    assert str(tmp_path / "src" / "tests") in seen["cmd"]
+
+
+def test_pytest_is_the_one_on_path_when_there_is_one(monkeypatch):
+    """`hook_verifier.sh` runs the binary off `PATH`. Where that pytest is not importable by the
+    interpreter running this hook, `-m pytest` collects nothing and the field silently disappears —
+    where the static count it replaced always produced a number."""
+    monkeypatch.setattr(metrics.shutil, "which", lambda _name: "/usr/local/bin/pytest")
+    assert metrics.pytest_argv() == ["/usr/local/bin/pytest"]
+
+    monkeypatch.setattr(metrics.shutil, "which", lambda _name: None)
+    assert metrics.pytest_argv() == [sys.executable, "-m", "pytest"]
+
+
+# --- close is LANDED, not implemented — issue #46 -------------------------------------------------
+
+
+def test_a_handover_write_alone_does_not_close_the_phase(stub_sink):  # noqa: F811
+    """Reproduces the defect: a handover.md WRITE, with nothing committed, used to stamp `closed`.
+
+    This is the guard going red on the exact shape #46 described — an amendment still open, a
+    further Verifier finding, a suite hang blocking the commit, nothing pushed. Simulated here as
+    "the phase directory is not committed at all", which is every one of those cases from the
+    emitter's point of view: it has no commit to point at.
+    """
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text("{}", encoding="utf-8")
+    metrics.record_phase_open(str(phase_dir))
+    git_land(project, "open")  # only the open is committed
+
+    (phase_dir / "handover.md").write_text("draft", encoding="utf-8")  # NOT committed
+    assert metrics.record_phase_close(str(phase_dir)) is False
+
+    record = stored(store, "08")
+    assert record["closed"] is None
+    assert record["elapsed_minutes"] is None
+    assert record["tests_after"] is None
+
+
+def test_a_phase_with_no_repo_at_all_does_not_close_either(stub_sink):  # noqa: F811
+    """A producer that cannot observe landing must not claim it — including when it cannot ask git."""
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    metrics.record_phase_open(str(phase_dir))
+
+    (phase_dir / "handover.md").write_text("draft", encoding="utf-8")
+    assert metrics.record_phase_close(str(phase_dir)) is False
+    assert stored(store, "08")["closed"] is None
+
+
+def test_the_close_lands_once_the_phase_directory_is_actually_committed(stub_sink):  # noqa: F811
+    """The green case: committing the phase (`avenger-run.md` §5) is what unblocks the stamp."""
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text("{}", encoding="utf-8")
+    metrics.record_phase_open(str(phase_dir))
+    git_land(project, "open")
+
+    (phase_dir / "handover.md").write_text("landed", encoding="utf-8")
+    git_land(project, "close")
+    assert metrics.record_phase_close(str(phase_dir)) is True
+
+    record = stored(store, "08")
+    assert record["closed"] is not None
 
 
 def test_opening_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
@@ -901,10 +1060,12 @@ def test_the_gate_answers_before_it_measures_itself(stub_sink, monkeypatch, tmp_
 def test_a_populated_record_validates(real_sink):  # noqa: F811
     """The claim the double cannot make: what this pipeline writes is a valid v1 record."""
     project, home = real_sink
+    git_init(project)
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n- R8.1.2 two\n")
     phase_dir = str(spec.parents[2])
     (project / "tests").mkdir()
     (project / "tests" / "test_a.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    git_land(project, "open")
 
     metrics.record_phase_open(phase_dir)
     metrics.record_spec_round(str(spec))
@@ -922,6 +1083,7 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
                               evidence="", loaded=False)
     metrics.record_defect("08", identifier="D1", summary="a real one", found_by="execution",
                           real=True, stage_reached="verification", severity="security")
+    git_land(project, "close")
     metrics.record_phase_close(phase_dir)
 
     result = subprocess.run(  # noqa: S603

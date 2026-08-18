@@ -498,8 +498,12 @@ a hook's `hooks.json` budget must exceed `GATE_CALL_TIMEOUT` plus headroom
 (`scripts/gate_timeouts.py`, asserted at runtime and in the suite — a 120s hook around a 300s call
 was killed before it could answer and read for a day as a model size ceiling), and that headroom is
 checked against what **measurement** can spend inside the hook too — metrics processes on the hook's
-path × `AVENGER_METRICS_TIMEOUT`, derived from what the scripts spawn, since a blocked writer costs
-the full per-call bound once in every process; a timeout kills the
+path × `AVENGER_METRICS_TIMEOUT` **plus suite collections × `COLLECT_TIMEOUT_S`**, both counts derived
+from what the scripts spawn, since a blocked writer costs the full per-call bound once in every
+process and `phase-open`/`phase-close` size the suite by running `pytest --collect-only`, a child
+whose natural duration belongs to somebody else's test tree (`COLLECT_TIMEOUT_S` lives in
+`gate_timeouts.py` beside the headroom it spends, and `pipeline_metrics.py` reads it from there
+rather than keeping a second copy); a timeout kills the
 child's whole **process group** and reports measured wall clock (`scripts/proc_group.py` — killing
 the direct child alone left workers billing for over an hour); a rejection emits its report and
 records the judged hash **with its verdict**, so an unchanged rejected body replays the rejection;
@@ -688,8 +692,14 @@ the verification attempt **count** (`verifier_review.sh`, **derived from `verdic
 archives, never counted per invocation** — that script runs several times inside one attempt, and one
 phase recorded **8** against a real attempt of 1 and a cap of 3 that had never fired, which reads as
 the cap having failed; the retries stay visible in `gate_calls[]` with their `failure_cause`, and only
-the attribution was wrong) · tests before/after, counted the *same
-static way* at both ends (`hook_spec_gate.sh`, `hook_verifier.sh`) · **which stage found each defect** (`verifier_review.sh`,
+the attribution was wrong) · tests before/after — **collected pytest test items**
+(`pytest --collect-only`, minus the test root's `e2e/`), the same population `hook_verifier.sh`'s own
+`pytest -q` reports, never `def test_` lines — counted the same way at both ends
+(`hook_spec_gate.sh` on the first spec write, and the orchestrator's `phase-close` after the phase's
+commit) · the phase's **close** and `elapsed_minutes`, stamped by the orchestrator right after that
+commit and by no hook, because **close means landed, not implemented**: `handover.md` being written
+is the Verifier's precondition, and `record_phase_close` refuses the write while anything under the
+phase directory is still uncommitted · **which stage found each defect** (`verifier_review.sh`,
 `hook_mutation.sh`, and `pipeline_metrics.py defect` for stages no script sees) · which skills each
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
