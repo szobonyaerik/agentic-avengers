@@ -206,8 +206,27 @@ trap cleanup EXIT
 # Reference only, and NEVER a gate: absent context is normal (phase 1 has no prior card), so it is
 # omitted and named on stderr rather than failing anything. It composes with the re-gate bundle
 # rather than replacing it — `## CONTEXT` sits ahead of the markers the observe prompt already reads.
-python3 "$SD/spec_gate_context.py" "$FILE" > "$CONTEXT" 2>"$GERR" || : # never fails the gate
+#
+# Exit 3 is a THIRD state, not a failure: `overview.md` exists but has no `## Contracts and
+# Decisions` heading at all, so contradiction can only ever be checked against the prior phase's
+# card, never this feature's own contracts. That used to be one line among many on stderr — easy to
+# miss for eleven phases running (issue #57). It still never fails this gate, but it is no longer
+# discarded with `|| :`: it is echoed loudly here AND folded into the persisted report below, so it
+# shows up wherever this gate's verdict is read, not only in a log nobody was watching.
+python3 "$SD/spec_gate_context.py" "$FILE" > "$CONTEXT" 2>"$GERR"; ctx_rc=$?
 cat "$GERR" >&2
+CONTEXT_DEGRADED=0
+if [ "$ctx_rc" -eq 3 ]; then
+  CONTEXT_DEGRADED=1
+  echo "spec-gate: CONTEXT DEGRADED — overview.md has no '## Contracts and Decisions' heading." >&2
+  echo "  contradiction is being checked only against the prior phase's card, never this" >&2
+  echo "  feature's own contracts, for every spec this feature gates. See" >&2
+  echo "  docs/templates/overview.template.md, or run" >&2
+  echo "  'python3 $SD/spec_gate_context.py check --all' to find every overview like this one." >&2
+elif [ "$ctx_rc" -ne 0 ]; then
+  echo "spec-gate: the context block could not be built (exit $ctx_rc, cause named above) —" >&2
+  echo "  treating it as absent. This never fails the gate on its own." >&2
+fi
 if [ -s "$CONTEXT" ]; then
   {
     cat "$CONTEXT"
@@ -294,6 +313,19 @@ python3 "$SD/spec_notes.py" write "$FILE" "$DECISION" >&2 || true
 # shell quoting made it emit nothing, so a block arrived with an empty report — which is exactly the
 # unexplained rejection this pass exists to remove.
 python3 "$SD/spec_gate_triage.py" report "$DECISION" > "$REPORT" 2>/dev/null
+
+# Fold the degraded-context warning INTO the persisted report, not just stderr. A verdict this gate
+# stamps is read again later — on a replayed block, in a triage, by a human — and none of those
+# reads see the hook's own stderr. This is what makes the state "unmistakable" rather than merely
+# printed once: it is not a gate failure, but it also does not get to look like a clean pass.
+if [ "$CONTEXT_DEGRADED" -eq 1 ]; then
+  {
+    echo "CONTEXT DEGRADED: overview.md has no '## Contracts and Decisions' heading — contradiction"
+    echo "was checked only against the prior phase's card, never this feature's own contracts."
+    echo
+    cat "$REPORT"
+  } > "$REPORT.ctx" && mv "$REPORT.ctx" "$REPORT"
+fi
 
 if [ "$decided" -eq 0 ]; then
   # Approved. Stamp the machine gate through its ONE writer. The hook used to have two spellings —

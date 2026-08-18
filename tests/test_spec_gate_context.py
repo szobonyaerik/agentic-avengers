@@ -21,7 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from doc_read_path import HANDOVER_MAX_BYTES  # noqa: E402
-from spec_gate_context import MARKER, build, contracts_section, layout, prior_card  # noqa: E402
+from spec_gate_context import (  # noqa: E402
+    MARKER,
+    build,
+    check,
+    contracts_section,
+    layout,
+    main,
+    prior_card,
+)
 
 OVERVIEW = """---
 feature: demo
@@ -64,7 +72,9 @@ def feature(tmp_path: Path) -> Path:
 
 
 def spec_at(feature: Path, phase: str) -> Path:
-    path = feature / "phases" / phase / "specs" / f"{phase.split('-')[0]}.1-a" / "spec.md"
+    path = (
+        feature / "phases" / phase / "specs" / f"{phase.split('-')[0]}.1-a" / "spec.md"
+    )
     path.parent.mkdir(parents=True)
     path.write_text("# spec\n")
     return path
@@ -81,26 +91,29 @@ def card_at(feature: Path, phase: str, body: str = CARD) -> None:
 
 def test_both_parts_are_carried_when_both_exist(feature: Path) -> None:
     card_at(feature, "2-storage")
-    block, notes = build(spec_at(feature, "3-api"))
+    block, notes, degraded = build(spec_at(feature, "3-api"))
 
     assert block.startswith(MARKER)
     assert "Tokens are stored in the vault" in block
     assert "`TokenStore.put` is idempotent." in block
     assert any("overview.md" in note and "included" in note for note in notes)
     assert any("2-storage" in note and "included" in note for note in notes)
+    assert degraded is False
 
 
 def test_only_the_contracts_section_of_the_overview_is_carried(feature: Path) -> None:
     """Not the whole document. The read path grants this reader that header and grants the spec
     WRITER the whole file; sending more here re-acquires a read that was deliberately removed."""
-    block, _ = build(spec_at(feature, "1-first"))
+    block, _, _ = build(spec_at(feature, "1-first"))
 
     assert "## Contracts and Decisions" in block
     assert "Ship the thing." not in block
     assert "Nobody reads this part." not in block
 
 
-def test_a_subheading_inside_the_contracts_section_does_not_truncate_it(tmp_path: Path) -> None:
+def test_a_subheading_inside_the_contracts_section_does_not_truncate_it(
+    tmp_path: Path,
+) -> None:
     text = "## Contracts and Decisions\n\n### Storage\n\nVault only.\n\n## Risks\n\nignored\n"
     section = contracts_section(text)
     assert "Vault only." in section
@@ -110,11 +123,16 @@ def test_a_subheading_inside_the_contracts_section_does_not_truncate_it(tmp_path
 def test_only_the_immediately_prior_phase_card_is_carried(feature: Path) -> None:
     """Not every prior phase's: re-reading all of them is the 272 KB read the contract card replaced,
     and it cost one phase ~527k tokens before it wrote a line."""
-    card_at(feature, "1-first", CARD.replace("2-storage", "1-first").replace(
-        "`TokenStore.put` is idempotent.", "the oldest contract"))
+    card_at(
+        feature,
+        "1-first",
+        CARD.replace("2-storage", "1-first").replace(
+            "`TokenStore.put` is idempotent.", "the oldest contract"
+        ),
+    )
     card_at(feature, "2-storage")
 
-    block, _ = build(spec_at(feature, "3-api"))
+    block, _, _ = build(spec_at(feature, "3-api"))
 
     assert "`TokenStore.put` is idempotent." in block
     assert "the oldest contract" not in block
@@ -124,31 +142,39 @@ def test_only_the_immediately_prior_phase_card_is_carried(feature: Path) -> None
 def test_the_archive_is_never_read(feature: Path) -> None:
     """`handover-archive.md` is the half no stage reads. Reading it here would put the cost back."""
     card_at(feature, "2-storage")
-    (feature / "phases" / "2-storage" / "handover-archive.md").write_text("the archived detail\n")
+    (feature / "phases" / "2-storage" / "handover-archive.md").write_text(
+        "the archived detail\n"
+    )
 
-    block, _ = build(spec_at(feature, "3-api"))
+    block, _, _ = build(spec_at(feature, "3-api"))
 
     assert "the archived detail" not in block
 
 
-def test_a_gap_in_the_numbering_still_finds_the_nearest_prior_card(feature: Path) -> None:
+def test_a_gap_in_the_numbering_still_finds_the_nearest_prior_card(
+    feature: Path,
+) -> None:
     card_at(feature, "1-first")
     assert prior_card(feature, 4).phase == "1-first"
 
 
-def test_an_oversized_handover_is_bounded_by_the_read_paths_own_cap(feature: Path) -> None:
+def test_an_oversized_handover_is_bounded_by_the_read_paths_own_cap(
+    feature: Path,
+) -> None:
     """The cap's enforcement is diff-scoped, so a pre-rule handover is counted and not blocked.
     Reading it whole here would prepend all of it to EVERY spec write in the next phase — one
     measured handover held 272 KB, which is the cost the contract card was introduced to remove."""
     card_at(feature, "1-first", "# handover\n\n" + "x" * (HANDOVER_MAX_BYTES * 3))
 
     card = prior_card(feature, 2)
-    block, notes = build(spec_at(feature, "2-storage"))
+    block, notes, _ = build(spec_at(feature, "2-storage"))
 
     assert card.truncated is True
     assert len(card.body.encode("utf-8")) <= HANDOVER_MAX_BYTES
     assert len(block.encode("utf-8")) < HANDOVER_MAX_BYTES * 2
-    assert any("TRUNCATED" in note for note in notes), "a truncated context must never be silent"
+    assert any("TRUNCATED" in note for note in notes), (
+        "a truncated context must never be silent"
+    )
 
 
 def test_a_card_within_the_cap_is_carried_whole_and_says_nothing_about_truncation(
@@ -157,7 +183,7 @@ def test_a_card_within_the_cap_is_carried_whole_and_says_nothing_about_truncatio
     card_at(feature, "1-first")
 
     card = prior_card(feature, 2)
-    _, notes = build(spec_at(feature, "2-storage"))
+    _, notes, _ = build(spec_at(feature, "2-storage"))
 
     assert card.truncated is False
     assert "`TokenStore.put` is idempotent." in card.body
@@ -167,49 +193,157 @@ def test_a_card_within_the_cap_is_carried_whole_and_says_nothing_about_truncatio
 # ── absent parts are normal, never errors ────────────────────────────────────
 
 
-def test_the_first_phase_has_no_prior_card_and_that_is_not_a_failure(feature: Path) -> None:
-    block, notes = build(spec_at(feature, "1-first"))
+def test_the_first_phase_has_no_prior_card_and_that_is_not_a_failure(
+    feature: Path,
+) -> None:
+    block, notes, degraded = build(spec_at(feature, "1-first"))
 
     assert "Tokens are stored in the vault" in block
     assert any("no prior phase card" in note for note in notes)
-
-
-def test_a_feature_with_no_contracts_section_still_carries_the_card(feature: Path) -> None:
-    (feature / "overview.md").write_text("# Demo\n\n## Goal\n\nShip it.\n")
-    card_at(feature, "1-first")
-
-    block, notes = build(spec_at(feature, "2-storage"))
-
-    assert "`TokenStore.put` is idempotent." in block
-    assert "Ship it." not in block
-    assert any("no ## Contracts and Decisions" in note for note in notes)
+    assert degraded is False
 
 
 def test_no_context_at_all_is_an_empty_block_that_says_so(tmp_path: Path) -> None:
     root = tmp_path / "docs" / "features" / "demo"
     (root / "phases").mkdir(parents=True)
-    block, notes = build(spec_at(root, "1-first"))
+    block, notes, degraded = build(spec_at(root, "1-first"))
 
     assert block == ""
     assert len(notes) == 2 and all("absent" in note for note in notes)
+    assert degraded is False, (
+        "no overview.md at all is normal — a feature has not written one yet"
+    )
 
 
-def test_a_spec_outside_the_layout_is_reported_rather_than_guessed(tmp_path: Path) -> None:
+def test_a_spec_outside_the_layout_is_reported_rather_than_guessed(
+    tmp_path: Path,
+) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text("# spec\n")
 
-    block, notes = build(spec)
+    block, notes, degraded = build(spec)
 
     assert block == ""
     assert layout(spec) is None
     assert any("outside docs/features" in note for note in notes)
+    assert degraded is False
 
 
 def test_an_unreadable_overview_omits_it_rather_than_raising(feature: Path) -> None:
     (feature / "overview.md").unlink()
     (feature / "overview.md").mkdir()
 
-    block, notes = build(spec_at(feature, "1-first"))
+    block, notes, degraded = build(spec_at(feature, "1-first"))
 
     assert block == ""
     assert any("no ## Contracts and Decisions" in note for note in notes)
+    assert degraded is False, "unreadable is a different problem from missing-heading"
+
+
+# ── the heading-missing case is DEGRADED, never a silent pass (issue #57) ────
+
+
+def test_an_overview_missing_the_heading_entirely_is_reported_degraded(
+    feature: Path,
+) -> None:
+    """This is clickup-agents' actual shape across 11 phases: the overview exists and has real
+    content, just under `## Interfaces & contracts` and `## Key decisions & trade-offs` instead of
+    `## Contracts and Decisions`. The old behaviour reported this on stderr and nothing else -
+    `contradiction` silently lost half of what it checks, for every spec, forever."""
+    (feature / "overview.md").write_text(
+        "# Demo\n\n## Interfaces & contracts\n\nPUT /tokens.\n\n## Key decisions & trade-offs\n\n"
+        "Vault-only storage.\n"
+    )
+    card_at(feature, "1-first")
+
+    block, notes, degraded = build(spec_at(feature, "2-storage"))
+
+    assert degraded is True
+    assert "`TokenStore.put` is idempotent." in block, "the prior card is still carried"
+    assert "PUT /tokens." not in block, (
+        "content under the wrong heading is never picked up"
+    )
+    assert any(note.startswith("DEGRADED:") for note in notes)
+    assert any("no ## Contracts and Decisions" in note for note in notes)
+
+
+def test_a_feature_with_a_genuinely_empty_contracts_section_is_not_degraded(
+    feature: Path,
+) -> None:
+    """The heading IS present, just with nothing under it yet - a feature early in planning. That is
+    the normal "not written yet" state `overview_heading_missing` must not confuse with a heading
+    that is missing altogether."""
+    (feature / "overview.md").write_text(
+        "# Demo\n\n## Contracts and Decisions\n\n## Risks\n"
+    )
+    card_at(feature, "1-first")
+
+    _, notes, degraded = build(spec_at(feature, "2-storage"))
+
+    assert degraded is False
+    assert not any(note.startswith("DEGRADED:") for note in notes)
+
+
+def test_the_degraded_exit_code_is_not_discarded_by_the_caller(
+    feature: Path, capsys
+) -> None:
+    """`main()` is what a shell hook actually calls. Exit 3 is the signal a caller must not `|| :`
+    away - this pins the contract at the boundary the fix was for, not just the pure function."""
+    (feature / "overview.md").write_text(
+        "# Demo\n\n## Interfaces & contracts\n\nPUT /tokens.\n"
+    )
+    spec = spec_at(feature, "1-first")
+
+    rc = main([str(spec)])
+
+    assert rc == 3
+    assert "DEGRADED" in capsys.readouterr().err
+
+
+def test_a_normal_context_exits_zero(feature: Path) -> None:
+    rc = main([str(spec_at(feature, "1-first"))])
+    assert rc == 0
+
+
+# ── check: every overview.md on disk, independent of any one spec being gated ────
+
+
+def test_check_finds_an_overview_missing_the_heading(tmp_path: Path) -> None:
+    feature = tmp_path / "docs" / "features" / "demo"
+    feature.mkdir(parents=True)
+    (feature / "overview.md").write_text(
+        "# Demo\n\n## Interfaces & contracts\n\nPUT /tokens.\n"
+    )
+
+    problems = check(tmp_path, enforce_all=True)
+
+    assert len(problems) == 1
+    assert "no ## Contracts and Decisions heading" in problems[0]
+
+
+def test_check_passes_an_overview_that_has_the_heading(feature: Path) -> None:
+    problems = check(feature.parents[1], enforce_all=True)
+    assert problems == []
+
+
+def test_check_is_diff_scoped_by_default(tmp_path: Path, monkeypatch) -> None:
+    """Without --all, an overview the current change did not touch is COUNTED, never blocked - the
+    same boundary every other check on this repo shares (scripts/applicability.py). Without this, a
+    project with years of pre-rule overviews would fail CI the moment this check shipped."""
+    feature = tmp_path / "docs" / "features" / "demo"
+    feature.mkdir(parents=True)
+    (feature / "overview.md").write_text(
+        "# Demo\n\n## Interfaces & contracts\n\nPUT /tokens.\n"
+    )
+
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init", "--no-verify"], cwd=tmp_path, check=True
+    )
+
+    problems = check(tmp_path)
+
+    assert problems == [], "a committed, untouched overview is counted, not blocked"
