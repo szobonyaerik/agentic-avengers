@@ -53,6 +53,11 @@ Usage:
     carried_items.py discharge <phase-dir> <item-id> --as built|tested|declined
                                             [--by <spec/test/requirement>] [--reason-file <f>]
     carried_items.py due <phase-dir>        exit 1 when any owed item is undischarged
+
+    `list`, `discharge` and `due` read the PRIOR phase's card, so all three exit 2 - undecidable,
+    never exit 1 - when its `## Open items` section is present and states neither an item nor an
+    explicit `none`. The remedy is on that card, and `discharge` cannot reach it. `check` reports
+    the same state as a problem per phase rather than aborting its sweep of the others.
     carried_items.py filed <phase-dir>      exit 1 when a forward claim on the LAST card names no
                                             issue. Clean for every card that has a successor.
     carried_items.py check [--root .] [--all]

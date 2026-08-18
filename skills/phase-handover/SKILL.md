@@ -62,6 +62,10 @@ handover.
 **No item the previous phase carried is unanswered.** `python3 scripts/carried_items.py due
 <phase-dir>` must exit 0 - see *Open items carry your PREDICTIONS too* below. Discharge them as you
 build; a batch of them discovered at the close is a phase that never read its predecessor's card.
+**Exit 2 there is a different failure and its remedy is on the PREVIOUS card**: the prior phase's
+section is present and declares neither an item nor an explicit `none`, so what you inherit cannot be
+determined and `discharge` cannot repair it. Rewrite that card's section as the documented table
+before continuing.
 
 **No amendment is owed re-verification.** `python3 scripts/amendments.py due <phase-dir>` must exit
 0. A phase does not close over a pending security amendment, nor over a pending ordinary one on a
@@ -192,6 +196,14 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
 
 - **Your own card must state what it carries** - a row per item, or an explicit `none` row.
   **Silence is not `none`.** A phase does not close on a card that says nothing here.
+- **Write the rows as the table above, and nothing else.** The parser reads markdown table rows and
+  the literal `none`; a bullet list (`- OBS-1 | ... | ...`) and the template's own unfilled
+  placeholder rows (`OBS-<n>`, `FWD-<n>`) are **not items**, and a section holding only those states
+  neither an item nor `none`. That is the third state, and it is undecidable, not empty: your own
+  close fails on it, and so does the next phase's `due` (exit 2), whose only remedy is to come back
+  and rewrite **your** card. The shape is a closed set with a loud refusal, deliberately not widened
+  to accept a second row layout - which is why phase 9's bullet rows read as nothing carried and
+  OBS-1 through OBS-4 were never answered.
 - **The next phase must answer every row you leave**, and does not close until it has: `built` into a
   spec, `tested`, or `declined` with a stated reason. An item that still applies further out is
   declined there and **re-carried on that phase's own card** - that is how a claim about phases 9-12
