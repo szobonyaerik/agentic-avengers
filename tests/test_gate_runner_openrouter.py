@@ -102,7 +102,9 @@ def test_the_catch_all_calls_an_unforeseen_failure_what_it_is(
         raise ZeroDivisionError("a defect nothing above anticipated")
 
     monkeypatch.setattr(gate_runner, "assert_cross_family", explode)
-    monkeypatch.setattr(sys, "argv", ["gate_runner.py", "--selftest"])
+    monkeypatch.setattr(
+        sys, "argv", ["gate_runner.py", "--selftest", "--model", "deepseek/deepseek-chat"]
+    )
 
     with pytest.raises(SystemExit) as exit_code:
         gate_runner.main()

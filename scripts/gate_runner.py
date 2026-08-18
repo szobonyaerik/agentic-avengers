@@ -282,7 +282,11 @@ def extract_verdict(raw, key="verdict"):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rubric", help="path to the markdown rubric")
-    ap.add_argument("--model", default="deepseek/deepseek-chat")
+    ap.add_argument("--model",
+                    default=os.environ.get("GATE_MODEL"),
+                    help="the gate model id. There is NO hardcoded fallback: an unset --model with "
+                         "no GATE_MODEL is refused (cause=config), never resolved to a model on a "
+                         "provider the operator never configured (issue #48).")
     ap.add_argument("--provider", choices=["openrouter", "opencode"], default="opencode")
     ap.add_argument("--target", help="file to judge (else read from stdin hook JSON)")
     ap.add_argument("--author-family",
@@ -326,6 +330,15 @@ def main():
         return int((time.monotonic() - started) * 1000)
 
     try:
+        # No model, no gate. A hardcoded default here resolved to a provider the operator never
+        # configured, so every gate call could silently leave the configured providers behind while
+        # reporting an ordinary fail-closed error from a third one (issue #48). Refusing by name is
+        # the only outcome that points at the configuration instead of at the spec.
+        if not args.model:
+            raise GateError("config",
+                            "no gate model: pass --model or set GATE_MODEL. This gate has no "
+                            "default model — a gate must never run on one nobody chose.")
+
         # Cross-family invariant: a gate must not run on the author's family.
         family = assert_cross_family(args.model, args.author_family, args.model_family)
         if args.selftest:

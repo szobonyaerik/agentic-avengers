@@ -194,11 +194,15 @@ fail-closed gate self-halts the run instead of shipping junk.
 ### Env (export before launching)
 ```bash
 export AUTHOR_FAMILY=anthropic
-export GATE_MODEL=opencode-go/deepseek-v4-pro     # all gates on DeepSeek V4 Pro via OpenCode
+export GATE_MODEL=opencode-go/deepseek-v4-pro     # the spec gate (observe AND, unset, triage)
+export VERIFIER_GATE_MODEL=google/gemini-3.1-pro-preview   # the Verifier's review — its own default
 export GATE_PROVIDER=opencode
 export SPEC_REVIEW_MODE=auto                        # no human spec-review
 # OpenCode auth present (opencode-go creds). For the git floor (pre-commit/CI) instead:
 #   GATE_PROVIDER=openrouter + OPENROUTER_API_KEY + GATE_MODEL=openrouter/deepseek/deepseek-v4-pro
+# There are THREE gate models, not one — GATE_MODEL does not route them all. GATE_TRIAGE_MODEL
+# follows GATE_MODEL when unset; VERIFIER_GATE_MODEL does NOT, and keeping it on a third family is
+# the point of it. All three are documented together in docs/templates/env.example.
 ```
 
 ### Headless Claude Code (print mode)

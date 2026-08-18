@@ -48,7 +48,8 @@ def gate(tmp_path: Path):
     (tmp_path / "rubric.md").write_text("Return JSON with a verdict.")
     (tmp_path / "spec.md").write_text("---\nfeature: demo\n---\n\n- R1.1.1 a requirement\n")
 
-    def run(stub: str, author_family: str = "anthropic", **env_over) -> subprocess.CompletedProcess:
+    def run(stub: str, author_family: str = "anthropic", model: str = "deepseek/deepseek-chat",
+            **env_over) -> subprocess.CompletedProcess:
         binary = tmp_path / "bin" / "opencode"
         binary.write_text(STUBS[stub])
         binary.chmod(0o755)
@@ -62,7 +63,8 @@ def gate(tmp_path: Path):
         }
         return subprocess.run(
             [sys.executable, str(RUNNER), "--rubric", str(tmp_path / "rubric.md"),
-             "--target", str(tmp_path / "spec.md"), "--author-family", author_family],
+             "--target", str(tmp_path / "spec.md"), "--author-family", author_family,
+             *(["--model", model] if model else [])],
             capture_output=True, text=True, env=env, check=False,
         )
 
@@ -136,3 +138,22 @@ def test_the_success_path_is_unchanged_by_all_of_this(gate) -> None:
     result = gate("good")
     assert result.returncode == 0, result.stderr
     assert "OK (GO)" in result.stdout
+
+
+def test_no_model_anywhere_is_refused_by_name_rather_than_defaulted(gate) -> None:
+    """The runner used to carry `deepseek/deepseek-chat` as its `--model` default, so an invocation
+    that named no model reached OpenRouter regardless of GATE_PROVIDER — the same shape as issue #48
+    one layer down from the spec gate. With no --model and no GATE_MODEL there is now no model at
+    all, and the gate says so instead of choosing one."""
+    result = gate("good", model="")
+    assert result.returncode == 2
+    assert "cause=config" in result.stderr
+    assert "GATE_MODEL" in result.stderr
+    assert "deepseek" not in result.stderr, "no model id may be resolved from thin air"
+
+
+def test_gate_model_supplies_the_model_when_the_caller_names_none(gate) -> None:
+    """The fallback is the operator's own configured model, never a hardcoded one: GATE_MODEL is
+    what they already chose and already proved reachable."""
+    result = gate("good", model="", GATE_MODEL="deepseek/deepseek-chat")
+    assert result.returncode == 0, result.stderr
