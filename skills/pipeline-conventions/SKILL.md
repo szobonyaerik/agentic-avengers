@@ -701,9 +701,13 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
     `hook timeout >= GATE_CALL_TIMEOUT + headroom`, derives *which* hooks are gate hooks from what
     each one actually calls, and both the hooks and the suite check it. Raising `GATE_CALL_TIMEOUT`
     without raising `hooks.json` is a loud stop. **Measurement spends that same headroom**, so the
-    same module asserts `metrics processes on the hook's path x AVENGER_METRICS_TIMEOUT <= headroom`
-    — the count derived from what the scripts spawn and import, because the sink's breaker is
-    per-process state and a blocked writer therefore costs the full per-call bound in each one.
+    same module asserts `metrics processes x AVENGER_METRICS_TIMEOUT + suite collections x
+    COLLECT_TIMEOUT_S <= headroom` — both counts derived from what the scripts spawn and import,
+    because the sink's breaker is per-process state and a blocked writer therefore costs the full
+    per-call bound in each one, and because `phase-open`/`phase-close` size the suite by running
+    `pytest --collect-only`, a child whose natural duration is a property of somebody else's test
+    tree. `COLLECT_TIMEOUT_S` lives in `gate_timeouts.py` beside the headroom it spends, and
+    `pipeline_metrics.py` reads it from there rather than carrying a second copy.
     Ordering (the gate answers, then records) keeps a hung writer from ever truncating the answer;
     this bound is what keeps it from getting the hook killed.
   - **A timeout must stop the work, not just stop waiting.** `scripts/proc_group.py` runs the
@@ -843,7 +847,7 @@ seeded skill requirement never overwrites an observed load, whichever order the 
 | spec rounds, each round's **size in bytes**, requirement count | `hook_spec_gate.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
 | the spec gate's own arithmetic: observations in, **blocking** out, **notes** out | `spec_gate_triage.py`, where the verdict is derived from them | a filter that blocks everything and one that blocks nothing are otherwise indistinguishable without reading a transcript |
 | the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, **derived from `verdict.json` and its archives** — never counted per invocation | that script runs several times inside one attempt (a timed-out call, a diagnostic retry); one phase recorded **8** against a real attempt of 1 and a cap of 3 that had never fired, and read against that cap the number says the cap failed. Retries stay visible in `gate_calls[]` with their `failure_cause` — only the attribution was wrong. Repeated calls converge |
-| tests before and after | `hook_spec_gate.sh` (first spec write) and `hook_verifier.sh` (handover) | counted **the same static way at both ends**, so the delta is a real delta and not two counting methods |
+| tests before and after — **collected pytest test items** (`pytest --collect-only`, minus the test root's `e2e/`), the same population `hook_verifier.sh`'s own `pytest -q` reports, **never `def test_` lines** | `hook_spec_gate.sh` (first spec write) and the orchestrator's `phase-close` (after the phase's commit) | counted **the same way at both ends**, so the delta is a real delta and not two counting methods. A static count of test *functions* put 917/973 in the record against 1092/1164 observed in the same phase — a parametrized function is one `def` and several items (issue #46). The collection is bounded by `gate_timeouts.collect_timeout()` and runs in its own process group; a collection that cannot answer leaves the field **absent**, never 0 |
 | **which stage found each defect** | `verifier_review.sh`, `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
 | which skills each stage actually loaded | `hook_skill_load.sh`, `hook_ponytail.sh` | an instruction to load a skill is not a load |
 

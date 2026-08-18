@@ -133,12 +133,16 @@ class _KillGroupOnSignal:
                 pass
 
 
-def run_bounded(cmd: list[str], timeout: float) -> ChildResult:
+def run_bounded(cmd: list[str], timeout: float, cwd: str | None = None) -> ChildResult:
     """Run `cmd` in its own process group and return its result, or a killed-group timeout.
 
     Never raises on timeout: a timeout is a result with `timed_out=True` and a measured `elapsed`,
     which the caller turns into a `timeout`-caused GateError. FileNotFoundError still propagates —
     a missing binary is a different failure and the caller names it differently.
+
+    `cwd` is for a child whose behaviour depends on where it runs — `pytest` resolves its rootdir
+    and its ini file from there — so that such a caller has no reason to reach for
+    `subprocess.run(timeout=…)`, which stops the process it started and nothing else.
     """
     start = time.monotonic()
     proc = subprocess.Popen(
@@ -147,6 +151,7 @@ def run_bounded(cmd: list[str], timeout: float) -> ChildResult:
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        cwd=cwd,
     )
     # Read the group id NOW, while the child certainly exists. `communicate(timeout=…)` reaps a
     # child that exits early, and `os.getpgid()` on a reaped pid raises — which is precisely the

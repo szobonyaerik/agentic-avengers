@@ -43,8 +43,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
+import gate_timeouts  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
 import plugin_release  # noqa: E402
+import proc_group  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
     "every emission point writes through a real writer process, which is the whole mechanism"
@@ -456,6 +458,78 @@ def test_the_suite_is_counted_the_same_way_at_both_ends(stub_sink):  # noqa: F81
     assert record["tests_after"] == 4
     assert record["opened"] is not None and record["closed"] is not None
     assert record["elapsed_minutes"] == 0
+
+
+def test_the_collection_is_bounded_the_way_every_child_on_a_hook_path_is(monkeypatch, tmp_path):
+    """It runs inside `hook_spec_gate.sh`, so it goes through `proc_group.run_bounded`.
+
+    `subprocess.run(cmd, capture_output=True, timeout=…)` stops the process it started and nothing
+    else: xdist workers keep the inherited pipes open and the drain that follows the kill has no
+    bound of its own, which turns the timeout into the unbounded hang that gets the whole hook
+    killed — and a killed spec-gate hook reports no verdict at all.
+    """
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.delenv("SUBPROC_CHECK_PATHS", raising=False)
+    seen = {}
+
+    def fake(cmd, timeout, cwd=None):
+        seen.update(cmd=cmd, timeout=timeout, cwd=cwd)
+        return proc_group.ChildResult(0, "7 tests collected in 0.1s\n", "", 0.1, False)
+
+    monkeypatch.setattr(metrics.proc_group, "run_bounded", fake)
+
+    assert metrics.count_tests() == 7
+    assert seen["timeout"] == gate_timeouts.collect_timeout()
+    assert seen["cwd"] == str(tmp_path)
+
+
+def test_a_wedged_collection_counts_nothing_rather_than_taking_the_hook_with_it(
+    monkeypatch, tmp_path
+):
+    """The smaller bound is the one that has to bind: a collection that blows it leaves the field
+    absent — the meaning "not counted" already had — instead of the hook being killed mid-gate."""
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        metrics.proc_group,
+        "run_bounded",
+        lambda cmd, timeout, cwd=None: proc_group.ChildResult(
+            -9, "300 tests collected in 60s\n", "", 61.0, True
+        ),
+    )
+
+    assert metrics.count_tests() is None
+
+
+def test_the_ignored_e2e_directory_follows_the_test_root(monkeypatch, tmp_path):
+    """`--ignore=tests/e2e` was a literal, so a project pointing `SUBPROC_CHECK_PATHS` at
+    `src/tests` counted `src/tests/e2e` items that the suite run it claims parity with excludes."""
+    (tmp_path / "src" / "tests").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "src/tests")
+    seen = {}
+
+    def fake(cmd, timeout, cwd=None):
+        seen["cmd"] = cmd
+        return proc_group.ChildResult(0, "0 tests collected in 0.1s\n", "", 0.1, False)
+
+    monkeypatch.setattr(metrics.proc_group, "run_bounded", fake)
+    metrics.count_tests()
+
+    assert f"--ignore={tmp_path / 'src' / 'tests' / 'e2e'}" in seen["cmd"]
+    assert str(tmp_path / "src" / "tests") in seen["cmd"]
+
+
+def test_pytest_is_the_one_on_path_when_there_is_one(monkeypatch):
+    """`hook_verifier.sh` runs the binary off `PATH`. Where that pytest is not importable by the
+    interpreter running this hook, `-m pytest` collects nothing and the field silently disappears —
+    where the static count it replaced always produced a number."""
+    monkeypatch.setattr(metrics.shutil, "which", lambda _name: "/usr/local/bin/pytest")
+    assert metrics.pytest_argv() == ["/usr/local/bin/pytest"]
+
+    monkeypatch.setattr(metrics.shutil, "which", lambda _name: None)
+    assert metrics.pytest_argv() == [sys.executable, "-m", "pytest"]
 
 
 # --- close is LANDED, not implemented — issue #46 -------------------------------------------------

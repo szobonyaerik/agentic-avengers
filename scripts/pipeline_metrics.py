@@ -62,7 +62,7 @@ import argparse
 import json
 import os
 import re
-import subprocess
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,8 +70,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
+import gate_timeouts  # noqa: E402
 import metrics_sink as sink  # noqa: E402
 import plugin_release  # noqa: E402
+import proc_group  # noqa: E402
 import skill_contract  # noqa: E402
 import verifier_attempts  # noqa: E402
 from spec_gate_cache import keep, normalized, previous, split_spec  # noqa: E402
@@ -533,28 +535,54 @@ def test_root() -> Path:
     return root / (declared.split(os.pathsep)[0] if declared else "tests")
 
 
+def pytest_argv() -> list[str]:
+    """How to invoke pytest, preferring the SAME `pytest` `hook_verifier.sh` runs.
+
+    That hook runs the binary off `PATH`; running `-m pytest` under whichever interpreter happens to
+    be executing this hook is a different program whenever the two disagree, and where pytest is on
+    `PATH` but not importable here it is no program at all — collection prints no summary line and
+    the field silently disappears, where the static count it replaced always produced a number. The
+    interpreter form stays as the fallback for an install where only that one exists.
+    """
+    found = shutil.which("pytest")
+    return [found] if found else [sys.executable, "-m", "pytest"]
+
+
 def count_tests() -> int | None:
     """Suite size: the number of items `pytest --collect-only` would run, minus e2e.
 
     The SAME population `hook_verifier.sh` reports when it runs the phase's suite (`pytest -q`,
-    `--ignore=tests/e2e` on the full-suite fallback) — collected test items, not `def test_` lines
-    (issue #46). None on anything that stops collection from answering — no test root, pytest not on
-    `PATH`, a timeout, an import error — the same "not counted" the prior static count used, so
-    `record_phase_open`/`record_phase_close` still treat a None here as "skip the field", never a 0.
+    `--ignore=<test root>/e2e` on the full-suite fallback) — collected test items, not `def test_`
+    lines (issue #46). Both the collected root and the ignored e2e directory come from
+    `test_root()`, so a project that points `SUBPROC_CHECK_PATHS` elsewhere excludes ITS e2e
+    directory rather than a `tests/e2e` that does not exist there.
+
+    Bounded through `proc_group.run_bounded`, never `subprocess.run(timeout=…)`: this runs inside
+    `hook_spec_gate.sh`, and a raw timeout stops the process it started and nothing else — leaving
+    xdist workers holding the inherited pipes and turning the bound into the unbounded hang that
+    gets the whole hook killed. The budget is `gate_timeouts.collect_timeout()`, which is the same
+    number that module checks the hook's headroom against.
+
+    None on anything that stops collection from answering — no test root, no pytest, a timeout, an
+    import error — the same "not counted" the prior static count used, so `record_phase_open`/
+    `record_phase_close` still treat a None here as "skip the field", never a 0.
     """
     root = test_root()
     if not root.is_dir():
         return None
     project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+    argv = [*pytest_argv(), "-q", "--collect-only", f"--ignore={root / 'e2e'}", str(root)]
     try:
-        result = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            [sys.executable, "-m", "pytest", "-q", "--collect-only", "--ignore=tests/e2e", str(root)],
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            timeout=120,
+        result = proc_group.run_bounded(
+            argv, gate_timeouts.collect_timeout(), cwd=str(project_root)
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError:
+        return None
+    if result.timed_out:
+        sink.note(
+            f"suite size not counted: collection exceeded {gate_timeouts.collect_timeout()}s "
+            f"({result.elapsed:.0f}s measured) and its process group was killed"
+        )
         return None
     match = TESTS_COLLECTED.search(result.stdout)
     return int(match.group(1)) if match else None
