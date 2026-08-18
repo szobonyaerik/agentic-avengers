@@ -1076,6 +1076,9 @@ times in two days about three different stamps. So the stamp is made **self-corr
 the moment `hook_verifier.sh` sees `status: done` land on a `spec.md` (its `spec-done` trigger), it
 checks, mechanically, whether the spec is actually done — its own `test-mapping.md` carries at
 least one recorded row, and its phase's test suite is green — **before** letting the stamp stand.
+A **recorded** row is one that says something: the mapping template ships three placeholder rows
+and `skills/tdd` points every implementer at it, so a row still carrying the template's `<…>`
+syntax in any cell counts as nothing. Counting rows would pass exactly the state this issue names.
 Either check failing REVERTS `status: done` back to `status: in-progress`
 (`scripts/spec_done_guard.py`) and then fails the hook. A premature `done` does not survive the
 check that reads it. Break-glass (`GATE_BYPASS`) still lets the tool call through; it does not

@@ -19,15 +19,25 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import spec_done_guard  # noqa: E402
 from spec_done_guard import (  # noqa: E402
     ERROR,
     NOT_DONE,
     OK,
     OUT_OF_SCOPE,
+    UndecidableMapping,
     main,
     mapping_complete,
     revert,
     stamp_is_new,
+)
+
+TEMPLATE_ROWS = (
+    "| requirement id(s) | test name(s) | level | why |\n"
+    "|---|---|---|---|\n"
+    "| R<n>.<k>.<m>, R<n>.<k>.<m+1> | test_<journey> | e2e | the user path both ids sit on |\n"
+    "| R<n>.<k>.<m> | test_<name> | integration | drives <seam> with real collaborators |\n"
+    "| R<n>.<k>.<m> | test_<name> | narrow | <mandatory: no reachable seam, because …> |\n"
 )
 
 
@@ -116,6 +126,76 @@ def test_pipe_lines_before_the_separator_are_never_counted_as_rows(
     )
 
     assert mapping_complete(spec) is False
+
+
+def test_the_mapping_template_copied_verbatim_is_not_complete(tmp_path: Path) -> None:
+    """The state issue #68 actually describes. `skills/tdd` points implementers at this template,
+    so copy-then-stamp is the expected flow — and a row COUNT passes it, because the template ships
+    three rows. Counting rows is not the same as checking they say anything."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+    (tmp_path / "test-mapping.md").write_text(TEMPLATE_ROWS)
+
+    assert mapping_complete(spec) is False
+
+
+def test_one_filled_row_beside_the_template_rows_is_complete(tmp_path: Path) -> None:
+    """The check must not become "delete the placeholders first" — one real row is completeness,
+    however many placeholders sit beside it."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+    (tmp_path / "test-mapping.md").write_text(
+        TEMPLATE_ROWS
+        + "| R1.1.1 | test_x.py::test_it | integration | drives the handler |\n"
+    )
+
+    assert mapping_complete(spec) is True
+
+
+# ── unknown is not empty ──────────────────────────────────────────────────
+
+
+def test_a_mapping_that_cannot_be_read_is_undecidable_not_empty(tmp_path: Path) -> None:
+    """A non-UTF-8 byte raises `UnicodeDecodeError` — a `ValueError`, so no `except OSError` sees
+    it. Answered as `False`, it reaches the hook as the obligation and rewrites a spec whose
+    mapping is full of rows, on the strength of a check that never ran."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+    (tmp_path / "test-mapping.md").write_bytes(
+        b"| R1.1.1 | test_x | integration | \xff\xfe |\n"
+    )
+
+    with pytest.raises(UndecidableMapping):
+        mapping_complete(spec)
+
+
+def test_cli_reports_an_unreadable_mapping_as_an_error(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+    (tmp_path / "test-mapping.md").write_bytes(b"|---|\n| \xff\xfe |\n")
+
+    assert main(["mapping-complete", str(spec)]) == ERROR
+
+
+def test_cli_reports_an_unexpected_failure_as_an_error_never_a_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Python exits 1 on an uncaught exception, and 1 is already both NOT_DONE and OUT_OF_SCOPE —
+    each wired to a different hook branch. A crash must never arrive as either."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+
+    def boom(_path: Path) -> bool:
+        raise RuntimeError("git went sideways")
+
+    monkeypatch.setattr(spec_done_guard, "stamp_is_new", boom)
+
+    assert main(["stamp-is-new", str(spec)]) == ERROR
+    err = capsys.readouterr().err
+    assert "unexpected failure" in err
+    assert "RuntimeError" in err
 
 
 # ── the applicability boundary: only a NEW stamp binds ────────────────────

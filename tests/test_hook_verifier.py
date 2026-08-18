@@ -487,8 +487,9 @@ def write_done_spec(
     """A spec stamped `status: done` in the worktree, committed at `head_status` — so the default
     is a stamp that JUST landed, and `head_status="done"` is one that shipped before this rule.
 
-    `test-mapping.md` is in one of three states: missing (`None`), header-only (the template's own
-    shape, no recorded test), or a real row (`"row"`).
+    `test-mapping.md` is in one of five states: missing (`None`), header-only, the shipped template
+    copied verbatim (`"template"`, placeholder rows and nothing recorded), a real row (`"row"`), or
+    a file that cannot be read at all (`"unreadable"`).
     """
     spec_dir = spec_done_dir(project)
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -497,6 +498,16 @@ def write_done_spec(
     if mapping == "header-only":
         (spec_dir / "test-mapping.md").write_text(
             "| requirement | test | level | why |\n|---|---|---|---|\n"
+        )
+    elif mapping == "template":
+        (spec_dir / "test-mapping.md").write_text(
+            "| requirement id(s) | test name(s) | level | why |\n|---|---|---|---|\n"
+            "| R<n>.<k>.<m> | test_<journey> | e2e | the user path both ids sit on |\n"
+            "| R<n>.<k>.<m> | test_<name> | integration | drives <seam> with real collaborators |\n"
+        )
+    elif mapping == "unreadable":
+        (spec_dir / "test-mapping.md").write_bytes(
+            b"| R1.1.1 | test_x | integration | \xff\xfe |\n"
         )
     elif mapping == "row":
         (spec_dir / "test-mapping.md").write_text(
@@ -546,10 +557,37 @@ def test_a_stamp_with_no_recorded_mapping_is_reverted(project: Path) -> None:
     result = run_spec_done_hook(project, spec_path)
 
     assert result.returncode == 2
-    assert "no rows yet" in result.stderr
+    assert "records no" in result.stderr
     text = spec_path.read_text()
     assert "status: in-progress" in text
     assert "status: done" not in text
+
+
+def test_a_stamp_over_the_template_copied_verbatim_is_reverted(project: Path) -> None:
+    """The flow this issue actually describes: the implementer copies the mapping template (which
+    ships placeholder ROWS), records nothing, and stamps. A row count passes that; this must not."""
+    spec_path = write_done_spec(project, mapping="template")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "placeholder" in result.stderr
+    assert "status: in-progress" in spec_path.read_text()
+
+
+def test_an_unreadable_mapping_does_not_revert_the_stamp(project: Path) -> None:
+    """A non-UTF-8 mapping is a check that could not run, not an empty one. Reverting there rewrites
+    a spec whose mapping may be full of rows and prescribes a remedy that cannot repair it."""
+    spec_path = write_done_spec(project, mapping="unreadable")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "could not be DECIDED" in result.stderr
+    assert "records no" not in result.stderr
+    assert "status: done" in spec_path.read_text()
 
 
 def test_a_stamp_with_no_mapping_file_at_all_is_reverted(project: Path) -> None:
@@ -602,7 +640,7 @@ def test_a_stamp_already_done_at_head_is_counted_and_never_rewritten(
     assert result.returncode == 0, result.stderr
     assert "status: done" in spec_path.read_text()
     assert "NOT enforced" in result.stderr
-    assert "no rows yet" not in result.stderr
+    assert "records no" not in result.stderr
 
 
 def test_a_shipped_spec_over_a_red_suite_still_keeps_its_stamp(project: Path) -> None:
@@ -634,5 +672,5 @@ def test_an_undecidable_stamp_check_does_not_rewrite_the_spec(project: Path) -> 
 
     assert result.returncode == 2
     assert "could not be DECIDED" in result.stderr
-    assert "no rows yet" not in result.stderr
+    assert "records no" not in result.stderr
     assert "status: done" in spec_path.read_text()

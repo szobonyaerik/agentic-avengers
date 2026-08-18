@@ -42,16 +42,35 @@ three answers are the boundary:
   same direction every other check on this boundary takes rather than enforcing everything.
 
 `test-mapping.md` completeness is checked here directly (a spec's own mapping file must carry at
-least one row past its header separator) rather than by re-deriving the full per-requirement
-traceability rule in `scripts/verifier_precheck.py` — that check is phase-level, reads `binding:`
-tiers, and is off-limits to this change. This check is narrower and spec-scoped: a spec cannot be
-done while its mapping is still empty, which is exactly the ordering issue #68 names.
+least one RECORDED row past its header separator) rather than by re-deriving the full
+per-requirement traceability rule in `scripts/verifier_precheck.py` — that check is phase-level,
+reads `binding:` tiers, and is off-limits to this change. This check is narrower and spec-scoped: a
+spec cannot be done while its mapping is still empty, which is exactly the ordering issue #68 names.
+
+**Counting rows is not the same as checking they say anything.** `docs/templates/`'s mapping
+template ships a header, a separator and THREE placeholder rows, and `skills/tdd` points every
+implementer at it as the starting shape — so copy-then-stamp is the expected flow, not an edge
+case, and a row-count check would pass exactly the state this issue is about ("test-mapping.md was
+still empty" when the stamp landed). A row is a PLACEHOLDER while any cell still carries the
+template's angle-bracket syntax (`R<n>.<k>.<m>`, `test_<name>`, `<seam>`); completeness needs one
+row that is not. One genuinely filled row is enough, however many placeholders sit beside it.
+
+## Exit 1 means the answer, never a crash
+
+`NOT_DONE` and `OUT_OF_SCOPE` are both exit 1, wired to two different branches of
+`hook_verifier.sh` — and Python exits 1 on an uncaught exception too. Left uncaught, a
+`UnicodeDecodeError` from a non-UTF-8 mapping (a `ValueError`, so no `except OSError` sees it)
+would arrive as the mapping obligation and revert a correctly-stamped spec, while the same crash in
+`stamp_is_new` would arrive as the boundary and silently stop enforcing. So every unexpected
+failure is ERROR and names its own cause, the rule CLAUDE.md §4c states for `verifier_attempts.py`.
+An unreadable mapping is the same shape one layer in: it is UNDECIDABLE, never `empty`.
 
 Usage:
     spec_done_guard.py stamp-is-new <spec.md>       exit 0 = a NEW `done` stamp, the rule binds;
                                                      1 = out of scope (already done at HEAD, or the
                                                      scope is unknowable); 2 = error
-    spec_done_guard.py mapping-complete <spec.md>   exit 0 = has rows, 1 = empty/missing, 2 = error
+    spec_done_guard.py mapping-complete <spec.md>   exit 0 = a recorded row, 1 = empty/missing/only
+                                                     placeholders, 2 = error
     spec_done_guard.py revert <spec.md>             flip status: done -> status: in-progress;
                                                      exit 0 whether or not a change was needed,
                                                      2 if the file cannot be read/written
@@ -88,6 +107,24 @@ STATUS_LINE = re.compile(rf"^{STATUS_FIELD}:.*$", re.MULTILINE)
 #: dash. Detecting it by "the line contains `---`" dropped any real data row whose own text happens
 #: to contain a dash run, which reads as a header-only mapping and reverts a correct stamp.
 SEPARATOR_ROW = re.compile(r"\|[\s:|-]*-[\s:|-]*\|")
+
+#: The template's own placeholder syntax, in any cell of a row. Every placeholder cell the mapping
+#: template ships carries it (`R<n>.<k>.<m>`, `test_<journey>`, `<seam>`, `<mandatory: …>`), and a
+#: filled-in row does not — real requirement ids, test names and prose have no bare `<…>` token.
+PLACEHOLDER_CELL = re.compile(r"<[^>]+>")
+
+
+class UndecidableMapping(Exception):
+    """The mapping file exists but could not be read, so completeness is UNKNOWN.
+
+    Deliberately not `False`. Answering "no rows recorded" here would reach the hook as the
+    obligation branch and rewrite a spec on the strength of a check that never ran — the same
+    conflation the shell-level exit-code split removes one layer out.
+    """
+
+    def __init__(self, path: Path, cause: Exception) -> None:
+        super().__init__(f"{path}: {type(cause).__name__}: {cause}")
+        self.path = path
 
 
 def _git(root: Path, *args: str) -> tuple[int, str]:
@@ -126,18 +163,22 @@ def stamp_is_new(spec_path: Path) -> bool | None:
 
 
 def mapping_complete(spec_path: Path) -> bool:
-    """`test-mapping.md` beside the spec carries at least one row past its header separator.
+    """`test-mapping.md` beside the spec carries at least one RECORDED row past its separator.
 
-    A missing or template-only mapping means not one test has been recorded yet for this spec,
+    A row still carrying the template's `<…>` placeholder syntax in any cell has recorded nothing,
+    so the template copied verbatim reads exactly like the missing file it came from. A missing,
+    header-only or placeholder-only mapping means not one test has been recorded yet for this spec,
     which cannot be true of a spec that is genuinely done.
+
+    Raises `UndecidableMapping` when the file exists but cannot be read — unknown is not empty.
     """
     mapping = spec_path.parent / "test-mapping.md"
     if not mapping.is_file():
         return False
     try:
         lines = mapping.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
+    except (OSError, ValueError) as exc:
+        raise UndecidableMapping(mapping, exc) from exc
     seen_separator = False
     for line in lines:
         stripped = line.strip()
@@ -146,7 +187,8 @@ def mapping_complete(spec_path: Path) -> bool:
         if not seen_separator:
             seen_separator = bool(SEPARATOR_ROW.fullmatch(stripped))
             continue
-        return True
+        if not PLACEHOLDER_CELL.search(stripped):
+            return True
     return False
 
 
@@ -200,6 +242,34 @@ def _stamp_is_new_cli(path: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Exit 1 means the answer — the obligation or the boundary. Everything else is ERROR.
+
+    The catch-all is the point, not the belt: guarding one `read_text` fixes one crash, while an
+    uncaught exception of ANY kind exiting 1 arrives at `hook_verifier.sh` as a verdict it never
+    reached — reverting a correct stamp on the mapping branch, or silently standing down on the
+    boundary branch. `SystemExit` is a `BaseException` and passes through untouched.
+    """
+    try:
+        return _dispatch(argv)
+    except UndecidableMapping as exc:
+        print(
+            f"[{CHECK}] cannot read the mapping: {exc}\n"
+            f"  This is NOT an empty mapping and recording rows cannot fix it — the check never\n"
+            f"  ran, so the stamp is left exactly as written. Repair {exc.path}, then run again.",
+            file=sys.stderr,
+        )
+        return ERROR
+    except Exception as exc:  # noqa: BLE001 — an unexpected failure is an ERROR, never a verdict
+        print(
+            f"[{CHECK}] unexpected failure deciding the `status: {DONE}` stamp: "
+            f"{type(exc).__name__}: {exc}\n"
+            f"  Reported as an error rather than a verdict: nothing was judged.",
+            file=sys.stderr,
+        )
+        return ERROR
+
+
+def _dispatch(argv: list[str] | None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) == 2 and args[0] in ("stamp-is-new", "mapping-complete"):
         path = Path(args[1])
