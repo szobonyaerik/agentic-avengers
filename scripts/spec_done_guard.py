@@ -51,9 +51,16 @@ spec cannot be done while its mapping is still empty, which is exactly the order
 template ships a header, a separator and THREE placeholder rows, and `skills/tdd` points every
 implementer at it as the starting shape — so copy-then-stamp is the expected flow, not an edge
 case, and a row-count check would pass exactly the state this issue is about ("test-mapping.md was
-still empty" when the stamp landed). A row is a PLACEHOLDER while any cell still carries the
-template's angle-bracket syntax (`R<n>.<k>.<m>`, `test_<name>`, `<seam>`); completeness needs one
-row that is not. One genuinely filled row is enough, however many placeholders sit beside it.
+still empty" when the stamp landed). A row is a PLACEHOLDER while its REQUIREMENT-ID cell still
+carries the template's angle-bracket syntax (`R<n>.<k>.<m>`); completeness needs one row that is
+not. One genuinely filled row is enough, however many placeholders sit beside it.
+
+That test is anchored to the first cell rather than the whole row because a real mapping's other
+columns may legitimately contain angle brackets — `Result<Config, Error>` in a test name, `rejects
+n < 5 or > 10` in a `why` cell — and this pipeline is vendored project-agnostically (§8), so
+generics are ordinary in a consumer repo. A real requirement id cannot contain them, so the shipped
+template is still rejected verbatim. The direction that matters most here is the FALSE POSITIVE: a
+misread row reverts a correctly-stamped spec, which is worse than the gap this check closes.
 
 ## Exit 1 means the answer, never a crash
 
@@ -108,9 +115,13 @@ STATUS_LINE = re.compile(rf"^{STATUS_FIELD}:.*$", re.MULTILINE)
 #: to contain a dash run, which reads as a header-only mapping and reverts a correct stamp.
 SEPARATOR_ROW = re.compile(r"\|[\s:|-]*-[\s:|-]*\|")
 
-#: The template's own placeholder syntax, in any cell of a row. Every placeholder cell the mapping
-#: template ships carries it (`R<n>.<k>.<m>`, `test_<journey>`, `<seam>`, `<mandatory: …>`), and a
-#: filled-in row does not — real requirement ids, test names and prose have no bare `<…>` token.
+#: The template's own placeholder syntax, matched against the row's FIRST cell — the requirement id
+#: — and nothing else. Every placeholder row the mapping template ships carries `R<n>.<k>.<m>`
+#: there, and a real requirement id cannot contain angle brackets, so the template is still rejected
+#: verbatim. Read over the WHOLE row it also matched legitimate prose in the other columns, and this
+#: pipeline is vendored project-agnostically (§8): `Result<Config, Error>` in a test name, `rejects
+#: n < 5 or > 10` in a `why` cell, `<ops@example.com>` — all ordinary, none of them a placeholder. A
+#: false positive there reverts a correctly-stamped spec, which is worse than the gap it closes.
 PLACEHOLDER_CELL = re.compile(r"<[^>]+>")
 
 
@@ -162,13 +173,20 @@ def stamp_is_new(spec_path: Path) -> bool | None:
     return spec_gate_state.frontmatter(text).get(STATUS_FIELD) != DONE
 
 
+def _requirement_cell(row: str) -> str:
+    """The first pipe-delimited cell of a table row — the requirement id column."""
+    cells = row.split("|")
+    return cells[1] if len(cells) > 1 else ""
+
+
 def mapping_complete(spec_path: Path) -> bool:
     """`test-mapping.md` beside the spec carries at least one RECORDED row past its separator.
 
-    A row still carrying the template's `<…>` placeholder syntax in any cell has recorded nothing,
+    A row whose requirement-id cell still carries the template's `<…>` syntax has recorded nothing,
     so the template copied verbatim reads exactly like the missing file it came from. A missing,
     header-only or placeholder-only mapping means not one test has been recorded yet for this spec,
-    which cannot be true of a spec that is genuinely done.
+    which cannot be true of a spec that is genuinely done. Angle brackets anywhere else in the row
+    are ordinary text and never disqualify it.
 
     Raises `UndecidableMapping` when the file exists but cannot be read — unknown is not empty.
     """
@@ -187,7 +205,7 @@ def mapping_complete(spec_path: Path) -> bool:
         if not seen_separator:
             seen_separator = bool(SEPARATOR_ROW.fullmatch(stripped))
             continue
-        if not PLACEHOLDER_CELL.search(stripped):
+        if not PLACEHOLDER_CELL.search(_requirement_cell(stripped)):
             return True
     return False
 

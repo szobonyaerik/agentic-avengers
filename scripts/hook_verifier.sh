@@ -136,7 +136,8 @@ if [ "$STAMP_BINDS" = "1" ]; then
     revert_premature_stamp
     fail "verifier:spec-done-mapping" \
       "verifier ($TRIGGER): status was stamped 'done' but test-mapping.md next to it records no" \
-      "test yet — no rows past the separator, or only the template's <…> placeholder rows." \
+      "test yet — no rows past the separator, or only rows whose requirement-id cell is still the" \
+      "template's R<n>.<k>.<m> placeholder." \
       "Reverted status to 'in-progress'. Finish recording the mapping, then stamp done again."
   elif [ "$mapping_rc" -ne 0 ]; then
     fail "verifier:spec-done-undecidable" \

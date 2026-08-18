@@ -487,9 +487,10 @@ def write_done_spec(
     """A spec stamped `status: done` in the worktree, committed at `head_status` — so the default
     is a stamp that JUST landed, and `head_status="done"` is one that shipped before this rule.
 
-    `test-mapping.md` is in one of five states: missing (`None`), header-only, the shipped template
-    copied verbatim (`"template"`, placeholder rows and nothing recorded), a real row (`"row"`), or
-    a file that cannot be read at all (`"unreadable"`).
+    `test-mapping.md` is in one of six states: missing (`None`), header-only, the shipped template
+    copied verbatim (`"template"`, placeholder rows and nothing recorded), a real row (`"row"`), a
+    real row whose `why` cell carries angle brackets for ordinary reasons
+    (`"row-with-generics"`), or a file that cannot be read at all (`"unreadable"`).
     """
     spec_dir = spec_done_dir(project)
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -513,6 +514,11 @@ def write_done_spec(
         (spec_dir / "test-mapping.md").write_text(
             "| requirement | test | level | why |\n|---|---|---|---|\n"
             "| R1.1.1 | test_x.py::test_it | integration | ... |\n"
+        )
+    elif mapping == "row-with-generics":
+        (spec_dir / "test-mapping.md").write_text(
+            "| requirement | test | level | why |\n|---|---|---|---|\n"
+            "| R1.1.1 | test_parse | integration | drives parse(): Result<Config, Error> |\n"
         )
     commit_docs(project)
     spec_path.write_text(spec_text("done"))
@@ -574,6 +580,19 @@ def test_a_stamp_over_the_template_copied_verbatim_is_reverted(project: Path) ->
     assert result.returncode == 2
     assert "placeholder" in result.stderr
     assert "status: in-progress" in spec_path.read_text()
+
+
+def test_a_real_row_carrying_generics_keeps_its_stamp(project: Path) -> None:
+    """The false-positive direction, through the real hook. `Result<Config, Error>` in a `why` cell
+    is ordinary in the TS/Java/Rust repos this pipeline is vendored into; read as a template
+    placeholder it reverts a spec that recorded its test properly — worse than the gap it closes."""
+    spec_path = write_done_spec(project, mapping="row-with-generics")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()
 
 
 def test_an_unreadable_mapping_does_not_revert_the_stamp(project: Path) -> None:

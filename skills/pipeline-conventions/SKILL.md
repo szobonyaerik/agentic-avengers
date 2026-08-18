@@ -1077,8 +1077,11 @@ the moment `hook_verifier.sh` sees `status: done` land on a `spec.md` (its `spec
 checks, mechanically, whether the spec is actually done — its own `test-mapping.md` carries at
 least one recorded row, and its phase's test suite is green — **before** letting the stamp stand.
 A **recorded** row is one that says something: the mapping template ships three placeholder rows
-and `skills/tdd` points every implementer at it, so a row still carrying the template's `<…>`
-syntax in any cell counts as nothing. Counting rows would pass exactly the state this issue names.
+and `skills/tdd` points every implementer at it, so a row whose **requirement-id cell** still
+carries the template's `R<n>.<k>.<m>` syntax counts as nothing. Counting rows would pass exactly the
+state this issue names. Only that first cell is read — a real id cannot contain angle brackets,
+while the other columns legitimately can (`Result<Config, Error>`, `rejects n < 5 or > 10`), and
+misreading one of those would revert a correctly-stamped spec.
 Either check failing REVERTS `status: done` back to `status: in-progress`
 (`scripts/spec_done_guard.py`) and then fails the hook. A premature `done` does not survive the
 check that reads it. Break-glass (`GATE_BYPASS`) still lets the tool call through; it does not

@@ -152,6 +152,45 @@ def test_one_filled_row_beside_the_template_rows_is_complete(tmp_path: Path) -> 
     assert mapping_complete(spec) is True
 
 
+@pytest.mark.parametrize(
+    "why",
+    [
+        "drives parse(): Result<Config, Error>",
+        "rejects n < 5 or > 10",
+        "no seam; asserts the To: header is <ops@example.com>",
+    ],
+)
+def test_angle_brackets_outside_the_id_cell_do_not_make_a_row_a_placeholder(
+    tmp_path: Path, why: str
+) -> None:
+    """The direction that matters most. Read over the whole row, the placeholder test classifies
+    ordinary prose as a template row and REVERTS a correctly-stamped spec — worse than the gap it
+    closes, and this pipeline is vendored into repos where generics in a cell are unremarkable."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+    (tmp_path / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+        f"| R1.1.1 | test_parse | integration | {why} |\n"
+    )
+
+    assert mapping_complete(spec) is True
+
+
+def test_a_placeholder_id_cell_is_a_placeholder_however_filled_the_rest_is(
+    tmp_path: Path,
+) -> None:
+    """The other direction of the same anchor: a real-looking `why` does not launder an id cell
+    that still says `R<n>.<k>.<m>`."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec)
+    (tmp_path / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+        "| R<n>.<k>.<m> | test_parse | integration | drives the handler with real collaborators |\n"
+    )
+
+    assert mapping_complete(spec) is False
+
+
 # ── unknown is not empty ──────────────────────────────────────────────────
 
 
