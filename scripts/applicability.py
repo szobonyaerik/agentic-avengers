@@ -105,9 +105,13 @@ RULES: dict[str, str] = {
 #: Every document the read-path table governs declares who reads it, in the document. JSON has no
 #: frontmatter, so it is a top-level key — written here, by the only writer, because declaring a
 #: reader in `scripts/doc_read_path.py` is not the same as instructing anyone to emit it.
+#: `doc_read_path.READ_PATH["exceptions.json"]` reads this list rather than keeping a second copy: a
+#: reader named in one place and not the other is a declaration that is already wrong, and nothing
+#: catches it — the read-path check verifies the key is present, never that it names the real readers.
 READERS = [
     "pipeline_state.py @ per phase, resolving the next stage",
     "requirement_cap.py @ per spec write",
+    "verifier_precheck.py @ per spec, resolving a stale spec-gate stamp",
     "phase-handover @ per phase",
     "breaker_gate.py @ per phase, resolving the Breaker obligation",
 ]

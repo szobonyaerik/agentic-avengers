@@ -74,6 +74,35 @@ def stamp(spec: Path) -> None:
     )
 
 
+def stale_spec(phase: Path, name: str = "1.1-a") -> Path:
+    """A spec whose body has moved on since the gate judged it — the finding under test."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n", name=name)
+    stamp(spec)
+    spec.write_text(
+        spec.read_text() + "\n\nan edit made after the gate judged it\n", encoding="utf-8"
+    )
+    return spec
+
+
+def record_spec_gate_exception(phase: Path, subject: str):
+    """Record the exception the way the finding's own remedy does — through the real writer."""
+    import applicability
+
+    return applicability.record_exception(
+        phase,
+        "spec-gate",
+        subject,
+        "gate provider was down; re-gating was not reachable",
+        "captain",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _project_dir(tmp_path, monkeypatch):
+    """bypass_log.sh writes gate-overrides.log under $CLAUDE_PROJECT_DIR — never this repository."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+
 # ── traceability, per binding ────────────────────────────────────────────────
 
 
@@ -264,56 +293,39 @@ def test_a_recorded_spec_gate_exception_clears_a_stale_stamp(
 ) -> None:
     """Issue 67's other documented remedy actually clears the check: recording a disclosed
     exception needs no live gate provider, unlike re-gating, and unlike an amendment it names the
-    rule this check reads (`spec-gate`)."""
-    import json
+    rule this check reads (`spec-gate`).
 
-    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
-    stamp(spec)
-    spec.write_text(spec.read_text() + "\n\nan edit made after the gate judged it\n")
-    (phase / "exceptions.json").write_text(
-        json.dumps(
-            {
-                "exceptions": [
-                    {
-                        "id": "X1",
-                        "rule": "spec-gate",
-                        "subject": "1.1-a",
-                        "reason": "gate provider was down; re-gating was not reachable",
-                        "recorded_by": "captain",
-                        "recorded_at": "2026-08-14T00:00:00Z",
-                    }
-                ]
-            }
-        )
-    )
+    The ledger is written by `applicability.record_exception` — the command the finding tells a
+    worker to run — so a change to the subject it normalises or the shape it stores is red here
+    rather than passing against a hand-written stand-in the remedy never produces.
+    """
+    spec = stale_spec(phase)
+    record = record_spec_gate_exception(phase, "1.1-a")
+    capsys.readouterr()
+
     assert not any("UNGATED" in f for f in check_phase(phase))
     err = capsys.readouterr().err
-    assert "X1" in err and "NOT enforced" in err
+    assert record.id in err and "NOT enforced" in err
+    assert spec.exists()
 
 
 def test_an_exception_for_a_different_spec_does_not_clear_this_one(phase: Path) -> None:
-    import json
-
-    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
-    stamp(spec)
-    spec.write_text(spec.read_text() + "\n\nan edit made after the gate judged it\n")
-    (phase / "exceptions.json").write_text(
-        json.dumps(
-            {
-                "exceptions": [
-                    {
-                        "id": "X1",
-                        "rule": "spec-gate",
-                        "subject": "1.2-other",
-                        "reason": "r",
-                        "recorded_by": "captain",
-                        "recorded_at": "2026-08-14T00:00:00Z",
-                    }
-                ]
-            }
-        )
-    )
+    stale_spec(phase)
+    record_spec_gate_exception(phase, "1.2-other")
     assert any("UNGATED" in f for f in check_phase(phase))
+
+
+def test_a_ledger_this_cannot_read_grants_no_exception(phase: Path, capsys) -> None:
+    """Fail closed: an unreadable ledger under-reports, so the stamp still blocks and the reason is
+    said out loud. A ledger that cannot be parsed is not a ledger that waives anything."""
+    stale_spec(phase)
+    (phase / "exceptions.json").write_text("{not json at all", encoding="utf-8")
+    capsys.readouterr()
+
+    assert any("UNGATED" in f for f in check_phase(phase))
+    err = capsys.readouterr().err
+    assert "exception ledger this cannot read" in err
+    assert "No exception is granted." in err
 
 
 def test_a_phase_with_no_specs_is_not_a_finding(phase: Path) -> None:
