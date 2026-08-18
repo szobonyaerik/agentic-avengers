@@ -231,13 +231,25 @@ case "$V" in
     # the feature's docs or tests (issue #45). A stage that emits nothing is indistinguishable from a
     # stage that never ran, so this checks for its RECORD (breaker.json), the same way the handover
     # check below checks for handover.md — mechanically, not by trusting the run to remember.
-    if ! python3 "$SD/breaker_gate.py" due "$PHASE_DIR"; then
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it, and the two
+    # carry different tags and different messages — the same split gate_ci.sh already makes for this
+    # check, and the rule CLAUDE.md § Gates states as "every stop names which". Collapsed into one,
+    # an unreadable phase directory would be reported as a Breaker that never ran and prescribed a
+    # Breaker run and a waiver, neither of which repairs it.
+    python3 "$SD/breaker_gate.py" due "$PHASE_DIR"; breaker_rc=$?
+    if [ "$breaker_rc" -eq 1 ]; then
       fail "verifier:breaker" \
         "verifier: this phase's Breaker obligation is not met (named above)." \
         "Run plan-build-verify:avenger-breaker over the critical/security paths; it persists" \
         "breaker.json with a verdict and what it actually attacked. If the run is deliberately" \
         "waived, record why: scripts/applicability.py record <phase-dir> --rule breaker" \
         "--subject <phase> --reason-file <f> --recorded-by <who>."
+    elif [ "$breaker_rc" -ne 0 ]; then
+      fail "verifier:breaker-undecidable" \
+        "verifier: this phase's Breaker obligation could not be DECIDED (cause above) — this is not" \
+        "a Breaker that never ran, and neither running it nor waiving it will repair this. A check" \
+        "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
     carried_items_gate
     exit 0 ;;

@@ -312,6 +312,33 @@ def test_a_standard_phase_closes_with_no_breaker_record(project: Path) -> None:
     assert run_hook(project).returncode == 0
 
 
+def test_an_undecidable_breaker_check_is_not_reported_as_a_breaker_that_never_ran(
+    project: Path,
+) -> None:
+    """`breaker_gate.py` separates OWED (exit 1) from an ERROR that could not DECIDE it (exit 2),
+    and `gate_ci.sh` honours the split. Collapsed here, the authoritative enforcement point would
+    answer an unreadable check with "run the Breaker, or waive it" - neither of which repairs it,
+    the same defect the attempt cap shipped once already.
+
+    The real script is defensive enough that exit 2 comes only from its catch-all, so the exit code
+    is forced at the dependency; what is under test is the hook's branching on it, and the hook is
+    the real one.
+    """
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+    (project / "scripts" / "breaker_gate.py").write_text(
+        "import sys\n"
+        "print('[breaker_gate] the check could not be decided: boom', file=sys.stderr)\n"
+        "raise SystemExit(2)\n"
+    )
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "could not be DECIDED" in result.stderr
+    assert "Breaker obligation is not met" not in result.stderr
+
+
 def test_the_breaker_gate_never_masks_a_failed_suite(project: Path) -> None:
     """Runs inside the `pass` branch on purpose, same as the carried-items gate: a red suite must
     stop the phase for its own reason, not a Breaker record it never got to check."""

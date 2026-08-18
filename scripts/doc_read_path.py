@@ -177,6 +177,19 @@ READ_PATH: dict[str, dict] = {
         # handover's forward-looking claim becoming nothing, which is how phase 8's correct,
         # specific prediction about caller-supplied identifiers shipped as a phase-9 defect.
     },
+    "breaker.json": {
+        "written_by": "avenger-breaker",
+        "emitted_by": "agents/avenger-breaker.md",
+        "readers": [
+            "breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
+            "pipeline_state.py @ per phase, resolving the next stage",
+        ],
+        "extent": "whole",
+        # The Breaker's own record: a verdict, and what it actually attacked or found. Small by
+        # construction - a verdict and one list - and it is what makes a stage that emits nothing
+        # distinguishable from a stage that never ran, which is how two owed Breaker runs went
+        # missing on one feature with nothing noticing (issue #45).
+    },
     "test-mapping.md": {
         "written_by": "implementer",
         "emitted_by": "docs/templates/test-mapping.template.md",

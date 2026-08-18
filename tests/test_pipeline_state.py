@@ -310,6 +310,42 @@ def test_a_found_verdict_naming_a_counterexample_lets_the_phase_reach_handover(t
     assert next_stage(tmp_path, "demo").stage == "handover"
 
 
+def test_a_phase_that_already_handed_over_is_never_reopened_for_a_missing_breaker_record(
+    tmp_path: Path,
+) -> None:
+    """A written handover.md is `shipped` evidence (§3a), and a mechanical rule binds only what is
+    still OPEN. Asked before the handover check, this rule re-opened every critical phase closed
+    before it existed - no phase anywhere carries a breaker.json - so the resolver parked on shipped
+    code and `/avenger-run --auto` never reached the phase in flight.
+    """
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "handover.md").write_text("done\n")
+    write_spec(feature, "2-next", "2.1-a", review_status="approved", status="draft")
+
+    state = next_stage(tmp_path, "demo")
+
+    assert state.stage == "implementer"
+    assert state.phase == "2-next"
+
+
+def test_the_last_phase_handed_over_without_a_breaker_record_still_reaches_e2e(
+    tmp_path: Path,
+) -> None:
+    """The same boundary at the end of the walk: a shipped phase must not wedge the feature."""
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "handover.md").write_text("done\n")
+
+    assert next_stage(tmp_path, "demo").stage == "e2e-author"
+
+
 def test_a_standard_phase_owes_no_breaker_record(tmp_path: Path) -> None:
     feature = planned(tmp_path)
     write_spec(feature, "1-core", "1.1-a", review_status="approved", status="done")

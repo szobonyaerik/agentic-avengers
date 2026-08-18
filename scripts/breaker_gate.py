@@ -212,12 +212,12 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
             problems.append(reason)
         else:
             unenforced += 1
-    if unenforced:
-        print(
-            f"[breaker_gate] {unenforced} phase(s) predate this rule or are untouched and are not "
-            f"enforced - they are checked when you next change them.",
-            file=sys.stderr,
-        )
+    applicability.report_unenforced(
+        "breaker_gate",
+        unenforced,
+        "phase(s) predate this rule or are untouched - they are checked when you next change "
+        "them, and `check --all` audits them now",
+    )
     return problems
 
 

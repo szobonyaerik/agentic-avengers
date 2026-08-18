@@ -55,18 +55,26 @@ noticed. Before you finish, write `breaker.json` next to `verdict.json`
 (`docs/features/<feature>/phases/<n>-<slug>/breaker.json`):
 
 ```json
-{"verdict": "clean", "attacked": ["malformed payloads", "auth bypass", "replay"]}
+{"verdict": "clean", "attacked": ["malformed payloads", "auth bypass", "replay"],
+ "readers": ["breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
+             "pipeline_state.py @ per phase, resolving the next stage"]}
 ```
 
 or, when you land a counterexample:
 
 ```json
-{"verdict": "found", "counterexamples": ["tests/<feature>/<n>-<slug>/test_breaker_replay.py::test_x"]}
+{"verdict": "found", "counterexamples": ["tests/<feature>/<n>-<slug>/test_breaker_replay.py::test_x"],
+ "readers": ["breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
+             "pipeline_state.py @ per phase, resolving the next stage"]}
 ```
 
 `attacked` (for `clean`) or `counterexamples` (for `found`) must be non-empty — the gate refuses a
 vacuous record the same way it refuses a missing one, because "clean" with nothing named is not
 evidence anything was probed.
+
+`readers` is the same declaration every other document on the read path carries
+(`scripts/doc_read_path.py`), as a top-level key because JSON has no frontmatter: a document no
+stage reads does not get written, so this record names the stages that read it.
 
 ## If nothing breaks
 Report **clean**, and list exactly what you attacked (the input classes and conditions you tried)

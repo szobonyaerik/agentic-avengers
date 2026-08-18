@@ -271,20 +271,29 @@ def _phase_state(feature: str, phase: Path) -> State | None:
             **common,
         )
 
-    # A phase that declares `criticality: critical` routes the Breaker (commands/avenger-run.md §4),
-    # and "the resolver reports criticality: critical" used to be the only signal anyone acted on —
-    # nothing enforced it, and it was owed twice on one feature and ran neither time (issue #45). A
-    # stage that emits nothing is indistinguishable from a stage that never ran, so this is checked
-    # the same way a missing handover.md is: mechanically, here, not by trusting the orchestrator to
-    # remember. `breaker_gate.satisfied` refuses a missing record AND a vacuous one (a "clean" verdict
-    # naming nothing attacked), because the agent's own instruction — "a clean report with no
-    # attempts described is not acceptable" — is exactly what this makes checkable.
-    if breaker_gate.owed(phase):
-        reason = breaker_gate.satisfied(phase)
-        if reason is not None and not _excepted(phase, "breaker", phase.name):
-            return State(stage="breaker", reason=reason, **common)
-
     if not (phase / "handover.md").is_file():
+        # A phase that declares `criticality: critical` routes the Breaker (commands/avenger-run.md
+        # §4), and "the resolver reports criticality: critical" used to be the only signal anyone
+        # acted on — nothing enforced it, and it was owed twice on one feature and ran neither time
+        # (issue #45). A stage that emits nothing is indistinguishable from a stage that never ran,
+        # so this is asked mechanically, here, rather than by trusting the orchestrator to remember.
+        # `breaker_gate.satisfied` refuses a missing record AND a vacuous one (a "clean" verdict
+        # naming nothing attacked), because the agent's own instruction — "a clean report with no
+        # attempts described is not acceptable" — is exactly what this makes checkable.
+        #
+        # It is asked INSIDE this branch, and only here, because a written handover.md is the
+        # `shipped` evidence of §3a's applicability boundary: a mechanical rule binds what is still
+        # OPEN, and what is CLOSED it may count and name, never block. Asked before this check it
+        # re-opened every already-handed-over critical phase — no phase anywhere carries a
+        # breaker.json yet — parking the resolver on shipped code so `/avenger-run --auto` could not
+        # reach the phase in flight at all, which is the first wedge `applicability.py`'s own
+        # docstring names. Enforcement loses nothing: `hook_verifier.sh` fires on the handover WRITE,
+        # which is this same open moment, and `gate_ci.sh` backs it up diff-scoped.
+        if breaker_gate.owed(phase):
+            reason = breaker_gate.satisfied(phase)
+            if reason is not None and not _excepted(phase, "breaker", phase.name):
+                return State(stage="breaker", reason=reason, **common)
+
         return State(
             stage="handover", reason=f"phase {phase.name} has no handover.md", **common
         )
