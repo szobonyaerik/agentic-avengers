@@ -204,15 +204,20 @@ def test_the_first_phase_has_no_prior_card_and_that_is_not_a_failure(
     assert degraded is False
 
 
-def test_no_context_at_all_is_an_empty_block_that_says_so(tmp_path: Path) -> None:
+def test_no_overview_at_all_is_degraded_not_a_silent_pass(tmp_path: Path) -> None:
+    """A feature with no `overview.md` yet loses the same half of `contradiction` as one with the
+    wrong heading, and there is no silent exemption for it: reporting success over zero contracts is
+    the defect in its purest form. A legitimate "genuinely has none yet" state belongs on a recorded
+    exception, never on this function inventing one to stay green."""
     root = tmp_path / "docs" / "features" / "demo"
     (root / "phases").mkdir(parents=True)
     block, notes, degraded = build(spec_at(root, "1-first"))
 
     assert block == ""
-    assert len(notes) == 2 and all("absent" in note for note in notes)
-    assert degraded is False, (
-        "no overview.md at all is normal — a feature has not written one yet"
+    assert degraded is True
+    assert any(
+        note.startswith("DEGRADED:") and "no readable overview.md" in note
+        for note in notes
     )
 
 
@@ -230,15 +235,21 @@ def test_a_spec_outside_the_layout_is_reported_rather_than_guessed(
     assert degraded is False
 
 
-def test_an_unreadable_overview_omits_it_rather_than_raising(feature: Path) -> None:
+def test_an_unreadable_overview_is_degraded_not_omitted(feature: Path) -> None:
+    """An unreadable overview loses this reader's half of `contradiction` exactly like a missing
+    one - there is no meaningful difference between the two from the gate's perspective, so both are
+    degraded rather than one being reported and the other quietly omitted."""
     (feature / "overview.md").unlink()
     (feature / "overview.md").mkdir()
 
     block, notes, degraded = build(spec_at(feature, "1-first"))
 
     assert block == ""
-    assert any("no ## Contracts and Decisions" in note for note in notes)
-    assert degraded is False, "unreadable is a different problem from missing-heading"
+    assert degraded is True
+    assert any(
+        note.startswith("DEGRADED:") and "no readable overview.md" in note
+        for note in notes
+    )
 
 
 # ── the heading-missing case is DEGRADED, never a silent pass (issue #57) ────
@@ -266,6 +277,45 @@ def test_an_overview_missing_the_heading_entirely_is_reported_degraded(
     )
     assert any(note.startswith("DEGRADED:") for note in notes)
     assert any("no ## Contracts and Decisions" in note for note in notes)
+
+
+def test_a_heading_holding_only_the_templates_html_comment_is_degraded(
+    feature: Path,
+) -> None:
+    """`docs/templates/overview.template.md` ships this exact heading followed by an HTML comment of
+    instructional text. A freshly-templated, never-filled-in overview matches that shape verbatim,
+    so it must degrade like a missing heading - not read as `included` just because the section has
+    visible characters in it."""
+    (feature / "overview.md").write_text(
+        "# Demo\n\n"
+        "## Contracts and Decisions\n"
+        "<!-- A STABLE HEADER, and the only section some readers open. So everything a later spec "
+        "can CONTRADICT belongs here. -->\n\n"
+        "## Risks\n"
+    )
+    card_at(feature, "1-first")
+
+    block, notes, degraded = build(spec_at(feature, "2-storage"))
+
+    assert degraded is True
+    assert "STABLE HEADER" not in block
+    assert any(note.startswith("DEGRADED:") and "boilerplate" in note for note in notes)
+
+
+def test_boilerplate_mixed_with_real_prose_is_not_degraded(feature: Path) -> None:
+    """The comment-stripping is meant to catch a section that is ONLY boilerplate, not to punish an
+    overview that keeps the template's comment alongside real, filled-in contracts."""
+    (feature / "overview.md").write_text(
+        "# Demo\n\n"
+        "## Contracts and Decisions\n"
+        "<!-- template instructions -->\n\n"
+        "- Tokens are stored in the vault.\n"
+    )
+
+    block, notes, degraded = build(spec_at(feature, "1-first"))
+
+    assert degraded is False
+    assert "Tokens are stored in the vault." in block
 
 
 def test_a_feature_with_a_genuinely_empty_contracts_section_is_not_degraded(
@@ -327,6 +377,31 @@ def test_check_passes_an_overview_that_has_the_heading(feature: Path) -> None:
     assert problems == []
 
 
+def test_check_finds_a_feature_with_no_overview_at_all(tmp_path: Path) -> None:
+    """A missing `overview.md` can never itself appear as a changed path, so this has to be found by
+    walking feature directories, not by globbing for files that exist."""
+    feature = tmp_path / "docs" / "features" / "demo"
+    feature.mkdir(parents=True)
+
+    problems = check(tmp_path, enforce_all=True)
+
+    assert len(problems) == 1
+    assert "no readable overview.md" in problems[0]
+
+
+def test_check_finds_a_boilerplate_only_heading(tmp_path: Path) -> None:
+    feature = tmp_path / "docs" / "features" / "demo"
+    feature.mkdir(parents=True)
+    (feature / "overview.md").write_text(
+        "# Demo\n\n## Contracts and Decisions\n<!-- unfilled template comment -->\n"
+    )
+
+    problems = check(tmp_path, enforce_all=True)
+
+    assert len(problems) == 1
+    assert "boilerplate" in problems[0]
+
+
 @pytest.mark.subprocess(
     "the subject IS the diff scope, which only the real git binary can answer: a stubbed "
     "changed_paths would prove the stub, not the boundary this check runs on"
@@ -356,3 +431,36 @@ def test_check_is_diff_scoped_by_default(tmp_path: Path, monkeypatch) -> None:
     problems = check(tmp_path)
 
     assert problems == [], "a committed, untouched overview is counted, not blocked"
+
+
+@pytest.mark.subprocess(
+    "the subject IS the diff scope, which only the real git binary can answer: a stubbed "
+    "changed_paths would prove the stub, not the boundary this check runs on"
+)
+def test_check_scopes_a_missing_overview_by_its_feature_directory(
+    tmp_path: Path,
+) -> None:
+    """A missing `overview.md` can never itself be a changed path (there is nothing on disk to
+    name), so scoping on the artifact path alone would make it permanently unenforceable. Touching
+    ANY file under the feature directory - here, a phase's spec - must be enough to bring the
+    missing overview into scope."""
+    feature = tmp_path / "docs" / "features" / "demo"
+    spec = feature / "phases" / "1-first" / "specs" / "1.1-a" / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# spec\n")
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init", "--no-verify"], cwd=tmp_path, check=True
+    )
+    spec.write_text("# spec\n\nedited\n")
+
+    problems = check(tmp_path)
+
+    assert len(problems) == 1
+    assert "no readable overview.md" in problems[0]

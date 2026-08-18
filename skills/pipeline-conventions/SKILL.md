@@ -194,26 +194,38 @@ Three consequences worth stating outright:
      so without them a closed set of four is three items and a claim. It is reference only: absent
      context is normal (phase 1 has no prior card), named on stderr, and never fails the gate.
 
-     **Absent is not DEGRADED.** An `overview.md` that exists but carries no
-     `## Contracts and Decisions` heading *at all* is not "no contracts yet" — it is this reader
-     never finding them, for every spec that feature will ever gate. clickup-agents ran eleven
-     phases in exactly that state (its overview uses `## Interfaces & contracts` instead) while the
-     gate reported success, which is issue #57: a silently degraded gate is worse than a failing
-     one. `build()` marks it `degraded` and `main()` exits **3** — never 1 or 2, which mean
-     something else here — and `hook_spec_gate.sh` does not discard that exit code with `|| :`. It
-     echoes it loudly **and folds a `CONTEXT DEGRADED` banner into the persisted report**, the one
+     **Absent is not DEGRADED, and three shapes are DEGRADED.** An `overview.md` that exists but
+     carries no `## Contracts and Decisions` heading *at all* is not "no contracts yet" — it is this
+     reader never finding them, for every spec that feature will ever gate. clickup-agents ran
+     eleven phases in exactly that state (its overview uses `## Interfaces & contracts` instead)
+     while the gate reported success, which is issue #57: a silently degraded gate is worse than a
+     failing one. Two more shapes are the same defect wearing a different face, found while proving
+     the fix and confirmed rather than deferred: a heading whose section holds **only boilerplate**
+     — an HTML comment, which is exactly what `docs/templates/overview.template.md` ships under this
+     heading, so a freshly-templated overview that nobody has filled in yet LOOKS included and
+     contradicts nothing; and `overview.md` **missing or unreadable outright**, which loses the same
+     half of `contradiction` and has no silent exemption — a feature that genuinely has none yet
+     belongs on a recorded exception (§3a), never on this reader inventing one to stay green. The one
+     absence that stays ordinary: the heading present with nothing under it, not even a comment — a
+     feature early in planning, ordinary because it cannot be mistaken for "filled in."
+     `build()` marks each degraded shape `degraded` and `main()` exits **3** — never 1 or 2, which
+     mean something else here — and `hook_spec_gate.sh` does not discard that exit code with `|| :`.
+     It echoes it loudly **and folds a `CONTEXT DEGRADED` banner into the persisted report**, the one
      stamped into `spec_gate_cache` on APPROVED and BLOCKED alike, since no later read of a verdict
      sees a hook's stderr. Still never a gate failure on its own; no longer indistinguishable from a
      clean pass.
 
      **The heading contract is checked, not merely stated.** `spec_gate_context.py check [--all]`
-     finds every `docs/features/*/overview.md` missing the heading, independent of any spec being
-     gated, and runs from `gate_ci.sh` beside the read-path check. **Diff-scoped** on the same
-     applicability boundary as every other check here: an overview this change did not touch is
-     counted and named, never blocked, so a repository full of pre-rule overviews can adopt it. The
-     remedy is the heading `docs/templates/overview.template.md` already mandates — and adding it to
-     one project's overview is **not** the fix, because that hides the symptom on that project and
-     leaves the silent pass available to every other one.
+     walks every `docs/features/*/` feature directory for the same three degraded shapes,
+     independent of any spec being gated, and runs from `gate_ci.sh` beside the read-path check. It
+     walks feature DIRECTORIES rather than globbing existing `overview.md` files, because a missing
+     overview can never itself be a changed path — scoping on the artifact alone would make it
+     permanently unenforceable. **Diff-scoped** on the same applicability boundary as every other
+     check here: a feature this change did not touch is counted and named, never blocked, so a
+     repository full of pre-rule overviews can adopt it. The remedy is the heading
+     `docs/templates/overview.template.md` already mandates, filled in with real content — and
+     adding it to one project's overview is **not** the fix, because that hides the symptom on that
+     project and leaves the silent pass available to every other one.
   2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation
      against the closed set. It emits `classifications`, not a verdict. Its tie-break is the reverse
      of the old one: **when unsure, it is a note.**

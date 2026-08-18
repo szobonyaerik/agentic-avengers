@@ -31,18 +31,35 @@ Each of those is omitted and named on stderr, so a gate running with no context 
 than silent. Nothing here fails the gate: the block is reference material, and the observe pass is
 told not to raise observations *about* it.
 
-The exception is `overview.md` existing but carrying no `## Contracts and Decisions` heading at all
-(clickup-agents' overview never has, across 11 phases - it uses `## Interfaces & contracts` and
-`## Key decisions & trade-offs` instead). That is not "not written yet"; it is the heading this reader
-looks for not existing, so `contradiction` - one of the four things that BLOCK a spec - can only ever
-be checked against the prior phase's card, never against the feature's own contracts, and every spec
-in the feature pays for it. Reporting that on stderr and nothing else was the defect this module
-shipped with: eleven phases read "reported success" while the gate quietly checked a fraction of what
-it claimed to. `build()` therefore marks this case `degraded=True` and `main()` exits **3** for it
-(never 1 or 2, which mean something else on this gate) - still not a gate failure, but no longer a
-state indistinguishable from "nothing to carry yet". The caller decides what to do with that signal;
-it must not be discarded with `|| true`. `check()` below is the other half: it finds every overview on
-disk missing the heading, independent of any one spec being gated.
+There are three exceptions, and all three are `degraded=True`:
+
+- `overview.md` existing but carrying no `## Contracts and Decisions` heading at all
+  (clickup-agents' overview never has, across 11 phases - it uses `## Interfaces & contracts` and
+  `## Key decisions & trade-offs` instead). That is not "not written yet"; it is the heading this
+  reader looks for not existing.
+- `overview.md` carrying the heading but nothing under it except boilerplate - an HTML comment, or
+  the instructional text `docs/templates/overview.template.md` ships under this exact heading. A
+  freshly-templated overview LOOKS filled in at this heading and carries nothing a spec could
+  contradict; treating that as "included" is the same defect wearing the shape every project that
+  starts from the template actually has.
+- `overview.md` missing or unreadable outright. A feature with no overview yet loses the same half
+  of `contradiction` as one with the wrong heading, and there is no such thing as a legitimate
+  silent exemption for it here - a feature that genuinely has none yet is a fact for a recorded
+  exception to state, never a reason for this reader to report success over zero contracts.
+
+Any of the three means `contradiction` - one of the four things that BLOCK a spec - can only ever be
+checked against the prior phase's card, never against the feature's own contracts, and every spec in
+the feature pays for it. Reporting that on stderr and nothing else was the defect this module shipped
+with: eleven phases read "reported success" while the gate quietly checked a fraction of what it
+claimed to. `build()` marks each of these `degraded=True` and `main()` exits **3** for it (never 1 or
+2, which mean something else on this gate) - still not a gate failure, but no longer a state
+indistinguishable from "nothing to carry yet". The caller decides what to do with that signal; it
+must not be discarded with `|| true`. `check()` below is the other half: it finds every feature on
+disk in one of these three states, independent of any one spec being gated.
+
+A section that is genuinely blank - the heading is there, nothing is written under it, not even a
+comment - stays the ordinary, non-degraded "not written yet" case: a feature early in planning. That
+is the one absence this module still treats as normal, and the only one.
 
 Usage:
     spec_gate_context.py <spec.md>          the block on stdout (empty when there is none), what was
@@ -97,6 +114,46 @@ def layout(spec: Path) -> tuple[Path, int] | None:
     return Path(*parts[:index]), int(number.group(1))
 
 
+#: Boilerplate this reader must not count as real contracts: an HTML comment. The template's own
+#: instructional text under this exact heading lives inside one (`docs/templates/overview.template.md`),
+#: so a freshly-templated, never-filled-in overview matches this and nothing else needs to.
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+class Contracts(NamedTuple):
+    """What `## Contracts and Decisions` looks like in one overview, as this reader may see it.
+
+    `heading` is whether the heading exists at all. `body` is the section's MEANINGFUL content -
+    comments stripped - or None when there is none to send. `boilerplate` is True for the specific
+    case in between: the section has visible characters, so it is not simply unwritten, but every
+    one of them is inside an HTML comment - it LOOKS filled in and carries nothing a spec could
+    contradict. `heading=True, body=None, boilerplate=False` is the one truly ordinary case: the
+    heading is there and genuinely nothing is written under it yet.
+    """
+
+    heading: bool
+    body: str | None
+    boilerplate: bool
+
+
+def contracts(text: str) -> Contracts:
+    """`Contracts` for one overview's text. ONE slice answers every question this reader asks, and
+    this is the only place the slice arguments are written - two calls with the same arguments are
+    two things to keep in step, and one of them drifts."""
+    found = slice_section(text, CONTRACTS_HEADING, min_level=2, allow_trailing=True)
+    if found is None:
+        return Contracts(False, None, False)
+    _, body = found
+    # The heading LINE always makes `"".join(found)` non-empty, so emptiness is judged on the body
+    # alone - a heading with nothing under it, not "a heading" (which is never nothing).
+    if not body.strip():
+        return Contracts(True, None, False)
+    stripped = _COMMENT.sub("", body).strip()
+    if not stripped:
+        return Contracts(True, None, True)
+    return Contracts(True, "".join(found).strip(), False)
+
+
 def contracts_section(text: str) -> str | None:
     """The `## Contracts and Decisions` section of an overview, heading included, or None.
 
@@ -104,43 +161,27 @@ def contracts_section(text: str) -> str | None:
     `### ` subheading stays inside the section rather than truncating it - and the section still
     stops well short of the whole document, which is the extent the read path grants this reader.
     That level rule is `md_section.slice_section`'s; what stays here is the policy - the heading line
-    is carried into the block, and a section with nothing under it is no context at all.
+    is carried into the block, and a section with nothing under it BUT boilerplate is no context at
+    all, same as one with nothing under it at all.
     """
-    return contracts(text)[1]
-
-
-def contracts(text: str) -> tuple[bool, str | None]:
-    """(whether `## Contracts and Decisions` appears at all, what is under it or None).
-
-    ONE slice answers both questions, and this is the only place the slice arguments are written:
-    two calls with the same arguments are two things to keep in step, and one of them drifts.
-
-    The pair is what tells "no heading" and "heading with nothing under it yet" apart. Both send
-    nothing, so both are `None` on the right - but a heading that is simply not written yet is
-    normal, while its total absence from an `overview.md` that otherwise exists means this reader
-    can never find it, no matter how many phases pass. That distinction is what `degraded` in
-    `build()` is built on.
-    """
-    found = slice_section(text, CONTRACTS_HEADING, min_level=2, allow_trailing=True)
-    if found is None:
-        return False, None
-    return True, "".join(found).strip() or None
+    return contracts(text).body
 
 
 def heading_present(text: str) -> bool:
     """Whether `## Contracts and Decisions` appears at all, regardless of what is under it."""
-    return contracts(text)[0]
+    return contracts(text).heading
 
 
-def overview_state(feature_dir: Path) -> tuple[bool, str | None] | None:
+def overview_state(feature_dir: Path) -> Contracts | None:
     """`contracts()` for the feature overview, or None when there is no readable `overview.md`.
 
-    One read of one file answers both halves of what `build()` needs. Reading it twice - once for
-    the section, once to ask whether the heading was there at all - is the same file opened twice
-    per spec gated, on the read path this module exists to hold the line on.
+    One read of one file answers everything `build()` needs. Reading it twice - once for the
+    section, once to ask whether the heading was there at all - is the same file opened twice per
+    spec gated, on the read path this module exists to hold the line on.
 
-    None is deliberately NOT `(False, None)`: an overview that does not exist has no heading missing
-    from it. That is a plain absence, which is normal here, and never the degraded state.
+    None is a THIRD degraded shape, not a softer version of "not written yet": a feature with no
+    readable overview at all loses the same half of `contradiction` as one with the wrong heading or
+    a boilerplate-only section, and `build()` treats it exactly that way.
     """
     try:
         text = (feature_dir / "overview.md").read_text(encoding="utf-8")
@@ -232,19 +273,33 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
     degraded = False
 
     state = overview_state(feature_dir)
-    section = state[1] if state is not None else None
-    if section:
-        parts.append(section)
+    if state is None:
+        degraded = True
+        notes.append(
+            f"DEGRADED: no readable overview.md in {feature_dir.name} — contradiction can only be "
+            f"checked against the prior phase's card, never this feature's own contracts, for "
+            f"EVERY spec in this feature. A feature genuinely without one yet is a fact for a "
+            f"recorded exception to state, never a reason to report success over zero contracts."
+        )
+    elif state.body:
+        parts.append(state.body)
         notes.append(
             f"included: {feature_dir.name}/overview.md — ## Contracts and Decisions only"
         )
-    elif state is not None and not state[0]:
+    elif not state.heading:
         degraded = True
         notes.append(
             f"DEGRADED: no ## Contracts and Decisions heading in {feature_dir.name}/overview.md — "
             f"contradiction can only be checked against the prior phase's card, never this "
             f"feature's own contracts, for EVERY spec in this feature. "
             f"See docs/templates/overview.template.md."
+        )
+    elif state.boilerplate:
+        degraded = True
+        notes.append(
+            f"DEGRADED: ## Contracts and Decisions in {feature_dir.name}/overview.md holds only "
+            f"boilerplate (an HTML comment, e.g. the unfilled template) — nothing a spec could "
+            f"contradict, the same gap as a missing heading, for EVERY spec in this feature."
         )
     else:
         notes.append(
@@ -281,21 +336,34 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
 # --- check: every overview.md on disk, independent of any one spec being gated -------------------
 
 
+def _touches(feature: Path, scope: set[Path]) -> bool:
+    """Whether the current change touches anything under `feature` - the file itself, or any file
+    beneath its directory. A missing `overview.md` can never itself appear as a changed path (there
+    is nothing on disk to name), so scoping on the artifact path alone - the `doc_read_path.py`
+    pattern - would make a missing overview permanently unenforceable. Scoping on the feature
+    directory instead is what lets "this feature has no overview at all" be in scope the moment
+    someone is actually working under it."""
+    feature = feature.resolve()
+    return any(feature == path or feature in path.parents for path in scope)
+
+
 def check(root: Path, *, enforce_all: bool = False) -> list[str]:
-    """Every `docs/features/*/overview.md` with no `## Contracts and Decisions` heading.
+    """Every feature under `docs/features/` whose overview cannot carry its contracts: a missing or
+    unreadable `overview.md`, one with no `## Contracts and Decisions` heading, or one where that
+    heading holds only boilerplate.
 
     This is the other half of the fix: `build()` reports degradation per spec gated, which only ever
     surfaces the defect one spec write at a time and only for a project someone is actively working
-    on. This finds it directly, for every feature on disk, the moment `overview.md` is written or
-    edited - the heading contract the template already states (`docs/templates/overview.template.md`)
-    made explicit and CHECKED rather than merely written down.
+    on. This finds it directly, for every feature on disk, the moment an overview is written, edited,
+    or never written at all - the heading contract the template already states
+    (`docs/templates/overview.template.md`) made explicit and CHECKED rather than merely written down.
 
     Diff-scoped like every other check on this applicability boundary (`scripts/applicability.py`):
-    an overview the current change did not touch is COUNTED on stderr, never blocked. That is not a
+    a feature the current change did not touch is COUNTED on stderr, never blocked. That is not a
     grandfathering exception written for this issue - it is the same rule `doc_read_path.py check`
     already runs, and it is what lets a project with years of pre-rule overviews (clickup-agents
     included) adopt this check without every one of them failing CI on day one. `check(...,
-    enforce_all=True)` — the `--all` flag — audits every overview regardless of scope.
+    enforce_all=True)` — the `--all` flag — audits every feature regardless of scope.
     """
     features = root / "docs" / "features"
     if not features.is_dir():
@@ -308,28 +376,46 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
         if scope is None:
             print(
                 f"[spec_gate_context] git cannot say what changed under {root}, so the scope is "
-                f"unknowable and no overview is enforced. Run `check --all` for a full audit.",
+                f"unknowable and no feature is enforced. Run `check --all` for a full audit.",
                 file=sys.stderr,
             )
             return []
 
     problems: list[str] = []
     unenforced = 0
-    for overview in sorted(features.glob("*/overview.md")):
+    for feature in sorted(p for p in features.iterdir() if p.is_dir()):
+        overview = feature / "overview.md"
+        in_scope = enforce_all or _touches(feature, scope or set())
+
         try:
             text = overview.read_text(encoding="utf-8")
         except OSError as exc:
-            problems.append(f"{overview}: unreadable ({exc}) — fail closed")
-            continue
-        if heading_present(text):
-            continue
-        message = (
-            f"{overview}: no ## Contracts and Decisions heading — the spec gate's CONTEXT block can "
-            f"never carry this feature's contracts, so `contradiction` is checked only against the "
-            f"prior phase's card, for every spec this feature ever gates. Add the heading (see "
-            f"docs/templates/overview.template.md)."
-        )
-        if enforce_all or overview.resolve() in (scope or set()):
+            message = (
+                f"{feature}: no readable overview.md ({exc}) — the spec gate's CONTEXT block can "
+                f"never carry this feature's contracts without one, so `contradiction` is checked "
+                f"only against the prior phase's card, for every spec this feature ever gates. If "
+                f"this feature genuinely has none yet, that belongs on a recorded exception, never "
+                f"a silent pass."
+            )
+        else:
+            state = contracts(text)
+            if not state.heading:
+                message = (
+                    f"{overview}: no ## Contracts and Decisions heading — the spec gate's CONTEXT "
+                    f"block can never carry this feature's contracts, so `contradiction` is checked "
+                    f"only against the prior phase's card, for every spec this feature ever gates. "
+                    f"Add the heading (see docs/templates/overview.template.md)."
+                )
+            elif state.boilerplate:
+                message = (
+                    f"{overview}: ## Contracts and Decisions holds only boilerplate (an HTML "
+                    f"comment, e.g. the unfilled template) — nothing a spec could contradict, the "
+                    f"same gap as a missing heading."
+                )
+            else:
+                continue
+
+        if in_scope:
             problems.append(message)
         else:
             unenforced += 1
@@ -337,7 +423,7 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     report_unenforced(
         "spec_gate_context",
         unenforced,
-        "missing the ## Contracts and Decisions heading - checked when that overview is next "
+        "with no usable ## Contracts and Decisions content - checked when that feature is next "
         "touched, and `check --all` audits them now",
     )
     return problems

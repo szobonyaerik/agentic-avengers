@@ -49,13 +49,18 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    Everything else is a **note**; notes never block and land in `spec-notes.md`. The observe pass is
    given a `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) — the overview's
    `## Contracts and Decisions` section and the immediately prior phase's contract card, and nothing
-   else — because half of `contradiction` is a contract those declare. Absent context is normal and
-   never fails the gate, but **an `overview.md` with no `## Contracts and Decisions` heading at all
-   is DEGRADED, not absent**: the reader can never find that feature's contracts, for every spec it
-   ever gates. `spec_gate_context.py` exits **3** for it and `hook_spec_gate.sh` folds a
-   `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code — still
-   not a gate failure, no longer a clean-looking pass. `spec_gate_context.py check [--all]` finds
-   every overview missing the heading, runs from `gate_ci.sh`, and is diff-scoped (3e).
+   else — because half of `contradiction` is a contract those declare. Absent context (heading
+   present, genuinely nothing under it yet) is normal and never fails the gate, but **three shapes
+   are DEGRADED, not absent**: no `## Contracts and Decisions` heading at all; a heading whose
+   section is only boilerplate (an HTML comment — the unfilled template ships one under this exact
+   heading, so the emptiness test strips comments before judging a section empty); or `overview.md`
+   missing/unreadable outright (a legitimate "none yet" is a recorded exception, never an invented
+   silent pass). Any of the three means the reader can never find that feature's contracts, for
+   every spec it ever gates. `spec_gate_context.py` exits **3** for any of them and `hook_spec_gate.sh`
+   folds a `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code —
+   still not a gate failure, no longer a clean-looking pass. `spec_gate_context.py check [--all]`
+   walks every feature directory (not just existing overview files, since a missing one can never be
+   a changed path) for the same three shapes, runs from `gate_ci.sh`, and is diff-scoped (3e).
 3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and
