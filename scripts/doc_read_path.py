@@ -68,6 +68,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # module for it: a second copy of a rule is the copy that goes blind.
 from applicability import changed_paths, report_unenforced  # noqa: E402,F401  (re-exported)
 
+# `applicability.py` WRITES the `readers` key into every exception ledger from its own list, so the
+# list it emits and the list this table declares must be one list. Two copies is how a ledger ships
+# declaring readers that are no longer its readers, with nothing to catch it: the check below asserts
+# the key is present, never that it names the truth.
+from applicability import READERS as APPLICABILITY_READERS  # noqa: E402
+
 # `breaker_gate.py` REFUSES a record that declares no readers, so the list it enforces and the list
 # this table declares must be one list. Two copies is how a record passes the gate that closes the
 # phase and fails the gate that reads it a commit later.
@@ -159,11 +165,7 @@ READ_PATH: dict[str, dict] = {
     "exceptions.json": {
         "written_by": "orchestrator / captain (scripts/applicability.py)",
         "emitted_by": "docs/templates/exceptions.template.json",
-        "readers": [
-            "pipeline_state.py @ per phase, resolving the next stage",
-            "requirement_cap.py @ per spec write",
-            "phase-handover @ per phase",
-        ],
+        "readers": list(APPLICABILITY_READERS),
         "extent": "whole",
         # A disclosed exception to ONE mechanical rule, for ONE subject. Small by construction — a
         # rule, a subject, who recorded it and why — and it is what lets a phase closed under a

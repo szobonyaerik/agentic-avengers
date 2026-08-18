@@ -292,6 +292,17 @@ Three consequences worth stating outright:
     under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer repo's CI over
     locked phases nobody touched; when git cannot say what changed, nothing is enforced and the check
     says so out loud rather than falling back to enforcing everything.
+  - **A stale gate stamp has two remedies, and both of them clear the check.** Write the spec again
+    to re-gate it, or record a disclosed `spec-gate` exception for that spec
+    (`applicability.py record <phase-dir> --rule spec-gate --subject <n>.<k>-<subslug>
+    --reason-file <f>`), which `verifier_precheck.py` reads as the **excepted** evidence of the
+    applicability boundary below and reports as unenforced instead of blocking. The exception is the remedy that survives **the gate provider
+    being down** — recording one makes no gate call at all, so it is reachable in exactly the
+    circumstance re-gating is not. An **amendment is not a remedy here** and is deliberately not
+    named as one: `amendments.py` re-verifies requirement ids at the Verifier and never touches the
+    spec-gate hash this check compares, so a phase that opened, closed and evidenced one still
+    reported UNGATED. A remedy that cannot clear its own check is worse than none — it sends a
+    worker in a circle before giving up.
   - **The loop is capped at 3 attempts, and route-backs are bundled.** **16 of 20 re-attempts were
     the Verifier routing back to itself.** One phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 —
     a gate disclosing a subset of what it could already see, one expensive round at a time.

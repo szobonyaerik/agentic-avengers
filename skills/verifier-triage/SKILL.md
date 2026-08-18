@@ -28,6 +28,12 @@ All of it was mechanically decidable, and `verifier_precheck.py` decides it on e
 reports something, say so and let it be fixed mechanically; do **not** turn it into a `verdict.json`
 finding and do not spend an attempt on it.
 
+A **stale gate stamp** is cleared by writing the spec again to re-gate it, or — when the gate
+provider cannot be reached, which is when re-gating is unavailable — by recording a disclosed
+`spec-gate` exception for that spec (`applicability.py record <phase-dir> --rule spec-gate --subject
+<n>.<k>-<subslug> --reason-file <f>`), which the pre-check reads. An **amendment does not clear it**:
+it re-verifies requirement ids here, and never touches the spec-gate hash the pre-check compares.
+
 **Three attempts, and route-backs are bundled.** 16 of 20 re-attempts were this stage routing back
 to itself. Raise everything you can see in one pass, with your uncertainty stated, rather than
 holding a finding for the next attempt. At the cap: carry the remainder as known-open in

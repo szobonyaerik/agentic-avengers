@@ -18,7 +18,9 @@
   "readers": [
     "pipeline_state.py @ per phase, resolving the next stage",
     "requirement_cap.py @ per spec write",
-    "phase-handover @ per phase"
+    "verifier_precheck.py @ per spec, resolving a stale spec-gate stamp",
+    "phase-handover @ per phase",
+    "breaker_gate.py @ per phase, resolving the Breaker obligation"
   ],
   "exceptions": [
     {
