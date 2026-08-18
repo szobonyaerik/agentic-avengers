@@ -340,7 +340,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 |---|---|---|
 | `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip) |
 | `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
-| `GATE_TRIAGE_MODEL` | `deepseek/deepseek-chat` | the spec gate's cheaper triage pass; must not be the author's family |
+| `GATE_TRIAGE_MODEL` | `GATE_MODEL` | the spec gate's cheaper triage pass; must not be the author's family. Unset, it now defaults to `GATE_MODEL` — the model the operator already configured and proved reachable — never to a hardcoded model on its own provider (issue #48) |
 | `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
 | `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
