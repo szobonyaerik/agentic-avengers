@@ -106,44 +106,47 @@ def contracts_section(text: str) -> str | None:
     That level rule is `md_section.slice_section`'s; what stays here is the policy - the heading line
     is carried into the block, and a section with nothing under it is no context at all.
     """
+    return contracts(text)[1]
+
+
+def contracts(text: str) -> tuple[bool, str | None]:
+    """(whether `## Contracts and Decisions` appears at all, what is under it or None).
+
+    ONE slice answers both questions, and this is the only place the slice arguments are written:
+    two calls with the same arguments are two things to keep in step, and one of them drifts.
+
+    The pair is what tells "no heading" and "heading with nothing under it yet" apart. Both send
+    nothing, so both are `None` on the right - but a heading that is simply not written yet is
+    normal, while its total absence from an `overview.md` that otherwise exists means this reader
+    can never find it, no matter how many phases pass. That distinction is what `degraded` in
+    `build()` is built on.
+    """
     found = slice_section(text, CONTRACTS_HEADING, min_level=2, allow_trailing=True)
     if found is None:
-        return None
-    return "".join(found).strip() or None
+        return False, None
+    return True, "".join(found).strip() or None
 
 
 def heading_present(text: str) -> bool:
-    """Whether `## Contracts and Decisions` appears at all, regardless of what is under it.
+    """Whether `## Contracts and Decisions` appears at all, regardless of what is under it."""
+    return contracts(text)[0]
 
-    `contracts_section` collapses "no heading" and "heading with an empty body" to the same `None` -
-    correctly, since neither carries anything to send. This is the one place those two are told
-    apart: a heading that is simply not written yet is normal, but its total absence from an
-    `overview.md` that otherwise exists means this reader can never find it, no matter how many
-    phases pass. That distinction is what `degraded` in `build()` is built on.
+
+def overview_state(feature_dir: Path) -> tuple[bool, str | None] | None:
+    """`contracts()` for the feature overview, or None when there is no readable `overview.md`.
+
+    One read of one file answers both halves of what `build()` needs. Reading it twice - once for
+    the section, once to ask whether the heading was there at all - is the same file opened twice
+    per spec gated, on the read path this module exists to hold the line on.
+
+    None is deliberately NOT `(False, None)`: an overview that does not exist has no heading missing
+    from it. That is a plain absence, which is normal here, and never the degraded state.
     """
-    return (
-        slice_section(text, CONTRACTS_HEADING, min_level=2, allow_trailing=True)
-        is not None
-    )
-
-
-def overview_contracts(feature_dir: Path) -> str | None:
-    """The feature overview's contracts section, or None when there is no overview or no section."""
     try:
         text = (feature_dir / "overview.md").read_text(encoding="utf-8")
     except OSError:
         return None
-    return contracts_section(text)
-
-
-def overview_heading_missing(feature_dir: Path) -> bool:
-    """True only when `overview.md` exists, is readable, and has no `## Contracts and Decisions`
-    heading anywhere - the state `build()` reports as `degraded`, never as a plain absence."""
-    try:
-        text = (feature_dir / "overview.md").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return not heading_present(text)
+    return contracts(text)
 
 
 class Card(NamedTuple):
@@ -228,13 +231,14 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
     parts: list[str] = []
     degraded = False
 
-    contracts = overview_contracts(feature_dir)
-    if contracts:
-        parts.append(contracts)
+    state = overview_state(feature_dir)
+    section = state[1] if state is not None else None
+    if section:
+        parts.append(section)
         notes.append(
             f"included: {feature_dir.name}/overview.md — ## Contracts and Decisions only"
         )
-    elif overview_heading_missing(feature_dir):
+    elif state is not None and not state[0]:
         degraded = True
         notes.append(
             f"DEGRADED: no ## Contracts and Decisions heading in {feature_dir.name}/overview.md — "

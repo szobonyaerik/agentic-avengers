@@ -50,7 +50,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    given a `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) — the overview's
    `## Contracts and Decisions` section and the immediately prior phase's contract card, and nothing
    else — because half of `contradiction` is a contract those declare. Absent context is normal and
-   never fails the gate.
+   never fails the gate, but **an `overview.md` with no `## Contracts and Decisions` heading at all
+   is DEGRADED, not absent**: the reader can never find that feature's contracts, for every spec it
+   ever gates. `spec_gate_context.py` exits **3** for it and `hook_spec_gate.sh` folds a
+   `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code — still
+   not a gate failure, no longer a clean-looking pass. `spec_gate_context.py check [--all]` finds
+   every overview missing the heading, runs from `gate_ci.sh`, and is diff-scoped (3e).
 3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and

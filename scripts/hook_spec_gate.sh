@@ -188,9 +188,10 @@ GERR="$(mktemp "${TMPDIR:-/tmp}/spec-gate-stderr.XXXXXX")"
 REPORT="$(mktemp "${TMPDIR:-/tmp}/spec-gate-report.XXXXXX")"
 CONTEXT="$(mktemp "${TMPDIR:-/tmp}/spec-gate-context.XXXXXX")"
 OBSERVE_IN="$(mktemp "${TMPDIR:-/tmp}/spec-gate-observe-in.XXXXXX")"
+REPORT_CTX="$(mktemp "${TMPDIR:-/tmp}/spec-gate-report-ctx.XXXXXX")"
 cleanup () {
   rm -f "$OBS" "$CLS" "$TRIAGE_IN" "$DECISION" "$GERR" "$REPORT" "$CONTEXT" "$OBSERVE_IN" \
-        ${BUNDLE:+"$BUNDLE"}
+        "$REPORT_CTX" ${BUNDLE:+"$BUNDLE"}
 }
 trap cleanup EXIT
 
@@ -318,13 +319,24 @@ python3 "$SD/spec_gate_triage.py" report "$DECISION" > "$REPORT" 2>/dev/null
 # stamps is read again later — on a replayed block, in a triage, by a human — and none of those
 # reads see the hook's own stderr. This is what makes the state "unmistakable" rather than merely
 # printed once: it is not a gate failure, but it also does not get to look like a clean pass.
+#
+# The fold itself must not fail the way it is fixing. A full or read-only TMPDIR makes the write or
+# the move fail, and a silent one leaves the persisted report indistinguishable from a clean pass —
+# the exact state this block exists to remove. So it goes through a temp file the EXIT trap already
+# owns, and a failure says so on stderr rather than being swallowed by `&&`.
 if [ "$CONTEXT_DEGRADED" -eq 1 ]; then
-  {
+  if {
     echo "CONTEXT DEGRADED: overview.md has no '## Contracts and Decisions' heading — contradiction"
     echo "was checked only against the prior phase's card, never this feature's own contracts."
     echo
     cat "$REPORT"
-  } > "$REPORT.ctx" && mv "$REPORT.ctx" "$REPORT"
+  } > "$REPORT_CTX" && mv "$REPORT_CTX" "$REPORT"; then
+    :
+  else
+    echo "spec-gate: could not fold the CONTEXT DEGRADED warning into the persisted report" >&2
+    echo "  (writing $REPORT_CTX or moving it over $REPORT failed — check TMPDIR). The stamped" >&2
+    echo "  report will NOT carry it, so the degraded state above is the only record of it." >&2
+  fi
 fi
 
 if [ "$decided" -eq 0 ]; then

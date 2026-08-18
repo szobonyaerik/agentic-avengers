@@ -26,6 +26,14 @@ from pathlib import Path
 
 import pytest
 
+# The helpers below spawn the real git binary, and they belong to no test function - the module-level
+# helper shape `scripts/subprocess_check.py` accepts a file-wide declaration for. Every phase-close
+# emission point asks git whether the phase LANDED, so a double would prove the double.
+pytestmark = pytest.mark.subprocess(
+    "record_phase_close's landing check asks the real git binary whether the phase directory is "
+    "committed, so these fixtures build real repositories"
+)
+
 #: A writer that records its argv and keeps just enough state for read-modify-write to work.
 DOUBLE = r'''#!/usr/bin/env python3
 import json, os, sys

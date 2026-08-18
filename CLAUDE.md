@@ -98,7 +98,25 @@ with the verdict taken out of the model's hands entirely:
    an oversized pre-rule handover is counted rather than blocked; a truncated card says so),
    never the whole overview and never `handover-archive.md`. Without it half of `contradiction` is
    undetectable, and a closed set of four with an unobservable member is three items and a claim;
-   absent context is normal, named on stderr, and never fails the gate.
+   absent context is normal, named on stderr, and never fails the gate. **Absent is not the same as
+   DEGRADED, and that distinction is the whole of issue #57**: an `overview.md` that exists but has
+   no `## Contracts and Decisions` heading *at all* is not "no contracts written yet" — it is this
+   reader never finding them, for every spec that feature will ever gate, and clickup-agents ran
+   eleven phases that way (its overview uses `## Interfaces & contracts` instead) while the gate
+   reported success. `build()` marks that case `degraded` and `main()` exits **3** for it — never 1
+   or 2, which mean something else on this gate — and `hook_spec_gate.sh` no longer discards that
+   exit code with `|| :`: it echoes it loudly **and folds a `CONTEXT DEGRADED` banner into the
+   persisted report**, the one stamped into `spec_gate_cache` on APPROVED and BLOCKED alike, because
+   nothing that reads a verdict later sees a hook's stderr. It still never fails the gate on its own
+   — the block is reference-only by design — but it can no longer look identical to a clean pass.
+   **The heading contract is checked mechanically, not just written down**: `spec_gate_context.py
+   check [--all]` finds every `docs/features/*/overview.md` missing the heading independent of any
+   spec being gated, wired into `gate_ci.sh` beside the read-path check and **diff-scoped** on the
+   same applicability boundary (§3a) — an overview this change did not touch is counted and named,
+   never blocked, which is what lets a repository full of pre-rule overviews adopt it. The remedy is
+   the heading `docs/templates/overview.template.md` already mandates; adding it to one project's
+   overview is **not** the fix, since that hides the symptom there and leaves the silent pass
+   available to every other project.
 2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation against
    the closed set. Its tie-break is the reverse of the old one: **when unsure, it is a note.**
 3. **Decide** (`scripts/spec_gate_triage.py`) — derives the verdict deterministically. **No model

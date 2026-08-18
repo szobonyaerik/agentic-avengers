@@ -12,6 +12,7 @@ Two properties matter as much as building the block at all, and both are cost:
   * an absent part is normal and never an error. Phase 1 has no prior card.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -326,6 +327,10 @@ def test_check_passes_an_overview_that_has_the_heading(feature: Path) -> None:
     assert problems == []
 
 
+@pytest.mark.subprocess(
+    "the subject IS the diff scope, which only the real git binary can answer: a stubbed "
+    "changed_paths would prove the stub, not the boundary this check runs on"
+)
 def test_check_is_diff_scoped_by_default(tmp_path: Path, monkeypatch) -> None:
     """Without --all, an overview the current change did not touch is COUNTED, never blocked - the
     same boundary every other check on this repo shares (scripts/applicability.py). Without this, a
@@ -336,9 +341,13 @@ def test_check_is_diff_scoped_by_default(tmp_path: Path, monkeypatch) -> None:
         "# Demo\n\n## Interfaces & contracts\n\nPUT /tokens.\n"
     )
 
-    import subprocess
-
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    # An identity, before the commit that needs one: a container with no global git config exits
+    # 128 with "Please tell me who you are", which errors this test instead of failing it.
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "test"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", "init", "--no-verify"], cwd=tmp_path, check=True
