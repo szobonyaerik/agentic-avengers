@@ -145,6 +145,24 @@ elif [ "$carried_rc" -ne 0 ]; then
   record_fail "carried-items:undecidable"
 fi
 
+# 1be) Breaker — a phase that declares criticality: critical does not close without a Breaker record
+#      (breaker.json). It was owed twice on one measured feature and ran neither time, with zero
+#      trace anywhere (issue #45): a stage that emits nothing is indistinguishable from one that never
+#      ran. Enforced here as well as in scripts/hook_verifier.sh, for the same reason the carried-items
+#      obligation is — a rule only an in-session hook applies stops existing the moment the phase is
+#      driven another way. DIFF-SCOPED even under --full, for the same reason carried-items is: this
+#      obligation lands on a phase directory tree every consumer repo already has on disk, and the
+#      in-session hook already holds it on the phase being CLOSED, which the diff touches by
+#      construction. `breaker_gate.py check --all` is there for anyone who wants the audit.
+echo "• breaker: a critical phase has a valid Breaker record"
+python3 "$SCRIPT_DIR/breaker_gate.py" check --root "$ROOT"
+breaker_rc=$?
+if [ "$breaker_rc" -eq 1 ]; then
+  record_fail "breaker"
+elif [ "$breaker_rc" -ne 0 ]; then
+  record_fail "breaker:undecidable"
+fi
+
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
 #      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY

@@ -25,6 +25,8 @@ pytestmark = pytest.mark.subprocess(
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import breaker_gate  # noqa: E402
+
 PASSING = {
     "verdict": "pass",
     "attempt": 3,
@@ -42,6 +44,24 @@ def project(tmp_path: Path) -> Path:
 
 def phase_dir(project: Path) -> Path:
     return project / "docs" / "features" / "demo" / "phases" / "1-demo"
+
+
+def write_spec(project: Path, spec: str = "1.1-a", *, criticality: str = "standard") -> None:
+    """A spec that also satisfies `verifier_precheck.py` (Acceptance criteria heading, a fresh gate
+    stamp, no untraced requirement ids) — that check is not what these tests are about, so it is
+    driven clean the same way `spec_gate_cache.py` itself would leave a spec after an approval."""
+    spec_dir = phase_dir(project) / "specs" / spec
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    path = spec_dir / "spec.md"
+    path.write_text(
+        f"---\nfeature: demo\nphase: 1-demo\nspec: {spec}\ncriticality: {criticality}\n---\n\n"
+        f"# Spec\n\n## Acceptance criteria\n\nDone.\n"
+    )
+    subprocess.run(
+        [sys.executable, str(project / "scripts" / "spec_gate_cache.py"), "stamp", str(path),
+         "gate", "APPROVED"],
+        check=True, capture_output=True,
+    )
 
 
 def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
@@ -251,3 +271,104 @@ def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(project: Pa
 
     assert "refused" in result.stderr
     assert "carries forward" not in result.stderr
+
+
+# ── the Breaker obligation (issue #45) ────────────────────────────────────────────────────────────
+#
+# All four phase-8 specs and all four phase-9 specs of one measured feature declared
+# `criticality: critical`, which is what routes the Breaker — and it was owed twice and ran neither
+# time, with zero trace of it anywhere in the feature's docs or tests. This drives the REAL hook, the
+# same discipline the attempt cap above holds itself to: a rule whose test passes against the
+# un-enforced hook is not a rule.
+
+
+def test_a_critical_phase_does_not_close_without_a_breaker_record(project: Path) -> None:
+    """The gap the issue describes, reproduced directly against the hook that is supposed to stop
+    it. Without the fix this phase closes silently — exactly what happened twice already."""
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "Breaker obligation is not met" in result.stderr
+    assert "breaker.json" in result.stderr
+
+
+def write_breaker(project: Path, data: dict) -> None:
+    """A record as the Breaker is instructed to write it, `readers` included - the hook must close
+    on the same record `doc_read_path.py` accepts, not one it refuses a commit later."""
+    record = {"readers": list(breaker_gate.READERS), **data}
+    (phase_dir(project) / "breaker.json").write_text(json.dumps(record))
+
+
+def test_a_valid_breaker_record_lets_a_critical_phase_close(project: Path) -> None:
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+    write_breaker(project, {"verdict": "clean", "attacked": ["replay", "auth bypass"]})
+
+    result = run_hook(project)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_breaker_record_declaring_no_readers_does_not_close_the_phase(project: Path) -> None:
+    """Reproduced against the real hook: a record without `readers` used to clear the close and
+    then fail `doc_read_path.py` on the very next commit - two gates disagreeing about one file."""
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+    (phase_dir(project) / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["replay"]})
+    )
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "declares no `readers`" in result.stderr
+
+
+def test_a_standard_phase_closes_with_no_breaker_record(project: Path) -> None:
+    write_spec(project, criticality="standard")
+    attempts(project, [(1, 0, "pass")])
+
+    assert run_hook(project).returncode == 0
+
+
+def test_an_undecidable_breaker_check_is_not_reported_as_a_breaker_that_never_ran(
+    project: Path,
+) -> None:
+    """`breaker_gate.py` separates OWED (exit 1) from an ERROR that could not DECIDE it (exit 2),
+    and `gate_ci.sh` honours the split. Collapsed here, the authoritative enforcement point would
+    answer an unreadable check with "run the Breaker, or waive it" - neither of which repairs it,
+    the same defect the attempt cap shipped once already.
+
+    The real script is defensive enough that exit 2 comes only from its catch-all, so the exit code
+    is forced at the dependency; what is under test is the hook's branching on it, and the hook is
+    the real one.
+    """
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+    (project / "scripts" / "breaker_gate.py").write_text(
+        "import sys\n"
+        "print('[breaker_gate] the check could not be decided: boom', file=sys.stderr)\n"
+        "raise SystemExit(2)\n"
+    )
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "could not be DECIDED" in result.stderr
+    assert "Breaker obligation is not met" not in result.stderr
+
+
+def test_the_breaker_gate_never_masks_a_failed_suite(project: Path) -> None:
+    """Runs inside the `pass` branch on purpose, same as the carried-items gate: a red suite must
+    stop the phase for its own reason, not a Breaker record it never got to check."""
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 6, "fail")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "route back per its findings" in result.stderr
+    assert "Breaker obligation" not in result.stderr

@@ -8,7 +8,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
 - Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
-- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `handover.md`, `handover-archive.md`)
+- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `breaker.json`, `handover.md`, `handover-archive.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
 ```yaml
@@ -109,8 +109,10 @@ with the verdict taken out of the model's hands entirely:
    the section empty, and only a section with visible non-comment content still counts); and
    `overview.md` **missing or unreadable outright** — a feature with no overview loses the same half
    of `contradiction` as a wrong heading, and there is no silent exemption for "hasn't written one
-   yet": that state is a fact for a *recorded exception* (§3a) to state, never something this reader
-   invents to stay green. The one absence that stays ordinary is a heading present with genuinely
+   yet". Not even a recorded exception (§3a) reaches it: that ledger records against a PHASE
+   directory, and a feature with no overview has no phase directory either — there is nowhere for
+   one to live at that point in the pipeline, so this reader does not special-case it. The one
+   absence that stays ordinary is a heading present with genuinely
    nothing under it — not even a comment — since that alone is indistinguishable from a feature
    early in planning. `build()` marks each degraded shape `degraded` and `main()` exits **3** for
    it — never 1 or 2, which mean something else on this gate — and `hook_spec_gate.sh` no longer
@@ -224,7 +226,7 @@ loud) · **shipped** (the artifact's own stamps say the pipeline is past it — 
 cannot split, and **a rule whose remedy is unavailable is not a gate, it is a wedge**) · **excepted**
 (a disclosed exception on the phase's ledger, `exceptions.json` beside `verdict.json`).
 
-The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each one read
+The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`, each one read
 by a named call site — and a rule outside it is a hard failure naming what was invented, never a silent
 no-op: a ledger entry nothing reads is an exception that does not exist. An exception is **narrow**
 (one rule, one subject, one phase), **audited or not recorded** (through `bypass_log.sh` into
@@ -321,6 +323,19 @@ per §6's rule that a stop names which.
 
 The **Breaker stays separate** and is never folded into verification: it found phase 8's credential
 leaks by *constructing inputs*, which is a different instrument from reading a test set.
+
+**And it now leaves a record, because a stage that emits nothing is indistinguishable from one that
+never ran.** Every phase-8 and phase-9 spec of one measured feature declared `criticality: critical`,
+which is what routes the Breaker; it was owed twice, ran neither time, and left zero trace anywhere in
+that feature's docs or tests, because nothing checked. `scripts/breaker_gate.py` closes that: a phase
+owing a Breaker run does not reach handover without a valid `breaker.json` beside `verdict.json` — a
+`clean` verdict naming what it **attacked**, or a `found` verdict naming its **counterexample**, since
+a vacuous record is refused exactly like a missing one. **`hook_verifier.sh` is the authoritative
+point** (the handover write, unconditional); `gate_ci.sh` is a diff-scoped backstop and
+`pipeline_state.py` is routing, reporting `stage: breaker` so `/avenger-run` acts on the obligation
+rather than a human remembering it. Asked only while the phase is still OPEN (§3a), waivable only
+through the disclosed-exception ledger, `--rule breaker`. Full statement in
+`skills/pipeline-conventions`.
 
 ### 4d. Amendments — change a verified phase without re-verifying all of it
 The pipeline had no concept of a correction, so any change to a verified phase re-opened the whole
@@ -439,8 +454,12 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
   card is in force is `spec_gate_context.prior_phase`'s decision, imported rather than re-derived:
   this ledger and the spec gate's CONTEXT block must not disagree about which phase came before.
 - The ledger (`carried.json`, beside `verdict.json` in the phase that **acted**) refuses an id the
-  prior card never declared, and a corrupt ledger is an error rather than an empty one. **A pre-rule
-  card with no section owes nothing**, and the CI sweep is **diff-scoped even under `--full`**
+  prior card never declared, and a corrupt ledger is an error rather than an empty one. **A prior
+  card's section has three states**: an explicit `none` proceeds, **no section at all owes nothing**,
+  and a section **present but declaring neither an item nor an explicit `none`** fails closed (exit
+  2, undecidable) because what the phase inherits cannot be determined - phase 9's bullet rows, and a
+  card left on the template's placeholder rows, are both that state, and the remedy is to rewrite the
+  prior card's section as the documented table. The CI sweep is **diff-scoped even under `--full`**
   (deliberately unlike `verifier_precheck`), because this obligation lands on a document class every
   consumer repo already has on disk - a full audit would fail its CI over cards written before the
   rule existed. Nothing is lost: the hook holds the phase being *closed*, which the diff touches by

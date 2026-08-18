@@ -43,9 +43,11 @@ There are three exceptions, and all three are `degraded=True`:
   contradict; treating that as "included" is the same defect wearing the shape every project that
   starts from the template actually has.
 - `overview.md` missing or unreadable outright. A feature with no overview yet loses the same half
-  of `contradiction` as one with the wrong heading, and there is no such thing as a legitimate
-  silent exemption for it here - a feature that genuinely has none yet is a fact for a recorded
-  exception to state, never a reason for this reader to report success over zero contracts.
+  of `contradiction` as one with the wrong heading, and there is no silent exemption for it here.
+  This one has no ledger to fall back on either: `applicability.excepted` records against a PHASE
+  directory, and a feature with no overview yet has no phase directory - there is nowhere for a
+  recorded exception to live at that point in the pipeline. So this reader does not special-case it;
+  it reports the same degraded state a broken overview would, for as long as the overview is missing.
 
 Any of the three means `contradiction` - one of the four things that BLOCK a spec - can only ever be
 checked against the prior phase's card, never against the feature's own contracts, and every spec in
@@ -279,8 +281,9 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
         notes.append(
             f"DEGRADED: no readable overview.md in {feature_dir.name} — contradiction can only be "
             f"checked against the prior phase's card, never this feature's own contracts, for "
-            f"EVERY spec in this feature. A feature genuinely without one yet is a fact for a "
-            f"recorded exception to state, never a reason to report success over zero contracts."
+            f"EVERY spec in this feature, for as long as the overview stays missing. There is no "
+            f"exemption for a feature that genuinely has none yet: write overview.md before writing "
+            f"specs, or accept the degraded gate until you do."
         )
     elif state.body:
         parts.append(state.body)
@@ -394,9 +397,9 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
             message = (
                 f"{feature}: no readable overview.md ({exc}) — the spec gate's CONTEXT block can "
                 f"never carry this feature's contracts without one, so `contradiction` is checked "
-                f"only against the prior phase's card, for every spec this feature ever gates. If "
-                f"this feature genuinely has none yet, that belongs on a recorded exception, never "
-                f"a silent pass."
+                f"only against the prior phase's card, for every spec this feature ever gates, "
+                f"until overview.md exists. There is no exemption for it: this feature has no phase "
+                f"directory yet either, so there is nowhere for a recorded exception to live."
             )
         else:
             state = contracts(text)

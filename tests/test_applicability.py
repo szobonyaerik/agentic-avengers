@@ -283,7 +283,35 @@ def test_the_rule_set_is_the_one_the_ledger_validates_against():
         "spec-review",
         "verdict",
         "requirement-cap",
+        "breaker",
     }
+
+
+def test_every_script_that_reads_the_ledger_is_declared_a_reader():
+    """A reader that is not declared is a `readers:` key that is already wrong, and nothing else
+    catches it: the read-path check asserts the key exists, never that it names the real readers.
+    Derived from the call sites rather than listed, so a new reader is red here on the commit that
+    adds it instead of shipping a ledger that under-declares who reads it."""
+    scripts_dir = Path(applicability.__file__).parent
+    declared = " ".join(applicability.READERS)
+    for source in sorted(scripts_dir.glob("*.py")):
+        if source.name == "applicability.py":
+            continue
+        text = source.read_text(encoding="utf-8")
+        reads_ledger = "applicability.excepted(" in text or (
+            "excepted," in text and "from applicability import" in text
+        )
+        if reads_ledger:
+            assert source.name in declared, (
+                f"{source.name} reads exceptions.json but is not in applicability.READERS"
+            )
+
+
+def test_the_template_declares_the_same_readers_the_writer_emits():
+    """The template is what a reader opens to learn the record's shape; a stale copy there teaches
+    a set of readers no ledger on disk has carried since."""
+    template = Path(applicability.__file__).parents[1] / "docs/templates/exceptions.template.json"
+    assert json.loads(template.read_text(encoding="utf-8"))["readers"] == applicability.READERS
 
 
 def test_load_of_a_ledger_that_is_not_a_ledger(tmp_path):

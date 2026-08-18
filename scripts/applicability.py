@@ -85,11 +85,13 @@ FILENAME = "exceptions.json"
 #: hard error naming what was invented — the same discipline `spec_gate_triage.BLOCKING` runs on, and
 #: for the same reason: guessing either way corrupts the record.
 #:
-#: **Every entry here is read by a named call site** — the first three by `pipeline_state.py`, the
-#: fourth by `requirement_cap.py`. That is the same rule this module states about a ledger entry: one
-#: nothing reads is an exception that does not exist, and it would be discovered as a phase wedged on
-#: a rule someone believed was waived. So a fifth entry is a deliberate edit here **together with the
-#: call site that reads it**, never ahead of one. The cost gate is deliberately absent: it needs the
+#: **Every entry here is read by a named call site** — `spec-gate` by `pipeline_state.py` and by
+#: `verifier_precheck.py` (the stale-stamp check — the only remedy that clears it without a live gate
+#: provider), `spec-review` and `verdict` by `pipeline_state.py`, `requirement-cap` by
+#: `requirement_cap.py`. That is the same rule this module states about a ledger entry: one nothing
+#: reads is an exception that does not exist, and it would be discovered as a phase wedged on a rule
+#: someone believed was waived. So a fifth entry is a deliberate edit here **together with the call
+#: site that reads it**, never ahead of one. The cost gate is deliberately absent: it needs the
 #: *untouched* evidence, not this one, and a rule nothing consults would be a promise with no
 #: mechanism behind it.
 RULES: dict[str, str] = {
@@ -97,15 +99,21 @@ RULES: dict[str, str] = {
     "spec-review": "the human spec-review sign-off on a spec",
     "verdict": "the Verifier's passing verdict for a phase",
     "requirement-cap": "the requirement cap's split trigger on a spec",
+    "breaker": "a Breaker record owed by a phase that declares criticality: critical",
 }
 
 #: Every document the read-path table governs declares who reads it, in the document. JSON has no
 #: frontmatter, so it is a top-level key — written here, by the only writer, because declaring a
 #: reader in `scripts/doc_read_path.py` is not the same as instructing anyone to emit it.
+#: `doc_read_path.READ_PATH["exceptions.json"]` reads this list rather than keeping a second copy: a
+#: reader named in one place and not the other is a declaration that is already wrong, and nothing
+#: catches it — the read-path check verifies the key is present, never that it names the real readers.
 READERS = [
     "pipeline_state.py @ per phase, resolving the next stage",
     "requirement_cap.py @ per spec write",
+    "verifier_precheck.py @ per spec, resolving a stale spec-gate stamp",
     "phase-handover @ per phase",
+    "breaker_gate.py @ per phase, resolving the Breaker obligation",
 ]
 
 
@@ -233,7 +241,11 @@ def load(phase_dir: Path) -> dict:
     """
     target = path_for(phase_dir)
     if not target.is_file():
-        return {"phase": Path(phase_dir).name, "readers": list(READERS), "exceptions": []}
+        return {
+            "phase": Path(phase_dir).name,
+            "readers": list(READERS),
+            "exceptions": [],
+        }
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -242,7 +254,9 @@ def load(phase_dir: Path) -> dict:
         raise ApplicabilityError(f"{target} is not an exception ledger")
     for entry in data["exceptions"]:
         if not isinstance(entry, dict):
-            raise ApplicabilityError(f"{target} holds an entry that is not an exception record")
+            raise ApplicabilityError(
+                f"{target} holds an entry that is not an exception record"
+            )
         rule = entry.get("rule")
         if rule not in RULES:
             raise ApplicabilityError(
@@ -325,7 +339,9 @@ def _audit(phase_dir: Path, record: Exception_) -> None:
             check=False,
         )
     except OSError as exc:
-        raise ApplicabilityError(f"cannot audit this exception ({exc}); nothing was recorded") from exc
+        raise ApplicabilityError(
+            f"cannot audit this exception ({exc}); nothing was recorded"
+        ) from exc
     if proc.returncode != 0:
         raise ApplicabilityError(
             f"the override log refused this exception ({proc.stderr.strip()}); nothing was recorded"
@@ -408,7 +424,9 @@ def main(argv: list[str] | None = None) -> int:
     p_record = sub.add_parser("record", help="record one disclosed exception")
     p_record.add_argument("phase_dir", type=Path)
     p_record.add_argument("--rule", required=True, choices=sorted(RULES))
-    p_record.add_argument("--subject", required=True, help="the spec directory name, or the phase")
+    p_record.add_argument(
+        "--subject", required=True, help="the spec directory name, or the phase"
+    )
     p_record.add_argument(
         "--reason-file",
         required=True,
@@ -416,7 +434,9 @@ def main(argv: list[str] | None = None) -> int:
         "belongs in a file the command reads — never on a command line, where the auto-approve "
         "hook matches its deny regex against the whole command string.",
     )
-    p_record.add_argument("--recorded-by", default="", help="who decided it (default: git user)")
+    p_record.add_argument(
+        "--recorded-by", default="", help="who decided it (default: git user)"
+    )
 
     p_list = sub.add_parser("list", help="every exception on this phase's ledger")
     p_list.add_argument("phase_dir", type=Path)
@@ -440,10 +460,15 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 reason = Path(args.reason_file).read_text(encoding="utf-8")
             except OSError as exc:
-                print(f"[applicability] cannot read the reason file: {exc}", file=sys.stderr)
+                print(
+                    f"[applicability] cannot read the reason file: {exc}",
+                    file=sys.stderr,
+                )
                 return ERROR
             who = args.recorded_by or _git_user(args.phase_dir)
-            record = record_exception(args.phase_dir, args.rule, args.subject, reason, who)
+            record = record_exception(
+                args.phase_dir, args.rule, args.subject, reason, who
+            )
             print(record.id)
             return OK
 
@@ -468,8 +493,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _git_user(phase_dir: Path) -> str:
-    lines = _git(Path(phase_dir) if Path(phase_dir).is_dir() else Path.cwd(),
-                 "config", "user.email")
+    lines = _git(
+        Path(phase_dir) if Path(phase_dir).is_dir() else Path.cwd(),
+        "config",
+        "user.email",
+    )
     return lines[0] if lines else "unknown"
 
 

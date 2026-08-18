@@ -5,9 +5,10 @@
     "It is the third evidence of the applicability boundary (untouched | shipped | excepted): a",
     "phase closed with a recorded exception is CLOSED, not incomplete, so the stage resolver can",
     "move past it without anyone stamping a sign-off nobody gave.",
-    "The rule set is CLOSED - spec-gate, spec-review, verdict, requirement-cap - and every one of",
-    "them is read by a named call site, because a ledger entry nothing reads is an exception that",
-    "does not exist. A rule outside it is a hard error naming what was invented, never a no-op.",
+    "The rule set is CLOSED and every one of them is read by a named call site, because a ledger",
+    "entry nothing reads is an exception that does not exist. A rule outside it is a hard error",
+    "naming what was invented, never a no-op. `applicability.py rules` prints the set - it is",
+    "applicability.RULES that decides, and a second copy here is the copy that goes stale.",
     "Every exception is logged to gate-overrides.log through scripts/bypass_log.sh as it is",
     "recorded; one that could not be logged is not recorded at all.",
     "Do not hand-edit: `applicability.py record` owns this file, and `applicability.py check` is",
@@ -17,7 +18,9 @@
   "readers": [
     "pipeline_state.py @ per phase, resolving the next stage",
     "requirement_cap.py @ per spec write",
-    "phase-handover @ per phase"
+    "verifier_precheck.py @ per spec, resolving a stale spec-gate stamp",
+    "phase-handover @ per phase",
+    "breaker_gate.py @ per phase, resolving the Breaker obligation"
   ],
   "exceptions": [
     {

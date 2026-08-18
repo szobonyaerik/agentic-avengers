@@ -54,8 +54,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    are DEGRADED, not absent**: no `## Contracts and Decisions` heading at all; a heading whose
    section is only boilerplate (an HTML comment — the unfilled template ships one under this exact
    heading, so the emptiness test strips comments before judging a section empty); or `overview.md`
-   missing/unreadable outright (a legitimate "none yet" is a recorded exception, never an invented
-   silent pass). Any of the three means the reader can never find that feature's contracts, for
+   missing/unreadable outright (no exemption for a legitimate "none yet" - a recorded exception
+   records against a phase directory, and this feature has none yet either, so there is nowhere for
+   one to live). Any of the three means the reader can never find that feature's contracts, for
    every spec it ever gates. `spec_gate_context.py` exits **3** for any of them and `hook_spec_gate.sh`
    folds a `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code —
    carrying the builder's own per-shape cause line, since a record naming the wrong one of the three
@@ -107,8 +108,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    scope enforces nothing and says so), **shipped** (`status: done` in the spec's frontmatter, read
    through `spec_gate_state` like every other stamp — the remedy no longer exists, and
    a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
-   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
-   named call site — and an unknown rule is a hard failure naming what was invented. Every exception
+   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
+   `breaker`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
    all, and named on stderr when it applies — and `bypass_log.sh` **exits 2 (blocking) when it
    cannot append**, so an override nobody could log is not an override. **A phase closed with a recorded
@@ -116,6 +117,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    forever. `pipeline_state.py --from-phase <n>` steps over earlier phases for one invocation and
    answers **nothing feature-wide** over them: with any phase skipped the stage is `unknown`, never
    `done` or `e2e-author`.
+3h. **The Breaker obligation — a critical phase does not close without a record.** All four phase-8
+   specs and all four phase-9 specs of one measured feature declared `criticality: critical`, which
+   routes the Breaker; it was owed twice and ran neither time, with zero trace anywhere in that
+   feature's docs or tests, because nothing checked for it. `scripts/breaker_gate.py` closes that: a
+   phase owing a Breaker run does not close without a valid `breaker.json` beside `verdict.json` (a
+   `clean` verdict naming what it attacked, or a `found` verdict naming its counterexample — a vacuous
+   record is refused the same as a missing one). Enforced by `hook_verifier.sh` and `gate_ci.sh`
+   (diff-scoped, `check --all` audits) and reported by `pipeline_state.py` as `stage: breaker`, and
+   waivable only through the same disclosed-exception ledger as every other rule here.
 3c. **Amendments — change a verified phase without re-verifying all of it.**
    `scripts/amendments.py` records the requirement ids a post-verification change touched; **only
    those re-verify**, and the verdict reads *verified at attempt N, plus amendments A1..An*
@@ -142,7 +152,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    carries no `#<number>` or issue URL - a presence check, never a judgement about the claim.
    Ids are scoped by the card that declared them; which card is in force is
    `spec_gate_context.prior_phase`'s decision, imported rather than re-derived. A pre-rule card with
-   no section owes nothing, so a repository upgrades instead of being held hostage.
+   no section owes nothing, so a repository upgrades instead of being held hostage - but a section
+   that is present and declares neither an item nor an explicit `none` is undecidable, not empty, and
+   fails closed (exit 2) until the prior card is rewritten as the documented table.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
    What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
    restated in a table — a second statement of a fact is what every promise-versus-enforcement gap
@@ -293,6 +305,9 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 # once all specs in the phase are green:
 @avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
                                           # -> writes verdict.json; on pass the phase's tests LOCK
+@avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
+                                          # then NOT optional: -> writes breaker.json, without which
+                                          # the handover below is refused (see 3h)
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md
 # once the FINAL phase of the feature is green:
 @avenger-backend-architect --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/

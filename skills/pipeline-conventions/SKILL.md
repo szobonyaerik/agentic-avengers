@@ -17,7 +17,7 @@ for these rules; `/pipeline-init` can also copy them into a target repo's own CL
 ## The chain
 
 `task-analyst → solution-architect → implementation-planner → spec-writer → [spec gate] →
-[human spec review] → backend/frontend implementer → verifier → (breaker, optional) → handover`,
+[human spec review] → backend/frontend implementer → verifier → (breaker, on a critical phase) → handover`,
 looped per phase until the feature is done, then a single feature-level **e2e** stage, then the
 **ship gate** (`no-mistakes`: lint, docs, push, PR, CI), and finally the **retrospective triage**
 (`pipeline-retrospective`). The retrospective runs last on purpose — a defect the ship gate caught
@@ -46,6 +46,7 @@ The implementer authors **both tests and code** test-first (there is no separate
         test-evidence.md          # mutation evidence, route-back history, build order, deviations
       verdict.json                # the Verifier's persisted verdict for the phase
       verdict-attempt-<n>.json    # a superseded attempt, archived out of verdict.json
+      breaker.json                # the Breaker's record — only on a phase declaring criticality: critical
       handover.md                 # the phase's CONTRACT CARD, written after the Verifier passes
       handover-archive.md         # everything the card does not carry
   tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/...
@@ -82,6 +83,7 @@ deleted to fix this; the read directives changed.
 | `test-evidence.md` | **on route-back only** | whole |
 | `verdict.json` | phase-handover, feature close | whole; `report` ≤ 1500 chars |
 | `verdict-attempt-<n>.json` | **nobody** — archive | — |
+| `breaker.json` | `breaker_gate.py` at phase close (`hook_verifier.sh`, `gate_ci.sh`); `pipeline_state.py` resolving the next stage | whole |
 | `handover.md` | the Spec Writer (prior cards), the spec gate and the human spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
 | `handover-archive.md` | **nobody** — archive | — |
 | `pipeline-observations.md` | the retrospective triage, once at feature close; the preflight sweep, frontmatter only | whole |
@@ -204,9 +206,11 @@ Three consequences worth stating outright:
      — an HTML comment, which is exactly what `docs/templates/overview.template.md` ships under this
      heading, so a freshly-templated overview that nobody has filled in yet LOOKS included and
      contradicts nothing; and `overview.md` **missing or unreadable outright**, which loses the same
-     half of `contradiction` and has no silent exemption — a feature that genuinely has none yet
-     belongs on a recorded exception (§3a), never on this reader inventing one to stay green. The one
-     absence that stays ordinary: the heading present with nothing under it, not even a comment — a
+     half of `contradiction` and has no silent exemption. Not even a recorded exception (§3a) reaches
+     it: that ledger records against a PHASE directory, and a feature with no overview has no phase
+     directory either, so there is nowhere for one to live at that point in the pipeline — this
+     reader does not invent an exemption to stay green. The one absence that stays ordinary: the
+     heading present with nothing under it, not even a comment — a
      feature early in planning, ordinary because it cannot be mistaken for "filled in."
      `build()` marks each degraded shape `degraded` and `main()` exits **3** — never 1 or 2, which
      mean something else here — and `hook_spec_gate.sh` does not discard that exit code with `|| :`.
@@ -328,6 +332,17 @@ Three consequences worth stating outright:
     under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer repo's CI over
     locked phases nobody touched; when git cannot say what changed, nothing is enforced and the check
     says so out loud rather than falling back to enforcing everything.
+  - **A stale gate stamp has two remedies, and both of them clear the check.** Write the spec again
+    to re-gate it, or record a disclosed `spec-gate` exception for that spec
+    (`applicability.py record <phase-dir> --rule spec-gate --subject <n>.<k>-<subslug>
+    --reason-file <f>`), which `verifier_precheck.py` reads as the **excepted** evidence of the
+    applicability boundary below and reports as unenforced instead of blocking. The exception is the remedy that survives **the gate provider
+    being down** — recording one makes no gate call at all, so it is reachable in exactly the
+    circumstance re-gating is not. An **amendment is not a remedy here** and is deliberately not
+    named as one: `amendments.py` re-verifies requirement ids at the Verifier and never touches the
+    spec-gate hash this check compares, so a phase that opened, closed and evidenced one still
+    reported UNGATED. A remedy that cannot clear its own check is worse than none — it sends a
+    worker in a circle before giving up.
   - **The loop is capped at 3 attempts, and route-backs are bundled.** **16 of 20 re-attempts were
     the Verifier routing back to itself.** One phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 —
     a gate disclosing a subset of what it could already see, one expensive round at a time.
@@ -362,7 +377,34 @@ Three consequences worth stating outright:
   was caught by mutation** — including two in one phase that neither spec gate nor a green 281-test
   suite surfaced. Advisory never blocks, so the cost of the default being wrong is a line of output.
   It is still **not** the independence mechanism — the Verifier's test-quality review is.
-- **Breaker** — critical/security paths only, optional.
+- **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
+  spec in the phase declares `criticality: critical`). Not optional in practice: it was owed on
+  every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that
+  feature's docs or tests, because nothing checked for it (issue #45). It now persists `breaker.json`
+  beside `verdict.json`, and a critical phase does not close without a valid one
+  (`scripts/breaker_gate.py`). **A stage that emits nothing is indistinguishable from a stage that
+  never ran**, which is why the record — not the run — is what is checked.
+  - **Valid means non-vacuous.** A `clean` verdict must name what it **attacked**; a `found` verdict
+    must name its **counterexample**. Either one empty is refused exactly like a missing record,
+    because *"a clean report with no attempts described is not acceptable"* was already the agent's
+    own written instruction and this is what makes it checkable. The record also declares `readers`,
+    as a top-level key since JSON has no frontmatter — the same declaration the read path requires of
+    every document it governs, asked here so the record that closes a phase is the record
+    `doc_read_path.py` accepts on the next commit.
+  - **Three call sites, deliberately unequal.** `scripts/hook_verifier.sh` is **authoritative** — it
+    fires on the `handover.md` write, unconditionally, and is the only point that catches the
+    omission before a human or an unattended run believes the phase is done. `scripts/gate_ci.sh` is
+    a **backstop**, diff-scoped for the same reason the carried-items sweep is: the obligation lands
+    on a phase directory tree every consumer repo already has on disk, and the hook already holds the
+    phase being closed (`breaker_gate.py check --all` is the audit). `scripts/pipeline_state.py` is
+    **routing** — it reports `stage: breaker` so the orchestrator acts on the obligation instead of a
+    human remembering to; it is not the enforcement, which is what makes a caller ignoring it
+    harmless.
+  - **Asked only while the phase is still OPEN** (see *The applicability boundary*): before
+    `handover.md` exists. A phase that already handed over carries no record and is counted, never
+    re-opened — asked any earlier, the resolver parked on shipped phases and `--auto` could not
+    reach the phase in flight. Waivable only through the same disclosed-exception ledger as every
+    other rule here, `--rule breaker`.
 - **Feature-level e2e** — once, after the final phase is green (see below).
 - **Phase review gate (per phase, `no-mistakes`, review-only)** — after each handover,
   `no-mistakes axi run --skip=push,pr,ci`. The Verifier reads **tests**; this reads the rest of the
@@ -439,12 +481,13 @@ python3 scripts/applicability.py list <phase-dir>
 python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-clickup-client
 ```
 
-- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap` — and every
-  one of them is read by a named call site. A rule outside it is a hard error naming what was invented, never a silent
-  no-op: a ledger entry nothing reads is an exception that does not exist, and it would surface as a
-  phase wedged on a rule everybody believed was waived. A fifth is a deliberate edit to
-  `applicability.RULES` together with the call site that reads it — `subprocess-cost` was dropped
-  from the set for exactly that reason: the cost gate uses the *untouched* evidence, not this one.
+- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker` —
+  and every one of them is read by a named call site. A rule outside it is a hard error naming what
+  was invented, never a silent no-op: a ledger entry nothing reads is an exception that does not
+  exist, and it would surface as a phase wedged on a rule everybody believed was waived. A sixth is a
+  deliberate edit to `applicability.RULES` together with the call site that reads it —
+  `subprocess-cost` was dropped from the set for exactly that reason: the cost gate uses the
+  *untouched* evidence, not this one.
 - **An exception is narrow.** One rule, one subject, one phase. It is not `GATE_BYPASS`: a
   break-glass waives one gate call in one session, an exception is durable state about work that has
   shipped.
@@ -556,10 +599,20 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
 - The ledger (`carried.json`, beside `verdict.json` in the phase that **acted**) refuses an id the
   prior card never declared - a typo would otherwise record an answer to a question nobody asked
   while the real item stayed owed - and a corrupt ledger is an error, never an empty one.
-- **A pre-rule card with no section owes nothing**, so a repository upgrades instead of being held
-  hostage by history it never touched. The CI sweep (`carried_items.py check`) is **diff-scoped even
-  under `--full`**, deliberately unlike `verifier_precheck`: this obligation lands on a document
-  class every consumer repo already has on disk, so a full audit would fail its CI over cards written
+- **A prior card's section has THREE states, not two.** An explicit `none` means nothing is carried
+  and the phase proceeds. **No section at all owes nothing** - a repository upgrades instead of being
+  held hostage by history it never touched. A section that is **present and declares neither an item
+  nor an explicit `none`** is neither of those and **fails closed** (exit 2, undecidable, not exit 1):
+  what the phase inherits cannot be determined, which is the state phase 9's bullet rows under an
+  `### Open items` heading were read as "nothing carried" in, and a card left holding the template's
+  own unfilled placeholder rows is the same state. The remedy is on the **prior** card - rewrite its
+  section as the documented table, a row per item or an explicit `none` row. The parser is
+  deliberately not widened to accept a second row shape: a closed set with a loud, specific refusal,
+  never silent inference of a new shape.
+- The CI sweep catches that undecidable prior card **per phase**, so one card does not abort the scan
+  of the rest; a corrupt `carried.json` is a different failure and still propagates as exit 2.
+- The CI sweep (`carried_items.py check`) is **diff-scoped even under `--full`**, deliberately
+  unlike `verifier_precheck`: this obligation lands on a document class every consumer repo has, so a full audit would fail its CI over cards written
   before the rule existed. Nothing is lost by that - the hook holds the phase being *closed*, which
   is a phase the diff touches by construction - and `check --all` is there for anyone who wants the
   audit. The check runs inside the *passing* branch of the handover gate: a phase at the attempt cap
@@ -1062,11 +1115,12 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
 The chain can be walked by hand, one stage at a time, or driven by `commands/avenger-run.md`, which
 makes the **main session** the orchestrator (a subagent has no Task tool, so it cannot spawn stages —
 only the main thread can). Position comes from `scripts/pipeline_state.py`, which reads the artifacts
-on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`, `exceptions.json`)
-and returns the single stage the feature owes next — so a run resumes after a `/clear`, a compaction, or a new session. It stops
-for `plan.md` approval and each spec-review unless `--auto`, retries a stage twice before halting,
-runs the Breaker only on `criticality: critical`, obeys `MUTATION_POLICY`, and commits per verified
-phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose
+on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`, `exceptions.json`,
+`breaker.json`) and returns the single stage the feature owes next — so a run resumes after a
+`/clear`, a compaction, or a new session. It stops for `plan.md` approval and each spec-review unless
+`--auto`, retries a stage twice before halting, routes to the Breaker on `criticality: critical` and
+does not walk past a critical phase that has no record of one, obeys `MUTATION_POLICY`, and commits
+per verified phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose
 precondition is a clean tree already carrying `tests/e2e/<feature>/`) and the retrospective artifacts
 *after* it. **The orchestrator itself never pushes**; the feature-close ship gate above does, in both
 modes. Full detail in `docs/AUTOMATE.md` §2.
