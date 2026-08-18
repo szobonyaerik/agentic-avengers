@@ -163,14 +163,22 @@ _GIT_UNAVAILABLE = (OSError, subprocess.SubprocessError)
 
 def _git(root: Path, *args: str) -> str | None:
     """One git command's stdout as text, or None when it has none — no repo, no git, a failed
-    command, or a call that timed out."""
+    command, or a call that timed out.
+
+    Decodes as UTF-8 explicitly (`errors="surrogateescape"`, matching git's own path encoding)
+    rather than `text=True`, which decodes with the ambient locale's preferred encoding — under
+    `LC_ALL=C` that is ASCII, and a non-ASCII path in git's output raised `UnicodeDecodeError`
+    from inside `subprocess.run` before this function ever got a chance to return `None`.
+    """
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), *args], capture_output=True, text=True, timeout=10, check=False,
+            ["git", "-C", str(root), *args], capture_output=True, timeout=10, check=False,
         )
     except _GIT_UNAVAILABLE:
         return None
-    return proc.stdout if proc.returncode == 0 else None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf-8", errors="surrogateescape")
 
 
 def _git_batch_blobs(root: Path, shas: list[str]) -> list[bytes] | None:

@@ -525,6 +525,38 @@ def test_cli_check_prints_a_dirty_note_but_stays_exit_0(tmp_path):  # noqa: F811
     assert "uncommitted changes" in result.stderr
 
 
+# --- fix: _git() decodes explicitly, so it survives a non-UTF-8 ambient locale -----------------------
+
+
+def test_cli_check_survives_a_non_ascii_path_under_lc_all_c(tmp_path):  # noqa: F811
+    """RED (the bug): `_git()` used `text=True`, which decodes git's stdout with the ambient
+    locale's preferred encoding. Under `LC_ALL=C` that resolves to ASCII, and `git ls-tree`
+    emitting a non-ASCII path (committed HEAD comparison, `_head_content_hash`) raised
+    `UnicodeDecodeError` from inside `subprocess.run`, before `_git` ever got to return `None` —
+    a crash, not a graceful UNKNOWN. GREEN (the fix): `_git` decodes UTF-8 explicitly regardless
+    of locale, so `check` reports a real verdict instead of a traceback.
+
+    `PYTHONUTF8=0`/`PYTHONCOERCECLOCALE=0` are required alongside `LC_ALL=C`/`LANG=C`: CPython on
+    POSIX auto-coerces a `C` locale to UTF-8 (PEP 538/540) unless explicitly told not to, which
+    would otherwise mask this exact bug in CI.
+    """
+    repo = git_repo(tmp_path / "repo", version="1.0.0")
+    (repo / "scripts" / "ünïcödé.py").write_text("# non-ascii filename\n", encoding="utf-8")
+    _run_git(repo, "add", "-A")
+    _run_git(repo, "commit", "-q", "-m", "add non-ascii path")
+    cached = pr.cut(repo, tmp_path / "cache")
+
+    env = dict(os.environ)
+    env.update(LC_ALL="C", LANG="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+
+    result = run_cli("check", "--executing", str(cached), "--source", str(repo), env=env)
+
+    assert "UnicodeDecodeError" not in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.returncode == 0
+    assert "FRESH" in result.stderr
+
+
 # --- fix: cut() pins the install registry, and proves the pin actually resolves ----------------------
 
 
