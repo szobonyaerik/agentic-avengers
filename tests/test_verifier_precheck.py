@@ -69,7 +69,9 @@ def stamp(spec: Path) -> None:
     """Record the current body as judged, so freshness is not the finding under test."""
     import spec_gate_cache
 
-    spec.write_text(spec_gate_cache.stamp(spec.read_text(), "gate", "APPROVED"), encoding="utf-8")
+    spec.write_text(
+        spec_gate_cache.stamp(spec.read_text(), "gate", "APPROVED"), encoding="utf-8"
+    )
 
 
 # ── traceability, per binding ────────────────────────────────────────────────
@@ -99,7 +101,9 @@ def test_a_binding_none_requirement_is_never_a_gap(phase: Path) -> None:
     assert check_phase(phase) == []
 
 
-def test_a_requirement_with_no_binding_at_all_is_still_owed_a_trace(phase: Path) -> None:
+def test_a_requirement_with_no_binding_at_all_is_still_owed_a_trace(
+    phase: Path,
+) -> None:
     """A missing binding is a spec defect; treating it as exempt would let the ABSENCE of a
     declaration buy the absence of a test."""
     spec = write_spec(phase, "- R1.1.1 — a thing with no binding\n")
@@ -114,7 +118,9 @@ def test_a_journey_row_listing_several_ids_traces_all_of_them(phase: Path) -> No
         "- R1.1.1 — `binding: e2e` — one\n- R1.1.2 — `binding: e2e` — two\n",
     )
     stamp(spec)
-    write_mapping(phase, "| R1.1.1, R1.1.2 | tests/demo/test_journey.py::test_j1 | e2e |\n")
+    write_mapping(
+        phase, "| R1.1.1, R1.1.2 | tests/demo/test_journey.py::test_j1 | e2e |\n"
+    )
     assert check_phase(phase) == []
 
 
@@ -177,16 +183,24 @@ LAYOUTS = {
 
 
 @pytest.mark.parametrize("layout", sorted(LAYOUTS))
-def test_every_layout_the_cap_accepts_reads_its_binding(phase: Path, layout: str) -> None:
+def test_every_layout_the_cap_accepts_reads_its_binding(
+    phase: Path, layout: str
+) -> None:
     """Both parsers move together or a red test says so."""
     bound = write_spec(phase, LAYOUTS[layout].format(b="e2e"))
-    assert bound_requirements(bound) == (["R1.1.1"], []), f"{layout}: bound must be owed a trace"
+    assert bound_requirements(bound) == (["R1.1.1"], []), (
+        f"{layout}: bound must be owed a trace"
+    )
 
     unbound = write_spec(phase, LAYOUTS[layout].format(b="none"))
-    assert bound_requirements(unbound) == ([], ["R1.1.1"]), f"{layout}: none must be exempt"
+    assert bound_requirements(unbound) == ([], ["R1.1.1"]), (
+        f"{layout}: none must be exempt"
+    )
 
 
-def test_a_heading_declaration_does_not_inherit_the_next_ones_binding(phase: Path) -> None:
+def test_a_heading_declaration_does_not_inherit_the_next_ones_binding(
+    phase: Path,
+) -> None:
     """The lookahead is bounded by the next declaration, so an unbound requirement cannot be
     exempted by its neighbour — the absence of a declaration must never buy the absence of a test."""
     spec = write_spec(
@@ -197,7 +211,9 @@ def test_a_heading_declaration_does_not_inherit_the_next_ones_binding(phase: Pat
 
 
 def test_a_heading_declaration_does_not_reach_past_its_own_section(phase: Path) -> None:
-    spec = write_spec(phase, "### R1.1.1\n\na thing with no binding\n\n## Notes\n\nbinding: none\n")
+    spec = write_spec(
+        phase, "### R1.1.1\n\na thing with no binding\n\n## Notes\n\nbinding: none\n"
+    )
     assert bound_requirements(spec) == (["R1.1.1"], [])
 
 
@@ -227,6 +243,76 @@ def test_a_body_changed_since_it_was_judged_is_a_finding(phase: Path) -> None:
     spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
     stamp(spec)
     spec.write_text(spec.read_text() + "\n\nan edit made after the gate judged it\n")
+    assert any("UNGATED" in f for f in check_phase(phase))
+
+
+def test_the_stale_stamp_message_never_names_amendments_as_a_remedy(
+    phase: Path,
+) -> None:
+    """Issue 67: an amendment does not touch the spec-gate hash this check reads, so naming
+    `amendments.py` as a remedy sends a worker in a circle — it can never clear this finding."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    spec.write_text(spec.read_text() + "\n\nan edit made after the gate judged it\n")
+    (finding,) = [f for f in check_phase(phase) if "UNGATED" in f]
+    assert "amendments.py" not in finding
+    assert "applicability.py" in finding
+
+
+def test_a_recorded_spec_gate_exception_clears_a_stale_stamp(
+    phase: Path, capsys
+) -> None:
+    """Issue 67's other documented remedy actually clears the check: recording a disclosed
+    exception needs no live gate provider, unlike re-gating, and unlike an amendment it names the
+    rule this check reads (`spec-gate`)."""
+    import json
+
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    spec.write_text(spec.read_text() + "\n\nan edit made after the gate judged it\n")
+    (phase / "exceptions.json").write_text(
+        json.dumps(
+            {
+                "exceptions": [
+                    {
+                        "id": "X1",
+                        "rule": "spec-gate",
+                        "subject": "1.1-a",
+                        "reason": "gate provider was down; re-gating was not reachable",
+                        "recorded_by": "captain",
+                        "recorded_at": "2026-08-14T00:00:00Z",
+                    }
+                ]
+            }
+        )
+    )
+    assert not any("UNGATED" in f for f in check_phase(phase))
+    err = capsys.readouterr().err
+    assert "X1" in err and "NOT enforced" in err
+
+
+def test_an_exception_for_a_different_spec_does_not_clear_this_one(phase: Path) -> None:
+    import json
+
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    spec.write_text(spec.read_text() + "\n\nan edit made after the gate judged it\n")
+    (phase / "exceptions.json").write_text(
+        json.dumps(
+            {
+                "exceptions": [
+                    {
+                        "id": "X1",
+                        "rule": "spec-gate",
+                        "subject": "1.2-other",
+                        "reason": "r",
+                        "recorded_by": "captain",
+                        "recorded_at": "2026-08-14T00:00:00Z",
+                    }
+                ]
+            }
+        )
+    )
     assert any("UNGATED" in f for f in check_phase(phase))
 
 
@@ -269,7 +355,8 @@ def git_repo(root: Path) -> None:
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
-        cwd=root, check=True,
+        cwd=root,
+        check=True,
     )
 
 
@@ -278,8 +365,18 @@ def commit_all(root: Path) -> None:
 
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "history"],
-        cwd=root, check=True,
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "history",
+        ],
+        cwd=root,
+        check=True,
     )
 
 
@@ -304,8 +401,12 @@ def test_a_phase_the_diff_does_not_touch_is_not_enforced_but_full_still_audits_i
     stamp(spec)
     write_mapping(phase, "")
     commit_all(tmp_path)
-    assert main(["--root", str(tmp_path)]) == 0, "committed history is not this commit's business"
-    assert main(["--all", "--root", str(tmp_path)]) == 1, "--full still audits everything"
+    assert main(["--root", str(tmp_path)]) == 0, (
+        "committed history is not this commit's business"
+    )
+    assert main(["--all", "--root", str(tmp_path)]) == 1, (
+        "--full still audits everything"
+    )
 
 
 def test_an_unknowable_scope_enforces_nothing_and_says_so(
