@@ -359,6 +359,14 @@ scripts/sync_runtimes.sh             # regenerates the .opencode/ adapter
 `AGENTS.md` carries the opencode conventions and is hand-maintained from
 `skills/pipeline-conventions/SKILL.md` — update it only when the rules themselves change.
 
+A merged edit is still not what a run executes: phases run from the plugin release cached under
+`$CLAUDE_PLUGIN_ROOT`. Release it, then restart Claude Code so the harness re-reads the cache:
+```text
+python3 scripts/plugin_release.py check   # is the executing copy stale against this repo? (also /avenger-run's preflight)
+python3 scripts/plugin_release.py cut     # the one release step: copy the payload into the cache and re-point the install registry
+```
+Rule, guarantees and env overrides: `skills/pipeline-conventions` (*Closing the release loop*).
+
 ---
 
 ## codemap

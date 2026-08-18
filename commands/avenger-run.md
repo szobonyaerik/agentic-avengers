@@ -48,12 +48,12 @@ Run these before anything else, and stop with the fix if one fails:
   ```
 
   Exit `1` (`STALE`) means the executing copy's content differs from the merged repository at
-  `AVENGER_SOURCE_REPO` (or from itself, when this project *is* that repository) — stop, and tell the
-  operator to release before continuing: `python3 scripts/plugin_release.py cut` from the source
-  checkout, then restart Claude Code so the harness re-reads the refreshed cache. `UNKNOWN` (no
-  `AVENGER_SOURCE_REPO` configured on this machine) is not enforced — the check says so on stderr and
-  the run continues — the same applicability boundary every other check in this repo draws around a
-  scope it cannot resolve.
+  `AVENGER_SOURCE_REPO` (or from this project, when its plugin manifest `name` says this project *is*
+  that repository) — stop, and tell the operator to release before continuing: `python3
+  scripts/plugin_release.py cut` from the source checkout, then restart Claude Code so the harness
+  re-reads the refreshed cache. `UNKNOWN` (neither of those resolves a source repository on this
+  machine) is not enforced — the check says so on stderr and the run continues — the same
+  applicability boundary every other check in this repo draws around a scope it cannot resolve.
 - **The §4a ship gate's three preconditions — the binary, an initialised repo, and a filled-in
   config.** All three are needed in interactive *and* `--auto` runs, and each is checked by
   *interrogating state*, never by printing advice and hoping:

@@ -950,9 +950,18 @@ no schema.
 
 **The guard is a preflight, not a hope.** `/avenger-run` §1 runs `plugin_release.py check` before any
 phase executes: `STALE` (the executing copy's content differs from the merged repository) stops the
-run and names the fix; `UNKNOWN` (no `AVENGER_SOURCE_REPO` configured on this machine) is reported on
+run and names the fix; `UNKNOWN` (no source repository resolvable on this machine) is reported on
 stderr and left unenforced — the same applicability boundary every other check here draws around a
-scope it cannot resolve. Comparison is by content hash of the shipped payload
+scope it cannot resolve. **Two things resolve a source repository, and nothing else does**:
+`AVENGER_SOURCE_REPO`, the explicit per-machine override; or the project being worked on being this
+plugin's own repository, decided by its `.claude-plugin/plugin.json` `name` matching the EXECUTING
+copy's — not merely by that manifest existing. A consumer using this pipeline to develop *their own*
+Claude Code plugin has `CLAUDE_PROJECT_DIR` pointing at an unrelated plugin repository, and comparing
+the executing release against that payload can never match: a permanent STALE whose prescribed remedy
+cannot clear it, which is the unclearable wedge §3a exists to prevent. So an unrecognised project is
+UNKNOWN — reported, never enforced — exactly like a machine with nothing configured at all, and a
+consumer who wants the guard enforced sets `AVENGER_SOURCE_REPO`. Comparison is by content hash of
+the shipped payload
 (`agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`, `.claude-plugin/`,
 `docs/templates/` — the rest of `docs/` is this repo's own documentation of itself, not payload),
 not by version string alone, because a forgotten version bump would otherwise read as a clean
