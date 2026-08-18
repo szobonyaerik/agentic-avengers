@@ -223,7 +223,8 @@ Three consequences worth stating outright:
   blocking. Two shipped specs of one measured feature declared 30 and 29 requirements against the cap
   of 12, and no verdict of any kind was reachable for them. It is not an escape hatch for a draft:
   `status: done` is stamped by the implementer, and it is what fires the phase suite and the
-  traceability pre-check, both of which a draft claiming to be done fails loudly.
+  traceability pre-check, both of which a draft claiming to be done fails loudly — and, since issue
+  #68, a stamp that fails either check does not stay `done` on disk (see below).
 
   **The writer is primed from this same rubric before it writes, from ONE source.** Phase 9 of one
   feature ran **fourteen** rounds on its first spec and one, three and one on the next three, while
@@ -1058,6 +1059,37 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
   and add characterization tests only at genuine gaps on pre-agreed critical seams.
 - **Refactor** → baseline-first parity: use the migration procedure without porting tests; behavior
   remains unchanged unless a separate greenfield requirement explicitly says otherwise.
+
+## A `status: done` stamp is not a completion signal by itself (issue #68)
+
+A spec's own implementer writes `status: done` into its frontmatter, and used to keep working
+afterward — `test-mapping.md`, `test-evidence.md` and the phase's mutation gate all landed later.
+In phase 11 a worker had armed a wedge guard on that stamp, watching for it as the signal that it
+was safe to dispatch the next spec's implementer into the same worktree. It fired at 24 minutes
+while the agent was still running. Had the guard been trusted, two implementers would have run in
+one worktree against one shared database — forbidden outright, and phase 9 measured why: a `git
+stash` from one implementer swallowed the other's uncommitted work, and the shared database
+produced foreign-key violations plus a spurious lint failure.
+
+Telling people not to wait on the stamp fixes nothing — that sentence has already been written five
+times in two days about three different stamps. So the stamp is made **self-correcting** instead:
+the moment `hook_verifier.sh` sees `status: done` land on a `spec.md` (its `spec-done` trigger), it
+checks, mechanically, whether the spec is actually done — its own `test-mapping.md` carries at
+least one recorded row, and its phase's test suite is green — **before** letting the stamp stand.
+Either check failing REVERTS `status: done` back to `status: in-progress`
+(`scripts/spec_done_guard.py`) and then fails the hook. A premature `done` does not survive the
+check that reads it: nothing that observes the frontmatter afterward — a wedge guard included — can
+see a false `done`. Break-glass (`GATE_BYPASS`) still lets the tool call through; it does not
+restore the stamp, because the revert is an audited exception to the *failure*, not to what the
+stamp means.
+
+**This binds `status: done` specifically and does not generalize.** Other stamps this pipeline
+writes (`spec_gate:`, `review_status:`, `verdict.json`'s `verdict`) already have their own single
+writer and single reader (`spec_gate_state.py`, `/spec-review`, `hook_verifier.sh`'s handover
+branch) and are not touched here — a caller still may not treat any of them as a liveness signal;
+the only reliable completion signal in this harness is the agent/task notification, never a written
+marker and never process polling. What changed is narrower: the one marker this issue was filed
+about now corrects itself instead of trusting the writer.
 
 ## Driving the chain (`/avenger-run`)
 

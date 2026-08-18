@@ -122,7 +122,9 @@ src/
 For each spec you implement:
 1. **Tests** at the requirement seams in `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`, each traced to an `R<n>.<k>.<m>` in that spec's `test-mapping.md`
 2. **Working components** that turn them GREEN and satisfy the spec's acceptance criteria
-3. **Updated phase spec status** in frontmatter to `status: done`
+3. **Updated phase spec status** in frontmatter to `status: done`, LAST — after `test-mapping.md`
+   has its rows and the phase suite is green. `hook_verifier.sh` checks both the instant the stamp
+   lands and reverts it back to `status: in-progress` if either is not yet true (issue #68).
 4. **Summary** of what was implemented, any deviations, and anything routed back to `avenger-spec-writer`. When every spec in the phase is done, the phase goes to `avenger-verifier` (a different model family), which writes `verdict.json`
 
 ## What You Do NOT Do

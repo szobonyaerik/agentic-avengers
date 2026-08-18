@@ -31,7 +31,10 @@ PASSING = {
     "verdict": "pass",
     "attempt": 3,
     "findings": [],
-    "test_quality": {"reviewed": True, "scope": {"test_files": ["tests/demo/1-a/test_x.py"]}},
+    "test_quality": {
+        "reviewed": True,
+        "scope": {"test_files": ["tests/demo/1-a/test_x.py"]},
+    },
 }
 
 
@@ -46,7 +49,9 @@ def phase_dir(project: Path) -> Path:
     return project / "docs" / "features" / "demo" / "phases" / "1-demo"
 
 
-def write_spec(project: Path, spec: str = "1.1-a", *, criticality: str = "standard") -> None:
+def write_spec(
+    project: Path, spec: str = "1.1-a", *, criticality: str = "standard"
+) -> None:
     """A spec that also satisfies `verifier_precheck.py` (Acceptance criteria heading, a fresh gate
     stamp, no untraced requirement ids) — that check is not what these tests are about, so it is
     driven clean the same way `spec_gate_cache.py` itself would leave a spec after an approval."""
@@ -58,22 +63,35 @@ def write_spec(project: Path, spec: str = "1.1-a", *, criticality: str = "standa
         f"# Spec\n\n## Acceptance criteria\n\nDone.\n"
     )
     subprocess.run(
-        [sys.executable, str(project / "scripts" / "spec_gate_cache.py"), "stamp", str(path),
-         "gate", "APPROVED"],
-        check=True, capture_output=True,
+        [
+            sys.executable,
+            str(project / "scripts" / "spec_gate_cache.py"),
+            "stamp",
+            str(path),
+            "gate",
+            "APPROVED",
+        ],
+        check=True,
+        capture_output=True,
     )
 
 
 def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     """Write the phase's verdict history: the archives, then the live verdict as the last entry."""
     for number, findings, result in series[:-1]:
-        (phase_dir(project) / f"verdict-attempt-{number}.json").write_text(json.dumps({
-            "attempt": number, "verdict": result,
-            "findings": [{"id": f"a{number}-{i}"} for i in range(findings)],
-        }))
+        (phase_dir(project) / f"verdict-attempt-{number}.json").write_text(
+            json.dumps(
+                {
+                    "attempt": number,
+                    "verdict": result,
+                    "findings": [{"id": f"a{number}-{i}"} for i in range(findings)],
+                }
+            )
+        )
     number, findings, result = series[-1]
     verdict = {
-        "attempt": number, "verdict": result,
+        "attempt": number,
+        "verdict": result,
         "findings": [{"id": f"f{i}", "status": "open"} for i in range(findings)],
         "routed": [{"to": "implementer", "reason": "code issue", "finding_id": "f0"}],
     }
@@ -83,8 +101,9 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     (phase_dir(project) / "verdict.json").write_text(json.dumps(verdict))
 
 
-def run_hook(project: Path, card: str = "# handover\n\n## Open items\nnone\n", **env: str
-             ) -> subprocess.CompletedProcess:
+def run_hook(
+    project: Path, card: str = "# handover\n\n## Open items\nnone\n", **env: str
+) -> subprocess.CompletedProcess:
     handover = phase_dir(project) / "handover.md"
     # A closing phase states what it carries forward, so the card these tests write says `none`
     # explicitly. `tests/test_carried_items.py` owns that rule; here it is only enough card for the
@@ -93,9 +112,15 @@ def run_hook(project: Path, card: str = "# handover\n\n## Open items\nnone\n", *
     return subprocess.run(
         ["bash", str(project / "scripts" / "hook_verifier.sh")],
         input='{"tool_input": {"file_path": "%s"}}' % handover,
-        capture_output=True, text=True, check=False,
-        env={"PATH": os.environ["PATH"], "HOME": str(project),
-             "CLAUDE_PROJECT_DIR": str(project), **env},
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            **env,
+        },
     )
 
 
@@ -138,7 +163,9 @@ def test_under_the_cap_the_phase_still_routes_back_normally(project: Path) -> No
     assert "refused" not in result.stderr
 
 
-def test_a_phase_that_passes_cleanly_on_its_last_allowed_attempt_still_passes(project: Path) -> None:
+def test_a_phase_that_passes_cleanly_on_its_last_allowed_attempt_still_passes(
+    project: Path,
+) -> None:
     """The cap is on the LOOP, not on the phase. Turning a successful third attempt into a stop
     would be weakening the gate in the other direction."""
     attempts(project, [(1, 6, "fail"), (2, 2, "fail"), (3, 0, "pass")])
@@ -148,14 +175,24 @@ def test_a_phase_that_passes_cleanly_on_its_last_allowed_attempt_still_passes(pr
     assert result.returncode == 0, result.stderr
 
 
-def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(project: Path) -> None:
+def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(
+    project: Path,
+) -> None:
     """`CAPPED` is exit 1 and so is an uncaught exception, so a malformed `attempt` arrived here as a
     cap: the handover was refused with "carry, waive or escalate" for a phase that might be on
     attempt 1, whose real problem is a file none of those three remedies can repair."""
-    (phase_dir(project) / "verdict.json").write_text(json.dumps({
-        "attempt": "N/A", "verdict": "fail", "findings": [{"id": "f0", "status": "open"}],
-        "routed": [{"to": "implementer", "reason": "code issue", "finding_id": "f0"}],
-    }))
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": "N/A",
+                "verdict": "fail",
+                "findings": [{"id": "f0", "status": "open"}],
+                "routed": [
+                    {"to": "implementer", "reason": "code issue", "finding_id": "f0"}
+                ],
+            }
+        )
+    )
 
     result = run_hook(project)
 
@@ -166,12 +203,16 @@ def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(proje
     assert "KNOWN-OPEN" not in result.stderr
 
 
-def test_the_cap_is_escapable_and_audited_rather_than_a_hard_wedge(project: Path) -> None:
+def test_the_cap_is_escapable_and_audited_rather_than_a_hard_wedge(
+    project: Path,
+) -> None:
     """Consistent with every other blocking check here: break-glass through the same `fail()` path,
     logged and visible, never silent."""
     attempts(project, [(1, 6, "fail"), (2, 2, "fail"), (3, 8, "fail")])
 
-    result = run_hook(project, GATE_BYPASS="captain accepts the remaining findings as known-open")
+    result = run_hook(
+        project, GATE_BYPASS="captain accepts the remaining findings as known-open"
+    )
 
     assert result.returncode == 0, result.stderr
     assert (project / "gate-overrides.log").is_file()
@@ -201,7 +242,9 @@ CARRIED = (
 )
 
 
-def test_a_passing_phase_does_not_close_over_an_undischarged_carried_item(project: Path) -> None:
+def test_a_passing_phase_does_not_close_over_an_undischarged_carried_item(
+    project: Path,
+) -> None:
     attempts(project, [(1, 0, "pass")])
     prior_card(project, CARRIED)
 
@@ -216,15 +259,27 @@ def test_discharging_the_item_lets_the_phase_close(project: Path) -> None:
     attempts(project, [(1, 0, "pass")])
     prior_card(project, CARRIED)
     subprocess.run(
-        [sys.executable, str(project / "scripts" / "carried_items.py"), "discharge",
-         str(phase_dir(project)), "FWD-1", "--as", "built", "--by", "R1.1.3"],
-        check=True, capture_output=True,
+        [
+            sys.executable,
+            str(project / "scripts" / "carried_items.py"),
+            "discharge",
+            str(phase_dir(project)),
+            "FWD-1",
+            "--as",
+            "built",
+            "--by",
+            "R1.1.3",
+        ],
+        check=True,
+        capture_output=True,
     )
 
     assert run_hook(project).returncode == 0
 
 
-def test_a_card_that_says_nothing_about_what_it_carries_does_not_close(project: Path) -> None:
+def test_a_card_that_says_nothing_about_what_it_carries_does_not_close(
+    project: Path,
+) -> None:
     """Silence is not `none`. A prediction left out of the table is owed to nobody, which is the
     state phase 8's card was in."""
     attempts(project, [(1, 0, "pass")])
@@ -242,7 +297,9 @@ LAST_CARD = (
 )
 
 
-def test_the_last_phase_does_not_close_over_a_forward_claim_owed_to_nobody(project: Path) -> None:
+def test_the_last_phase_does_not_close_over_a_forward_claim_owed_to_nobody(
+    project: Path,
+) -> None:
     """`next: e2e` means no phase follows to answer this row, so the claim has to be filed. Asserted
     through the real hook: a rule only its unit test knows about is the promise-with-no-mechanism
     this whole change removes."""
@@ -261,7 +318,9 @@ def test_naming_an_issue_on_that_row_lets_the_last_phase_close(project: Path) ->
     assert run_hook(project, card=LAST_CARD % "filed as #41").returncode == 0
 
 
-def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(project: Path) -> None:
+def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(
+    project: Path,
+) -> None:
     """It runs inside the `pass` branch on purpose. A phase at the attempt cap is already not
     closing, and answering an unasked question there would hide the one that stopped it."""
     attempts(project, [(1, 6, "fail"), (2, 2, "fail"), (3, 8, "fail")])
@@ -282,7 +341,9 @@ def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(project: Pa
 # un-enforced hook is not a rule.
 
 
-def test_a_critical_phase_does_not_close_without_a_breaker_record(project: Path) -> None:
+def test_a_critical_phase_does_not_close_without_a_breaker_record(
+    project: Path,
+) -> None:
     """The gap the issue describes, reproduced directly against the hook that is supposed to stop
     it. Without the fix this phase closes silently — exactly what happened twice already."""
     write_spec(project, criticality="critical")
@@ -312,7 +373,9 @@ def test_a_valid_breaker_record_lets_a_critical_phase_close(project: Path) -> No
     assert result.returncode == 0, result.stderr
 
 
-def test_a_breaker_record_declaring_no_readers_does_not_close_the_phase(project: Path) -> None:
+def test_a_breaker_record_declaring_no_readers_does_not_close_the_phase(
+    project: Path,
+) -> None:
     """Reproduced against the real hook: a record without `readers` used to clear the close and
     then fail `doc_read_path.py` on the very next commit - two gates disagreeing about one file."""
     write_spec(project, criticality="critical")
@@ -372,3 +435,119 @@ def test_the_breaker_gate_never_masks_a_failed_suite(project: Path) -> None:
     assert result.returncode == 2
     assert "route back per its findings" in result.stderr
     assert "Breaker obligation" not in result.stderr
+
+
+# ── a `status: done` stamp is not trusted on sight (issue #68) ───────────────────────────────────
+#
+# An implementer writes its own spec's `status: done` and used to keep working afterward —
+# test-mapping.md, test-evidence.md and the phase's mutation gate all landed later. A wedge guard
+# watching for that stamp in phase 11 fired at 24 minutes while the agent was still running. What is
+# pinned here is that the REAL hook now refuses to let a premature stamp stand: it reverts
+# `status: done` back to `status: in-progress` before failing, so nothing that reads the frontmatter
+# afterward — a wedge guard included — can observe a false "done".
+
+
+def spec_done_dir(project: Path, spec: str = "1.1-a") -> Path:
+    return phase_dir(project) / "specs" / spec
+
+
+def write_done_spec(project: Path, *, mapping: str | None = "header-only") -> Path:
+    """A spec stamped `status: done`, with `test-mapping.md` in one of three states:
+    missing (`None`), header-only (the template's own shape, no recorded test), or a real row
+    (`"row"`)."""
+    spec_dir = spec_done_dir(project)
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = spec_dir / "spec.md"
+    spec_path.write_text(
+        "---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\nstatus: done\n---\n\n"
+        "# Spec\n\n## Acceptance criteria\n\nDone.\n"
+    )
+    if mapping == "header-only":
+        (spec_dir / "test-mapping.md").write_text(
+            "| requirement | test | level | why |\n|---|---|---|---|\n"
+        )
+    elif mapping == "row":
+        (spec_dir / "test-mapping.md").write_text(
+            "| requirement | test | level | why |\n|---|---|---|---|\n"
+            "| R1.1.1 | test_x.py::test_it | integration | ... |\n"
+        )
+    return spec_path
+
+
+def write_phase_tests(project: Path, *, passing: bool) -> None:
+    tests_dir = project / "tests" / "demo" / "1-demo"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    body = (
+        "def test_it():\n    assert True\n"
+        if passing
+        else "def test_it():\n    assert False\n"
+    )
+    (tests_dir / "test_x.py").write_text(body)
+
+
+def run_spec_done_hook(
+    project: Path, spec_path: Path, **env: str
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}' % spec_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            **env,
+        },
+    )
+
+
+def test_a_stamp_with_no_recorded_mapping_is_reverted(project: Path) -> None:
+    """Break the guard's happy path: stamp `done` before a single test is mapped. Without the fix
+    this stays `status: done` on disk forever — the exact near miss issue #68 describes."""
+    spec_path = write_done_spec(project, mapping="header-only")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "no rows yet" in result.stderr
+    text = spec_path.read_text()
+    assert "status: in-progress" in text
+    assert "status: done" not in text
+
+
+def test_a_stamp_with_no_mapping_file_at_all_is_reverted(project: Path) -> None:
+    spec_path = write_done_spec(project, mapping=None)
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "status: in-progress" in spec_path.read_text()
+
+
+def test_a_stamp_over_a_red_suite_is_reverted(project: Path) -> None:
+    """Mapping recorded, but the tests it maps to don't pass — still not done, still reverted."""
+    spec_path = write_done_spec(project, mapping="row")
+    write_phase_tests(project, passing=False)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "the suite is RED" in result.stderr
+    text = spec_path.read_text()
+    assert "status: in-progress" in text
+    assert "status: done" not in text
+
+
+def test_a_genuinely_complete_spec_keeps_its_stamp(project: Path) -> None:
+    """The guard must not fire on the happy path — proof it discriminates, not just blocks."""
+    spec_path = write_done_spec(project, mapping="row")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()

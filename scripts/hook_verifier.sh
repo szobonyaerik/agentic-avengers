@@ -16,8 +16,15 @@
 # throughout a build. Firing per edit stopped the agent to route a failure back to itself.
 #
 # Triggers (both derive the phase from the written path, so no guessing):
-#   */specs/<n>.<k>-*/spec.md  with `status: done`  -> smoke-check that spec's phase suite
+#   */specs/<n>.<k>-*/spec.md  with `status: done`  -> smoke-check that spec's mapping + phase suite
 #   */handover.md                                   -> full phase suite + require a passing verdict.json
+#
+# `status: done` is not trusted on sight (issue #68): a spec's own implementer writes it, and used
+# to keep working afterward — test-mapping.md, test-evidence.md and the phase's mutation gate all
+# land later. On the `spec-done` trigger this hook checks the mapping is non-empty and the suite is
+# green BEFORE letting the stamp stand; either check failing reverts it to `status: in-progress`
+# (scripts/spec_done_guard.py) and then fails. A premature `done` is undone, not just complained
+# about — a caller reading the frontmatter never observes a false "done" surviving this hook.
 #
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
@@ -74,6 +81,29 @@ elif [ -n "$SLUG" ] && [ -d "tests/$SLUG" ]; then
   TESTPATH="tests/$SLUG"
 fi
 
+fail() {   # $1 = bypass tag, rest = message
+  local tag="$1"; shift
+  printf '%s\n' "$*" >&2
+  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "$tag"
+  exit 2
+}
+
+# A stamp is not a completion signal (issue #68) unless something makes it one: the moment
+# `status: done` lands, revert it back to `in-progress` before this hook fails, so a premature
+# stamp never survives past the check that reads it — a wedge guard watching this field sees
+# nothing to trust until the checks below actually pass. Break-glass (GATE_BYPASS) still leaves the
+# revert in place; it is an audited exception to the FAILURE, not to the stamp's meaning.
+revert_premature_stamp() {
+  python3 "$SD/spec_done_guard.py" revert "$FILE" >&2 || true
+}
+
+if [ "$TRIGGER" = "spec-done" ] && ! python3 "$SD/spec_done_guard.py" mapping-complete "$FILE"; then
+  revert_premature_stamp
+  fail "verifier:spec-done-mapping" \
+    "verifier ($TRIGGER): status was stamped 'done' but test-mapping.md next to it has no rows yet" \
+    "— reverted status to 'in-progress'. Finish recording the mapping, then stamp done again."
+fi
+
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
   OUT=$(pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
@@ -82,15 +112,9 @@ else
   OUT=$(pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
 fi
 
-fail() {   # $1 = bypass tag, rest = message
-  local tag="$1"; shift
-  printf '%s\n' "$*" >&2
-  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "$tag"
-  exit 2
-}
-
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
 if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
+  [ "$TRIGGER" = "spec-done" ] && revert_premature_stamp
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
        "$(printf '%s\n' "$OUT" | tail -20)"
 fi
