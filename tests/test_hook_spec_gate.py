@@ -523,6 +523,37 @@ def test_the_degraded_state_rides_the_report_a_block_stamps(in_layout) -> None:
     assert "missing-requirement" in report, "the fold must not displace the gate's own findings"
 
 
+def test_the_banner_names_the_shape_that_actually_fired_missing_overview(in_layout) -> None:
+    """Three shapes exit 3 and each has its own remedy. A banner that always says "no heading" tells
+    a feature with NO overview at all to fix a heading it does not have a file to put one in - and
+    the persisted report is the durable record, so the wrong cause outlives the run."""
+    project, spec, _ = in_layout
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "no readable overview.md" in report
+    assert "no ## Contracts and Decisions heading" not in report
+
+
+def test_the_banner_names_the_shape_that_actually_fired_boilerplate(in_layout) -> None:
+    """The other misreported shape: the heading IS there, holding only the unfilled template's
+    comment. "Add the heading" is a remedy already applied."""
+    project, spec, _ = in_layout
+    (spec.parents[4] / "overview.md").write_text(
+        "# Demo\n\n## Contracts and Decisions\n<!-- fill this in -->\n"
+    )
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "boilerplate" in report
+
+
 def test_a_feature_carrying_the_heading_stamps_no_warning(in_layout) -> None:
     """The control: without it, a test asserting the warning appears proves nothing about when."""
     project, spec, write_context = in_layout

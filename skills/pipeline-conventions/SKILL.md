@@ -212,8 +212,10 @@ Three consequences worth stating outright:
      mean something else here — and `hook_spec_gate.sh` does not discard that exit code with `|| :`.
      It echoes it loudly **and folds a `CONTEXT DEGRADED` banner into the persisted report**, the one
      stamped into `spec_gate_cache` on APPROVED and BLOCKED alike, since no later read of a verdict
-     sees a hook's stderr. Still never a gate failure on its own; no longer indistinguishable from a
-     clean pass.
+     sees a hook's stderr. The banner **carries the builder's own cause line verbatim** rather than
+     re-authoring one: three shapes exit 3, each with its own remedy, and a durable record naming the
+     wrong one prescribes a fix already applied. Still never a gate failure on its own; no longer
+     indistinguishable from a clean pass.
 
      **The heading contract is checked, not merely stated.** `spec_gate_context.py check [--all]`
      walks every `docs/features/*/` feature directory for the same three degraded shapes,
@@ -222,7 +224,10 @@ Three consequences worth stating outright:
      overview can never itself be a changed path — scoping on the artifact alone would make it
      permanently unenforceable. **Diff-scoped** on the same applicability boundary as every other
      check here: a feature this change did not touch is counted and named, never blocked, so a
-     repository full of pre-rule overviews can adopt it. The remedy is the heading
+     repository full of pre-rule overviews can adopt it — and diff-scoped **even under `--full`**, on
+     `carried_items.py`'s precedent rather than the read path's, because `overview.md` is a document
+     class every consumer repo already has on disk and a full CI audit would fail its build over
+     every pre-rule one at once. `check --all` stays the audit somebody runs deliberately. The remedy is the heading
      `docs/templates/overview.template.md` already mandates, filled in with real content — and
      adding it to one project's overview is **not** the fix, because that hides the symptom on that
      project and leaves the silent pass available to every other one.

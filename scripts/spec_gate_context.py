@@ -80,7 +80,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # The diff-scope mechanism every check on this boundary shares, and the one line every such check
 # prints when it counted a finding instead of enforcing it.
-from applicability import changed_paths, report_unenforced  # noqa: E402
+from applicability import changed_paths, report_unenforced, touched  # noqa: E402
 
 # The contract card's cap belongs to the read-path table, which owns every extent in this file. A
 # literal 6144 here would be a second statement of it, and the second statement is the one that
@@ -148,10 +148,13 @@ def contracts(text: str) -> Contracts:
     # alone - a heading with nothing under it, not "a heading" (which is never nothing).
     if not body.strip():
         return Contracts(True, None, False)
-    stripped = _COMMENT.sub("", body).strip()
-    if not stripped:
+    if not _COMMENT.sub("", body).strip():
         return Contracts(True, None, True)
-    return Contracts(True, "".join(found).strip(), False)
+    # Comments are stripped from what is CARRIED as well as from what is judged. Judging on the
+    # stripped text and sending the raw section would ship the template's own instructional comment
+    # into the observe pass under "these are the binding contracts the spec must not contradict" -
+    # presenting "do not rename this heading" to the model as a contract. One text, one meaning.
+    return Contracts(True, _COMMENT.sub("", "".join(found)).strip(), False)
 
 
 def contracts_section(text: str) -> str | None:
@@ -165,11 +168,6 @@ def contracts_section(text: str) -> str | None:
     all, same as one with nothing under it at all.
     """
     return contracts(text).body
-
-
-def heading_present(text: str) -> bool:
-    """Whether `## Contracts and Decisions` appears at all, regardless of what is under it."""
-    return contracts(text).heading
 
 
 def overview_state(feature_dir: Path) -> Contracts | None:
@@ -336,17 +334,6 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
 # --- check: every overview.md on disk, independent of any one spec being gated -------------------
 
 
-def _touches(feature: Path, scope: set[Path]) -> bool:
-    """Whether the current change touches anything under `feature` - the file itself, or any file
-    beneath its directory. A missing `overview.md` can never itself appear as a changed path (there
-    is nothing on disk to name), so scoping on the artifact path alone - the `doc_read_path.py`
-    pattern - would make a missing overview permanently unenforceable. Scoping on the feature
-    directory instead is what lets "this feature has no overview at all" be in scope the moment
-    someone is actually working under it."""
-    feature = feature.resolve()
-    return any(feature == path or feature in path.parents for path in scope)
-
-
 def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     """Every feature under `docs/features/` whose overview cannot carry its contracts: a missing or
     unreadable `overview.md`, one with no `## Contracts and Decisions` heading, or one where that
@@ -360,10 +347,16 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
 
     Diff-scoped like every other check on this applicability boundary (`scripts/applicability.py`):
     a feature the current change did not touch is COUNTED on stderr, never blocked. That is not a
-    grandfathering exception written for this issue - it is the same rule `doc_read_path.py check`
-    already runs, and it is what lets a project with years of pre-rule overviews (clickup-agents
-    included) adopt this check without every one of them failing CI on day one. `check(...,
-    enforce_all=True)` — the `--all` flag — audits every feature regardless of scope.
+    grandfathering exception written for this issue - it is what lets a project with years of
+    pre-rule overviews (clickup-agents included) adopt this check without every one of them failing
+    CI on day one.
+
+    **`gate_ci.sh` keeps it diff-scoped even under `--full`**, on `carried_items.py`'s precedent
+    rather than `doc_read_path.py`'s: this obligation lands on a document class every consumer repo
+    already has on disk, so a full audit wired into CI would fail its build over overviews written
+    before the rule existed. `check(..., enforce_all=True)` - the `--all` flag - audits every
+    feature regardless of scope, and is deliberately something a person runs, not something CI runs
+    unconditionally.
     """
     features = root / "docs" / "features"
     if not features.is_dir():
@@ -385,7 +378,12 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     unenforced = 0
     for feature in sorted(p for p in features.iterdir() if p.is_dir()):
         overview = feature / "overview.md"
-        in_scope = enforce_all or _touches(feature, scope or set())
+        # The FEATURE DIRECTORY, never `overview.md` itself: a missing overview can never appear as
+        # a changed path, so scoping on the artifact would make that shape permanently
+        # unenforceable. `applicability.touched` already answers "this path, or anything under it",
+        # which is exactly the question — a second copy of the containment rule is the one that
+        # drifts.
+        in_scope = enforce_all or touched(feature, scope or set())
 
         try:
             text = overview.read_text(encoding="utf-8")

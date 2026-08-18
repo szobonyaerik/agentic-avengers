@@ -191,13 +191,17 @@ fi
 #       the feature's own contracts, and the spec gate used to report that absence on stderr and
 #       PASS regardless (issue #57: eleven phases of clickup-agents). The heading is already
 #       mandated by docs/templates/overview.template.md; this is what verifies real overviews carry
-#       it. Diff-scoped the same way as the read-path check above, for the same reason: a project
-#       with years of pre-rule overviews must be able to adopt this without every one of them
-#       failing CI on day one.
+#       it.
+#
+#       DIFF-SCOPED even under --full, on the carried-items precedent above rather than the read
+#       path's: `overview.md` is a document class every consumer repo already has on disk, written
+#       long before this heading was checked, so a full CI audit would fail every one of those
+#       features at once the day this ships — the hostage failure the scoping exists to remove.
+#       Nothing is lost: a feature is checked the moment someone works under it, which is where the
+#       remedy (fill in the heading) is actually available. `spec_gate_context.py check --all` is
+#       there for anyone who wants the audit, deliberately by hand.
 echo "• overview contracts heading: docs/features/*/overview.md"
-CONTEXT_CHECK_ARGS="check"
-[ "$FULL" -eq 1 ] && CONTEXT_CHECK_ARGS="check --all"
-if ! python3 "$SCRIPT_DIR/spec_gate_context.py" $CONTEXT_CHECK_ARGS "$ROOT"; then
+if ! python3 "$SCRIPT_DIR/spec_gate_context.py" check "$ROOT"; then
   record_fail "overview-contracts-heading"
 fi
 

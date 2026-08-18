@@ -116,7 +116,9 @@ with the verdict taken out of the model's hands entirely:
    it — never 1 or 2, which mean something else on this gate — and `hook_spec_gate.sh` no longer
    discards that exit code with `|| :`: it echoes it loudly **and folds a `CONTEXT DEGRADED` banner
    into the persisted report**, the one stamped into `spec_gate_cache` on APPROVED and BLOCKED
-   alike, because nothing that reads a verdict later sees a hook's stderr. It still never fails the
+   alike, because nothing that reads a verdict later sees a hook's stderr. That banner **carries the
+   builder's own cause line verbatim** rather than re-authoring one: three shapes exit 3 and each has
+   its own remedy, so a durable record naming the wrong one prescribes a fix already applied. It still never fails the
    gate on its own — the block is reference-only by design — but it can no longer look identical to
    a clean pass. **The heading contract is checked mechanically, not just written down**:
    `spec_gate_context.py check [--all]` walks every `docs/features/*/` feature directory for the
@@ -125,7 +127,11 @@ with the verdict taken out of the model's hands entirely:
    as a changed path, so scoping on the artifact alone would make it permanently unenforceable. It is
    wired into `gate_ci.sh` beside the read-path check and **diff-scoped** on the same applicability
    boundary (§3a) — a feature this change did not touch is counted and named, never blocked, which
-   is what lets a repository full of pre-rule overviews adopt it. The remedy is the heading
+   is what lets a repository full of pre-rule overviews adopt it. It stays diff-scoped **even under
+   `--full`**, on `carried_items.py`'s precedent rather than the read path's (§4f): `overview.md` is a
+   document class every consumer repo already has on disk, so a full audit wired into CI would fail
+   its build over overviews written before the rule existed. `check --all` remains the audit somebody
+   runs deliberately, never what CI runs unconditionally. The remedy is the heading
    `docs/templates/overview.template.md` already mandates, filled in with real content; adding it
    to one project's overview is **not** the fix, since that hides the symptom there and leaves the
    silent pass available to every other project.

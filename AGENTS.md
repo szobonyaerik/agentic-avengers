@@ -58,9 +58,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    silent pass). Any of the three means the reader can never find that feature's contracts, for
    every spec it ever gates. `spec_gate_context.py` exits **3** for any of them and `hook_spec_gate.sh`
    folds a `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code —
-   still not a gate failure, no longer a clean-looking pass. `spec_gate_context.py check [--all]`
+   carrying the builder's own per-shape cause line, since a record naming the wrong one of the three
+   prescribes a remedy already applied. Still not a gate failure, no longer a clean-looking pass.
+   `spec_gate_context.py check [--all]`
    walks every feature directory (not just existing overview files, since a missing one can never be
-   a changed path) for the same three shapes, runs from `gate_ci.sh`, and is diff-scoped (3e).
+   a changed path) for the same three shapes, runs from `gate_ci.sh`, and is diff-scoped (3e) **even
+   under `--full`** — the carried-items precedent (4f), because a full CI audit would fail every
+   pre-rule overview at once; `check --all` is the audit somebody runs by hand.
 3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and

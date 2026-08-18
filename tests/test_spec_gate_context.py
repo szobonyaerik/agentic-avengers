@@ -318,6 +318,27 @@ def test_boilerplate_mixed_with_real_prose_is_not_degraded(feature: Path) -> Non
     assert "Tokens are stored in the vault." in block
 
 
+def test_the_boilerplate_this_reader_discounts_is_not_carried_as_a_contract(
+    feature: Path,
+) -> None:
+    """What is judged and what is sent must be the same text. Stripping comments to decide the
+    section is boilerplate and then carrying the raw section anyway would ship the template's own
+    instructional text into the observe pass under "the binding contracts the spec must not
+    contradict" - so "do not rename this heading" would be presented to the model as a contract."""
+    (feature / "overview.md").write_text(
+        "# Demo\n\n"
+        "## Contracts and Decisions\n"
+        "<!-- Do not rename this heading - it is a read target. -->\n\n"
+        "- Tokens are stored in the vault.\n"
+    )
+
+    block, _, degraded = build(spec_at(feature, "1-first"))
+
+    assert degraded is False
+    assert "Tokens are stored in the vault." in block
+    assert "Do not rename this heading" not in block
+
+
 def test_a_feature_with_a_genuinely_empty_contracts_section_is_not_degraded(
     feature: Path,
 ) -> None:

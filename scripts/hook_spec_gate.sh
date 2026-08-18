@@ -208,21 +208,31 @@ trap cleanup EXIT
 # omitted and named on stderr rather than failing anything. It composes with the re-gate bundle
 # rather than replacing it — `## CONTEXT` sits ahead of the markers the observe prompt already reads.
 #
-# Exit 3 is a THIRD state, not a failure: `overview.md` exists but has no `## Contracts and
-# Decisions` heading at all, so contradiction can only ever be checked against the prior phase's
-# card, never this feature's own contracts. That used to be one line among many on stderr — easy to
-# miss for eleven phases running (issue #57). It still never fails this gate, but it is no longer
-# discarded with `|| :`: it is echoed loudly here AND folded into the persisted report below, so it
-# shows up wherever this gate's verdict is read, not only in a log nobody was watching.
+# Exit 3 is a THIRD state, not a failure: contradiction can only ever be checked against the prior
+# phase's card, never this feature's own contracts. That used to be one line among many on stderr —
+# easy to miss for eleven phases running (issue #57). It still never fails this gate, but it is no
+# longer discarded with `|| :`: it is echoed loudly here AND folded into the persisted report below,
+# so it shows up wherever this gate's verdict is read, not only in a log nobody was watching.
+#
+# THREE shapes exit 3 — a missing or unreadable overview.md, a missing heading, and a heading holding
+# only boilerplate — and each has its own remedy, so the cause is not re-authored here. The builder
+# already names the one that fired, on stderr, in its own words; this lifts that line verbatim out of
+# $GERR (which later gate calls overwrite, so it is captured now) and carries it into both the echo
+# and the persisted banner. A stamped report naming a cause that did not fire prescribes a fix
+# already applied, which is a worse record than no banner at all.
 python3 "$SD/spec_gate_context.py" "$FILE" > "$CONTEXT" 2>"$GERR"; ctx_rc=$?
 cat "$GERR" >&2
 CONTEXT_DEGRADED=0
+CONTEXT_CAUSE=""
 if [ "$ctx_rc" -eq 3 ]; then
   CONTEXT_DEGRADED=1
-  echo "spec-gate: CONTEXT DEGRADED — overview.md has no '## Contracts and Decisions' heading." >&2
-  echo "  contradiction is being checked only against the prior phase's card, never this" >&2
-  echo "  feature's own contracts, for every spec this feature gates. See" >&2
-  echo "  docs/templates/overview.template.md, or run" >&2
+  CONTEXT_CAUSE="$(sed -n 's/^[[:space:]]*spec-gate context: \(DEGRADED:.*\)$/\1/p' "$GERR")"
+  if [ -z "$CONTEXT_CAUSE" ]; then
+    CONTEXT_CAUSE="DEGRADED: the context builder reported a degraded state without naming which \
+shape — see its stderr above."
+  fi
+  printf 'spec-gate: CONTEXT %s\n' "$CONTEXT_CAUSE" >&2
+  echo "  See docs/templates/overview.template.md, or run" >&2
   echo "  'python3 $SD/spec_gate_context.py check --all' to find every overview like this one." >&2
 elif [ "$ctx_rc" -ne 0 ]; then
   echo "spec-gate: the context block could not be built (exit $ctx_rc, cause named above) —" >&2
@@ -318,7 +328,9 @@ python3 "$SD/spec_gate_triage.py" report "$DECISION" > "$REPORT" 2>/dev/null
 # Fold the degraded-context warning INTO the persisted report, not just stderr. A verdict this gate
 # stamps is read again later — on a replayed block, in a triage, by a human — and none of those
 # reads see the hook's own stderr. This is what makes the state "unmistakable" rather than merely
-# printed once: it is not a gate failure, but it also does not get to look like a clean pass.
+# printed once: it is not a gate failure, but it also does not get to look like a clean pass. The
+# banner carries the builder's own cause line, so the durable record names the shape that actually
+# fired rather than one of the three.
 #
 # The fold itself must not fail the way it is fixing. A full or read-only TMPDIR makes the write or
 # the move fail, and a silent one leaves the persisted report indistinguishable from a clean pass —
@@ -326,8 +338,7 @@ python3 "$SD/spec_gate_triage.py" report "$DECISION" > "$REPORT" 2>/dev/null
 # owns, and a failure says so on stderr rather than being swallowed by `&&`.
 if [ "$CONTEXT_DEGRADED" -eq 1 ]; then
   if {
-    echo "CONTEXT DEGRADED: overview.md has no '## Contracts and Decisions' heading — contradiction"
-    echo "was checked only against the prior phase's card, never this feature's own contracts."
+    printf 'CONTEXT %s\n' "$CONTEXT_CAUSE"
     echo
     cat "$REPORT"
   } > "$REPORT_CTX" && mv "$REPORT_CTX" "$REPORT"; then
