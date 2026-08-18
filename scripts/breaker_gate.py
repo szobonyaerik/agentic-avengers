@@ -60,6 +60,16 @@ FILENAME = "breaker.json"
 VERDICTS = ("clean", "found")
 RULE = "breaker"
 
+#: Every document the read-path table governs declares who reads it, in the document. JSON has no
+#: frontmatter, so it is a top-level key - required here, by the gate that owns this record's shape,
+#: because declaring a reader in `scripts/doc_read_path.py` is not the same as instructing anyone to
+#: emit it. `doc_read_path.READ_PATH` reads this list rather than keeping a second copy: two gates
+#: that disagree about what a valid record is let one pass a record the other refuses a commit later.
+READERS = [
+    "breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
+    "pipeline_state.py @ per phase, resolving the next stage",
+]
+
 
 class BreakerGateError(Exception):
     """A record or ledger this cannot read. Always fails the caller closed."""
@@ -112,6 +122,14 @@ def _validate(data: object, path: Path) -> str | None:
                 f"{path} verdict is 'found' but names no counterexample (test path/id) routed to "
                 f"the implementer"
             )
+    readers = data.get("readers")
+    if not isinstance(readers, list) or not readers:
+        return (
+            f"{path} declares no `readers` - every document the read path governs names who reads "
+            f"it, as a top-level key because JSON has no frontmatter. Asked here so the record that "
+            f"closes a phase is the same record `doc_read_path.py` accepts on the next commit; "
+            f"expected: {'; '.join(READERS)}"
+        )
     return None
 
 

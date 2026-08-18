@@ -61,7 +61,8 @@ def phase_dir(root: Path, phase: str = "1-core") -> Path:
 
 
 def write_breaker(root: Path, data: dict, phase: str = "1-core") -> None:
-    (phase_dir(root, phase) / "breaker.json").write_text(json.dumps(data))
+    record = {"readers": list(breaker_gate.READERS), **data}
+    (phase_dir(root, phase) / "breaker.json").write_text(json.dumps(record))
 
 
 # --- owed() -------------------------------------------------------------------------------------
@@ -137,6 +138,45 @@ def test_due_refuses_an_unreadable_verdict(tmp_path: Path) -> None:
     reason = breaker_gate.due(phase_dir(tmp_path))
     assert reason is not None
     assert "no readable verdict" in reason
+
+
+def test_due_refuses_a_record_that_declares_no_readers(tmp_path: Path) -> None:
+    """A record this gate accepts and `doc_read_path.py` refuses is two gates disagreeing about
+    what a valid record is - the phase closes on it, and the very next commit fails on the same
+    file. Asked here, where the remedy still exists, rather than a commit later."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    (phase_dir(tmp_path) / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["replay"]})
+    )
+    reason = breaker_gate.due(phase_dir(tmp_path))
+    assert reason is not None
+    assert "declares no `readers`" in reason
+
+
+def test_due_refuses_a_record_whose_readers_list_is_empty(tmp_path: Path) -> None:
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    (phase_dir(tmp_path) / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["replay"], "readers": []})
+    )
+    reason = breaker_gate.due(phase_dir(tmp_path))
+    assert reason is not None
+    assert "declares no `readers`" in reason
+
+
+def test_a_record_this_gate_accepts_is_one_the_read_path_check_accepts(tmp_path: Path) -> None:
+    """The two gates are pinned to ONE answer: whatever clears the phase close must also clear the
+    artifact check that reads the same file. `doc_read_path` takes its declared readers from this
+    module's constant, so the entry and the enforcement cannot drift apart."""
+    import doc_read_path
+
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": ["replay"]})
+    assert breaker_gate.due(phase_dir(tmp_path)) is None
+
+    spec = doc_read_path.spec_for(breaker_gate.FILENAME)
+    assert spec is not None, "breaker.json is not on the read-path table"
+    assert spec["readers"] == breaker_gate.READERS
+    assert doc_read_path._artifact_problems(breaker_gate.record_path(phase_dir(tmp_path)), spec) == []
 
 
 def test_due_refuses_malformed_json(tmp_path: Path) -> None:

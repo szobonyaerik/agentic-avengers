@@ -74,7 +74,9 @@ evidence anything was probed.
 
 `readers` is the same declaration every other document on the read path carries
 (`scripts/doc_read_path.py`), as a top-level key because JSON has no frontmatter: a document no
-stage reads does not get written, so this record names the stages that read it.
+stage reads does not get written, so this record names the stages that read it. It is **required**,
+and `scripts/breaker_gate.py` refuses a record without it rather than letting the phase close on a
+record `doc_read_path.py` rejects at the next commit. Copy the two lines above verbatim.
 
 ## If nothing breaks
 Report **clean**, and list exactly what you attacked (the input classes and conditions you tried)

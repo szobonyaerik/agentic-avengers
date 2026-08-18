@@ -25,6 +25,8 @@ pytestmark = pytest.mark.subprocess(
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import breaker_gate  # noqa: E402
+
 PASSING = {
     "verdict": "pass",
     "attempt": 3,
@@ -293,16 +295,36 @@ def test_a_critical_phase_does_not_close_without_a_breaker_record(project: Path)
     assert "breaker.json" in result.stderr
 
 
+def write_breaker(project: Path, data: dict) -> None:
+    """A record as the Breaker is instructed to write it, `readers` included - the hook must close
+    on the same record `doc_read_path.py` accepts, not one it refuses a commit later."""
+    record = {"readers": list(breaker_gate.READERS), **data}
+    (phase_dir(project) / "breaker.json").write_text(json.dumps(record))
+
+
 def test_a_valid_breaker_record_lets_a_critical_phase_close(project: Path) -> None:
     write_spec(project, criticality="critical")
     attempts(project, [(1, 0, "pass")])
-    (phase_dir(project) / "breaker.json").write_text(
-        json.dumps({"verdict": "clean", "attacked": ["replay", "auth bypass"]})
-    )
+    write_breaker(project, {"verdict": "clean", "attacked": ["replay", "auth bypass"]})
 
     result = run_hook(project)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_a_breaker_record_declaring_no_readers_does_not_close_the_phase(project: Path) -> None:
+    """Reproduced against the real hook: a record without `readers` used to clear the close and
+    then fail `doc_read_path.py` on the very next commit - two gates disagreeing about one file."""
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+    (phase_dir(project) / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["replay"]})
+    )
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "declares no `readers`" in result.stderr
 
 
 def test_a_standard_phase_closes_with_no_breaker_record(project: Path) -> None:

@@ -13,10 +13,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import breaker_gate  # noqa: E402
 from pipeline_state import (  # noqa: E402
     FeatureNotFoundError,
     next_stage,
 )
+
+
+def write_breaker(feature: Path, phase: str, data: dict) -> None:
+    """A record as the Breaker is instructed to write it - `readers` included, since the gate
+    refuses one without it exactly as `doc_read_path.py` does."""
+    record = {"readers": list(breaker_gate.READERS), **data}
+    (feature / "phases" / phase / "breaker.json").write_text(json.dumps(record))
 
 SPEC = """---
 feature: demo
@@ -247,8 +255,8 @@ def test_a_valid_breaker_record_lets_the_phase_reach_handover(tmp_path: Path) ->
         feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
     )
     write_verdict(feature, "1-core", "pass")
-    (feature / "phases" / "1-core" / "breaker.json").write_text(
-        json.dumps({"verdict": "clean", "attacked": ["malformed payloads", "auth bypass"]})
+    write_breaker(
+        feature, "1-core", {"verdict": "clean", "attacked": ["malformed payloads", "auth bypass"]}
     )
 
     assert next_stage(tmp_path, "demo").stage == "handover"
@@ -263,6 +271,21 @@ def test_a_breaker_record_with_no_verdict_still_blocks(tmp_path: Path) -> None:
     )
     write_verdict(feature, "1-core", "pass")
     (feature / "phases" / "1-core" / "breaker.json").write_text(json.dumps({"ran": True}))
+
+    assert next_stage(tmp_path, "demo").stage == "breaker"
+
+
+def test_a_record_declaring_no_readers_still_blocks(tmp_path: Path) -> None:
+    """The resolver reads the same validity the read-path check does, so a record that would close
+    the phase here and fail `doc_read_path.py` on the next commit routes back to the Breaker."""
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["replay"]})
+    )
 
     assert next_stage(tmp_path, "demo").stage == "breaker"
 
@@ -301,10 +324,10 @@ def test_a_found_verdict_naming_a_counterexample_lets_the_phase_reach_handover(t
         feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
     )
     write_verdict(feature, "1-core", "pass")
-    (feature / "phases" / "1-core" / "breaker.json").write_text(
-        json.dumps(
-            {"verdict": "found", "counterexamples": ["tests/demo/1-core/test_breaker_auth.py"]}
-        )
+    write_breaker(
+        feature,
+        "1-core",
+        {"verdict": "found", "counterexamples": ["tests/demo/1-core/test_breaker_auth.py"]},
     )
 
     assert next_stage(tmp_path, "demo").stage == "handover"
