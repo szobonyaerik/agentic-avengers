@@ -959,3 +959,129 @@ def test_cli_cut_reports_an_unwritable_registry_and_says_the_payload_landed(tmp_
     assert "payload IS released" in result.stderr
     assert (cache_root / "1.1.0" / ".claude-plugin" / "plugin.json").is_file()  # it really did land
     assert registry_path.read_text(encoding="utf-8") == original  # and the pin is untouched
+
+
+# --- fix: the review findings — plugin identity, non-UTF-8 payload paths, and the pin's error path --
+
+
+def test_source_root_refuses_a_project_that_is_a_DIFFERENT_plugin(tmp_path, monkeypatch):  # noqa: F811
+    """RED: a consumer who uses this pipeline to develop their OWN Claude Code plugin has
+    `CLAUDE_PROJECT_DIR` pointing at a plugin repository that is not this one. Accepting it on the
+    mere presence of `.claude-plugin/plugin.json` compared the executing release against a payload
+    that can never match — a permanent STALE, whose prescribed remedy (`cut` from the source
+    checkout) cannot clear it, which is the unclearable wedge CLAUDE.md §3a exists to prevent.
+    GREEN: identity is the manifest's `name`, so an unrelated plugin resolves to no source at all
+    and `check` reports UNKNOWN — never enforced.
+    """
+    _clean_env(monkeypatch)
+    executing = make_plugin(tmp_path / "cache" / "0.10.2", version="0.10.2")
+    other = make_plugin(tmp_path / "their-plugin", version="2.0.0")
+    (other / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "someone-elses-plugin", "version": "2.0.0"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(other))
+
+    assert pr.source_root(executing) is None
+    assert pr.check(executing).status == "unknown"
+
+    ours = make_plugin(tmp_path / "our-plugin", version="0.10.3")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(ours))
+    assert pr.source_root(executing) == ours
+
+
+def test_cli_check_does_not_wedge_a_consumer_whose_project_is_another_plugin(tmp_path):  # noqa: F811
+    """The same fact at the boundary `/avenger-run` §1 actually calls: exit 0, not the exit 1 that
+    halts every run."""
+    executing = make_plugin(tmp_path / "cache" / "0.10.2", version="0.10.2")
+    other = make_plugin(tmp_path / "their-plugin", version="2.0.0")
+    (other / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "someone-elses-plugin", "version": "2.0.0"}), encoding="utf-8"
+    )
+    env = {k: v for k, v in os.environ.items() if k not in (pr.SOURCE_ROOT_ENV, "CLAUDE_PLUGIN_ROOT")}
+    env["CLAUDE_PROJECT_DIR"] = str(other)
+
+    result = run_cli("check", "--executing", str(executing), env=env)
+
+    assert result.returncode == 0
+    assert "UNKNOWN" in result.stderr
+
+
+def test_encode_path_round_trips_bytes_a_plain_utf8_encode_cannot():  # noqa: F811
+    """RED: both hashers re-encoded a path with `.encode("utf-8")`. Git's output is decoded
+    `errors="surrogateescape"` and `Path.rglob` yields the same shape, so a payload filename whose
+    bytes are not valid UTF-8 carries lone surrogates and that call raises `UnicodeEncodeError` —
+    uncaught, exit 1 with a traceback, indistinguishable from a confirmed STALE. GREEN: the same
+    error handler on the way back out restores the original bytes."""
+    raw = b"agents/caf\xe9.md"
+    decoded = os.fsdecode(raw)
+
+    with pytest.raises(UnicodeEncodeError):
+        decoded.encode("utf-8")
+
+    assert pr._encode_path(decoded) == raw
+
+
+def test_both_hashers_agree_on_a_path_that_is_not_valid_utf8(tmp_path, monkeypatch):  # noqa: F811
+    """The two sides of `check()` must produce the SAME digest for the same (path, bytes) pair even
+    when the path is not valid UTF-8 — the filesystem side via `content_hash`, the committed side
+    via `_head_content_hash`. Driven through fakes rather than a real file because macOS refuses to
+    create a filename that is not valid UTF-8 at all, while Linux allows it."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    weird_rel = b"agents/caf\xe9.md"
+    weird = Path(os.fsdecode(os.fsencode(root) + b"/" + weird_rel))
+    body = b"# not valid utf-8 in the NAME, not the body\n"
+
+    expected = hashlib.sha256()
+    expected.update(weird_rel)
+    expected.update(b"\0")
+    expected.update(body)
+    expected.update(b"\0")
+
+    monkeypatch.setattr(pr, "_shipped_files", lambda _root: [weird])
+    monkeypatch.setattr(Path, "read_bytes", lambda _self: body)
+    assert pr.content_hash(root) == expected.hexdigest()
+
+    listing = "100644 blob 0123456789abcdef0123456789abcdef01234567\t" + os.fsdecode(weird_rel) + "\0"
+    monkeypatch.setattr(pr, "_git", lambda _root, *_args: listing)
+    monkeypatch.setattr(pr, "_git_batch_blobs", lambda _root, _shas: [body])
+    assert pr._head_content_hash(root) == expected.hexdigest()
+
+
+def test_cli_cut_says_the_payload_landed_when_the_registry_has_no_entry(tmp_path):  # noqa: F811
+    """RED: `_pin_after_copy` translated only `OSError`, but `update_pin` raises `ValueError` for an
+    unreadable, non-JSON or entry-less registry — every one of them AFTER the payload is on disk.
+    Printed bare by `main`, `cannot read .../installed_plugins.json` reads as "the release failed",
+    which is the exact misreading that wrapper exists to prevent. GREEN: every failure from the pin
+    step carries the payload's real state, with the cause appended verbatim."""
+    repo = make_plugin(tmp_path / "repo", version="1.1.0")
+    cache_root = tmp_path / "cache" / "erik-tools" / "plan-build-verify"
+    registry_path = make_registry(tmp_path / "installed_plugins.json", {})
+
+    result = run_cli(
+        "cut", "--repo", str(repo), "--cache-root", str(cache_root),
+        "--pin-path", str(registry_path),
+    )
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "payload IS released" in result.stderr
+    assert "no entries under" in result.stderr  # the cause, verbatim
+    assert (cache_root / "1.1.0" / ".claude-plugin" / "plugin.json").is_file()
+
+
+def test_cli_cut_says_the_payload_landed_when_the_registry_is_not_json(tmp_path):  # noqa: F811
+    repo = make_plugin(tmp_path / "repo", version="1.1.0")
+    cache_root = tmp_path / "cache" / "erik-tools" / "plan-build-verify"
+    registry_path = tmp_path / "installed_plugins.json"
+    registry_path.write_text("{not json", encoding="utf-8")
+
+    result = run_cli(
+        "cut", "--repo", str(repo), "--cache-root", str(cache_root),
+        "--pin-path", str(registry_path),
+    )
+
+    assert result.returncode == 1
+    assert "payload IS released" in result.stderr
+    assert "not valid JSON" in result.stderr
+    assert (cache_root / "1.1.0" / ".claude-plugin" / "plugin.json").is_file()

@@ -111,6 +111,25 @@ def plugin_version(root: Path) -> str | None:
     return version if isinstance(version, str) and version.strip() else None
 
 
+def plugin_name(root: Path) -> str | None:
+    """The `name` field this copy's own manifest declares — plugin IDENTITY, not version."""
+    name = (plugin_manifest(root) or {}).get("name")
+    return name if isinstance(name, str) and name.strip() else None
+
+
+def _encode_path(path: str) -> bytes:
+    """A path's ORIGINAL bytes, for a digest that survives a filename that is not valid UTF-8.
+
+    Both sides of the comparison carry such a path as a `str` holding lone surrogates — git's output
+    is decoded `errors="surrogateescape"` in `_git`, and `Path.rglob` produces the same shape via
+    `os.fsdecode` — and a plain `.encode("utf-8")` raises `UnicodeEncodeError` on one. Uncaught,
+    that exits 1 with a traceback: the code `main`'s `check` reserves for a confirmed STALE, whose
+    prescribed remedy (cut a release) crashes the same way. Round-tripping with the same error
+    handler restores the original bytes, so identical bytes hash identically on both sides.
+    """
+    return path.encode("utf-8", errors="surrogateescape")
+
+
 def _shipped_files(root: Path) -> list[Path]:
     """Every file under `PLUGIN_PATHS`, sorted, for a hash order that does not depend on `os.walk`."""
     found: list[Path] = []
@@ -143,7 +162,7 @@ def content_hash(root: Path) -> str | None:
         return None
     digest = hashlib.sha256()
     for path in _shipped_files(root):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(_encode_path(path.relative_to(root).as_posix()))
         digest.update(b"\0")
         try:
             digest.update(path.read_bytes())
@@ -271,7 +290,7 @@ def _head_content_hash(repo: Path, paths: tuple[str, ...] = PLUGIN_PATHS) -> str
 
     digest = hashlib.sha256()
     for (path, _), content in zip(tracked, blobs):
-        digest.update(path.encode("utf-8"))
+        digest.update(_encode_path(path))
         digest.update(b"\0")
         digest.update(content)
         digest.update(b"\0")
@@ -286,7 +305,7 @@ def _working_tree_dirty(repo: Path, paths: tuple[str, ...] = PLUGIN_PATHS) -> bo
     return bool(output and output.strip())
 
 
-def source_root() -> Path | None:
+def source_root(executing: Path | None = None) -> Path | None:
     """Where the merged repository this plugin ships from lives on this machine, if findable.
 
     `AVENGER_SOURCE_REPO` is the explicit, per-machine override — the same shape as
@@ -294,12 +313,25 @@ def source_root() -> Path | None:
     once rather than guessing a path. The one case resolved without it: the project actively being
     worked on *is* this plugin's own repository (developing plan-build-verify against itself), which
     is exactly the situation this fix was written under.
+
+    "Is this plugin's own repository" is decided by the manifest's `name` matching the EXECUTING
+    copy's, not merely by a `.claude-plugin/plugin.json` existing. A consumer who uses this pipeline
+    to develop their own Claude Code plugin has `CLAUDE_PROJECT_DIR` pointing at an unrelated plugin
+    repository, and comparing the executing release against *that* payload can never match: a
+    permanent STALE whose prescribed remedy cannot clear it, since cutting from the wrong repo would
+    either refuse on `_missing_shipped_paths` or release the wrong payload. That is the unclearable
+    wedge CLAUDE.md §3a exists to prevent, so an unrecognised project falls back to "unknown" —
+    reported, never enforced — exactly like a machine with nothing configured at all.
     """
     declared = os.environ.get(SOURCE_ROOT_ENV)
     if declared:
         return Path(declared)
     project = os.environ.get("CLAUDE_PROJECT_DIR")
-    if project and (Path(project) / ".claude-plugin" / "plugin.json").is_file():
+    if not project:
+        return None
+    executing_name = plugin_name(executing if executing is not None else executing_root())
+    project_name = plugin_name(Path(project))
+    if executing_name and project_name and executing_name == project_name:
         return Path(project)
     return None
 
@@ -343,7 +375,7 @@ def check(executing: Path | None = None, source: Path | None = None) -> DriftRes
     """
     exe_root = Path(executing) if executing is not None else executing_root()
     exe_version = plugin_version(exe_root)
-    src_root = Path(source) if source is not None else source_root()
+    src_root = Path(source) if source is not None else source_root(exe_root)
 
     if src_root is None:
         return DriftResult(
@@ -447,8 +479,9 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
     object, so a write that silently failed to take cannot be missed) and confirms every entry this
     call claims to have updated both persisted and resolves `plugin_version()` back to `version` —
     proof that a harness reading the pin now would actually execute the release, not merely that
-    some bytes were written somewhere. Raises `RuntimeError` if that proof fails; `cut()` lets it
-    propagate, so a `cut` cannot report success while the pin does not actually resolve to it.
+    some bytes were written somewhere. Raises `RuntimeError` if that proof fails; `cut()` surfaces
+    it through `_pin_after_copy`, so a `cut` cannot report success while the pin does not actually
+    resolve to it.
     """
     pin_path = Path(pin_path)
     try:
@@ -527,21 +560,28 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
 
 
 def _pin_after_copy(pin_path: Path, cache_root: Path, target: Path, version: str, repo: Path) -> int:
-    """`update_pin`, with a write failure re-raised as one that SAYS the payload already landed.
+    """`update_pin`, with EVERY failure re-raised as one that SAYS the payload already landed.
 
-    The registry update is the last step of `cut`, so an `OSError` here (a root-owned or read-only
-    registry) happens after the payload is fully in place. Reported as a bare write error it reads
-    as "the release failed", sending an operator to re-run a copy that already succeeded; what is
-    actually owed is the pin alone.
+    The registry update is the last step of `cut`, so anything that fails here fails after the
+    payload is fully in place. Reported bare it reads as "the release failed", sending an operator
+    to re-run a copy that already succeeded; what is actually owed is the pin alone.
+
+    That framing is owed to every way `update_pin` can fail, not only `OSError`: it converts its own
+    read failure into `ValueError`, and raises `ValueError` for a non-JSON registry, a registry with
+    no entry for this plugin, and no entry pointing under `cache_root` — all after the copy — while
+    its closing check raises `RuntimeError`. Catching one of the three left the others printing bare
+    from `main`, which is the exact misreading this wrapper exists to prevent. Only the payload's
+    state is asserted here; the cause is appended verbatim, so a message about a registry that WAS
+    written (the closing check) is never contradicted by a claim that it was not.
     """
     try:
         return update_pin(pin_path, cache_root, target, version, repo)
-    except OSError as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         raise RuntimeError(
-            f"the payload IS released to {target}, but writing the install registry {pin_path} "
-            f"failed: {exc}. Nothing points at the release yet — fix the registry's permissions and "
-            f"re-run `cut` (the copy step is a no-op on unchanged content), or pass --no-pin and "
-            "re-point it by hand."
+            f"the payload IS released to {target} — the copy step succeeded and re-running `cut` "
+            f"is a no-op on unchanged content. What is owed is the install registry {pin_path} "
+            f"alone: resolve the cause below and re-run `cut`, or pass --no-pin and re-point the "
+            f"registry by hand. Cause: {exc}"
         ) from exc
 
 
