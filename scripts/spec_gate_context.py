@@ -250,10 +250,13 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
     """(the CONTEXT block, one note per part included/absent/degraded, whether it is degraded).
 
     An empty block with `degraded=False` is a normal answer - phase 1 has no prior card, a feature
-    may not have written contracts yet. `degraded=True` means `overview.md` exists but never had a
-    `## Contracts and Decisions` heading at all, so `contradiction` loses half of what it is defined
-    to check for every spec in the feature, not just this one. The caller decides what to do with
-    that; this function only refuses to make it indistinguishable from "nothing to carry yet".
+    may have the heading with genuinely nothing under it yet. `degraded=True` means one of the three
+    shapes named at the top of this module - no `## Contracts and Decisions` heading at all, that
+    heading holding only boilerplate, or no readable `overview.md` at all - so `contradiction` loses
+    half of what it is defined to check for every spec in the feature, not just this one. Each shape
+    names its own remedy in its own note, because the caller carries that line verbatim. The caller
+    decides what to do with the signal; this function only refuses to make it indistinguishable from
+    "nothing to carry yet".
     """
     where = layout(spec)
     if where is None:
