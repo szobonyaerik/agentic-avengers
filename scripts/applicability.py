@@ -97,6 +97,7 @@ RULES: dict[str, str] = {
     "spec-review": "the human spec-review sign-off on a spec",
     "verdict": "the Verifier's passing verdict for a phase",
     "requirement-cap": "the requirement cap's split trigger on a spec",
+    "breaker": "a Breaker record owed by a phase that declares criticality: critical",
 }
 
 #: Every document the read-path table governs declares who reads it, in the document. JSON has no
@@ -106,6 +107,7 @@ READERS = [
     "pipeline_state.py @ per phase, resolving the next stage",
     "requirement_cap.py @ per spec write",
     "phase-handover @ per phase",
+    "breaker_gate.py @ per phase, resolving the Breaker obligation",
 ]
 
 

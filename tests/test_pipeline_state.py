@@ -217,6 +217,118 @@ def test_e2e_mapping_present_means_done(tmp_path: Path) -> None:
     assert next_stage(tmp_path, "demo").stage == "done"
 
 
+# ── the Breaker obligation (issue #45) ────────────────────────────────────────────────────────────
+#
+# All four phase-8 specs and all four phase-9 specs of one measured feature declared
+# `criticality: critical`, which is what routes the Breaker — and it ran neither time, because
+# nothing enforced it: the resolver reported the criticality and trusted the orchestrator to act on
+# it. These tests break that gap before proving it closed: a critical phase with a passing verdict
+# and no Breaker record must NOT reach `handover`.
+
+
+def test_a_critical_phase_with_no_breaker_record_does_not_reach_handover(tmp_path: Path) -> None:
+    """The gap issue #45 describes, reproduced: two owed Breaker runs went missing and nothing
+    noticed. Without the fix this asserts the wrong thing — the resolver would report `handover`."""
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+
+    state = next_stage(tmp_path, "demo")
+
+    assert state.stage == "breaker"
+    assert "breaker.json" in state.reason
+
+
+def test_a_valid_breaker_record_lets_the_phase_reach_handover(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["malformed payloads", "auth bypass"]})
+    )
+
+    assert next_stage(tmp_path, "demo").stage == "handover"
+
+
+def test_a_breaker_record_with_no_verdict_still_blocks(tmp_path: Path) -> None:
+    """A file existing is not the same as a record proving anything — the same "emits nothing"
+    failure mode the issue names, one level down: a Breaker that writes junk rather than a verdict."""
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "breaker.json").write_text(json.dumps({"ran": True}))
+
+    assert next_stage(tmp_path, "demo").stage == "breaker"
+
+
+def test_a_clean_verdict_naming_nothing_attacked_still_blocks(tmp_path: Path) -> None:
+    """"A clean Breaker report with no attempts described is not acceptable" (agents/avenger-breaker
+    .md) — this is what makes that instruction checkable rather than a sentence nobody enforces."""
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": []})
+    )
+
+    assert next_stage(tmp_path, "demo").stage == "breaker"
+
+
+def test_a_found_verdict_naming_no_counterexample_still_blocks(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "breaker.json").write_text(
+        json.dumps({"verdict": "found", "counterexamples": []})
+    )
+
+    assert next_stage(tmp_path, "demo").stage == "breaker"
+
+
+def test_a_found_verdict_naming_a_counterexample_lets_the_phase_reach_handover(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    (feature / "phases" / "1-core" / "breaker.json").write_text(
+        json.dumps(
+            {"verdict": "found", "counterexamples": ["tests/demo/1-core/test_breaker_auth.py"]}
+        )
+    )
+
+    assert next_stage(tmp_path, "demo").stage == "handover"
+
+
+def test_a_standard_phase_owes_no_breaker_record(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="approved", status="done")
+    write_verdict(feature, "1-core", "pass")
+
+    assert next_stage(tmp_path, "demo").stage == "handover"
+
+
+def test_a_recorded_breaker_exception_lets_the_phase_reach_handover(tmp_path: Path) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+    )
+    write_verdict(feature, "1-core", "pass")
+    record(feature / "phases" / "1-core", "breaker", "1-core")
+
+    assert next_stage(tmp_path, "demo").stage == "handover"
+
+
 def test_criticality_is_reported_for_the_breaker_decision(tmp_path: Path) -> None:
     feature = planned(tmp_path)
     write_spec(

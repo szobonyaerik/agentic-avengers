@@ -226,6 +226,19 @@ case "$V" in
         "A green suite the implementer wrote is not evidence. Run scripts/verifier_review.sh over the" \
         "bounded review set on a cross-family model, then record its scope and findings in verdict.json."
     fi
+    # A phase that declares criticality: critical routes the Breaker (commands/avenger-run.md §4) —
+    # and on one measured feature it was owed twice and ran neither time, with zero trace anywhere in
+    # the feature's docs or tests (issue #45). A stage that emits nothing is indistinguishable from a
+    # stage that never ran, so this checks for its RECORD (breaker.json), the same way the handover
+    # check below checks for handover.md — mechanically, not by trusting the run to remember.
+    if ! python3 "$SD/breaker_gate.py" due "$PHASE_DIR"; then
+      fail "verifier:breaker" \
+        "verifier: this phase's Breaker obligation is not met (named above)." \
+        "Run plan-build-verify:avenger-breaker over the critical/security paths; it persists" \
+        "breaker.json with a verdict and what it actually attacked. If the run is deliberately" \
+        "waived, record why: scripts/applicability.py record <phase-dir> --rule breaker" \
+        "--subject <phase> --reason-file <f> --recorded-by <who>."
+    fi
     carried_items_gate
     exit 0 ;;
   fail)

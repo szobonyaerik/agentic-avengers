@@ -93,8 +93,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    scope enforces nothing and says so), **shipped** (`status: done` in the spec's frontmatter, read
    through `spec_gate_state` like every other stamp — the remedy no longer exists, and
    a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
-   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
-   named call site — and an unknown rule is a hard failure naming what was invented. Every exception
+   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
+   `breaker`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
    all, and named on stderr when it applies — and `bypass_log.sh` **exits 2 (blocking) when it
    cannot append**, so an override nobody could log is not an override. **A phase closed with a recorded
@@ -102,6 +102,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    forever. `pipeline_state.py --from-phase <n>` steps over earlier phases for one invocation and
    answers **nothing feature-wide** over them: with any phase skipped the stage is `unknown`, never
    `done` or `e2e-author`.
+3h. **The Breaker obligation — a critical phase does not close without a record.** All four phase-8
+   specs and all four phase-9 specs of one measured feature declared `criticality: critical`, which
+   routes the Breaker; it was owed twice and ran neither time, with zero trace anywhere in that
+   feature's docs or tests, because nothing checked for it. `scripts/breaker_gate.py` closes that: a
+   phase owing a Breaker run does not close without a valid `breaker.json` beside `verdict.json` (a
+   `clean` verdict naming what it attacked, or a `found` verdict naming its counterexample — a vacuous
+   record is refused the same as a missing one). Enforced by `hook_verifier.sh` and `gate_ci.sh`
+   (diff-scoped, `check --all` audits) and reported by `pipeline_state.py` as `stage: breaker`, and
+   waivable only through the same disclosed-exception ledger as every other rule here.
 3c. **Amendments — change a verified phase without re-verifying all of it.**
    `scripts/amendments.py` records the requirement ids a post-verification change touched; **only
    those re-verify**, and the verdict reads *verified at attempt N, plus amendments A1..An*

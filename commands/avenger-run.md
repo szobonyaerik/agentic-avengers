@@ -159,7 +159,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/applicability.py" record <phase-dir> \
   --rule spec-review --subject <n>.<k>-<subslug> --reason-file <file> --recorded-by <who>
 ```
 
-Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`; one rule and one
+Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`; one rule and one
 subject each, audited to `gate-overrides.log`. `--from-phase <n>` steps over earlier phases for one
 invocation without recording anything, and names what it skipped. It never answers a feature-wide
 question over them: with any phase stepped over the stage is `unknown` — not a stage to act on, but
@@ -179,6 +179,7 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `spec-review` | `/plan-build-verify:spec-review <spec_path>` (add `--auto` when running unattended) — the **human** sign-off; the machine gate already ran on write |
 | `implementer` | `plan-build-verify:avenger-backend-architect`, or `avenger-frontend-developer` when the spec is UI. It writes tests **and** code, test-first |
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
+| `breaker` | `plan-build-verify:avenger-breaker` for the phase — it persists `breaker.json`, which is what lets the resolver move past this stage (see §4) |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
 | `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature — **then commit its output, see §5** |
 | `done` | **Ship gate (§4a), retrospective triage (§4b), the second feature-close commit (§5), then** report and stop |
@@ -268,12 +269,18 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 
 ## 4. After the Verifier passes a phase
 
-1. **Breaker** — only if the resolver reports `criticality: critical` for the phase. Invoke
-   `plan-build-verify:avenger-breaker` — it runs at the effort its own definition declares, which
-   you neither pass nor override. A counterexample routes back to the
+1. **Breaker** — when the resolver reports `stage: breaker` (any spec in the phase declares
+   `criticality: critical` and no valid `breaker.json` exists yet — `scripts/breaker_gate.py`).
+   Invoke `plan-build-verify:avenger-breaker` — it runs at the effort its own definition declares,
+   which you neither pass nor override. It persists `breaker.json` beside `verdict.json`, naming its
+   verdict and what it actually attacked; **this is not optional documentation, it is what the
+   handover hook and CI check for** — a critical phase with no record does not close
+   (`scripts/hook_verifier.sh`, `scripts/gate_ci.sh`). A counterexample routes back to the
    implementer to **add** a test (the suite is locked; additions only). **It is never folded into
    verification**: it found phase 8's credential leaks by constructing inputs, which is a different
-   instrument from reading a test set.
+   instrument from reading a test set. **This step used to be a sentence nobody enforced** — it was
+   owed on every phase-8 and phase-9 spec of one feature and ran on neither (issue #45) — so it is
+   now the same mechanical gate as everything else here, not a reminder.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
    Read survivors as candidate missing cases. It is still not the independence mechanism.
 3. **Carried items** - the handover hook runs **three** carried-items checks and refuses the card if

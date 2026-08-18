@@ -283,6 +283,7 @@ def test_the_rule_set_is_the_one_the_ledger_validates_against():
         "spec-review",
         "verdict",
         "requirement-cap",
+        "breaker",
     }
 
 

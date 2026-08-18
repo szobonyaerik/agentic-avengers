@@ -44,6 +44,24 @@ def phase_dir(project: Path) -> Path:
     return project / "docs" / "features" / "demo" / "phases" / "1-demo"
 
 
+def write_spec(project: Path, spec: str = "1.1-a", *, criticality: str = "standard") -> None:
+    """A spec that also satisfies `verifier_precheck.py` (Acceptance criteria heading, a fresh gate
+    stamp, no untraced requirement ids) — that check is not what these tests are about, so it is
+    driven clean the same way `spec_gate_cache.py` itself would leave a spec after an approval."""
+    spec_dir = phase_dir(project) / "specs" / spec
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    path = spec_dir / "spec.md"
+    path.write_text(
+        f"---\nfeature: demo\nphase: 1-demo\nspec: {spec}\ncriticality: {criticality}\n---\n\n"
+        f"# Spec\n\n## Acceptance criteria\n\nDone.\n"
+    )
+    subprocess.run(
+        [sys.executable, str(project / "scripts" / "spec_gate_cache.py"), "stamp", str(path),
+         "gate", "APPROVED"],
+        check=True, capture_output=True,
+    )
+
+
 def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     """Write the phase's verdict history: the archives, then the live verdict as the last entry."""
     for number, findings, result in series[:-1]:
@@ -251,3 +269,57 @@ def test_the_carried_gate_never_masks_the_stop_that_would_have_fired(project: Pa
 
     assert "refused" in result.stderr
     assert "carries forward" not in result.stderr
+
+
+# ── the Breaker obligation (issue #45) ────────────────────────────────────────────────────────────
+#
+# All four phase-8 specs and all four phase-9 specs of one measured feature declared
+# `criticality: critical`, which is what routes the Breaker — and it was owed twice and ran neither
+# time, with zero trace of it anywhere in the feature's docs or tests. This drives the REAL hook, the
+# same discipline the attempt cap above holds itself to: a rule whose test passes against the
+# un-enforced hook is not a rule.
+
+
+def test_a_critical_phase_does_not_close_without_a_breaker_record(project: Path) -> None:
+    """The gap the issue describes, reproduced directly against the hook that is supposed to stop
+    it. Without the fix this phase closes silently — exactly what happened twice already."""
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "Breaker obligation is not met" in result.stderr
+    assert "breaker.json" in result.stderr
+
+
+def test_a_valid_breaker_record_lets_a_critical_phase_close(project: Path) -> None:
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 0, "pass")])
+    (phase_dir(project) / "breaker.json").write_text(
+        json.dumps({"verdict": "clean", "attacked": ["replay", "auth bypass"]})
+    )
+
+    result = run_hook(project)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_standard_phase_closes_with_no_breaker_record(project: Path) -> None:
+    write_spec(project, criticality="standard")
+    attempts(project, [(1, 0, "pass")])
+
+    assert run_hook(project).returncode == 0
+
+
+def test_the_breaker_gate_never_masks_a_failed_suite(project: Path) -> None:
+    """Runs inside the `pass` branch on purpose, same as the carried-items gate: a red suite must
+    stop the phase for its own reason, not a Breaker record it never got to check."""
+    write_spec(project, criticality="critical")
+    attempts(project, [(1, 6, "fail")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "route back per its findings" in result.stderr
+    assert "Breaker obligation" not in result.stderr

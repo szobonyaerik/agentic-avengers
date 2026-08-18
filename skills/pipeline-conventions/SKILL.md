@@ -324,7 +324,13 @@ Three consequences worth stating outright:
   was caught by mutation** — including two in one phase that neither spec gate nor a green 281-test
   suite surfaced. Advisory never blocks, so the cost of the default being wrong is a line of output.
   It is still **not** the independence mechanism — the Verifier's test-quality review is.
-- **Breaker** — critical/security paths only, optional.
+- **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
+  spec in the phase declares `criticality: critical`). Not optional in practice: it was owed on
+  every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that
+  feature's docs or tests, because nothing checked for it (issue #45). It now persists `breaker.json`
+  beside `verdict.json`, and a critical phase does not close without a valid one
+  (`scripts/breaker_gate.py`, enforced from `scripts/hook_verifier.sh` and `scripts/gate_ci.sh` the
+  same way the carried-items obligation is) — see §4c.
 - **Feature-level e2e** — once, after the final phase is green (see below).
 - **Phase review gate (per phase, `no-mistakes`, review-only)** — after each handover,
   `no-mistakes axi run --skip=push,pr,ci`. The Verifier reads **tests**; this reads the rest of the
@@ -401,12 +407,13 @@ python3 scripts/applicability.py list <phase-dir>
 python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-clickup-client
 ```
 
-- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap` — and every
-  one of them is read by a named call site. A rule outside it is a hard error naming what was invented, never a silent
-  no-op: a ledger entry nothing reads is an exception that does not exist, and it would surface as a
-  phase wedged on a rule everybody believed was waived. A fifth is a deliberate edit to
-  `applicability.RULES` together with the call site that reads it — `subprocess-cost` was dropped
-  from the set for exactly that reason: the cost gate uses the *untouched* evidence, not this one.
+- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker` —
+  and every one of them is read by a named call site. A rule outside it is a hard error naming what
+  was invented, never a silent no-op: a ledger entry nothing reads is an exception that does not
+  exist, and it would surface as a phase wedged on a rule everybody believed was waived. A sixth is a
+  deliberate edit to `applicability.RULES` together with the call site that reads it —
+  `subprocess-cost` was dropped from the set for exactly that reason: the cost gate uses the
+  *untouched* evidence, not this one.
 - **An exception is narrow.** One rule, one subject, one phase. It is not `GATE_BYPASS`: a
   break-glass waives one gate call in one session, an exception is durable state about work that has
   shipped.

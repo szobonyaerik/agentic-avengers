@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import amendments  # noqa: E402
 import applicability  # noqa: E402
+import breaker_gate  # noqa: E402
 import spec_gate_state  # noqa: E402
 
 FEATURE_ORDER: tuple[tuple[str, str], ...] = (
@@ -269,6 +270,19 @@ def _phase_state(feature: str, phase: Path) -> State | None:
             ),
             **common,
         )
+
+    # A phase that declares `criticality: critical` routes the Breaker (commands/avenger-run.md §4),
+    # and "the resolver reports criticality: critical" used to be the only signal anyone acted on —
+    # nothing enforced it, and it was owed twice on one feature and ran neither time (issue #45). A
+    # stage that emits nothing is indistinguishable from a stage that never ran, so this is checked
+    # the same way a missing handover.md is: mechanically, here, not by trusting the orchestrator to
+    # remember. `breaker_gate.satisfied` refuses a missing record AND a vacuous one (a "clean" verdict
+    # naming nothing attacked), because the agent's own instruction — "a clean report with no
+    # attempts described is not acceptable" — is exactly what this makes checkable.
+    if breaker_gate.owed(phase):
+        reason = breaker_gate.satisfied(phase)
+        if reason is not None and not _excepted(phase, "breaker", phase.name):
+            return State(stage="breaker", reason=reason, **common)
 
     if not (phase / "handover.md").is_file():
         return State(
