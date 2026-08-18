@@ -548,10 +548,20 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
 - The ledger (`carried.json`, beside `verdict.json` in the phase that **acted**) refuses an id the
   prior card never declared - a typo would otherwise record an answer to a question nobody asked
   while the real item stayed owed - and a corrupt ledger is an error, never an empty one.
-- **A pre-rule card with no section owes nothing**, so a repository upgrades instead of being held
-  hostage by history it never touched. The CI sweep (`carried_items.py check`) is **diff-scoped even
-  under `--full`**, deliberately unlike `verifier_precheck`: this obligation lands on a document
-  class every consumer repo already has on disk, so a full audit would fail its CI over cards written
+- **A prior card's section has THREE states, not two.** An explicit `none` means nothing is carried
+  and the phase proceeds. **No section at all owes nothing** - a repository upgrades instead of being
+  held hostage by history it never touched. A section that is **present and declares neither an item
+  nor an explicit `none`** is neither of those and **fails closed** (exit 2, undecidable, not exit 1):
+  what the phase inherits cannot be determined, which is the state phase 9's bullet rows under an
+  `### Open items` heading were read as "nothing carried" in, and a card left holding the template's
+  own unfilled placeholder rows is the same state. The remedy is on the **prior** card - rewrite its
+  section as the documented table, a row per item or an explicit `none` row. The parser is
+  deliberately not widened to accept a second row shape: a closed set with a loud, specific refusal,
+  never silent inference of a new shape.
+- The CI sweep catches that undecidable prior card **per phase**, so one card does not abort the scan
+  of the rest; a corrupt `carried.json` is a different failure and still propagates as exit 2.
+- The CI sweep (`carried_items.py check`) is **diff-scoped even under `--full`**, deliberately
+  unlike `verifier_precheck`: this obligation lands on a document class every consumer repo has, so a full audit would fail its CI over cards written
   before the rule existed. Nothing is lost by that - the hook holds the phase being *closed*, which
   is a phase the diff touches by construction - and `check --all` is there for anyone who wants the
   audit. The check runs inside the *passing* branch of the handover gate: a phase at the attempt cap

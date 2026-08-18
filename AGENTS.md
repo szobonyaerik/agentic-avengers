@@ -137,7 +137,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    carries no `#<number>` or issue URL - a presence check, never a judgement about the claim.
    Ids are scoped by the card that declared them; which card is in force is
    `spec_gate_context.prior_phase`'s decision, imported rather than re-derived. A pre-rule card with
-   no section owes nothing, so a repository upgrades instead of being held hostage.
+   no section owes nothing, so a repository upgrades instead of being held hostage - but a section
+   that is present and declares neither an item nor an explicit `none` is undecidable, not empty, and
+   fails closed (exit 2) until the prior card is rewritten as the documented table.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
    What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
    restated in a table — a second statement of a fact is what every promise-versus-enforcement gap

@@ -53,6 +53,11 @@ Usage:
     carried_items.py discharge <phase-dir> <item-id> --as built|tested|declined
                                             [--by <spec/test/requirement>] [--reason-file <f>]
     carried_items.py due <phase-dir>        exit 1 when any owed item is undischarged
+
+    `list`, `discharge` and `due` read the PRIOR phase's card, so all three exit 2 - undecidable,
+    never exit 1 - when its `## Open items` section is present and states neither an item nor an
+    explicit `none`. The remedy is on that card, and `discharge` cannot reach it. `check` reports
+    the same state as a problem per phase rather than aborting its sweep of the others.
     carried_items.py filed <phase-dir>      exit 1 when a forward claim on the LAST card names no
                                             issue. Clean for every card that has a successor.
     carried_items.py check [--root .] [--all]
@@ -255,8 +260,22 @@ def declared(phase_dir: Path) -> tuple[list[Item], bool, bool]:
 def owed(phase_dir: Path) -> list[Item]:
     """Everything the immediately prior phase's card carries, which this phase owes an answer to.
 
-    An unresolvable layout, a first phase, or a prior card with nothing on it all mean nothing is
-    owed. None of those is an error: a feature's first phase inherits nothing by construction.
+    An unresolvable layout, a first phase, or a prior card with no `## Open items` section AT ALL all
+    mean nothing is owed. None of those is an error: a feature's first phase inherits nothing by
+    construction, and a repository upgrading to this rule must not be held hostage by a card written
+    before the section existed.
+
+    A prior card whose section IS present but declares neither an item nor an explicit `none` is a
+    different state, and reading it the same way as "nothing carried" is the defect this function
+    exists to close: phase 9's card wrote `### Open items` with bullet rows (`- OBS-1 | ... | ...`),
+    the table parser found no rows and no `none`, and `due` on phase 10 read that silence as nothing
+    owed - so OBS-1 through OBS-4 were never answered, not because they were discharged but because
+    the parser could not see them. That must FAIL, loudly, rather than pass as nothing-carried.
+
+    A card left holding the template's own unfilled placeholder rows is the same state and fails the
+    same way - the section is on the page and says nothing, which is exactly what cannot be read as
+    `none`. The message says so rather than claiming the table failed to parse: a placeholder row
+    parses perfectly and is simply not an item.
     """
     where = layout(Path(phase_dir))
     if where is None:
@@ -265,7 +284,18 @@ def owed(phase_dir: Path) -> list[Item]:
     previous = prior_phase(feature_dir, phase)
     if previous is None:
         return []
-    items, _says_none, _present = declared(previous)
+    items, says_none, present = declared(previous)
+    if present and not items and not says_none:
+        raise CarriedError(
+            f"{previous}/handover.md has a `## {SECTION_HEADING}` section that declares neither an "
+            f"item nor an explicit `none`, so what this phase inherits CANNOT BE DETERMINED. That "
+            f"covers every shape the row parser does not read as an item - phase 9's bullet rows "
+            f"under an `### Open items` heading, and a card left holding the template's own "
+            f"unfilled placeholder rows. It is NOT the same as nothing carried: reading it that way "
+            f"is what let a phase close without answering what it inherited. Fix the prior phase's "
+            f"card to the documented table format - a row per item, or an explicit `none` row if it "
+            f"truly carries nothing."
+        )
     return items
 
 
@@ -315,7 +345,11 @@ def load(phase_dir: Path) -> dict:
     """
     target = path_for(phase_dir)
     if not target.is_file():
-        return {"phase": Path(phase_dir).name, "readers": list(READERS), "discharges": []}
+        return {
+            "phase": Path(phase_dir).name,
+            "readers": list(READERS),
+            "discharges": [],
+        }
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -339,7 +373,11 @@ def _now() -> str:
 
 
 def discharge(
-    phase_dir: Path, item_id: str, how: str, by: str | None = None, reason: str | None = None
+    phase_dir: Path,
+    item_id: str,
+    how: str,
+    by: str | None = None,
+    reason: str | None = None,
 ) -> dict:
     """Answer one carried item. Refuses an item the prior card never declared.
 
@@ -411,8 +449,25 @@ def phase_problems(phase_dir: Path) -> list[str]:
             f"{phase_dir}/handover.md: the `## {SECTION_HEADING}` section states neither an item "
             f"nor an explicit `none`. Silence is not none."
         )
-    for item in undischarged(phase_dir):
-        out.append(f"{phase_dir}: {item.id} ({item.phase}) has no answer here - {item.title}")
+    # The ledger is read OUTSIDE the guard below, which is the whole point of not calling
+    # `undischarged()` here: a corrupt `carried.json` is undecidable (exit 2) and must keep
+    # propagating, and catching it here would answer malformed JSON with `run discharge` - the exact
+    # collapse `main()` exists to prevent. Only `owed()`'s own state is caught, because `check` sweeps
+    # many phases in one pass and one phase's unreadable prior card must not abort the scan of the
+    # rest; `declared`/`due` run standalone (hook_verifier.sh, one phase at a time) and let the same
+    # CarriedError reach `main()` as the loud, undecidable failure.
+    answered = {d.get("item") for d in load(phase_dir)["discharges"]}
+    try:
+        carried = owed(phase_dir)
+    except CarriedError as exc:
+        out.append(f"{phase_dir}: {exc}")
+        carried = []
+    for item in carried:
+        if item.id in answered:
+            continue
+        out.append(
+            f"{phase_dir}: {item.id} ({item.phase}) has no answer here - {item.title}"
+        )
     for item in unfiled(phase_dir):
         out.append(_unfiled_line(phase_dir, item))
     return out
@@ -441,8 +496,10 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     """
     phases = closed_phases(root)
     if not phases:
-        print(f"[carried_items] no phase contract cards under {root} - nothing to check",
-              file=sys.stderr)
+        print(
+            f"[carried_items] no phase contract cards under {root} - nothing to check",
+            file=sys.stderr,
+        )
         return []
 
     scope: set[Path] | None = None
@@ -465,7 +522,9 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
         resolved = phase.resolve()
         if enforce_all or (
             scope is not None
-            and any(changed == resolved or resolved in changed.parents for changed in scope)
+            and any(
+                changed == resolved or resolved in changed.parents for changed in scope
+            )
         ):
             problems.extend(found)
         else:
@@ -492,7 +551,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[carried_items] {exc}", file=sys.stderr)
         return ERROR
     except Exception as exc:  # noqa: BLE001 - an undecidable check is never an owed item
-        print(f"[carried_items] the check could not be decided: {exc!r}", file=sys.stderr)
+        print(
+            f"[carried_items] the check could not be decided: {exc!r}", file=sys.stderr
+        )
         return ERROR
 
 
@@ -507,9 +568,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p_discharge = sub.add_parser("discharge")
     p_discharge.add_argument("phase_dir", type=Path)
     p_discharge.add_argument("item_id")
-    p_discharge.add_argument("--as", dest="how", required=True, choices=list(DISCHARGES))
     p_discharge.add_argument(
-        "--by", help="the spec, requirement id or test that now covers it (built/tested)"
+        "--as", dest="how", required=True, choices=list(DISCHARGES)
+    )
+    p_discharge.add_argument(
+        "--by",
+        help="the spec, requirement id or test that now covers it (built/tested)",
     )
     p_discharge.add_argument(
         "--reason-file",
@@ -520,7 +584,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
 
     p_check = sub.add_parser("check")
     p_check.add_argument("--root", default=".", type=Path)
-    p_check.add_argument("--all", action="store_true", help="every phase, not just changed ones")
+    p_check.add_argument(
+        "--all", action="store_true", help="every phase, not just changed ones"
+    )
 
     return parser.parse_args(argv)
 
@@ -539,7 +605,10 @@ def _filed(phase_dir: Path) -> int:
             if nxt in LAST_CARD_NEXT
             else "not a last card, so its claims are owed to the phase after it"
         )
-        print(f"[carried_items] {phase_dir} (next: {nxt or 'unset'}) - {why}.", file=sys.stderr)
+        print(
+            f"[carried_items] {phase_dir} (next: {nxt or 'unset'}) - {why}.",
+            file=sys.stderr,
+        )
         return OK
     print(
         f"{len(remaining)} forward claim(s) on this phase's card name no issue, and this is the LAST "
@@ -609,7 +678,10 @@ def _dispatch(args: argparse.Namespace) -> int:
             try:
                 reason = Path(args.reason_file).read_text(encoding="utf-8")
             except OSError as exc:
-                print(f"[carried_items] cannot read the reason file: {exc}", file=sys.stderr)
+                print(
+                    f"[carried_items] cannot read the reason file: {exc}",
+                    file=sys.stderr,
+                )
                 return ERROR
         record = discharge(args.phase_dir, args.item_id, args.how, args.by, reason)
         print(f"{record['item']} discharged as {record['as']}")
