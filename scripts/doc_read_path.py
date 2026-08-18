@@ -68,6 +68,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # module for it: a second copy of a rule is the copy that goes blind.
 from applicability import changed_paths, report_unenforced  # noqa: E402,F401  (re-exported)
 
+# `breaker_gate.py` REFUSES a record that declares no readers, so the list it enforces and the list
+# this table declares must be one list. Two copies is how a record passes the gate that closes the
+# phase and fails the gate that reads it a commit later.
+from breaker_gate import READERS as BREAKER_READERS  # noqa: E402
+
 # --- the table -----------------------------------------------------------------------------------
 # extent: whole | header | table | card | none. `none` means the document is written but no stage is
 # instructed to read it - it is an archive, kept on disk, off the read path.
@@ -176,6 +181,16 @@ READ_PATH: dict[str, dict] = {
         # reason. Small by construction - an id, a kind, one pointer - and it is what stops a
         # handover's forward-looking claim becoming nothing, which is how phase 8's correct,
         # specific prediction about caller-supplied identifiers shipped as a phase-9 defect.
+    },
+    "breaker.json": {
+        "written_by": "avenger-breaker",
+        "emitted_by": "agents/avenger-breaker.md",
+        "readers": list(BREAKER_READERS),
+        "extent": "whole",
+        # The Breaker's own record: a verdict, and what it actually attacked or found. Small by
+        # construction - a verdict and one list - and it is what makes a stage that emits nothing
+        # distinguishable from a stage that never ran, which is how two owed Breaker runs went
+        # missing on one feature with nothing noticing (issue #45).
     },
     "test-mapping.md": {
         "written_by": "implementer",

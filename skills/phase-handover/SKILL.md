@@ -63,6 +63,15 @@ handover.
 <phase-dir>` must exit 0 - see *Open items carry your PREDICTIONS too* below. Discharge them as you
 build; a batch of them discovered at the close is a phase that never read its predecessor's card.
 
+**A phase that owes a Breaker run has a record of one.** `python3 scripts/breaker_gate.py due
+<phase-dir>` must exit 0. Any spec declaring `criticality: critical` routes the Breaker, and the
+phase does not close without its `breaker.json` beside `verdict.json` - a `clean` verdict naming what
+it attacked, or a `found` verdict naming its counterexample; a vacuous record is refused the same as
+a missing one, because a stage that emits nothing is indistinguishable from one that never ran. If it
+is outstanding, run `avenger-breaker` rather than writing the card - `scripts/hook_verifier.sh`
+enforces this on the handover write, so a card written without it will not land. A deliberate waiver
+is a disclosed exception (`scripts/applicability.py record ... --rule breaker`), never a silence.
+
 **No amendment is owed re-verification.** `python3 scripts/amendments.py due <phase-dir>` must exit
 0. A phase does not close over a pending security amendment, nor over a pending ordinary one on a
 phase whose verdict already passes — that verdict is a claim about code that has since changed.
@@ -295,8 +304,8 @@ summary, the binding-contracts table, the decisions list, the artifact links, th
 verdict (plus any waived findings), the mutation line, an **Open items section that says what this
 phase carries forward or explicitly says `none`**, and a `next` value (a phase slug, `e2e` if this
 was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean, and
-`python3 scripts/carried_items.py declared <phase-dir>`, `… due <phase-dir>` and
-`… filed <phase-dir>` all exit 0.
+`python3 scripts/carried_items.py declared <phase-dir>`, `… due <phase-dir>`,
+`… filed <phase-dir>` and `python3 scripts/breaker_gate.py due <phase-dir>` all exit 0.
 
 **And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
 codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you
