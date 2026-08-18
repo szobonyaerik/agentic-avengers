@@ -260,12 +260,17 @@ def owed(phase_dir: Path) -> list[Item]:
     construction, and a repository upgrading to this rule must not be held hostage by a card written
     before the section existed.
 
-    A prior card whose section IS present but parses to neither an item nor an explicit `none` is a
+    A prior card whose section IS present but declares neither an item nor an explicit `none` is a
     different state, and reading it the same way as "nothing carried" is the defect this function
     exists to close: phase 9's card wrote `### Open items` with bullet rows (`- OBS-1 | ... | ...`),
     the table parser found no rows and no `none`, and `due` on phase 10 read that silence as nothing
     owed - so OBS-1 through OBS-4 were never answered, not because they were discharged but because
     the parser could not see them. That must FAIL, loudly, rather than pass as nothing-carried.
+
+    A card left holding the template's own unfilled placeholder rows is the same state and fails the
+    same way - the section is on the page and says nothing, which is exactly what cannot be read as
+    `none`. The message says so rather than claiming the table failed to parse: a placeholder row
+    parses perfectly and is simply not an item.
     """
     where = layout(Path(phase_dir))
     if where is None:
@@ -277,11 +282,14 @@ def owed(phase_dir: Path) -> list[Item]:
     items, says_none, present = declared(previous)
     if present and not items and not says_none:
         raise CarriedError(
-            f"{previous}/handover.md has a `## {SECTION_HEADING}` section that could not be parsed - "
-            f"neither a table row nor an explicit `none` was found. This is NOT the same as nothing "
-            f"carried: reading it that way is what let a phase close without answering what it "
-            f"inherited. Fix the prior phase's card to the documented table format (a row per item, "
-            f"or an explicit `none`), or state `none` explicitly if it truly carries nothing."
+            f"{previous}/handover.md has a `## {SECTION_HEADING}` section that declares neither an "
+            f"item nor an explicit `none`, so what this phase inherits CANNOT BE DETERMINED. That "
+            f"covers every shape the row parser does not read as an item - phase 9's bullet rows "
+            f"under an `### Open items` heading, and a card left holding the template's own "
+            f"unfilled placeholder rows. It is NOT the same as nothing carried: reading it that way "
+            f"is what let a phase close without answering what it inherited. Fix the prior phase's "
+            f"card to the documented table format - a row per item, or an explicit `none` row if it "
+            f"truly carries nothing."
         )
     return items
 
@@ -436,17 +444,22 @@ def phase_problems(phase_dir: Path) -> list[str]:
             f"{phase_dir}/handover.md: the `## {SECTION_HEADING}` section states neither an item "
             f"nor an explicit `none`. Silence is not none."
         )
+    # The ledger is read OUTSIDE the guard below, which is the whole point of not calling
+    # `undischarged()` here: a corrupt `carried.json` is undecidable (exit 2) and must keep
+    # propagating, and catching it here would answer malformed JSON with `run discharge` - the exact
+    # collapse `main()` exists to prevent. Only `owed()`'s own state is caught, because `check` sweeps
+    # many phases in one pass and one phase's unreadable prior card must not abort the scan of the
+    # rest; `declared`/`due` run standalone (hook_verifier.sh, one phase at a time) and let the same
+    # CarriedError reach `main()` as the loud, undecidable failure.
+    answered = {d.get("item") for d in load(phase_dir)["discharges"]}
     try:
-        remaining = undischarged(phase_dir)
+        carried = owed(phase_dir)
     except CarriedError as exc:
-        # The prior card is present-but-unparseable (see `owed()`). `check` scans many phases in one
-        # pass, and one phase's undecidable prior card must not abort the scan of the rest of them -
-        # so it is reported here as a problem for THIS phase, the same as every other obligation this
-        # function collects. `declared`/`due` run standalone (hook_verifier.sh, one phase at a time)
-        # and let the same CarriedError propagate to `main()`, which is the loud, undecidable failure.
         out.append(f"{phase_dir}: {exc}")
-        remaining = []
-    for item in remaining:
+        carried = []
+    for item in carried:
+        if item.id in answered:
+            continue
         out.append(
             f"{phase_dir}: {item.id} ({item.phase}) has no answer here - {item.title}"
         )

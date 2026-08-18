@@ -407,12 +407,12 @@ def test_the_heading_level_was_never_the_defect_bullet_rows_are(
     assert present and not items and not says_none
 
     nxt = phase(root, "10-c", "none")
-    with pytest.raises(carried_items.CarriedError, match="could not be parsed"):
+    with pytest.raises(carried_items.CarriedError, match="CANNOT BE DETERMINED"):
         carried_items.owed(nxt)
 
     assert run("due", str(nxt)) == 2
     err = capsys.readouterr().err
-    assert "could not be parsed" in err
+    assert "CANNOT BE DETERMINED" in err
     assert "9-b" in err
 
 
@@ -431,8 +431,55 @@ def test_check_reports_the_unparseable_prior_card_and_keeps_scanning_other_phase
     phase(root, "10-c", "none")
 
     problems = carried_items.check(tmp_path, enforce_all=True)
-    assert any("could not be parsed" in p and "9-b" in p for p in problems)
-    assert any("9-b" in p and "neither an item nor an explicit" in p for p in problems)
+    assert any("CANNOT BE DETERMINED" in p and "9-b" in p for p in problems)
+    assert any("9-b" in p and "Silence is not none" in p for p in problems)
+
+
+def test_an_unparseable_prior_card_names_what_it_is_not_a_broken_table(
+    tmp_path: Path,
+) -> None:
+    """The template ships placeholder rows (`| OBS-<n> | ... |`), which parse perfectly and are not
+    items. Such a card is the same undecidable state and must still fail - but the message must not
+    tell its reader to fix a table format that is already correct."""
+    root = feature(tmp_path)
+    nine = phase(
+        root,
+        "9-b",
+        "| id | kind | one-line title | where the detail lives |\n"
+        "|----|------|----------------|------------------------|\n"
+        "| OBS-<n> | open-finding | <title> | verdict.json#observations[n] |",
+    )
+    items, says_none, present = carried_items.declared(nine)
+    assert present and not items and not says_none
+
+    nxt = phase(root, "10-c", "none")
+    with pytest.raises(carried_items.CarriedError) as caught:
+        carried_items.owed(nxt)
+    message = str(caught.value)
+    assert "could not be parsed" not in message
+    assert "placeholder" in message
+    assert "9-b/handover.md" in message
+
+
+def test_a_corrupt_ledger_stays_undecidable_in_the_ci_sweep(
+    tmp_path: Path, capsys
+) -> None:
+    """`check` catches `owed()`'s undecidable prior card so one phase does not abort the sweep - it
+    must NOT also catch the corrupt ledger `load()` refuses. Demoted to a problem line, exit 2
+    (undecidable) becomes exit 1 (owed), and the remedy printed is `discharge`, which cannot repair
+    malformed JSON."""
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    (nxt / "carried.json").write_text("{oh no", encoding="utf-8")
+
+    with pytest.raises(carried_items.CarriedError, match="cannot read"):
+        carried_items.check(tmp_path, enforce_all=True)
+
+    assert run("check", "--root", str(tmp_path), "--all") == 2
+    err = capsys.readouterr().err
+    assert "cannot read" in err
+    assert "discharge <phase-dir>" not in err
 
 
 def test_an_explicit_none_under_an_h3_heading_is_still_none(tmp_path: Path) -> None:

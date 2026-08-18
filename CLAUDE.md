@@ -403,8 +403,12 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
   card is in force is `spec_gate_context.prior_phase`'s decision, imported rather than re-derived:
   this ledger and the spec gate's CONTEXT block must not disagree about which phase came before.
 - The ledger (`carried.json`, beside `verdict.json` in the phase that **acted**) refuses an id the
-  prior card never declared, and a corrupt ledger is an error rather than an empty one. **A pre-rule
-  card with no section owes nothing**, and the CI sweep is **diff-scoped even under `--full`**
+  prior card never declared, and a corrupt ledger is an error rather than an empty one. **A prior
+  card's section has three states**: an explicit `none` proceeds, **no section at all owes nothing**,
+  and a section **present but declaring neither an item nor an explicit `none`** fails closed (exit
+  2, undecidable) because what the phase inherits cannot be determined - phase 9's bullet rows, and a
+  card left on the template's placeholder rows, are both that state, and the remedy is to rewrite the
+  prior card's section as the documented table. The CI sweep is **diff-scoped even under `--full`**
   (deliberately unlike `verifier_precheck`), because this obligation lands on a document class every
   consumer repo already has on disk - a full audit would fail its CI over cards written before the
   rule existed. Nothing is lost: the hook holds the phase being *closed*, which the diff touches by
