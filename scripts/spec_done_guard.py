@@ -16,13 +16,41 @@ its `test-mapping.md` non-empty), and if not, this module REVERTS `status: done`
 `status: in-progress` before the hook fails. A premature stamp does not survive contact with the
 gate that reads it — it is undone, not merely complained about.
 
+## What this may bind (the applicability boundary, `scripts/applicability.py`)
+
+**Only the TRANSITION into `done` binds.** `hook_verifier.sh` fires on any tool write to a
+`spec.md` that merely *contains* `status: done`, which cannot by itself tell a stamp that has just
+landed from one that has sat there since the phase closed. Acting on the second is the wedge this
+repository has now built four times: a consumer repo vendored through `scripts/install.sh` carries
+specs stamped `done` long before this rule existed, and any later edit to one of them — an
+amendment (§4d) to a verified phase included — would rewrite `status: in-progress` into a SHIPPED
+spec. That stamp is the *only* evidence `applicability.spec_shipped` reads, so removing it flips
+`requirement_cap` from counting a shipped spec to blocking it with a SPLIT it cannot take, and
+re-routes a completed spec back to `stage: implementer` in `pipeline_state.py`. Re-stamping `done`
+re-fires the hook and reverts again; `spec-done` is not in `applicability.RULES`, so no disclosed
+exception can be recorded for it either. There is no way out of that loop, which is exactly what
+"a rule whose remedy is unavailable is not a gate, it is a wedge" names.
+
+So `stamp_is_new` compares the worktree against the file's **committed HEAD** version, and the
+three answers are the boundary:
+
+- the committed version says anything other than `done`, or there is no committed version at all →
+  the stamp is NEW, the spec is still OPEN, and the rule BINDS;
+- the committed version already says `done` → the spec is CLOSED by the *shipped* evidence, and it
+  is COUNTED and NAMED (`applicability.report_unenforced`), never blocked and never rewritten;
+- git cannot say → the scope is UNKNOWABLE, so nothing is enforced and it is said out loud, the
+  same direction every other check on this boundary takes rather than enforcing everything.
+
 `test-mapping.md` completeness is checked here directly (a spec's own mapping file must carry at
-least one row past its header) rather than by re-deriving the full per-requirement traceability
-rule in `scripts/verifier_precheck.py` — that check is phase-level, reads `binding:` tiers, and is
-off-limits to this change. This check is narrower and spec-scoped: a spec cannot be done while its
-mapping is still empty, which is exactly the ordering issue #68 names.
+least one row past its header separator) rather than by re-deriving the full per-requirement
+traceability rule in `scripts/verifier_precheck.py` — that check is phase-level, reads `binding:`
+tiers, and is off-limits to this change. This check is narrower and spec-scoped: a spec cannot be
+done while its mapping is still empty, which is exactly the ordering issue #68 names.
 
 Usage:
+    spec_done_guard.py stamp-is-new <spec.md>       exit 0 = a NEW `done` stamp, the rule binds;
+                                                     1 = out of scope (already done at HEAD, or the
+                                                     scope is unknowable); 2 = error
     spec_done_guard.py mapping-complete <spec.md>   exit 0 = has rows, 1 = empty/missing, 2 = error
     spec_done_guard.py revert <spec.md>             flip status: done -> status: in-progress;
                                                      exit 0 whether or not a change was needed,
@@ -32,32 +60,69 @@ Usage:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import applicability  # noqa: E402
+import spec_gate_state  # noqa: E402
+
 OK = 0
 NOT_DONE = 1
+#: Same code as `NOT_DONE`, different question: the rule does not bind this spec at all.
+OUT_OF_SCOPE = 1
 ERROR = 2
 
 STATUS_FIELD = "status"
 DONE = "done"
 IN_PROGRESS = "in-progress"
 
+CHECK = "spec-done"
+
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 STATUS_LINE = re.compile(rf"^{STATUS_FIELD}:.*$", re.MULTILINE)
 
+#: A markdown table's separator row and nothing else: pipes, colons, whitespace, and at least one
+#: dash. Detecting it by "the line contains `---`" dropped any real data row whose own text happens
+#: to contain a dash run, which reads as a header-only mapping and reverts a correct stamp.
+SEPARATOR_ROW = re.compile(r"\|[\s:|-]*-[\s:|-]*\|")
 
-def frontmatter(text: str) -> dict[str, str]:
-    """Flat key/value view of a spec's YAML frontmatter; empty when there is none."""
-    match = FRONTMATTER.match(text)
-    if not match:
-        return {}
-    fields: dict[str, str] = {}
-    for line in match.group(1).splitlines():
-        key, sep, value = line.partition(":")
-        if sep:
-            fields[key.strip()] = value.split("#")[0].strip()
-    return fields
+
+def _git(root: Path, *args: str) -> tuple[int, str]:
+    """git's exit code and raw stdout. Deliberately not `applicability._git`, which answers "which
+    paths changed" by dropping blank lines — fine for a path list, wrong for file content."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=str(root), capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return 127, ""
+    return proc.returncode, proc.stdout
+
+
+def stamp_is_new(spec_path: Path) -> bool | None:
+    """Whether `status: done` in the worktree is a TRANSITION rather than a pre-existing stamp.
+
+    True binds the rule, False means the spec is already CLOSED by the *shipped* evidence, and None
+    means git could not say and therefore nothing may be enforced. See the module docstring.
+    """
+    path = Path(spec_path).resolve()
+    rc, out = _git(path.parent, "rev-parse", "--show-toplevel")
+    if rc != 0 or not out.strip():
+        return None
+    top = Path(out.strip().splitlines()[0]).resolve()
+    try:
+        rel = path.relative_to(top)
+    except ValueError:
+        return None
+    rc, text = _git(top, "show", f"HEAD:{rel.as_posix()}")
+    if rc != 0:
+        # No committed version — an unborn branch, or a spec written this session. Either way the
+        # stamp cannot predate this change, so it is new.
+        return True
+    return spec_gate_state.frontmatter(text).get(STATUS_FIELD) != DONE
 
 
 def mapping_complete(spec_path: Path) -> bool:
@@ -73,15 +138,24 @@ def mapping_complete(spec_path: Path) -> bool:
         lines = mapping.read_text(encoding="utf-8").splitlines()
     except OSError:
         return False
-    rows = [
-        line for line in lines if line.strip().startswith("|") and "---" not in line
-    ]
-    # The first `|...|` line is the header row itself; a real mapping has at least one more.
-    return len(rows) >= 2
+    seen_separator = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        if not seen_separator:
+            seen_separator = bool(SEPARATOR_ROW.fullmatch(stripped))
+            continue
+        return True
+    return False
 
 
 def revert(spec_path: Path) -> bool:
     """Flip `status: done` back to `status: in-progress`. Returns True iff it changed anything.
+
+    Only when the field currently reads exactly `done`. Between the hook's grep and this call sits
+    the phase's whole suite run, so another lane may have written `blocked` or some later status in
+    the meantime, and rewriting whatever value it finds would be a mutation nobody asked for.
 
     Raises ValueError when the file has no frontmatter or no `status:` field — a spec that could
     stamp `done` in the first place has both, so either case means something else is already wrong
@@ -94,6 +168,8 @@ def revert(spec_path: Path) -> bool:
     block = match.group(1)
     if not STATUS_LINE.search(block):
         raise ValueError("no status: field in frontmatter")
+    if spec_gate_state.frontmatter(text).get(STATUS_FIELD) != DONE:
+        return False
     new_block = STATUS_LINE.sub(f"{STATUS_FIELD}: {IN_PROGRESS}", block)
     if new_block == block:
         return False
@@ -103,13 +179,35 @@ def revert(spec_path: Path) -> bool:
     return True
 
 
+def _stamp_is_new_cli(path: Path) -> int:
+    verdict = stamp_is_new(path)
+    if verdict is True:
+        return OK
+    if verdict is None:
+        print(
+            f"[{CHECK}] scope UNKNOWABLE — git cannot say what this change touches, so the "
+            f"`done` stamp on {path} is not enforced either way.",
+            file=sys.stderr,
+        )
+        return OUT_OF_SCOPE
+    applicability.report_unenforced(
+        CHECK,
+        1,
+        f"{path} was already stamped `status: {DONE}` at HEAD — the spec has SHIPPED, so its "
+        f"stamp is counted, never reverted (a rule whose remedy is unavailable is a wedge).",
+    )
+    return OUT_OF_SCOPE
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) == 2 and args[0] == "mapping-complete":
+    if len(args) == 2 and args[0] in ("stamp-is-new", "mapping-complete"):
         path = Path(args[1])
         if not path.is_file():
             print(f"[spec_done_guard] no such spec: {path}", file=sys.stderr)
             return ERROR
+        if args[0] == "stamp-is-new":
+            return _stamp_is_new_cli(path)
         return OK if mapping_complete(path) else NOT_DONE
     if len(args) == 2 and args[0] == "revert":
         path = Path(args[1])

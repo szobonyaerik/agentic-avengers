@@ -1078,10 +1078,26 @@ checks, mechanically, whether the spec is actually done — its own `test-mappin
 least one recorded row, and its phase's test suite is green — **before** letting the stamp stand.
 Either check failing REVERTS `status: done` back to `status: in-progress`
 (`scripts/spec_done_guard.py`) and then fails the hook. A premature `done` does not survive the
-check that reads it: nothing that observes the frontmatter afterward — a wedge guard included — can
-see a false `done`. Break-glass (`GATE_BYPASS`) still lets the tool call through; it does not
+check that reads it. Break-glass (`GATE_BYPASS`) still lets the tool call through; it does not
 restore the stamp, because the revert is an audited exception to the *failure*, not to what the
 stamp means.
+
+**The claim is exactly as wide as the mechanism.** This is a `PostToolUse` hook matched on
+`Write|Edit|MultiEdit` (`hooks/hooks.json`), so what is enforced is: **no Write/Edit/MultiEdit tool
+call can leave a false `done` stamp on disk.** A stamp written through Bash — `sed -i`, a heredoc,
+`python3 -c` — never reaches this hook and is outside this mechanism's reach. Saying otherwise
+would be one more sentence claiming behaviour nothing enforces, which is the class this issue is
+curing.
+
+**And it binds only the TRANSITION into `done`** (the applicability boundary, §3a). The trigger
+fires on any write to a `spec.md` that merely *contains* `status: done`, so `spec_done_guard.py`
+compares against the file's **committed HEAD** version: a stamp that was already `done` there
+belongs to a SHIPPED spec, and it is counted and named on stderr, never reverted. Rewriting it
+would delete the single evidence `applicability.spec_shipped` reads — flipping the requirement cap
+from counting that spec to blocking it with a split a shipped spec cannot take, and re-routing a
+completed spec back to `stage: implementer` — with no exception recordable for it, since
+`spec-done` is not in `applicability.RULES`. When git cannot say what is committed, the scope is
+unknowable, so nothing is enforced and the check says so out loud.
 
 **This binds `status: done` specifically and does not generalize.** Other stamps this pipeline
 writes (`spec_gate:`, `review_status:`, `verdict.json`'s `verdict`) already have their own single

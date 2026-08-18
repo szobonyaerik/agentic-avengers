@@ -22,9 +22,14 @@
 # `status: done` is not trusted on sight (issue #68): a spec's own implementer writes it, and used
 # to keep working afterward — test-mapping.md, test-evidence.md and the phase's mutation gate all
 # land later. On the `spec-done` trigger this hook checks the mapping is non-empty and the suite is
-# green BEFORE letting the stamp stand; either check failing reverts it to `status: in-progress`
-# (scripts/spec_done_guard.py) and then fails. A premature `done` is undone, not just complained
-# about — a caller reading the frontmatter never observes a false "done" surviving this hook.
+# green BEFORE letting a NEWLY written stamp stand; either check failing reverts it to
+# `status: in-progress` (scripts/spec_done_guard.py) and then fails. A premature `done` is undone,
+# not just complained about.
+#
+# The claim is exactly as wide as the mechanism and no wider: this is a PostToolUse hook matched on
+# Write|Edit|MultiEdit (hooks/hooks.json), so no TOOL CALL can leave a false `done` stamp on disk.
+# A stamp written through Bash — sed -i, a heredoc, python3 -c — never reaches this hook and is
+# outside this mechanism's reach.
 #
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
@@ -93,15 +98,51 @@ fail() {   # $1 = bypass tag, rest = message
 # stamp never survives past the check that reads it — a wedge guard watching this field sees
 # nothing to trust until the checks below actually pass. Break-glass (GATE_BYPASS) still leaves the
 # revert in place; it is an audited exception to the FAILURE, not to the stamp's meaning.
+#
+# What it may bind is the applicability boundary (CLAUDE.md §3a, scripts/applicability.py): ONLY
+# the TRANSITION into `done`. This trigger fires on any tool write to a spec.md that merely
+# CONTAINS `status: done`, so on its own it cannot tell a stamp that just landed from one that has
+# sat there since the phase closed — and rewriting the second destroys the single evidence
+# `applicability.spec_shipped` reads, which flips the requirement cap from counting a shipped spec
+# to blocking it with a split it cannot take. A spec already stamped `done` at committed HEAD is
+# CLOSED: counted and named on stderr, never reverted, never blocked here.
+STAMP_BINDS=0
+
 revert_premature_stamp() {
+  [ "$STAMP_BINDS" = "1" ] || return 0
   python3 "$SD/spec_done_guard.py" revert "$FILE" >&2 || true
 }
 
-if [ "$TRIGGER" = "spec-done" ] && ! python3 "$SD/spec_done_guard.py" mapping-complete "$FILE"; then
-  revert_premature_stamp
-  fail "verifier:spec-done-mapping" \
-    "verifier ($TRIGGER): status was stamped 'done' but test-mapping.md next to it has no rows yet" \
-    "— reverted status to 'in-progress'. Finish recording the mapping, then stamp done again."
+# Exit 1 is the boundary (already `done` at HEAD, or a scope git cannot state); anything else is an
+# ERROR that could not DECIDE it, and the two carry different tags and different messages — the
+# same split carried_items, breaker_gate and the attempt cap below already make, and the rule
+# CLAUDE.md § Gates states as "every stop names which". A check that never ran may not rewrite a
+# spec, so neither undecidable branch reverts anything.
+if [ "$TRIGGER" = "spec-done" ]; then
+  python3 "$SD/spec_done_guard.py" stamp-is-new "$FILE"; stamp_rc=$?
+  if [ "$stamp_rc" -eq 0 ]; then
+    STAMP_BINDS=1
+  elif [ "$stamp_rc" -ne 1 ]; then
+    fail "verifier:spec-done-undecidable" \
+      "verifier ($TRIGGER): whether this 'status: done' stamp is NEW could not be DECIDED (cause" \
+      "above) — this is not a premature stamp, and finishing the mapping will not repair it. The" \
+      "stamp is left exactly as written. Fix what it named."
+  fi
+fi
+
+if [ "$STAMP_BINDS" = "1" ]; then
+  python3 "$SD/spec_done_guard.py" mapping-complete "$FILE"; mapping_rc=$?
+  if [ "$mapping_rc" -eq 1 ]; then
+    revert_premature_stamp
+    fail "verifier:spec-done-mapping" \
+      "verifier ($TRIGGER): status was stamped 'done' but test-mapping.md next to it has no rows yet" \
+      "— reverted status to 'in-progress'. Finish recording the mapping, then stamp done again."
+  elif [ "$mapping_rc" -ne 0 ]; then
+    fail "verifier:spec-done-undecidable" \
+      "verifier ($TRIGGER): whether this spec's mapping is recorded could not be DECIDED (cause" \
+      "above) — this is not an empty mapping, and recording one will not repair it. The stamp is" \
+      "left exactly as written."
+  fi
 fi
 
 if [ -n "$TESTPATH" ]; then
@@ -114,7 +155,7 @@ fi
 
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
 if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
-  [ "$TRIGGER" = "spec-done" ] && revert_premature_stamp
+  revert_premature_stamp
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
        "$(printf '%s\n' "$OUT" | tail -20)"
 fi

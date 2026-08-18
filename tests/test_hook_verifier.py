@@ -443,25 +443,57 @@ def test_the_breaker_gate_never_masks_a_failed_suite(project: Path) -> None:
 # test-mapping.md, test-evidence.md and the phase's mutation gate all landed later. A wedge guard
 # watching for that stamp in phase 11 fired at 24 minutes while the agent was still running. What is
 # pinned here is that the REAL hook now refuses to let a premature stamp stand: it reverts
-# `status: done` back to `status: in-progress` before failing, so nothing that reads the frontmatter
-# afterward — a wedge guard included — can observe a false "done".
+# `status: done` back to `status: in-progress` before failing, so no Write/Edit/MultiEdit tool call
+# can leave a false "done" on disk.
+#
+# And that it binds only the TRANSITION into `done`: the applicability boundary (§3a) is what stops
+# this guard from rewriting a spec that shipped before the rule existed. The stamp is compared with
+# the file's committed HEAD version, so these drive a REAL git repository — a stubbed one would test
+# a reimplementation of the boundary.
 
 
 def spec_done_dir(project: Path, spec: str = "1.1-a") -> Path:
     return phase_dir(project) / "specs" / spec
 
 
-def write_done_spec(project: Path, *, mapping: str | None = "header-only") -> Path:
-    """A spec stamped `status: done`, with `test-mapping.md` in one of three states:
-    missing (`None`), header-only (the template's own shape, no recorded test), or a real row
-    (`"row"`)."""
+def git(project: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=str(project), check=True, capture_output=True)
+
+
+def commit_docs(project: Path) -> None:
+    """Commit whatever is under `docs/` — the HEAD the boundary reads. `scripts/` stays untracked;
+    the guard only ever asks git about the spec it was handed."""
+    if not (project / ".git").exists():
+        git(project, "init", "-q")
+        git(project, "config", "user.email", "t@example.com")
+        git(project, "config", "user.name", "t")
+    git(project, "add", "docs")
+    git(project, "commit", "-qm", "docs")
+
+
+def spec_text(status: str) -> str:
+    return (
+        f"---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\nstatus: {status}\n---\n\n"
+        "# Spec\n\n## Acceptance criteria\n\nDone.\n"
+    )
+
+
+def write_done_spec(
+    project: Path,
+    *,
+    mapping: str | None = "header-only",
+    head_status: str = "in-progress",
+) -> Path:
+    """A spec stamped `status: done` in the worktree, committed at `head_status` — so the default
+    is a stamp that JUST landed, and `head_status="done"` is one that shipped before this rule.
+
+    `test-mapping.md` is in one of three states: missing (`None`), header-only (the template's own
+    shape, no recorded test), or a real row (`"row"`).
+    """
     spec_dir = spec_done_dir(project)
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec_path = spec_dir / "spec.md"
-    spec_path.write_text(
-        "---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\nstatus: done\n---\n\n"
-        "# Spec\n\n## Acceptance criteria\n\nDone.\n"
-    )
+    spec_path.write_text(spec_text(head_status))
     if mapping == "header-only":
         (spec_dir / "test-mapping.md").write_text(
             "| requirement | test | level | why |\n|---|---|---|---|\n"
@@ -471,6 +503,8 @@ def write_done_spec(project: Path, *, mapping: str | None = "header-only") -> Pa
             "| requirement | test | level | why |\n|---|---|---|---|\n"
             "| R1.1.1 | test_x.py::test_it | integration | ... |\n"
         )
+    commit_docs(project)
+    spec_path.write_text(spec_text("done"))
     return spec_path
 
 
@@ -550,4 +584,55 @@ def test_a_genuinely_complete_spec_keeps_its_stamp(project: Path) -> None:
     result = run_spec_done_hook(project, spec_path)
 
     assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()
+
+
+def test_a_stamp_already_done_at_head_is_counted_and_never_rewritten(
+    project: Path,
+) -> None:
+    """The wedge: a spec whose `done` predates this rule — vendored into a consumer repo, or a
+    verified phase reopened by an amendment — must not be rewritten to `in-progress`. That stamp is
+    the ONLY evidence `applicability.spec_shipped` reads, and no exception can be recorded for this
+    rule, so a revert here has no remedy and loops on every re-stamp."""
+    spec_path = write_done_spec(project, mapping="header-only", head_status="done")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()
+    assert "NOT enforced" in result.stderr
+    assert "no rows yet" not in result.stderr
+
+
+def test_a_shipped_spec_over_a_red_suite_still_keeps_its_stamp(project: Path) -> None:
+    """The suite check pre-dates this guard and still stops the phase — but the REVERT is the part
+    bound by the boundary, so a shipped spec does not lose its stamp to somebody else's red test."""
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=False)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "the suite is RED" in result.stderr
+    assert "status: done" in spec_path.read_text()
+
+
+def test_an_undecidable_stamp_check_does_not_rewrite_the_spec(project: Path) -> None:
+    """Exit 1 is the boundary; anything else could not DECIDE it. Collapsed into one branch, an
+    unreadable check prescribed "finish recording the mapping" — a remedy that cannot repair it —
+    and rewrote the spec on the strength of a check that never ran."""
+    spec_path = write_done_spec(project, mapping="row")
+    write_phase_tests(project, passing=True)
+    (project / "scripts" / "spec_done_guard.py").write_text(
+        "import sys\n"
+        "print('[spec-done] the check could not be decided: boom', file=sys.stderr)\n"
+        "raise SystemExit(2)\n"
+    )
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "could not be DECIDED" in result.stderr
+    assert "no rows yet" not in result.stderr
     assert "status: done" in spec_path.read_text()
