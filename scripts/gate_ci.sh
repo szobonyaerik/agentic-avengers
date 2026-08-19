@@ -203,6 +203,26 @@ if ! python3 "$SCRIPT_DIR/doc_read_path.py" $READ_PATH_ARGS "$ROOT"; then
   record_fail "read-path"
 fi
 
+# 1bcx) Every overview.md carries the `## Contracts and Decisions` heading the spec gate's CONTEXT
+#       block reads (scripts/spec_gate_context.py). Without it, `contradiction` — one of the four
+#       things that block a spec — can only ever be checked against the prior phase's card, never
+#       the feature's own contracts, and the spec gate used to report that absence on stderr and
+#       PASS regardless (issue #57: eleven phases of clickup-agents). The heading is already
+#       mandated by docs/templates/overview.template.md; this is what verifies real overviews carry
+#       it.
+#
+#       DIFF-SCOPED even under --full, on the carried-items precedent above rather than the read
+#       path's: `overview.md` is a document class every consumer repo already has on disk, written
+#       long before this heading was checked, so a full CI audit would fail every one of those
+#       features at once the day this ships — the hostage failure the scoping exists to remove.
+#       Nothing is lost: a feature is checked the moment someone works under it, which is where the
+#       remedy (fill in the heading) is actually available. `spec_gate_context.py check --all` is
+#       there for anyone who wants the audit, deliberately by hand.
+echo "• overview contracts heading: docs/features/*/overview.md"
+if ! python3 "$SCRIPT_DIR/spec_gate_context.py" check "$ROOT"; then
+  record_fail "overview-contracts-heading"
+fi
+
 # 1bd) Per-stage reasoning effort — declared where the harness reads it, and nowhere else claimed.
 #      The runbook carried an effort table for ten phases and told the orchestrator to PASS effort at
 #      spawn; the delegation tool has no such parameter, so nothing could obey it and every stage ran

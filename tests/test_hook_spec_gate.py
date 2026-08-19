@@ -456,6 +456,133 @@ def test_the_context_composes_with_the_re_gate_bundle_rather_than_replacing_it(i
     assert "## CHANGES SINCE APPROVAL" in target
 
 
+def stamped_report(project: Path, spec: Path) -> str:
+    """The report this gate persisted with its verdict — what a later read of it sees.
+
+    Read through `spec_gate_cache` rather than by globbing, so the test cannot pass by finding some
+    other file the hook happened to leave in the cache directory.
+    """
+    import spec_gate_cache
+
+    os.environ["CLAUDE_PROJECT_DIR"] = str(project)
+    try:
+        return spec_gate_cache.cache_path(spec, "gate", "report").read_text(encoding="utf-8")
+    finally:
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+
+def no_contracts_heading(spec: Path) -> None:
+    """The clickup-agents overview, in shape: real content under headings this reader never finds.
+
+    Not "no contracts written yet" — the heading the CONTEXT block looks for does not exist, and
+    will not exist for any spec this feature ever gates (issue #57: eleven phases of it).
+    """
+    (spec.parents[4] / "overview.md").write_text(
+        "# Demo\n\n## Interfaces & contracts\n\n- VAULT-ONLY-TOKENS\n\n"
+        "## Key decisions & trade-offs\n\n- POLLING-NOT-WEBHOOKS\n"
+    )
+
+
+def test_an_overview_with_no_contracts_heading_is_loudly_degraded(in_layout) -> None:
+    """The silent pass is the defect. Exit 3 out of the context builder must reach the author."""
+    project, spec, _ = in_layout
+    no_contracts_heading(spec)
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, "the context block is reference-only and never fails the gate"
+    assert "CONTEXT DEGRADED" in result.stderr
+    assert "## Contracts and Decisions" in result.stderr
+    assert "## CONTEXT (reference only)" not in observe_target(project)
+
+
+def test_the_degraded_state_rides_the_report_an_approval_stamps(in_layout) -> None:
+    """Nothing that reads this verdict later sees the hook's stderr, so a warning printed once is a
+    warning gone. An approved spec gated with no contracts must not read like a clean pass."""
+    project, spec, _ = in_layout
+    no_contracts_heading(spec)
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    assert "spec_gate: approved" in spec.read_text()
+    assert "CONTEXT DEGRADED" in stamped_report(project, spec)
+
+
+def test_the_degraded_state_rides_the_report_a_block_stamps(in_layout) -> None:
+    """Same on the other verdict — a blocked spec's report is replayed verbatim on the next write,
+    which is exactly where "what was this gate actually able to check?" gets asked."""
+    project, spec, _ = in_layout
+    no_contracts_heading(spec)
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=BLOCKING)
+
+    assert result.returncode == 2
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "missing-requirement" in report, "the fold must not displace the gate's own findings"
+
+
+def test_the_banner_names_the_shape_that_actually_fired_missing_overview(in_layout) -> None:
+    """Three shapes exit 3 and each has its own remedy. A banner that always says "no heading" tells
+    a feature with NO overview at all to fix a heading it does not have a file to put one in - and
+    the persisted report is the durable record, so the wrong cause outlives the run."""
+    project, spec, _ = in_layout
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "no readable overview.md" in report
+    assert "no ## Contracts and Decisions heading" not in report
+
+
+def test_the_banner_names_the_shape_that_actually_fired_boilerplate(in_layout) -> None:
+    """The other misreported shape: the heading IS there, holding only the unfilled template's
+    comment. "Add the heading" is a remedy already applied."""
+    project, spec, _ = in_layout
+    (spec.parents[4] / "overview.md").write_text(
+        "# Demo\n\n## Contracts and Decisions\n<!-- fill this in -->\n"
+    )
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "boilerplate" in report
+
+
+def test_the_banner_fires_for_an_overview_that_is_not_utf8(in_layout) -> None:
+    """The third shape, reached through the one input that used to crash the builder instead: an
+    `overview.md` whose bytes are not UTF-8 raised out of `read_text` as exit 1, which this hook
+    reads as "could not build, treat as absent" — a stamped report indistinguishable from a clean
+    pass, on a spec the gate could only half check."""
+    project, spec, _ = in_layout
+    (spec.parents[4] / "overview.md").write_bytes(b"# Demo\n\n\xff\xfe\n")
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "no readable overview.md" in report
+
+
+def test_a_feature_carrying_the_heading_stamps_no_warning(in_layout) -> None:
+    """The control: without it, a test asserting the warning appears proves nothing about when."""
+    project, spec, write_context = in_layout
+    write_context()
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    assert "CONTEXT DEGRADED" not in result.stderr
+    assert "CONTEXT DEGRADED" not in stamped_report(project, spec)
+
+
 def test_a_write_that_is_not_a_spec_is_ignored(project: Path) -> None:
     other = project / "docs" / "notes.md"
     other.write_text("# not a spec\n")

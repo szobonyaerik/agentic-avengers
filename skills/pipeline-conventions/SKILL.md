@@ -195,6 +195,57 @@ Three consequences worth stating outright:
      Half of `contradiction` is a contract declared in those documents,
      so without them a closed set of four is three items and a claim. It is reference only: absent
      context is normal (phase 1 has no prior card), named on stderr, and never fails the gate.
+
+     **Absent is not DEGRADED, and three shapes are DEGRADED.** An `overview.md` that exists but
+     carries no `## Contracts and Decisions` heading *at all* is not "no contracts yet" — it is this
+     reader never finding them, for every spec that feature will ever gate. clickup-agents ran
+     eleven phases in exactly that state (its overview uses `## Interfaces & contracts` instead)
+     while the gate reported success, which is issue #57: a silently degraded gate is worse than a
+     failing one. Two more shapes are the same defect wearing a different face, found while proving
+     the fix and confirmed rather than deferred: a heading whose section holds **only boilerplate**
+     — an HTML comment, which is exactly what `docs/templates/overview.template.md` ships under this
+     heading, so a freshly-templated overview that nobody has filled in yet LOOKS included and
+     contradicts nothing; and `overview.md` **missing or unreadable outright**, which loses the same
+     half of `contradiction` and has no silent exemption. Not even a recorded exception (§3a) reaches
+     it: that ledger records against a PHASE directory, and a feature with no overview has no phase
+     directory either, so there is nowhere for one to live at that point in the pipeline — this
+     reader does not invent an exemption to stay green. The one absence that stays ordinary: the
+     heading present with nothing under it, not even a comment — a
+     feature early in planning, ordinary because it cannot be mistaken for "filled in."
+     `build()` marks each degraded shape `degraded` and `main()` exits **3** — never 1 or 2, which
+     mean something else here: 1 is a `check` finding, 2 is a usage error or an unexpected failure.
+     **Nothing escapes `main()` as a traceback.** An uncaught exception used to exit 1, and 1 is the
+     code the hook reads as "could not build, treat as absent" - a crash arriving as a routine
+     absence is the same silent clean pass this whole item removes, so every unexpected failure gets
+     a code no other outcome uses and its cause on stderr.
+     `hook_spec_gate.sh` does not discard that exit code with `|| :`.
+     It echoes it loudly **and folds a `CONTEXT DEGRADED` banner into the persisted report**, the one
+     stamped into `spec_gate_cache` on APPROVED and BLOCKED alike, since no later read of a verdict
+     sees a hook's stderr. On exit 3 the banner **carries the builder's own cause line verbatim**
+     rather than re-authoring one: three shapes exit 3, each with its own remedy, and a durable
+     record naming the wrong one prescribes a fix already applied. **Any other non-zero exit is
+     recorded no more quietly**: a builder that could not run at all leaves `contradiction` checked
+     against less than the closed set claims, exactly as a degraded overview does, so it folds a
+     banner too - a hook-authored one marked `UNAVAILABLE`, because the remedies do not overlap. A
+     degraded overview is fixed in the overview; a builder failure is a defect in the script or its
+     inputs, and a banner naming the wrong one of those sends the reader to the wrong file.
+     Still never a gate failure on its own; no longer
+     indistinguishable from a clean pass.
+
+     **The heading contract is checked, not merely stated.** `spec_gate_context.py check [--all]`
+     walks every `docs/features/*/` feature directory for the same three degraded shapes,
+     independent of any spec being gated, and runs from `gate_ci.sh` beside the read-path check. It
+     walks feature DIRECTORIES rather than globbing existing `overview.md` files, because a missing
+     overview can never itself be a changed path — scoping on the artifact alone would make it
+     permanently unenforceable. **Diff-scoped** on the same applicability boundary as every other
+     check here: a feature this change did not touch is counted and named, never blocked, so a
+     repository full of pre-rule overviews can adopt it — and diff-scoped **even under `--full`**, on
+     `carried_items.py`'s precedent rather than the read path's, because `overview.md` is a document
+     class every consumer repo already has on disk and a full CI audit would fail its build over
+     every pre-rule one at once. `check --all` stays the audit somebody runs deliberately. The remedy is the heading
+     `docs/templates/overview.template.md` already mandates, filled in with real content — and
+     adding it to one project's overview is **not** the fix, because that hides the symptom on that
+     project and leaves the silent pass available to every other one.
   2. **Triage** (`prompts/spec-gate-triage.md`, a cheaper model) — classifies each observation
      against the closed set. It emits `classifications`, not a verdict. Its tie-break is the reverse
      of the old one: **when unsure, it is a note.**

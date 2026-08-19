@@ -49,8 +49,28 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    Everything else is a **note**; notes never block and land in `spec-notes.md`. The observe pass is
    given a `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) — the overview's
    `## Contracts and Decisions` section and the immediately prior phase's contract card, and nothing
-   else — because half of `contradiction` is a contract those declare. Absent context is normal and
-   never fails the gate.
+   else — because half of `contradiction` is a contract those declare. Absent context (heading
+   present, genuinely nothing under it yet) is normal and never fails the gate, but **three shapes
+   are DEGRADED, not absent**: no `## Contracts and Decisions` heading at all; a heading whose
+   section is only boilerplate (an HTML comment — the unfilled template ships one under this exact
+   heading, so the emptiness test strips comments before judging a section empty); or `overview.md`
+   missing/unreadable outright (no exemption for a legitimate "none yet" - a recorded exception
+   records against a phase directory, and this feature has none yet either, so there is nowhere for
+   one to live). Any of the three means the reader can never find that feature's contracts, for
+   every spec it ever gates. `spec_gate_context.py` exits **3** for any of them and `hook_spec_gate.sh`
+   folds a `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code —
+   carrying the builder's own per-shape cause line, since a record naming the wrong one of the three
+   prescribes a remedy already applied. **Any other non-zero exit banners too**, as a hook-authored
+   `UNAVAILABLE` cause: a builder that could not run at all costs the same half of `contradiction`,
+   but it is fixed in the script, not in the overview. Nothing escapes the builder as a traceback:
+   1 is a `check` finding, 2 is a usage error or an unexpected failure, and a crash arriving as 1
+   would read as the routine "treat as absent" this item exists to remove.
+   Still not a gate failure, no longer a clean-looking pass.
+   `spec_gate_context.py check [--all]`
+   walks every feature directory (not just existing overview files, since a missing one can never be
+   a changed path) for the same three shapes, runs from `gate_ci.sh`, and is diff-scoped (3e) **even
+   under `--full`** — the carried-items precedent (4f), because a full CI audit would fail every
+   pre-rule overview at once; `check --all` is the audit somebody runs by hand.
 3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and
