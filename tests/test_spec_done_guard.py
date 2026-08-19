@@ -26,8 +26,10 @@ from spec_done_guard import (  # noqa: E402
     OK,
     OUT_OF_SCOPE,
     UndecidableMapping,
+    UndecidableRequirements,
     main,
     mapping_complete,
+    mapping_owed,
     revert,
     stamp_is_new,
 )
@@ -47,9 +49,22 @@ pytestmark = pytest.mark.subprocess(
 )
 
 
-def write_spec(path: Path, status: str = "done") -> None:
+def write_spec(
+    path: Path,
+    status: str = "done",
+    *,
+    requirements: str = "- R1.1.1 — binding: integration\n",
+) -> None:
+    """A spec that OWES a mapping row by default: one requirement bound to a test.
+
+    A spec declaring only `binding: none` requirements owes no row at all (§4a), so the default here
+    is deliberately a spec the mapping check applies to — `requirements` is what varies that.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\nfeature: demo\nstatus: {status}\n---\n\n# Spec\n")
+    path.write_text(
+        f"---\nfeature: demo\nstatus: {status}\n---\n\n"
+        f"# Spec\n\n## Requirements\n{requirements}"
+    )
 
 
 def git(repo: Path, *args: str) -> None:
@@ -191,6 +206,90 @@ def test_a_placeholder_id_cell_is_a_placeholder_however_filled_the_rest_is(
     assert mapping_complete(spec) is False
 
 
+# ── a row is only owed where a test is owed (§4a) ──────────────────────────
+
+
+def test_a_spec_whose_every_requirement_is_binding_none_owes_no_row(
+    tmp_path: Path,
+) -> None:
+    """The tiered-binding rule gives a `binding: none` requirement no test and no mapping row, so
+    demanding one asks its author to invent a row for a test the rules forbid — with no remedy,
+    since `spec-done` is not in `applicability.RULES` and the revert re-fires on every re-stamp."""
+    spec = tmp_path / "spec.md"
+    write_spec(
+        spec,
+        requirements="- R1.1.1 — binding: none\n- R1.1.2 — binding: none\n",
+    )
+
+    assert mapping_owed(spec) is False
+
+
+def test_a_spec_declaring_no_requirements_owes_no_row(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    write_spec(spec, requirements="\n")
+
+    assert mapping_owed(spec) is False
+
+
+def test_one_requirement_bound_to_a_test_makes_a_row_owed(tmp_path: Path) -> None:
+    """The check must still bind the spec this issue is about — the exemption is not a hole."""
+    spec = tmp_path / "spec.md"
+    write_spec(
+        spec,
+        requirements="- R1.1.1 — binding: none\n- R1.1.2 — binding: integration\n",
+    )
+
+    assert mapping_owed(spec) is True
+
+
+def test_a_requirement_declaring_no_binding_at_all_is_owed_a_trace(
+    tmp_path: Path,
+) -> None:
+    """The same reading `verifier_precheck.py` takes: a missing `binding:` is a spec defect, not an
+    exemption, so the absence of a declaration may not buy the absence of a mapping row."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec, requirements="- R1.1.1 — the handler rejects an empty body\n")
+
+    assert mapping_owed(spec) is True
+
+
+def test_a_requirement_layout_that_cannot_be_read_is_undecidable_not_exempt(
+    tmp_path: Path,
+) -> None:
+    """A spec plainly carrying requirement ids in a shape the parser cannot see must not read as
+    "nothing is owed" — that exempts the spec from this check on the strength of a failed parse."""
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "---\nfeature: demo\nstatus: done\n---\n\n"
+        "# Spec\n\n## Requirements\n\nThe handler rejects an empty body (R1.1.1).\n"
+    )
+
+    with pytest.raises(UndecidableRequirements):
+        mapping_owed(spec)
+
+
+def test_cli_passes_a_binding_none_only_spec_with_no_mapping_at_all(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec = tmp_path / "spec.md"
+    write_spec(spec, requirements="- R1.1.1 — binding: none\n")
+
+    assert main(["mapping-complete", str(spec)]) == OK
+    assert "owes no row" in capsys.readouterr().err
+
+
+def test_cli_reports_an_unreadable_requirement_layout_as_an_error(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "---\nfeature: demo\nstatus: done\n---\n\n"
+        "# Spec\n\n## Requirements\n\nSee R1.1.1 for the empty-body case.\n"
+    )
+
+    assert main(["mapping-complete", str(spec)]) == ERROR
+
+
 # ── unknown is not empty ──────────────────────────────────────────────────
 
 
@@ -263,6 +362,32 @@ def test_a_spec_with_no_committed_version_is_new(tmp_path: Path) -> None:
     write_spec(fresh, status="done")
 
     assert stamp_is_new(fresh) is True
+
+
+def test_a_repository_with_no_commits_at_all_reads_as_new(tmp_path: Path) -> None:
+    """The one git failure that genuinely means "there is no committed version": an unborn branch,
+    where the stamp cannot predate this change."""
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q")
+    spec = repo / "spec.md"
+    write_spec(spec, status="done")
+
+    assert stamp_is_new(spec) is True
+
+
+def test_a_git_failure_that_is_not_an_absence_leaves_the_scope_unknowable(
+    tmp_path: Path,
+) -> None:
+    """`git show HEAD:<rel>` exits 128 both for "path is not in HEAD" and for a repository state git
+    cannot resolve, and reading the second as an absence BINDS a spec that may have shipped and
+    reverts its stamp — the direction this module names as the worst to get wrong. Here HEAD points
+    at a ref that does not exist while the repository's commits are all still there, so "absent" is
+    plainly the wrong answer."""
+    spec = repo_with_spec(tmp_path / "repo", status="done")
+    (tmp_path / "repo" / ".git" / "HEAD").write_text("ref: refs/heads/gone\n")
+
+    assert stamp_is_new(spec) is None
 
 
 def test_a_spec_outside_any_repository_leaves_the_scope_unknowable(

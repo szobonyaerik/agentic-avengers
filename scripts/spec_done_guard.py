@@ -34,18 +34,41 @@ exception can be recorded for it either. There is no way out of that loop, which
 So `stamp_is_new` compares the worktree against the file's **committed HEAD** version, and the
 three answers are the boundary:
 
-- the committed version says anything other than `done`, or there is no committed version at all →
+- the committed version says anything other than `done`, or the path is genuinely absent from HEAD →
   the stamp is NEW, the spec is still OPEN, and the rule BINDS;
 - the committed version already says `done` → the spec is CLOSED by the *shipped* evidence, and it
   is COUNTED and NAMED (`applicability.report_unenforced`), never blocked and never rewritten;
 - git cannot say → the scope is UNKNOWABLE, so nothing is enforced and it is said out loud, the
   same direction every other check on this boundary takes rather than enforcing everything.
 
+**An ABSENT path and a git FAILURE are not the same answer**, and `git show HEAD:<rel>` cannot tell
+them apart — it exits 128 both for "path is not in HEAD" and for an unreadable ref, a corrupt
+object, or any repository state git cannot resolve past `rev-parse --show-toplevel`. Read as
+"absent, therefore new", the second one BINDS a spec that may have shipped and reverts its stamp,
+the direction this module names as the worst to get wrong. So existence is asked with
+`git ls-tree HEAD -- <rel>`, which answers rc 0 with EMPTY output for a path HEAD does not carry and
+fails only when HEAD itself cannot be read; the one failure that genuinely means "no committed
+version" is a repository with no commits at all (an unborn branch), and it is confirmed as such
+rather than assumed. Every other failure is UNKNOWABLE.
+
 `test-mapping.md` completeness is checked here directly (a spec's own mapping file must carry at
 least one RECORDED row past its header separator) rather than by re-deriving the full
-per-requirement traceability rule in `scripts/verifier_precheck.py` — that check is phase-level,
-reads `binding:` tiers, and is off-limits to this change. This check is narrower and spec-scoped: a
-spec cannot be done while its mapping is still empty, which is exactly the ordering issue #68 names.
+per-requirement traceability rule in `scripts/verifier_precheck.py` — that check is phase-level and
+off-limits to this change. This check is narrower and spec-scoped: a spec cannot be done while its
+mapping is still empty, which is exactly the ordering issue #68 names.
+
+**But a mapping row is only OWED where the tiered-binding rule owes a test** (§4a). A
+`binding: none` requirement is structural or build-time: it gets no test and no mapping row by
+construction, `docs/templates/spec.template.md` says so, and `verifier_precheck.py` exempts it from
+tracing. A spec whose every declared requirement is `binding: none` therefore has a legitimately
+row-less mapping, and demanding one asks its author to invent a row for a requirement the rules
+forbid a test for — with no way out, since `spec-done` is not in `applicability.RULES` and the stamp
+is not committed until phase close, so the revert re-fires on every re-stamp. `mapping_owed` asks
+that question first, from `requirement_cap.declared_bindings`, which already owns both the
+declaration layout and where a binding sits inside it. A requirement declaring NO binding is owed a
+trace, exactly as the precheck reads it: an absent declaration buys no exemption. And a requirement
+layout this parser cannot read is UNDECIDABLE (`requirement_cap.unreadable_layout`), never an
+exemption — a silent "nothing is owed" is how a check comes to stop existing.
 
 **Counting rows is not the same as checking they say anything.** `docs/templates/`'s mapping
 template ships a header, a separator and THREE placeholder rows, and `skills/tdd` points every
@@ -76,8 +99,9 @@ Usage:
     spec_done_guard.py stamp-is-new <spec.md>       exit 0 = a NEW `done` stamp, the rule binds;
                                                      1 = out of scope (already done at HEAD, or the
                                                      scope is unknowable); 2 = error
-    spec_done_guard.py mapping-complete <spec.md>   exit 0 = a recorded row, 1 = empty/missing/only
-                                                     placeholders, 2 = error
+    spec_done_guard.py mapping-complete <spec.md>   exit 0 = a recorded row, or no row is owed at
+                                                     all (every declared binding is `none`);
+                                                     1 = empty/missing/only placeholders, 2 = error
     spec_done_guard.py revert <spec.md>             flip status: done -> status: in-progress;
                                                      exit 0 whether or not a change was needed,
                                                      2 if the file cannot be read/written
@@ -94,6 +118,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
 import spec_gate_state  # noqa: E402
+
+# The tiered-binding rule, from the module that owns how a requirement is declared and where its
+# `binding:` sits inside that layout. Re-deriving either here is the drift `verifier_precheck.py`
+# already measured once.
+from requirement_cap import declared_bindings, unreadable_layout  # noqa: E402
 
 OK = 0
 NOT_DONE = 1
@@ -138,6 +167,15 @@ class UndecidableMapping(Exception):
         self.path = path
 
 
+class UndecidableRequirements(Exception):
+    """The spec's own requirement set cannot be read, so whether it OWES a mapping row is UNKNOWN.
+
+    Deliberately not "nothing is owed". Answering that would exempt the spec from the mapping check
+    on the strength of a parse that failed — a silent pass, which is the direction
+    `requirement_cap.unreadable_layout` exists to refuse.
+    """
+
+
 def _git(root: Path, *args: str) -> tuple[int, str]:
     """git's exit code and raw stdout. Deliberately not `applicability._git`, which answers "which
     paths changed" by dropping blank lines — fine for a path list, wrong for file content."""
@@ -165,11 +203,21 @@ def stamp_is_new(spec_path: Path) -> bool | None:
         rel = path.relative_to(top)
     except ValueError:
         return None
+    rc, listed = _git(top, "ls-tree", "-z", "--name-only", "HEAD", "--", rel.as_posix())
+    if rc != 0:
+        # HEAD itself could not be read. Exactly one shape of that genuinely means "there is no
+        # committed version": a repository with no commits at all, where the stamp cannot predate
+        # this change. Anything else is a git FAILURE, and reading a failure as an absence binds a
+        # spec that may have shipped.
+        rc_commits, commits = _git(top, "rev-list", "--all", "--max-count=1")
+        return True if rc_commits == 0 and not commits.strip() else None
+    if not listed.replace("\0", "").strip():
+        # HEAD is readable and does not carry this path — a spec written this session.
+        return True
     rc, text = _git(top, "show", f"HEAD:{rel.as_posix()}")
     if rc != 0:
-        # No committed version — an unborn branch, or a spec written this session. Either way the
-        # stamp cannot predate this change, so it is new.
-        return True
+        # The path IS in HEAD, so this is not an absence: reading its committed content failed.
+        return None
     return spec_gate_state.frontmatter(text).get(STATUS_FIELD) != DONE
 
 
@@ -177,6 +225,30 @@ def _requirement_cell(row: str) -> str:
     """The first pipe-delimited cell of a table row — the requirement id column."""
     cells = row.split("|")
     return cells[1] if len(cells) > 1 else ""
+
+
+def mapping_owed(spec_path: Path) -> bool:
+    """Whether this spec owes a recorded `test-mapping.md` row at all.
+
+    False when every requirement it declares is `binding: none`, or it declares none: those get no
+    test and no mapping row by construction (§4a), so demanding a row asks the author to invent one
+    for a requirement the rules forbid a test for. A requirement declaring no binding at all is OWED
+    a trace, the same reading `verifier_precheck.py` takes — a missing declaration is a spec defect,
+    not an exemption.
+
+    Raises `UndecidableRequirements` when the spec cannot be read, or when its requirement layout
+    cannot be parsed — unknown is not "nothing is owed".
+    """
+    try:
+        text = spec_path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        raise UndecidableRequirements(
+            f"{spec_path}: {type(exc).__name__}: {exc}"
+        ) from exc
+    reason = unreadable_layout(text)
+    if reason is not None:
+        raise UndecidableRequirements(f"{spec_path}: {reason}")
+    return any(binding != "none" for _rid, binding in declared_bindings(text))
 
 
 def mapping_complete(spec_path: Path) -> bool:
@@ -259,6 +331,18 @@ def _stamp_is_new_cli(path: Path) -> int:
     return OUT_OF_SCOPE
 
 
+def _mapping_complete_cli(path: Path) -> int:
+    if not mapping_owed(path):
+        print(
+            f"[{CHECK}] {path} declares no requirement that is owed a test — every declared "
+            f"`binding:` is `none`, or none are declared — so `test-mapping.md` owes no row here "
+            f"(§4a) and the `status: {DONE}` stamp is not judged on one.",
+            file=sys.stderr,
+        )
+        return OK
+    return OK if mapping_complete(path) else NOT_DONE
+
+
 def main(argv: list[str] | None = None) -> int:
     """Exit 1 means the answer — the obligation or the boundary. Everything else is ERROR.
 
@@ -274,6 +358,15 @@ def main(argv: list[str] | None = None) -> int:
             f"[{CHECK}] cannot read the mapping: {exc}\n"
             f"  This is NOT an empty mapping and recording rows cannot fix it — the check never\n"
             f"  ran, so the stamp is left exactly as written. Repair {exc.path}, then run again.",
+            file=sys.stderr,
+        )
+        return ERROR
+    except UndecidableRequirements as exc:
+        print(
+            f"[{CHECK}] cannot tell whether this spec OWES a mapping row: {exc}\n"
+            f"  This is NOT an empty mapping and recording rows cannot fix it — the check never\n"
+            f"  ran, so the stamp is left exactly as written. Declare each requirement id as the\n"
+            f"  first content of its own line, list item or table row, then run again.",
             file=sys.stderr,
         )
         return ERROR
@@ -296,7 +389,7 @@ def _dispatch(argv: list[str] | None) -> int:
             return ERROR
         if args[0] == "stamp-is-new":
             return _stamp_is_new_cli(path)
-        return OK if mapping_complete(path) else NOT_DONE
+        return _mapping_complete_cli(path)
     if len(args) == 2 and args[0] == "revert":
         path = Path(args[1])
         try:

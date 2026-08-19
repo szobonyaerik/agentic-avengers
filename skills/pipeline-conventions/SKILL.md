@@ -1084,9 +1084,26 @@ while the other columns legitimately can (`Result<Config, Error>`, `rejects n < 
 misreading one of those would revert a correctly-stamped spec.
 Either check failing REVERTS `status: done` back to `status: in-progress`
 (`scripts/spec_done_guard.py`) and then fails the hook. A premature `done` does not survive the
-check that reads it. Break-glass (`GATE_BYPASS`) still lets the tool call through; it does not
-restore the stamp, because the revert is an audited exception to the *failure*, not to what the
-stamp means.
+check that reads it.
+
+**The revert acts only on evidence scoped to the same thing it rewrites**, and three states leave
+the stamp exactly as written while still failing the hook:
+
+- **A spec that owes no mapping row.** A `binding: none` requirement is structural or build-time and
+  gets no test and no mapping row by construction (§4a), so a spec whose every declared requirement
+  is `binding: none` has a legitimately row-less mapping and is never asked for one. The obligation
+  is read from `requirement_cap.declared_bindings`, which already owns the declaration layout and
+  where a binding sits inside it; a requirement declaring **no** binding is owed a trace, and a
+  layout the parser cannot read is undecidable rather than exempt.
+- **A red suite that could only be run repository-wide.** With no phase test directory resolvable
+  the hook runs the whole tree minus e2e — the permanent state of a project whose tests do not live
+  under `tests/` — and one unrelated failure there is not evidence about one spec, especially where
+  the implementer is told outright that pre-existing failures are expected.
+- **Break-glass.** `GATE_BYPASS` leaves the stamp `done`: overridden, audited in
+  `gate-overrides.log`, and *reachable*. Reverting underneath the override produced a bypass with no
+  end state at all — `fail()` cleared the failure, the spec stayed `in-progress`, re-stamping
+  re-fired the hook, and no disclosed exception can be recorded since `spec-done` is not in
+  `applicability.RULES`. A bypass an operator cannot act on is a trap, not an escape hatch.
 
 **The claim is exactly as wide as the mechanism.** This is a `PostToolUse` hook matched on
 `Write|Edit|MultiEdit` (`hooks/hooks.json`), so what is enforced is: **no Write/Edit/MultiEdit tool

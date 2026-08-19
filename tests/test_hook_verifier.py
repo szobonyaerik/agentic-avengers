@@ -471,10 +471,16 @@ def commit_docs(project: Path) -> None:
     git(project, "commit", "-qm", "docs")
 
 
-def spec_text(status: str) -> str:
+def spec_text(status: str, *, binding: str = "integration") -> str:
+    """A spec that OWES a mapping row by default — one requirement bound to a test.
+
+    `binding="none"` is the spec the tiered-binding rule (§4a) gives no test and no mapping row: it
+    owes no row, so the mapping check may not ask for one.
+    """
     return (
         f"---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\nstatus: {status}\n---\n\n"
-        "# Spec\n\n## Acceptance criteria\n\nDone.\n"
+        f"# Spec\n\n## Requirements\n- R1.1.1 — binding: {binding}\n\n"
+        "## Acceptance criteria\n\nDone.\n"
     )
 
 
@@ -483,6 +489,7 @@ def write_done_spec(
     *,
     mapping: str | None = "header-only",
     head_status: str = "in-progress",
+    binding: str = "integration",
 ) -> Path:
     """A spec stamped `status: done` in the worktree, committed at `head_status` — so the default
     is a stamp that JUST landed, and `head_status="done"` is one that shipped before this rule.
@@ -495,7 +502,7 @@ def write_done_spec(
     spec_dir = spec_done_dir(project)
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec_path = spec_dir / "spec.md"
-    spec_path.write_text(spec_text(head_status))
+    spec_path.write_text(spec_text(head_status, binding=binding))
     if mapping == "header-only":
         (spec_dir / "test-mapping.md").write_text(
             "| requirement | test | level | why |\n|---|---|---|---|\n"
@@ -521,7 +528,7 @@ def write_done_spec(
             "| R1.1.1 | test_parse | integration | drives parse(): Result<Config, Error> |\n"
         )
     commit_docs(project)
-    spec_path.write_text(spec_text("done"))
+    spec_path.write_text(spec_text("done", binding=binding))
     return spec_path
 
 
@@ -672,6 +679,87 @@ def test_a_shipped_spec_over_a_red_suite_still_keeps_its_stamp(project: Path) ->
 
     assert result.returncode == 2
     assert "the suite is RED" in result.stderr
+    assert "status: done" in spec_path.read_text()
+
+
+def test_a_spec_owed_no_mapping_row_keeps_its_stamp_with_no_mapping_at_all(
+    project: Path,
+) -> None:
+    """The tiered-binding rule (§4a) gives a `binding: none` requirement no test and no mapping row,
+    so this spec's absent mapping is correct. Reverting it prescribes "finish recording the mapping"
+    — inventing a row for a test the rules forbid — and there is no way out of that loop: no
+    exception is recordable for `spec-done`, and re-stamping re-fires the hook."""
+    spec_path = write_done_spec(project, mapping=None, binding="none")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()
+    assert "records no" not in result.stderr
+
+
+def test_an_unresolvable_test_dir_does_not_revert_over_an_unrelated_red_test(
+    project: Path,
+) -> None:
+    """The revert is spec-scoped, so its evidence must be too. With no phase test directory the hook
+    runs the whole repository minus e2e — the permanent state of a project whose tests live anywhere
+    else — and one unrelated failure there says nothing about whether THIS spec is done, while the
+    implementer is told outright that pre-existing failures are expected and are to be surfaced."""
+    spec_path = write_done_spec(project, mapping="row")
+    other = project / "tests" / "unrelated"
+    other.mkdir(parents=True)
+    (other / "test_other.py").write_text("def test_it():\n    assert False\n")
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "could not be" in result.stderr
+    assert "RESOLVED" in result.stderr
+    assert "status: done" in spec_path.read_text()
+
+
+def test_break_glass_leaves_the_stamp_as_written_rather_than_reverting_underneath_it(
+    project: Path,
+) -> None:
+    """`fail()` hands off to bypass_log.sh, which exits 0 — so a revert that ran first cleared the
+    failure and left the spec at `in-progress` anyway: an override with no reachable end state,
+    since re-stamping re-fires the hook and `spec-done` has no disclosed-exception route. A bypass an
+    operator cannot act on is a trap, so break-glass restores what it overrides."""
+    spec_path = write_done_spec(project, mapping="header-only")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(
+        project,
+        spec_path,
+        GATE_BYPASS="captain accepts this stamp; mapping lands next commit",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()
+    assert "BYPASSED" in result.stderr
+    assert "LEFT AS WRITTEN" in result.stderr
+    assert (
+        "gate:verifier:spec-done-mapping"
+        in (project / "gate-overrides.log").read_text()
+    )
+
+
+def test_break_glass_over_a_red_phase_suite_also_leaves_the_stamp_done(
+    project: Path,
+) -> None:
+    """The second revert site. Both must agree, or break-glass means something different depending
+    on which check happened to fire first."""
+    spec_path = write_done_spec(project, mapping="row")
+    write_phase_tests(project, passing=False)
+
+    result = run_spec_done_hook(
+        project,
+        spec_path,
+        GATE_BYPASS="captain accepts the red test; fix lands next commit",
+    )
+
+    assert result.returncode == 0, result.stderr
     assert "status: done" in spec_path.read_text()
 
 

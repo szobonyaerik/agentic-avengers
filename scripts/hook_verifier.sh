@@ -26,6 +26,11 @@
 # `status: in-progress` (scripts/spec_done_guard.py) and then fails. A premature `done` is undone,
 # not just complained about.
 #
+# The revert acts only on evidence scoped to the SAME thing it rewrites: a spec whose every
+# requirement declares `binding: none` owes no mapping row at all (§4a), and a suite that could only
+# be run repository-wide is undecidable for one spec rather than proof against it. Both still fail
+# the hook and both leave the stamp exactly as written, as does GATE_BYPASS.
+#
 # The claim is exactly as wide as the mechanism and no wider: this is a PostToolUse hook matched on
 # Write|Edit|MultiEdit (hooks/hooks.json), so no TOOL CALL can leave a false `done` stamp on disk.
 # A stamp written through Bash — sed -i, a heredoc, python3 -c — never reaches this hook and is
@@ -96,8 +101,14 @@ fail() {   # $1 = bypass tag, rest = message
 # A stamp is not a completion signal (issue #68) unless something makes it one: the moment
 # `status: done` lands, revert it back to `in-progress` before this hook fails, so a premature
 # stamp never survives past the check that reads it — a wedge guard watching this field sees
-# nothing to trust until the checks below actually pass. Break-glass (GATE_BYPASS) still leaves the
-# revert in place; it is an audited exception to the FAILURE, not to the stamp's meaning.
+# nothing to trust until the checks below actually pass.
+#
+# Break-glass RESTORES what it overrides. `fail()` hands off to bypass_log.sh, which exits 0, so a
+# revert that ran first cleared the failure and left the spec at `in-progress` anyway — an override
+# an operator cannot act on, because re-stamping `done` re-fires this hook and reverts again, and
+# `spec-done` is not in `applicability.RULES` so the disclosed-exception ledger is no route either.
+# A bypass with no reachable end state is a trap, not an escape hatch. With GATE_BYPASS set the
+# stamp is LEFT AS WRITTEN: done, overridden, and audited in gate-overrides.log.
 #
 # What it may bind is the applicability boundary (CLAUDE.md §3a, scripts/applicability.py): ONLY
 # the TRANSITION into `done`. This trigger fires on any tool write to a spec.md that merely
@@ -107,10 +118,17 @@ fail() {   # $1 = bypass tag, rest = message
 # to blocking it with a split it cannot take. A spec already stamped `done` at committed HEAD is
 # CLOSED: counted and named on stderr, never reverted, never blocked here.
 STAMP_BINDS=0
+STAMP_NOTE=""
 
 revert_premature_stamp() {
   [ "$STAMP_BINDS" = "1" ] || return 0
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    STAMP_NOTE="GATE_BYPASS is set, so the stamp is LEFT AS WRITTEN — this failure is the audited exception, and the spec stays 'done'."
+    printf '%s\n' "[spec-done] $STAMP_NOTE" >&2
+    return 0
+  fi
   python3 "$SD/spec_done_guard.py" revert "$FILE" >&2 || true
+  STAMP_NOTE="Reverted status to 'in-progress'."
 }
 
 # Exit 1 is the boundary (already `done` at HEAD, or a scope git cannot state); anything else is an
@@ -137,8 +155,9 @@ if [ "$STAMP_BINDS" = "1" ]; then
     fail "verifier:spec-done-mapping" \
       "verifier ($TRIGGER): status was stamped 'done' but test-mapping.md next to it records no" \
       "test yet — no rows past the separator, or only rows whose requirement-id cell is still the" \
-      "template's R<n>.<k>.<m> placeholder." \
-      "Reverted status to 'in-progress'. Finish recording the mapping, then stamp done again."
+      "template's R<n>.<k>.<m> placeholder. (A spec whose every requirement declares" \
+      "\`binding: none\` owes no row and is never asked for one.)" \
+      "$STAMP_NOTE Finish recording the mapping, then stamp done again."
   elif [ "$mapping_rc" -ne 0 ]; then
     fail "verifier:spec-done-undecidable" \
       "verifier ($TRIGGER): whether this spec's mapping is recorded could not be DECIDED (cause" \
@@ -156,9 +175,28 @@ else
 fi
 
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
+#
+# The REVERT is spec-scoped, so the evidence it acts on must be scoped to the same thing. With no
+# phase test directory resolvable the run above is the whole repository minus e2e — the permanent
+# state of any project whose tests do not live under `tests/` (what SUBPROC_CHECK_PATHS exists for)
+# — and one unrelated red test there says nothing about whether THIS spec is done, while
+# `agents/avenger-backend-architect.md` tells the implementer outright that pre-existing failures
+# are expected and are to be surfaced rather than fixed. So an unscoped suite is UNDECIDABLE for the
+# revert: the hook still fails closed, and the stamp is left exactly as written. Same direction as
+# both undecidable branches above — a check that could not answer the question may not rewrite a spec.
 if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
+  if [ "$STAMP_BINDS" = "1" ] && [ -z "$TESTPATH" ]; then
+    fail "verifier:spec-done-undecidable" \
+      "verifier ($SCOPE): the suite is RED, but this phase's own test directory could not be" \
+      "RESOLVED, so this is repository-wide evidence about a spec-scoped question — a failure" \
+      "anywhere in the tree does not say this spec is unfinished. The 'status: done' stamp is left" \
+      "exactly as written. Put the phase's tests at tests/<feature>/<n>-<slug> (or set PHASE) so" \
+      "the check can be scoped, and fix the failures below." \
+      "$(printf '%s\n' "$OUT" | tail -20)"
+  fi
   revert_premature_stamp
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
+       "$STAMP_NOTE" \
        "$(printf '%s\n' "$OUT" | tail -20)"
 fi
 
