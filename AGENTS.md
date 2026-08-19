@@ -346,9 +346,9 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
-| `GATE_MODEL` | per-gate defaults | routes every gate to one model |
+| `GATE_MODEL` | **none — required** | the spec gate's observe pass, and what the other two gate models fall back to. It has nothing beneath it to fall back to, so unset it is refused by name (`cause=config`) rather than substituted with a model nobody chose (issue #48) |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
-| `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
+| `VERIFIER_GATE_MODEL` | `GATE_MODEL` | model the Verifier's test-quality review runs on; must not be the implementer's family. Unset, it falls back to `GATE_MODEL` — announced on stderr, never a hardcoded id — and with neither set the review is refused (issue #48). A third family is what this variable is for |
 | `VERIFIER_SCOPE` | unset | `full` sends the Verifier the whole phase; by default the bundle carries only the specs whose text changed since the last completed review, names the rest as carried forward, and merges their findings back (an open carried finding still forces NO-GO). A spec still holding an open finding is never carried — a finding fixed in a test file changes no spec text, so carrying it would mean nothing ever regenerates it |
 | `GATE_CALL_TIMEOUT` | `300` | seconds the provider call gets. The gate hooks refuse to run if their `hooks.json` budget cannot outlive it plus headroom — raise this and raise `hooks/hooks.json` with it |
 | `GATE_MODEL_FAMILY` | unset | declare a gate model's vendor family when `scripts/model_vendors.py` has no entry for it; without it an unknown vendor is refused, never guessed |

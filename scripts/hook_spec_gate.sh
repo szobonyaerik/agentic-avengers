@@ -253,7 +253,22 @@ run_pass () {
 # The gate's model is resolved ONCE, here, and both passes are handed the result. Written twice it
 # is two defaults for one decision, and a drift between them is two gate models where the operator
 # chose one.
-GATE_OBSERVE_MODEL="${GATE_MODEL:-google/gemini-3.1-pro-preview}"
+#
+# There is NO hardcoded model in this position, and that is the whole of issue #48: a literal here
+# is a gate model the operator never chose, and an id with no provider prefix opencode recognises is
+# rewritten to `openrouter/<id>` regardless of GATE_PROVIDER — so the substituted default reached a
+# third provider whose credential the operator never configured, while both models they DID
+# configure were healthy. GATE_TRIAGE_MODEL and VERIFIER_GATE_MODEL each fall back to GATE_MODEL,
+# the one model already configured and proven reachable; GATE_MODEL itself has nothing beneath it to
+# fall back to, so its absence is refused by name. Refusing points at the configuration; a
+# substituted literal points at the spec.
+GATE_OBSERVE_MODEL="${GATE_MODEL:-}"
+if [ -z "$GATE_OBSERVE_MODEL" ]; then
+  [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
+  echo "spec-gate: cause=config no gate model — set GATE_MODEL (see docs/templates/env.example)." >&2
+  echo "  This gate has no default model: a gate must never run on one nobody chose (issue #48)." >&2
+  exit 2
+fi
 
 if ! run_pass "$SD/../prompts/spec-gate-observe.md" \
               "$GATE_OBSERVE_MODEL" "$TARGET" observations "$OBS" \

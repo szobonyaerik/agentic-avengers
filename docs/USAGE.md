@@ -220,11 +220,18 @@ write the spec again; the gate skips an unchanged body by design, so an edit is 
   pass, and `VERIFIER_GATE_MODEL` (gemini) runs the Verifier's test-quality review. Set
   `GATE_MODEL=<id>` to route the observe pass, e.g. `export GATE_MODEL=opencode-go/deepseek-v4-pro`
   (OpenCode's DeepSeek V4 Pro, provider `opencode`). Keep `AUTHOR_FAMILY` a different family than
-  `GATE_MODEL` or the gate fails closed. Left unset, `GATE_TRIAGE_MODEL` now **defaults to
-  `GATE_MODEL`** — the model you already configured and proved reachable — rather than to a
-  hardcoded model on its own provider; it used to default to a bare `deepseek/deepseek-chat`, which
-  resolves to OpenRouter regardless of `GATE_PROVIDER`, so every spec write failed closed on a
-  third, unconfigured provider (issue #48).
+  `GATE_MODEL` or the gate fails closed. Left unset, `GATE_TRIAGE_MODEL` and `VERIFIER_GATE_MODEL`
+  now both **fall back to `GATE_MODEL`** — the model you already configured and proved reachable —
+  rather than to a hardcoded model on its own provider; the triage pass used to default to a bare
+  `deepseek/deepseek-chat`, which resolves to OpenRouter regardless of `GATE_PROVIDER`, so every
+  spec write failed closed on a third, unconfigured provider (issue #48). **No gate carries a
+  hardcoded model id any more**, and `GATE_MODEL` itself has nothing beneath it to fall back to: with
+  it unset the spec gate, the Verifier's review and `gate_ci.sh`'s cross-family check each refuse by
+  name (`cause=config`) instead of substituting one. The `VERIFIER_GATE_MODEL` fallback is announced
+  on stderr — it is still cross-family from the author, but a third family is what that variable is
+  for, so set it. Watch which provider an id reaches: under `GATE_PROVIDER=opencode`, an id whose
+  prefix opencode does not recognise is routed as `openrouter/<id>` and needs an OpenRouter
+  credential inside opencode.
 - **opencode build models**: `MODEL_MAP` in `scripts/sync_opencode.py` maps the Claude model tiers to
   OpenRouter ids (`claude-opus-5` / `claude-sonnet-5` / `claude-haiku-4.5`). Re-check these against
   `https://openrouter.ai/api/v1/models` when the tiers move; a stale id fails at request time, not at

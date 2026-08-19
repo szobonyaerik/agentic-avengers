@@ -129,6 +129,10 @@ def run_hook(project: Path, spec: Path, **env) -> subprocess.CompletedProcess:
             "PATH": os.environ["PATH"],
             "HOME": str(project),
             "CLAUDE_PROJECT_DIR": str(project),
+            # GATE_MODEL is REQUIRED config: the hook carries no default model, so without one it
+            # refuses before any pass runs (issue #48). Every case below whose subject is something
+            # else needs the gate configured; the cases whose subject IS the refusal pass "".
+            "GATE_MODEL": "opencode-go/deepseek-v4-pro",
             **env,
         },
     )
@@ -199,14 +203,43 @@ def test_an_explicit_triage_model_still_wins_over_the_fallback(project: Path) ->
     assert seen["classifications"] == "opencode-go/deepseek-v4-pro"
 
 
-def test_both_gate_models_unset_falls_back_to_the_one_documented_default(project: Path) -> None:
-    """Neither variable set — the last resort is the single documented default, the same one the
-    observe pass already used, never a third model on a third provider."""
+def test_both_gate_models_unset_is_refused_rather_than_run_on_a_hardcoded_id(project: Path) -> None:
+    """Neither variable set — and there is no last resort. This hook used to substitute a literal
+    `google/gemini-3.1-pro-preview` here, which is exactly issue #48 one caller over: opencode does
+    not recognise the `google/` prefix, so it rewrites the id to `openrouter/google/…` whatever
+    GATE_PROVIDER says, and the gate runs on a model the operator never chose against a credential
+    they never configured. gate_runner.py's own refusal could not fire, because every in-repo caller
+    handed it a model. The refusal is now reachable from the caller, and it costs nothing: no paid
+    call is made at all."""
     spec = write_spec(project)
-    run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
-    seen = models(project)
-    assert seen["observations"] == seen["classifications"]
-    assert "deepseek" not in seen["classifications"]
+    result = run_hook(
+        project, spec, GATE_MODEL="",
+        STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+
+    assert result.returncode == 2
+    assert "cause=config" in result.stderr
+    assert "GATE_MODEL" in result.stderr
+    assert calls(project) == [], "a gate with no model must not reach the provider at all"
+    assert models(project) == {}
+    assert "gemini" not in result.stderr, "no model id may be resolved from thin air"
+    assert "spec_gate: pending" in spec.read_text(), "a refused gate stamps no verdict"
+
+
+def test_a_triage_model_alone_does_not_smuggle_the_observe_pass_past_the_refusal(
+    project: Path,
+) -> None:
+    """GATE_TRIAGE_MODEL is not a substitute for GATE_MODEL: the observe pass is the one that reads
+    the spec, and it has nothing to fall back to. Setting only the cheaper model must not resolve a
+    model for the expensive pass."""
+    spec = write_spec(project)
+    result = run_hook(
+        project, spec, GATE_MODEL="", GATE_TRIAGE_MODEL="opencode-go/deepseek-v4-pro",
+        STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+    assert result.returncode == 2
+    assert "cause=config" in result.stderr
+    assert calls(project) == []
 
 
 # ── the closed set decides, and the script decides it ────────────────────────
@@ -625,6 +658,7 @@ def test_a_killed_pass_is_recorded_under_the_pass_that_was_killed(measured) -> N
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         env={"PATH": os.environ["PATH"], "HOME": str(project),
              "CLAUDE_PROJECT_DIR": str(project),
+             "GATE_MODEL": "opencode-go/deepseek-v4-pro",
              "STUB_OBSERVATIONS": OBSERVATION, "STUB_CLASSIFICATIONS": NOTE_ONLY, **env},
     )
     hook.stdin.write('{"tool_input": {"file_path": "%s"}}' % spec)

@@ -51,6 +51,10 @@ def run(phase_dir: Path, files: list[Path], **env_over) -> subprocess.CompletedP
         "TEST_CMD": "echo 'stub: 1 passed'",
         # Guarantees a hard failure if the model is ever reached — these cases must not get there.
         "OPENROUTER_API_KEY": "",
+        # The script carries no default model: unset, it refuses before anything else it could
+        # refuse for (issue #48). Cases whose subject is some other refusal need a model configured;
+        # the cases whose subject IS the model resolution pass "" explicitly.
+        "VERIFIER_GATE_MODEL": "google/gemini-3.1-pro-preview",
         **env_over,
     }
     return subprocess.run(
@@ -416,3 +420,72 @@ def test_a_failed_defect_attribution_still_does_not_fail_the_review(tmp_path: Pa
 
     assert proc.returncode == healthy.returncode, proc.stderr
     assert (phase_dir / ".verifier-review.json").exists()
+
+
+# ── no gate carries a hardcoded model id (issue #48) ─────────────────────────
+
+
+def test_no_verifier_gate_model_and_no_gate_model_is_refused(tmp_path: Path) -> None:
+    """This script used to substitute `google/gemini-3.1-pro-preview` when VERIFIER_GATE_MODEL was
+    unset — issue #48's mechanism on a sibling path. opencode does not recognise the `google/`
+    prefix, so it rewrites that id to `openrouter/google/…` whatever GATE_PROVIDER says, and the
+    Verifier's judgement runs on a model the operator never chose against a credential they never
+    configured. gate_runner.py's own refusal could not fire, because this caller always handed it a
+    model. With neither variable set there is now no model at all, and the review says so."""
+    phase_dir = phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert 1 == 1\n")
+
+    proc = run(phase_dir, [src], VERIFIER_GATE_MODEL="", GATE_MODEL="")
+
+    assert proc.returncode == 2
+    assert "cause=config" in proc.stderr
+    assert "VERIFIER_GATE_MODEL" in proc.stderr
+    assert "gemini" not in proc.stderr, "no model id may be resolved from thin air"
+    assert not (phase_dir / ".verifier-review.json").exists()
+
+
+def test_an_unset_verifier_gate_model_falls_back_to_gate_model_and_says_so(
+    tmp_path: Path,
+) -> None:
+    """The fallback is a variable the operator did set, never a per-caller literal — and because it
+    puts the Verifier's judgement on the spec gate's own model instead of a third family, it is
+    announced rather than silent."""
+    phase_dir = phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert 1 == 1\n")
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    stub = bindir / "opencode"
+    stub.write_text(STUB_OPENCODE)
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    capture = tmp_path / "prompt.txt"
+
+    proc = run(
+        phase_dir, [src],
+        PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        GATE_PROVIDER="opencode",
+        VERIFIER_GATE_MODEL="",
+        GATE_MODEL="opencode-go/grok-4.5",
+        AUTHOR_FAMILY="anthropic",
+        VERIFIER_TEST_CAPTURE=str(capture),
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "falling back to GATE_MODEL" in proc.stderr
+    assert "opencode-go/grok-4.5" in proc.stderr
+
+
+def test_an_explicit_verifier_gate_model_still_wins_over_the_fallback(tmp_path: Path) -> None:
+    """The fallback fires only where the operator never chose; it never overrides a choice."""
+    phase_dir = phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert 1 == 1\n")
+
+    proc, _ = run_with_stub_model(
+        phase_dir, [src], tmp_path, GATE_MODEL="opencode-go/deepseek-v4-pro"
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "falling back to GATE_MODEL" not in proc.stderr
