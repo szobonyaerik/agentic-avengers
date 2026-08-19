@@ -71,8 +71,10 @@ if "--identify" in sys.argv:
 key = sys.argv[sys.argv.index("--json-key") + 1] if "--json-key" in sys.argv else "verdict"
 out = sys.argv[sys.argv.index("--emit-json") + 1]
 target = sys.argv[sys.argv.index("--target") + 1]
+model = sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv else ""
 open(sys.argv[0] + ".calls", "a").write(key + "\\n")
 open(sys.argv[0] + ".targets", "a").write(open(target).read() + "\\n=== END ===\\n")
+open(sys.argv[0] + ".models", "a").write(key + "=" + model + "\\n")
 
 if os.environ.get("STUB_FAIL_" + key.upper()):
     sys.stderr.write("cause=provider-unreachable the stub was told to fail\\n")
@@ -138,6 +140,14 @@ def calls(project: Path) -> list[str]:
     return log.read_text().split() if log.exists() else []
 
 
+def models(project: Path) -> dict[str, str]:
+    """Which --model each pass was actually invoked with, keyed by --json-key."""
+    log = project / "scripts" / "gate_runner.py.models"
+    if not log.exists():
+        return {}
+    return dict(line.split("=", 1) for line in log.read_text().splitlines() if line)
+
+
 # ── one gate, two passes, in that order ──────────────────────────────────────
 
 
@@ -154,6 +164,49 @@ def test_the_two_gates_it_replaced_leave_no_second_stamp(project: Path) -> None:
     spec = write_spec(project)
     run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
     assert "fidelity_verdict" not in spec.read_text()
+
+
+# ── an unset GATE_TRIAGE_MODEL can no longer reach an unconfigured provider (issue #48) ──────
+
+
+def test_an_unset_triage_model_falls_back_to_the_configured_gate_model(project: Path) -> None:
+    """GATE_MODEL is set and proven reachable; GATE_TRIAGE_MODEL is deliberately left unset — the
+    trap this reproduces. Unpatched, the triage pass reaches for a bare `deepseek/deepseek-chat`
+    on OpenRouter, a provider the operator never configured. Patched, it reuses GATE_MODEL."""
+    spec = write_spec(project)
+    result = run_hook(
+        project, spec, GATE_MODEL="opencode-go/grok-4.5",
+        STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+    assert result.returncode == 0, result.stderr
+    seen = models(project)
+    assert seen["observations"] == "opencode-go/grok-4.5"
+    assert seen["classifications"] == "opencode-go/grok-4.5"
+    assert "deepseek" not in seen["classifications"]
+
+
+def test_an_explicit_triage_model_still_wins_over_the_fallback(project: Path) -> None:
+    """The fallback only fires when the operator never chose — an explicit GATE_TRIAGE_MODEL is
+    not overridden by GATE_MODEL."""
+    spec = write_spec(project)
+    run_hook(
+        project, spec, GATE_MODEL="opencode-go/grok-4.5",
+        GATE_TRIAGE_MODEL="opencode-go/deepseek-v4-pro",
+        STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+    seen = models(project)
+    assert seen["observations"] == "opencode-go/grok-4.5"
+    assert seen["classifications"] == "opencode-go/deepseek-v4-pro"
+
+
+def test_both_gate_models_unset_falls_back_to_the_one_documented_default(project: Path) -> None:
+    """Neither variable set — the last resort is the single documented default, the same one the
+    observe pass already used, never a third model on a third provider."""
+    spec = write_spec(project)
+    run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    seen = models(project)
+    assert seen["observations"] == seen["classifications"]
+    assert "deepseek" not in seen["classifications"]
 
 
 # ── the closed set decides, and the script decides it ────────────────────────

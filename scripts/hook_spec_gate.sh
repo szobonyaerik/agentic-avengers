@@ -290,8 +290,13 @@ run_pass () {
 }
 
 # --- 4. OBSERVE — report everything, no verdict --------------------------------------------------
+# The gate's model is resolved ONCE, here, and both passes are handed the result. Written twice it
+# is two defaults for one decision, and a drift between them is two gate models where the operator
+# chose one.
+GATE_OBSERVE_MODEL="${GATE_MODEL:-google/gemini-3.1-pro-preview}"
+
 if ! run_pass "$SD/../prompts/spec-gate-observe.md" \
-              "${GATE_MODEL:-google/gemini-3.1-pro-preview}" "$TARGET" observations "$OBS" \
+              "$GATE_OBSERVE_MODEL" "$TARGET" observations "$OBS" \
               spec-gate-observe; then
   [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
   echo "spec-gate: the observe pass did not answer (fail closed) — the cause is named above." >&2
@@ -307,8 +312,15 @@ fi
   cat "$FILE"
 } > "$TRIAGE_IN"
 
+# GATE_TRIAGE_MODEL used to fall back to a bare `deepseek/deepseek-chat`, which resolves to
+# OpenRouter regardless of GATE_PROVIDER — a third, unpinned provider the operator never
+# configured. An unset triage model now defaults to GATE_MODEL, the observe pass's own model:
+# the operator has already chosen it and already proven it reachable. This can never regress to
+# reaching an unconfigured provider silently, and it costs an existing project nothing — a
+# project that never set GATE_TRIAGE_MODEL keeps running, just on GATE_MODEL for both passes
+# instead of on a model nobody chose (issue #48, evidence in #36).
 if ! run_pass "$SD/../prompts/spec-gate-triage.md" \
-              "${GATE_TRIAGE_MODEL:-deepseek/deepseek-chat}" "$TRIAGE_IN" \
+              "${GATE_TRIAGE_MODEL:-$GATE_OBSERVE_MODEL}" "$TRIAGE_IN" \
               classifications "$CLS" spec-gate-triage; then
   [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
   echo "spec-gate: the triage pass did not answer (fail closed) — the cause is named above." >&2
