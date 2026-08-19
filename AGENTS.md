@@ -60,7 +60,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    every spec it ever gates. `spec_gate_context.py` exits **3** for any of them and `hook_spec_gate.sh`
    folds a `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code —
    carrying the builder's own per-shape cause line, since a record naming the wrong one of the three
-   prescribes a remedy already applied. Still not a gate failure, no longer a clean-looking pass.
+   prescribes a remedy already applied. **Any other non-zero exit banners too**, as a hook-authored
+   `UNAVAILABLE` cause: a builder that could not run at all costs the same half of `contradiction`,
+   but it is fixed in the script, not in the overview. Nothing escapes the builder as a traceback:
+   1 is a `check` finding, 2 is a usage error or an unexpected failure, and a crash arriving as 1
+   would read as the routine "treat as absent" this item exists to remove.
+   Still not a gate failure, no longer a clean-looking pass.
    `spec_gate_context.py check [--all]`
    walks every feature directory (not just existing overview files, since a missing one can never be
    a changed path) for the same three shapes, runs from `gate_ci.sh`, and is diff-scoped (3e) **even

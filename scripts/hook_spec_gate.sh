@@ -215,7 +215,8 @@ trap cleanup EXIT
 # so it shows up wherever this gate's verdict is read, not only in a log nobody was watching.
 #
 # THREE shapes exit 3 — a missing or unreadable overview.md, a missing heading, and a heading holding
-# only boilerplate — and each has its own remedy, so the cause is not re-authored here. The builder
+# only boilerplate — and each has its own remedy, so the cause is not re-authored on that path (the
+# builder-failure branch below is a different fact and does author its own). The builder
 # already names the one that fired, on stderr, in its own words; this lifts that line verbatim out of
 # $GERR (which later gate calls overwrite, so it is captured now) and carries it into both the echo
 # and the persisted banner. A stamped report naming a cause that did not fire prescribes a fix

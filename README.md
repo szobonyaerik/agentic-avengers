@@ -245,7 +245,8 @@ agentic-avengers/
 │   │                          `## Contracts and Decisions` section + the prior phase's card. Three
 │   │                          shapes are DEGRADED, not absent - no such heading, a heading holding
 │   │                          only boilerplate, or no readable overview.md at all - exit 3, and the
-│   │                          hook folds the builder's own cause into the persisted report.
+│   │                          hook folds the builder's own cause into the persisted report; any
+│   │                          other non-zero exit banners as UNAVAILABLE, never as a clean pass.
 │   │                          `check [--all]` (diff-scoped even under --full, from gate_ci.sh)
 │   │                          finds every feature in one of those three states
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger

@@ -213,12 +213,23 @@ Three consequences worth stating outright:
      heading present with nothing under it, not even a comment — a
      feature early in planning, ordinary because it cannot be mistaken for "filled in."
      `build()` marks each degraded shape `degraded` and `main()` exits **3** — never 1 or 2, which
-     mean something else here — and `hook_spec_gate.sh` does not discard that exit code with `|| :`.
+     mean something else here: 1 is a `check` finding, 2 is a usage error or an unexpected failure.
+     **Nothing escapes `main()` as a traceback.** An uncaught exception used to exit 1, and 1 is the
+     code the hook reads as "could not build, treat as absent" - a crash arriving as a routine
+     absence is the same silent clean pass this whole item removes, so every unexpected failure gets
+     a code no other outcome uses and its cause on stderr.
+     `hook_spec_gate.sh` does not discard that exit code with `|| :`.
      It echoes it loudly **and folds a `CONTEXT DEGRADED` banner into the persisted report**, the one
      stamped into `spec_gate_cache` on APPROVED and BLOCKED alike, since no later read of a verdict
-     sees a hook's stderr. The banner **carries the builder's own cause line verbatim** rather than
-     re-authoring one: three shapes exit 3, each with its own remedy, and a durable record naming the
-     wrong one prescribes a fix already applied. Still never a gate failure on its own; no longer
+     sees a hook's stderr. On exit 3 the banner **carries the builder's own cause line verbatim**
+     rather than re-authoring one: three shapes exit 3, each with its own remedy, and a durable
+     record naming the wrong one prescribes a fix already applied. **Any other non-zero exit is
+     recorded no more quietly**: a builder that could not run at all leaves `contradiction` checked
+     against less than the closed set claims, exactly as a degraded overview does, so it folds a
+     banner too - a hook-authored one marked `UNAVAILABLE`, because the remedies do not overlap. A
+     degraded overview is fixed in the overview; a builder failure is a defect in the script or its
+     inputs, and a banner naming the wrong one of those sends the reader to the wrong file.
+     Still never a gate failure on its own; no longer
      indistinguishable from a clean pass.
 
      **The heading contract is checked, not merely stated.** `spec_gate_context.py check [--all]`

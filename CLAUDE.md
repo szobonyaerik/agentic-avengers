@@ -115,12 +115,21 @@ with the verdict taken out of the model's hands entirely:
    absence that stays ordinary is a heading present with genuinely
    nothing under it — not even a comment — since that alone is indistinguishable from a feature
    early in planning. `build()` marks each degraded shape `degraded` and `main()` exits **3** for
-   it — never 1 or 2, which mean something else on this gate — and `hook_spec_gate.sh` no longer
+   it — never 1 or 2, which mean something else on this gate: 1 is a `check` finding and 2 is a
+   usage error or an unexpected failure. **Nothing escapes `main()` as a traceback**, because an
+   uncaught exception used to exit 1, and 1 is the code the hook reads as "could not build, treat as
+   absent" - a crash arriving as a routine absence is the same silent clean pass this item exists to
+   remove. `hook_spec_gate.sh` no longer
    discards that exit code with `|| :`: it echoes it loudly **and folds a `CONTEXT DEGRADED` banner
    into the persisted report**, the one stamped into `spec_gate_cache` on APPROVED and BLOCKED
-   alike, because nothing that reads a verdict later sees a hook's stderr. That banner **carries the
-   builder's own cause line verbatim** rather than re-authoring one: three shapes exit 3 and each has
-   its own remedy, so a durable record naming the wrong one prescribes a fix already applied. It still never fails the
+   alike, because nothing that reads a verdict later sees a hook's stderr. On exit 3 that banner
+   **carries the builder's own cause line verbatim** rather than re-authoring one: three shapes exit
+   3 and each has its own remedy, so a durable record naming the wrong one prescribes a fix already
+   applied. **Any other non-zero exit is recorded no more quietly**: a builder that could
+   not run at all leaves `contradiction` checked against less than the closed set claims, exactly
+   like a degraded overview, so it folds a banner too - but a hook-authored one marked
+   `UNAVAILABLE`, since the two remedies do not overlap (a degraded overview is fixed in the
+   overview; this is a defect in the builder or its inputs). It still never fails the
    gate on its own — the block is reference-only by design — but it can no longer look identical to
    a clean pass. **The heading contract is checked mechanically, not just written down**:
    `spec_gate_context.py check [--all]` walks every `docs/features/*/` feature directory for the
