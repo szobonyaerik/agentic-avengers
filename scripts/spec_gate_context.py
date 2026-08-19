@@ -69,6 +69,12 @@ Usage:
     spec_gate_context.py check [--all] [root]
                                              every overview.md missing the heading, diff-scoped
                                             unless --all; exit 1 iff any is in scope and missing it
+
+Either way, an unexpected failure exits **2** with its cause, never 1 and never a traceback: 1 is a
+finding and 3 is a degraded context, so a crash arriving as either would be read as a fact about the
+overview rather than about this script. "Unreadable" is decided in one place (`UNREADABLE`) and
+includes a file whose bytes are not UTF-8 - that is a document this reader cannot carry, which is
+the third degraded shape above, not a crash.
 """
 
 from __future__ import annotations
@@ -99,6 +105,13 @@ CONTRACTS_HEADING = "Contracts and Decisions"
 PHASE_DIR = re.compile(r"^(\d+)-")
 
 MARKER = "## CONTEXT (reference only)"
+
+#: What "unreadable" means at every read site here, stated once. `read_text(encoding="utf-8")`
+#: raises `UnicodeDecodeError` - a `ValueError`, not an `OSError` - on a file whose bytes are not
+#: UTF-8, and a document this reader cannot decode carries exactly as much context as one that is
+#: not there. Catching only `OSError` made that shape a traceback and exit 1, which the caller reads
+#: as "could not build, treat as absent" - the silent clean pass this module exists to remove.
+UNREADABLE = (OSError, UnicodeDecodeError)
 
 
 def layout(spec: Path) -> tuple[Path, int] | None:
@@ -160,15 +173,8 @@ def contracts(text: str) -> Contracts:
 
 
 def contracts_section(text: str) -> str | None:
-    """The `## Contracts and Decisions` section of an overview, heading included, or None.
-
-    Ends at the next heading of the SAME OR SHALLOWER level, so a contract written under its own
-    `### ` subheading stays inside the section rather than truncating it - and the section still
-    stops well short of the whole document, which is the extent the read path grants this reader.
-    That level rule is `md_section.slice_section`'s; what stays here is the policy - the heading line
-    is carried into the block, and a section with nothing under it BUT boilerplate is no context at
-    all, same as one with nothing under it at all.
-    """
+    """The carried body alone, for callers with no use for the rest of `contracts()` - which owns
+    every rule about what that body is and when it is None."""
     return contracts(text).body
 
 
@@ -185,7 +191,7 @@ def overview_state(feature_dir: Path) -> Contracts | None:
     """
     try:
         text = (feature_dir / "overview.md").read_text(encoding="utf-8")
-    except OSError:
+    except UNREADABLE:
         return None
     return contracts(text)
 
@@ -238,7 +244,7 @@ def prior_card(feature_dir: Path, phase: int) -> Card | None:
         return None
     try:
         raw = (directory / "handover.md").read_text(encoding="utf-8")
-    except OSError:
+    except UNREADABLE:
         return None
     encoded = raw.encode("utf-8")
     truncated = len(encoded) > HANDOVER_MAX_BYTES
@@ -282,8 +288,10 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
             f"DEGRADED: no readable overview.md in {feature_dir.name} — contradiction can only be "
             f"checked against the prior phase's card, never this feature's own contracts, for "
             f"EVERY spec in this feature, for as long as the overview stays missing. There is no "
-            f"exemption for a feature that genuinely has none yet: write overview.md before writing "
-            f"specs, or accept the degraded gate until you do."
+            f"exemption for a feature that genuinely has none yet, and no tolerated degraded state "
+            f"to settle for: `spec_gate_context.py check` in gate_ci.sh blocks the commit as soon "
+            f"as this feature directory is touched. Write overview.md before writing specs under "
+            f"it."
         )
     elif state.body:
         parts.append(state.body)
@@ -393,12 +401,13 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
 
         try:
             text = overview.read_text(encoding="utf-8")
-        except OSError as exc:
+        except UNREADABLE as exc:
             message = (
                 f"{feature}: no readable overview.md ({exc}) — the spec gate's CONTEXT block can "
                 f"never carry this feature's contracts without one, so `contradiction` is checked "
                 f"only against the prior phase's card, for every spec this feature ever gates, "
-                f"until overview.md exists. There is no exemption for it: this feature has no phase "
+                f"until a readable UTF-8 overview.md exists. There is no exemption for it: this "
+                f"feature has no phase "
                 f"directory yet either, so there is nowhere for a recorded exception to live."
             )
         else:
@@ -434,8 +443,27 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+    """Exit 0 clean · 1 the `check` subcommand found an in-scope feature · 3 the built block is
+    degraded · 2 anything unexpected.
 
+    That last one is the reason this wrapper exists. Every code here means one thing to the hook,
+    and an uncaught exception used to exit 1 - the same code `check` uses for a real finding, and a
+    code `hook_spec_gate.sh` reads as "could not build, treat as absent, never fail the gate". A
+    crash arriving as a routine absence is the silent clean pass this module was written to remove,
+    so it gets a code no other outcome uses, and its cause on stderr rather than a traceback.
+    """
+    try:
+        return _run(list(sys.argv[1:] if argv is None else argv))
+    except Exception as exc:  # noqa: BLE001 - the point is that NOTHING escapes as exit 1
+        print(
+            f"[spec_gate_context] unexpected failure ({type(exc).__name__}: {exc}) — this is "
+            f"neither a degraded context nor a finding. Nothing was built.",
+            file=sys.stderr,
+        )
+        return 2
+
+
+def _run(args: list[str]) -> int:
     if args and args[0] == "check":
         rest = args[1:]
         enforce_all = "--all" in rest

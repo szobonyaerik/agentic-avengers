@@ -235,6 +235,15 @@ shape — see its stderr above."
   echo "  See docs/templates/overview.template.md, or run" >&2
   echo "  'python3 $SD/spec_gate_context.py check --all' to find every overview like this one." >&2
 elif [ "$ctx_rc" -ne 0 ]; then
+  # A builder that could not run at all carries the same consequence as one that ran and reported a
+  # degraded context: `contradiction` is checked against less than the closed set says it is. So it
+  # is recorded the same way — banner folded into the persisted report — rather than printed to a
+  # stderr nothing that reads the verdict later will ever see. Its cause line says which of the two
+  # it was, because the remedies do not overlap: a degraded overview is fixed in the overview, and
+  # this is a defect in the builder or its inputs.
+  CONTEXT_DEGRADED=1
+  CONTEXT_CAUSE="UNAVAILABLE: the context builder exited $ctx_rc without producing a block — this \
+is a builder failure, not a degraded overview. See the hook's stderr for its cause."
   echo "spec-gate: the context block could not be built (exit $ctx_rc, cause named above) —" >&2
   echo "  treating it as absent. This never fails the gate on its own." >&2
 fi

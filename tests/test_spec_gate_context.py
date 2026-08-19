@@ -252,6 +252,54 @@ def test_an_unreadable_overview_is_degraded_not_omitted(feature: Path) -> None:
     )
 
 
+def test_an_overview_that_is_not_utf8_is_degraded_like_any_other_unreadable_one(
+    feature: Path, capsys
+) -> None:
+    """`read_text(encoding="utf-8")` raises `UnicodeDecodeError`, which is a `ValueError` and not an
+    `OSError`, so a narrow catch turned this shape into a traceback and exit 1 - which the hook
+    reads as "could not build, treat as absent, never fail the gate", i.e. the silent clean pass
+    issue #57 exists to remove. Pinned through `main()` because the exit code is the whole point."""
+    (feature / "overview.md").write_bytes(b"# Demo\n\n\xff\xfe not utf-8\n")
+
+    rc = main([str(spec_at(feature, "1-first"))])
+
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "DEGRADED" in err
+    assert "Traceback" not in err
+
+
+def test_a_non_utf8_overview_is_a_check_finding_rather_than_a_crash(
+    tmp_path: Path,
+) -> None:
+    feature = tmp_path / "docs" / "features" / "demo"
+    feature.mkdir(parents=True)
+    (feature / "overview.md").write_bytes(b"\xff\xfe")
+
+    problems = check(tmp_path, enforce_all=True)
+
+    assert len(problems) == 1
+    assert "no readable overview.md" in problems[0]
+
+
+def test_an_unexpected_failure_exits_two_rather_than_one_or_three(
+    feature: Path, capsys, monkeypatch
+) -> None:
+    """1 is a `check` finding and 3 is a degraded context, so a crash that took either code would be
+    read as a fact about the overview instead of about this script."""
+    monkeypatch.setattr(
+        "spec_gate_context.build",
+        lambda spec: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    rc = main([str(spec_at(feature, "1-first"))])
+
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "unexpected failure" in err
+    assert "boom" in err
+
+
 # ── the heading-missing case is DEGRADED, never a silent pass (issue #57) ────
 
 

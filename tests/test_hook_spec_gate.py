@@ -554,6 +554,23 @@ def test_the_banner_names_the_shape_that_actually_fired_boilerplate(in_layout) -
     assert "boilerplate" in report
 
 
+def test_the_banner_fires_for_an_overview_that_is_not_utf8(in_layout) -> None:
+    """The third shape, reached through the one input that used to crash the builder instead: an
+    `overview.md` whose bytes are not UTF-8 raised out of `read_text` as exit 1, which this hook
+    reads as "could not build, treat as absent" — a stamped report indistinguishable from a clean
+    pass, on a spec the gate could only half check."""
+    project, spec, _ = in_layout
+    (spec.parents[4] / "overview.md").write_bytes(b"# Demo\n\n\xff\xfe\n")
+
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+    report = stamped_report(project, spec)
+    assert "CONTEXT DEGRADED" in report
+    assert "no readable overview.md" in report
+
+
 def test_a_feature_carrying_the_heading_stamps_no_warning(in_layout) -> None:
     """The control: without it, a test asserting the warning appears proves nothing about when."""
     project, spec, write_context = in_layout
