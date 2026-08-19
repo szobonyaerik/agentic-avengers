@@ -70,6 +70,17 @@ trace, exactly as the precheck reads it: an absent declaration buys no exemption
 layout this parser cannot read is UNDECIDABLE (`requirement_cap.unreadable_layout`), never an
 exemption — a silent "nothing is owed" is how a check comes to stop existing.
 
+**An EXEMPT spec and an EMPTY one are not the same answer either**, and an empty
+`declared_bindings()` list cannot tell them apart: `any(...)` over it is False whether every
+declared requirement is `binding: none` or the spec declares nothing at all. The first is a
+deliberate exemption; the second is a malformed spec, and reading it as an exemption reopens issue
+#68's own state — a `done` stamp standing over an absent mapping — for every spec whose requirements
+were never written down (`unreadable_layout` says nothing about that case by design: with no
+requirement id anywhere in scope there is no layout to misread). So the three states are three
+named branches, one of which is `NoRequirementsDeclared`: a spec that states no requirement states
+nothing about what it owes, so the check cannot pass it, and it is reported as its own stop with its
+own remedy — declare the requirements — rather than as an empty mapping or as an exemption.
+
 **Counting rows is not the same as checking they say anything.** `docs/templates/`'s mapping
 template ships a header, a separator and THREE placeholder rows, and `skills/tdd` points every
 implementer at it as the starting shape — so copy-then-stamp is the expected flow, not an edge
@@ -101,7 +112,8 @@ Usage:
                                                      scope is unknowable); 2 = error
     spec_done_guard.py mapping-complete <spec.md>   exit 0 = a recorded row, or no row is owed at
                                                      all (every declared binding is `none`);
-                                                     1 = empty/missing/only placeholders, 2 = error
+                                                     1 = empty/missing/only placeholders; 2 = error;
+                                                     3 = the spec declares no requirement at all
     spec_done_guard.py revert <spec.md>             flip status: done -> status: in-progress;
                                                      exit 0 whether or not a change was needed,
                                                      2 if the file cannot be read/written
@@ -129,6 +141,9 @@ NOT_DONE = 1
 #: Same code as `NOT_DONE`, different question: the rule does not bind this spec at all.
 OUT_OF_SCOPE = 1
 ERROR = 2
+#: Its own stop, and not `NOT_DONE`: the mapping was never judged, so nothing here says a row is
+#: missing, and the remedy is to declare the spec's requirements rather than to record a row.
+NO_REQUIREMENTS = 3
 
 STATUS_FIELD = "status"
 DONE = "done"
@@ -173,6 +188,17 @@ class UndecidableRequirements(Exception):
     Deliberately not "nothing is owed". Answering that would exempt the spec from the mapping check
     on the strength of a parse that failed — a silent pass, which is the direction
     `requirement_cap.unreadable_layout` exists to refuse.
+    """
+
+
+class NoRequirementsDeclared(Exception):
+    """The spec declares no requirement at all, so nothing in it states what it owes.
+
+    Its own state, separate from both "owed" and "not owed", because the empty `declared_bindings()`
+    list that produces it is also what an all-`binding: none` spec produces — and those two are a
+    deliberate exemption and a malformed spec respectively. Read as the exemption, a spec whose
+    requirements were never written down keeps a `done` stamp over an absent mapping, which is issue
+    #68's own state.
     """
 
 
@@ -230,14 +256,15 @@ def _requirement_cell(row: str) -> str:
 def mapping_owed(spec_path: Path) -> bool:
     """Whether this spec owes a recorded `test-mapping.md` row at all.
 
-    False when every requirement it declares is `binding: none`, or it declares none: those get no
-    test and no mapping row by construction (§4a), so demanding a row asks the author to invent one
-    for a requirement the rules forbid a test for. A requirement declaring no binding at all is OWED
-    a trace, the same reading `verifier_precheck.py` takes — a missing declaration is a spec defect,
-    not an exemption.
+    False when every requirement it declares is `binding: none`: those get no test and no mapping row
+    by construction (§4a), so demanding a row asks the author to invent one for a requirement the
+    rules forbid a test for. A requirement declaring no binding at all is OWED a trace, the same
+    reading `verifier_precheck.py` takes — a missing declaration is a spec defect, not an exemption.
 
-    Raises `UndecidableRequirements` when the spec cannot be read, or when its requirement layout
-    cannot be parsed — unknown is not "nothing is owed".
+    Raises `NoRequirementsDeclared` when the spec declares no requirement at all, which is NOT that
+    exemption however identically the two read off an empty binding list, and
+    `UndecidableRequirements` when the spec cannot be read or its requirement layout cannot be
+    parsed — unknown is not "nothing is owed".
     """
     try:
         text = spec_path.read_text(encoding="utf-8")
@@ -248,7 +275,10 @@ def mapping_owed(spec_path: Path) -> bool:
     reason = unreadable_layout(text)
     if reason is not None:
         raise UndecidableRequirements(f"{spec_path}: {reason}")
-    return any(binding != "none" for _rid, binding in declared_bindings(text))
+    declared = declared_bindings(text)
+    if not declared:
+        raise NoRequirementsDeclared(str(spec_path))
+    return any(binding != "none" for _rid, binding in declared)
 
 
 def mapping_complete(spec_path: Path) -> bool:
@@ -334,9 +364,9 @@ def _stamp_is_new_cli(path: Path) -> int:
 def _mapping_complete_cli(path: Path) -> int:
     if not mapping_owed(path):
         print(
-            f"[{CHECK}] {path} declares no requirement that is owed a test — every declared "
-            f"`binding:` is `none`, or none are declared — so `test-mapping.md` owes no row here "
-            f"(§4a) and the `status: {DONE}` stamp is not judged on one.",
+            f"[{CHECK}] every requirement {path} declares is `binding: none` — structural or "
+            f"build-time work that gets no test — so `test-mapping.md` owes no row here (§4a) and "
+            f"the `status: {DONE}` stamp is not judged on one.",
             file=sys.stderr,
         )
         return OK
@@ -361,6 +391,16 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return ERROR
+    except NoRequirementsDeclared as exc:
+        print(
+            f"[{CHECK}] {exc} declares no requirement at all, so nothing in it states what it "
+            f"owes.\n"
+            f"  This is NOT the `binding: none` exemption and NOT an empty mapping: the mapping was\n"
+            f"  never judged, so recording a row answers nothing. Declare the spec's requirements\n"
+            f"  with their `binding:` tier, then stamp done again. The stamp is left as written.",
+            file=sys.stderr,
+        )
+        return NO_REQUIREMENTS
     except UndecidableRequirements as exc:
         print(
             f"[{CHECK}] cannot tell whether this spec OWES a mapping row: {exc}\n"

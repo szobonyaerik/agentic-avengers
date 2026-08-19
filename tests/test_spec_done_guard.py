@@ -22,9 +22,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import spec_done_guard  # noqa: E402
 from spec_done_guard import (  # noqa: E402
     ERROR,
+    NO_REQUIREMENTS,
     NOT_DONE,
     OK,
     OUT_OF_SCOPE,
+    NoRequirementsDeclared,
     UndecidableMapping,
     UndecidableRequirements,
     main,
@@ -224,11 +226,18 @@ def test_a_spec_whose_every_requirement_is_binding_none_owes_no_row(
     assert mapping_owed(spec) is False
 
 
-def test_a_spec_declaring_no_requirements_owes_no_row(tmp_path: Path) -> None:
+def test_a_spec_declaring_no_requirements_is_its_own_state_not_that_exemption(
+    tmp_path: Path,
+) -> None:
+    """The two produce the SAME empty binding list, and they are opposites: one is a deliberate
+    exemption, the other a spec that states nothing about what it owes. Read as the exemption, every
+    spec whose requirements were never written down keeps a `done` stamp over an absent mapping —
+    issue #68's own state, reopened for a whole class."""
     spec = tmp_path / "spec.md"
     write_spec(spec, requirements="\n")
 
-    assert mapping_owed(spec) is False
+    with pytest.raises(NoRequirementsDeclared):
+        mapping_owed(spec)
 
 
 def test_one_requirement_bound_to_a_test_makes_a_row_owed(tmp_path: Path) -> None:
@@ -276,6 +285,31 @@ def test_cli_passes_a_binding_none_only_spec_with_no_mapping_at_all(
 
     assert main(["mapping-complete", str(spec)]) == OK
     assert "owes no row" in capsys.readouterr().err
+
+
+def test_cli_reports_a_spec_with_no_requirements_as_its_own_stop(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not OK (the exemption), not NOT_DONE (an empty mapping the check never judged): its own exit
+    code, so `hook_verifier.sh` can name the remedy that exists — declare the requirements."""
+    spec = tmp_path / "spec.md"
+    write_spec(spec, requirements="\n")
+    (tmp_path / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+    )
+
+    assert main(["mapping-complete", str(spec)]) == NO_REQUIREMENTS
+    err = capsys.readouterr().err
+    assert "declares no requirement at all" in err
+    assert "NOT the `binding: none` exemption" in err
+
+
+def test_the_no_requirements_stop_is_not_reused_by_any_other_answer(
+    tmp_path: Path,
+) -> None:
+    """Three states, three codes. A shared code is how the hook came to prescribe one branch's
+    remedy for another branch's problem."""
+    assert NO_REQUIREMENTS not in (OK, NOT_DONE, OUT_OF_SCOPE, ERROR)
 
 
 def test_cli_reports_an_unreadable_requirement_layout_as_an_error(

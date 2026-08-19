@@ -1094,7 +1094,11 @@ the stamp exactly as written while still failing the hook:
   is `binding: none` has a legitimately row-less mapping and is never asked for one. The obligation
   is read from `requirement_cap.declared_bindings`, which already owns the declaration layout and
   where a binding sits inside it; a requirement declaring **no** binding is owed a trace, and a
-  layout the parser cannot read is undecidable rather than exempt.
+  layout the parser cannot read is undecidable rather than exempt. **A spec declaring no requirement
+  at all is its own stop, never this exemption** — the two read off the same empty binding list, and
+  taking the second for the first would leave a `done` stamp standing over an absent mapping for
+  every spec whose requirements were never written down, which is issue #68's own state. There the
+  remedy is to declare the requirements, so it is said that way and the stamp is left as written.
 - **A red suite that could only be run repository-wide.** With no phase test directory resolvable
   the hook runs the whole tree minus e2e — the permanent state of a project whose tests do not live
   under `tests/` — and one unrelated failure there is not evidence about one spec, especially where

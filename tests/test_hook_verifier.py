@@ -471,15 +471,17 @@ def commit_docs(project: Path) -> None:
     git(project, "commit", "-qm", "docs")
 
 
-def spec_text(status: str, *, binding: str = "integration") -> str:
+def spec_text(status: str, *, binding: str | None = "integration") -> str:
     """A spec that OWES a mapping row by default — one requirement bound to a test.
 
     `binding="none"` is the spec the tiered-binding rule (§4a) gives no test and no mapping row: it
-    owes no row, so the mapping check may not ask for one.
+    owes no row, so the mapping check may not ask for one. `binding=None` declares no requirement at
+    all, which is a malformed spec rather than that exemption.
     """
+    requirements = "" if binding is None else f"- R1.1.1 — binding: {binding}\n"
     return (
         f"---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\nstatus: {status}\n---\n\n"
-        f"# Spec\n\n## Requirements\n- R1.1.1 — binding: {binding}\n\n"
+        f"# Spec\n\n## Requirements\n{requirements}\n"
         "## Acceptance criteria\n\nDone.\n"
     )
 
@@ -489,7 +491,7 @@ def write_done_spec(
     *,
     mapping: str | None = "header-only",
     head_status: str = "in-progress",
-    binding: str = "integration",
+    binding: str | None = "integration",
 ) -> Path:
     """A spec stamped `status: done` in the worktree, committed at `head_status` — so the default
     is a stamp that JUST landed, and `head_status="done"` is one that shipped before this rule.
@@ -695,6 +697,23 @@ def test_a_spec_owed_no_mapping_row_keeps_its_stamp_with_no_mapping_at_all(
     result = run_spec_done_hook(project, spec_path)
 
     assert result.returncode == 0, result.stderr
+    assert "status: done" in spec_path.read_text()
+    assert "records no" not in result.stderr
+
+
+def test_a_spec_declaring_no_requirements_gets_no_free_pass_from_the_exemption(
+    project: Path,
+) -> None:
+    """The exemption's mirror. An all-`binding: none` spec and a spec declaring nothing produce the
+    same empty binding list, so reading one as the other would let a `done` stamp stand over an
+    absent mapping — issue #68's own state. This is its own stop, with the remedy that exists."""
+    spec_path = write_done_spec(project, mapping=None, binding=None)
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "declares no requirement at all" in result.stderr
     assert "status: done" in spec_path.read_text()
     assert "records no" not in result.stderr
 

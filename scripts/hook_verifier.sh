@@ -158,6 +158,16 @@ if [ "$STAMP_BINDS" = "1" ]; then
       "template's R<n>.<k>.<m> placeholder. (A spec whose every requirement declares" \
       "\`binding: none\` owes no row and is never asked for one.)" \
       "$STAMP_NOTE Finish recording the mapping, then stamp done again."
+  elif [ "$mapping_rc" -eq 3 ]; then
+    # A spec stating NO requirement states nothing about what it owes, and that is neither the
+    # `binding: none` exemption nor an empty mapping — both of which read off the same empty binding
+    # list. Its own stop, with its own remedy: the mapping was never judged, so recording a row
+    # answers nothing, and nothing here justifies rewriting the stamp.
+    fail "verifier:spec-done-no-requirements" \
+      "verifier ($TRIGGER): status was stamped 'done' on a spec that declares no requirement at all" \
+      "(named above) — so nothing in it says what it owes, and the mapping check could not judge it." \
+      "This is NOT the \`binding: none\` exemption. Declare the spec's requirements with their" \
+      "\`binding:\` tier, then stamp done again. The stamp is left exactly as written."
   elif [ "$mapping_rc" -ne 0 ]; then
     fail "verifier:spec-done-undecidable" \
       "verifier ($TRIGGER): whether this spec's mapping is recorded could not be DECIDED (cause" \
