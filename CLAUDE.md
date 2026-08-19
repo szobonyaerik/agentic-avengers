@@ -598,10 +598,38 @@ blocks, so the cost of that default being wrong is a line of output. It is still
 **not** the independence mechanism — that is the Verifier's test-quality review. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
 `cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
 
-### 6a. Gates fire on "done", not on every edit
+### 6a. Gates fire on "done", not on every edit — and the "done" stamp is not believed on sight
 The implementer runs a red → green loop, so red is an expected state throughout a build. Gates trigger
-on a spec reaching `status: done` (smoke-check the phase suite; model called only on failure) and on
-`handover.md` — never per code edit. **No model runs in these hooks** except the spec gate: the
+on a spec reaching `status: done` (checks its mapping, then smoke-checks the phase suite; model called
+only on failure) and on `handover.md` — never per code edit.
+
+**A `status: done` stamp is not a completion signal by itself** (issue #68). Its own implementer
+writes it and used to keep working afterwards, so a wedge guard watching it fired 24 minutes early
+and would have put two implementers in one worktree. Telling people not to wait on the stamp fixes
+nothing, so the stamp is **self-correcting** instead: on the `spec-done` trigger `hook_verifier.sh`
+checks that the spec's own `test-mapping.md` records a real row and that the phase suite is green
+*before* letting a newly written stamp stand, and either failing REVERTS it to `status: in-progress`
+(`scripts/spec_done_guard.py`) and then fails the hook. A **recorded** row is one that says
+something: only the **requirement-id cell** is read, and a cell still carrying the mapping
+template's `R<n>.<k>.<m>` syntax counts as nothing — counting rows would pass exactly the state the
+issue names, and the other columns legitimately contain angle brackets (`Result<Config, Error>`).
+Three states fail the hook and leave the stamp **exactly as written**, because the revert acts only
+on evidence scoped to the same thing it rewrites: a spec whose every declared requirement is
+`binding: none` owes no row by construction (§4a, read from `requirement_cap.declared_bindings`) —
+a spec declaring **no** requirement at all is its own stop with its own remedy, never that
+exemption; a red suite that could only be run repository-wide, which is one unrelated failure rather
+than evidence about one spec; and `GATE_BYPASS`, which leaves the stamp `done`, overridden and
+audited, since reverting underneath an override produced a bypass with no reachable end state.
+It binds only the **transition** into `done` (§3a): `spec_done_guard.py` compares against the file's
+committed HEAD, so a spec already `done` there has shipped, is counted and named on stderr, and is
+never reverted — rewriting it would delete the one evidence `applicability.spec_shipped` reads. And
+**the claim is exactly as wide as the mechanism**: this is a `PostToolUse` hook on
+`Write|Edit|MultiEdit`, so no *tool call* can leave a false `done` stamp on disk, while a stamp
+written through Bash (`sed -i`, a heredoc, `python3 -c`) never reaches it. It binds `status: done`
+specifically and does not generalize to the pipeline's other stamps; the only reliable completion
+signal in this harness remains the agent/task notification, never a written marker.
+
+**No model runs in these hooks** except the spec gate: the
 Verifier is an *agent* that runs in chat and commits `verdict.json`, and the hook only checks that
 artifact exists and passes. Mechanical gates in hooks and CI; model gates in chat. The implementer's
 own `pytest tests/<feature>/<n>-<slug>/` is the inner loop: free, no model call. A gate also never re-judges an unchanged spec —
