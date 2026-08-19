@@ -157,3 +157,45 @@ def test_gate_model_supplies_the_model_when_the_caller_names_none(gate) -> None:
     what they already chose and already proved reachable."""
     result = gate("good", model="", GATE_MODEL="deepseek/deepseek-chat")
     assert result.returncode == 0, result.stderr
+
+
+def test_the_runner_refuses_a_bare_cli_invocation_with_no_model_before_any_provider(
+    tmp_path: Path,
+) -> None:
+    """The runner's own refusal, proven at the CLI and through no caller.
+
+    Every in-repo caller (`hook_spec_gate.sh`, `verifier_review.sh`, `gate_ci.sh`) resolves a model
+    from its own documented default before it ever spawns this script, so nothing in the pipeline
+    reaches this branch today and no caller-driven test can cover it. It is kept as defence in depth
+    for a future direct caller, and defence nothing exercises is a claim — so this invokes
+    `gate_runner.py` the way such a caller would: argv carrying no `--model` at all, an environment
+    carrying no GATE_MODEL, and a PATH with no provider CLI on it.
+
+    What it pins is that the refusal is the FIRST thing that happens. With no `opencode` reachable,
+    a runner that resolved a model from thin air would fail as `provider-not-found` — a message
+    naming the operator's PATH for a defect in their configuration."""
+    (tmp_path / "rubric.md").write_text("Return JSON with a verdict.")
+    (tmp_path / "spec.md").write_text("---\nfeature: demo\n---\n\n- R1.1.1 a requirement\n")
+    empty_bin = tmp_path / "bin"
+    empty_bin.mkdir()
+
+    result = subprocess.run(
+        [sys.executable, str(RUNNER),
+         "--rubric", str(tmp_path / "rubric.md"),
+         "--target", str(tmp_path / "spec.md"),
+         "--author-family", "anthropic"],
+        capture_output=True, text=True, check=False,
+        env={
+            "PATH": str(empty_bin),
+            "HOME": str(tmp_path),
+            "CLAUDE_PROJECT_DIR": str(tmp_path),
+        },
+    )
+
+    assert result.returncode == 2
+    assert "cause=config" in result.stderr
+    assert "a gate must never run on one nobody chose" in result.stderr
+    assert "--model" in result.stderr and "GATE_MODEL" in result.stderr, "name both ways out"
+    assert "provider-not-found" not in result.stderr, "it must refuse BEFORE reaching a provider"
+    for invented in ("deepseek", "gemini", "openrouter"):
+        assert invented not in result.stderr.lower(), "no model or provider may come from thin air"

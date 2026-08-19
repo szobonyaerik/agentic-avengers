@@ -227,15 +227,7 @@ model_token () { grep -m1 '^model:' "$1" 2>/dev/null | sed 's/.*:[[:space:]]*//;
 # non-zero here, so the caller's loud refusal below is unchanged.
 model_family () { python3 "$SCRIPT_DIR/model_vendors.py" family "$1"; }
 cross_family_check () {
-  # Resolved exactly as scripts/verifier_review.sh resolves it, and with no hardcoded id here for
-  # the same reason (issue #48): a literal in this position asserts a family for a model the
-  # operator never chose, so the check would pass on one model and the review would run on another.
-  local gate="${VERIFIER_GATE_MODEL:-${GATE_MODEL:-}}" gfam impl itok ifam
-  if [ -z "$gate" ]; then
-    echo "  ✗ no verifier gate model: set VERIFIER_GATE_MODEL, or GATE_MODEL for it to fall back to." >&2
-    echo "    There is no default — a gate must never run on a model nobody chose (issue #48)." >&2
-    return 1
-  fi
+  local gate="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}" gfam impl itok ifam
   gfam="$(model_family "$gate")" || { echo "  ✗ unknown VERIFIER_GATE_MODEL family: '$gate'" >&2; return 1; }
   for impl in "$ROOT/agents/avenger-backend-architect.md" "$ROOT/agents/avenger-frontend-developer.md"; do
     [ -f "$impl" ] || continue

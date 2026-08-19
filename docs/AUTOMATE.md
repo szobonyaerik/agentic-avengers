@@ -195,20 +195,14 @@ fail-closed gate self-halts the run instead of shipping junk.
 ```bash
 export AUTHOR_FAMILY=anthropic
 export GATE_MODEL=opencode-go/deepseek-v4-pro     # the spec gate (observe AND, unset, triage)
-export VERIFIER_GATE_MODEL=opencode-go/grok-4.5   # the Verifier's review — a third family
+export VERIFIER_GATE_MODEL=google/gemini-3.1-pro-preview   # the Verifier's review — its own default
 export GATE_PROVIDER=opencode
 export SPEC_REVIEW_MODE=auto                        # no human spec-review
 # OpenCode auth present (opencode-go creds). For the git floor (pre-commit/CI) instead:
 #   GATE_PROVIDER=openrouter + OPENROUTER_API_KEY + GATE_MODEL=openrouter/deepseek/deepseek-v4-pro
-# There are THREE gate models, not one — GATE_MODEL does not route them all, though the other two
-# fall back to it when unset. GATE_MODEL itself has NO default: unset, the gate is refused by name
-# rather than run on a model nobody chose. All three are documented together in
-# docs/templates/env.example.
-#
-# Both ids above are `opencode-go/…` on purpose. Under GATE_PROVIDER=opencode an id whose prefix
-# opencode does not recognise is routed as `openrouter/<id>`, so a `google/gemini-…` gate model
-# needs an OpenRouter credential configured INSIDE opencode — which this recipe's opencode-go creds
-# alone do not give you, and its absence is a fail-closed gate on every spec write.
+# There are THREE gate models, not one — GATE_MODEL does not route them all. GATE_TRIAGE_MODEL
+# follows GATE_MODEL when unset; VERIFIER_GATE_MODEL does NOT, and keeping it on a third family is
+# the point of it. All three are documented together in docs/templates/env.example.
 ```
 
 ### Headless Claude Code (print mode)

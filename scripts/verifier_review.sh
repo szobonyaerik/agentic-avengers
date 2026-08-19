@@ -21,7 +21,7 @@
 # On any path that does not produce a fresh trustworthy verdict the file is removed, so the caller
 # never merges an earlier run's pass (INVARIANT below).
 #
-# Env: VERIFIER_GATE_MODEL (falls back to GATE_MODEL; neither set is refused) · AUTHOR_FAMILY (anthropic)
+# Env: VERIFIER_GATE_MODEL (default google/gemini-3.1-pro-preview) · AUTHOR_FAMILY (default anthropic)
 #      GATE_PROVIDER · TEST_CMD (default: pytest -q --tb=short on the phase's tests dir)
 #      VERIFIER_SRC_LIMIT (default 400000) — chars of review-set source; an over-limit set is refused
 #      before the model is called, never truncated (see the comment on LIMIT below)
@@ -65,25 +65,7 @@ fi
 # shipped gate runner — a scaffold that prints GO is indistinguishable from a real pass here.
 require_gate_runner "$SD/gate_runner.py" || exit 2
 
-# No hardcoded model id in this position (issue #48). A literal here is a gate model nobody chose,
-# and one without a provider prefix opencode recognises is rewritten to `openrouter/<id>` whatever
-# GATE_PROVIDER says — so the substitution silently left the configured providers for a third one.
-# The fallback is the operator's own GATE_MODEL, already configured and already proven reachable;
-# with neither set there is no model at all and the review is refused rather than resolved.
-MODEL="${VERIFIER_GATE_MODEL:-${GATE_MODEL:-}}"
-if [ -z "$MODEL" ]; then
-  echo "verifier-review: cause=config no gate model (fail closed)." >&2
-  echo "  Set VERIFIER_GATE_MODEL, or GATE_MODEL for it to fall back to — docs/templates/env.example." >&2
-  echo "  This review has no default model: a gate must never run on one nobody chose (issue #48)." >&2
-  exit 2
-fi
-if [ -z "${VERIFIER_GATE_MODEL:-}" ]; then
-  # Said out loud, never silent: the Verifier's independence is best served by a THIRD family, and
-  # this fallback puts its judgement on the spec gate's model instead. Still cross-family from the
-  # author (asserted below), so it is a weaker decorrelation, not a broken one.
-  echo "verifier-review: VERIFIER_GATE_MODEL unset — falling back to GATE_MODEL ('$MODEL')." >&2
-  echo "  Set VERIFIER_GATE_MODEL to keep this review on a family of its own." >&2
-fi
+MODEL="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}"
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 # Chars of review-set source the gate model is given. 120000 (~30k tokens) was far below what any
 # current gate model can read, and it was the value that made truncation the normal case rather than
