@@ -283,6 +283,12 @@ agentic-avengers/
 │   │                          `table` renders the allocation. It does NOT observe what a stage ran
 │   │                          at, and opencode does not carry the key at all
 │   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
+│   ├── spec_done_guard.py     a spec's `status: done` is not believed on sight: on the stamp's
+│   │                          arrival the verifier hook checks that spec's test-mapping row and its
+│   │                          phase suite, and REVERTS the stamp to `in-progress` if either fails.
+│   │                          Binds only the transition into `done` (already `done` at committed
+│   │                          HEAD = shipped, counted not reverted); `binding: none`-only specs,
+│   │                          an unscoped red suite and `GATE_BYPASS` fail without rewriting it
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)

@@ -274,7 +274,8 @@ Three consequences worth stating outright:
   blocking. Two shipped specs of one measured feature declared 30 and 29 requirements against the cap
   of 12, and no verdict of any kind was reachable for them. It is not an escape hatch for a draft:
   `status: done` is stamped by the implementer, and it is what fires the phase suite and the
-  traceability pre-check, both of which a draft claiming to be done fails loudly.
+  traceability pre-check, both of which a draft claiming to be done fails loudly — and, since issue
+  #68, a stamp that fails either check does not stay `done` on disk (see below).
 
   **The writer is primed from this same rubric before it writes, from ONE source.** Phase 9 of one
   feature ran **fourteen** rounds on its first spec and one, three and one on the next three, while
@@ -1120,6 +1121,80 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
   and add characterization tests only at genuine gaps on pre-agreed critical seams.
 - **Refactor** → baseline-first parity: use the migration procedure without porting tests; behavior
   remains unchanged unless a separate greenfield requirement explicitly says otherwise.
+
+## A `status: done` stamp is not a completion signal by itself (issue #68)
+
+A spec's own implementer writes `status: done` into its frontmatter, and used to keep working
+afterward — `test-mapping.md`, `test-evidence.md` and the phase's mutation gate all landed later.
+In phase 11 a worker had armed a wedge guard on that stamp, watching for it as the signal that it
+was safe to dispatch the next spec's implementer into the same worktree. It fired at 24 minutes
+while the agent was still running. Had the guard been trusted, two implementers would have run in
+one worktree against one shared database — forbidden outright, and phase 9 measured why: a `git
+stash` from one implementer swallowed the other's uncommitted work, and the shared database
+produced foreign-key violations plus a spurious lint failure.
+
+Telling people not to wait on the stamp fixes nothing — that sentence has already been written five
+times in two days about three different stamps. So the stamp is made **self-correcting** instead:
+the moment `hook_verifier.sh` sees `status: done` land on a `spec.md` (its `spec-done` trigger), it
+checks, mechanically, whether the spec is actually done — its own `test-mapping.md` carries at
+least one recorded row, and its phase's test suite is green — **before** letting the stamp stand.
+A **recorded** row is one that says something: the mapping template ships three placeholder rows
+and `skills/tdd` points every implementer at it, so a row whose **requirement-id cell** still
+carries the template's `R<n>.<k>.<m>` syntax counts as nothing. Counting rows would pass exactly the
+state this issue names. Only that first cell is read — a real id cannot contain angle brackets,
+while the other columns legitimately can (`Result<Config, Error>`, `rejects n < 5 or > 10`), and
+misreading one of those would revert a correctly-stamped spec.
+Either check failing REVERTS `status: done` back to `status: in-progress`
+(`scripts/spec_done_guard.py`) and then fails the hook. A premature `done` does not survive the
+check that reads it.
+
+**The revert acts only on evidence scoped to the same thing it rewrites**, and three states leave
+the stamp exactly as written while still failing the hook:
+
+- **A spec that owes no mapping row.** A `binding: none` requirement is structural or build-time and
+  gets no test and no mapping row by construction (§4a), so a spec whose every declared requirement
+  is `binding: none` has a legitimately row-less mapping and is never asked for one. The obligation
+  is read from `requirement_cap.declared_bindings`, which already owns the declaration layout and
+  where a binding sits inside it; a requirement declaring **no** binding is owed a trace, and a
+  layout the parser cannot read is undecidable rather than exempt. **A spec declaring no requirement
+  at all is its own stop, never this exemption** — the two read off the same empty binding list, and
+  taking the second for the first would leave a `done` stamp standing over an absent mapping for
+  every spec whose requirements were never written down, which is issue #68's own state. There the
+  remedy is to declare the requirements, so it is said that way and the stamp is left as written.
+- **A red suite that could only be run repository-wide.** With no phase test directory resolvable
+  the hook runs the whole tree minus e2e — the permanent state of a project whose tests do not live
+  under `tests/` — and one unrelated failure there is not evidence about one spec, especially where
+  the implementer is told outright that pre-existing failures are expected.
+- **Break-glass.** `GATE_BYPASS` leaves the stamp `done`: overridden, audited in
+  `gate-overrides.log`, and *reachable*. Reverting underneath the override produced a bypass with no
+  end state at all — `fail()` cleared the failure, the spec stayed `in-progress`, re-stamping
+  re-fired the hook, and no disclosed exception can be recorded since `spec-done` is not in
+  `applicability.RULES`. A bypass an operator cannot act on is a trap, not an escape hatch.
+
+**The claim is exactly as wide as the mechanism.** This is a `PostToolUse` hook matched on
+`Write|Edit|MultiEdit` (`hooks/hooks.json`), so what is enforced is: **no Write/Edit/MultiEdit tool
+call can leave a false `done` stamp on disk.** A stamp written through Bash — `sed -i`, a heredoc,
+`python3 -c` — never reaches this hook and is outside this mechanism's reach. Saying otherwise
+would be one more sentence claiming behaviour nothing enforces, which is the class this issue is
+curing.
+
+**And it binds only the TRANSITION into `done`** (the applicability boundary, §3a). The trigger
+fires on any write to a `spec.md` that merely *contains* `status: done`, so `spec_done_guard.py`
+compares against the file's **committed HEAD** version: a stamp that was already `done` there
+belongs to a SHIPPED spec, and it is counted and named on stderr, never reverted. Rewriting it
+would delete the single evidence `applicability.spec_shipped` reads — flipping the requirement cap
+from counting that spec to blocking it with a split a shipped spec cannot take, and re-routing a
+completed spec back to `stage: implementer` — with no exception recordable for it, since
+`spec-done` is not in `applicability.RULES`. When git cannot say what is committed, the scope is
+unknowable, so nothing is enforced and the check says so out loud.
+
+**This binds `status: done` specifically and does not generalize.** Other stamps this pipeline
+writes (`spec_gate:`, `review_status:`, `verdict.json`'s `verdict`) already have their own single
+writer and single reader (`spec_gate_state.py`, `/spec-review`, `hook_verifier.sh`'s handover
+branch) and are not touched here — a caller still may not treat any of them as a liveness signal;
+the only reliable completion signal in this harness is the agent/task notification, never a written
+marker and never process polling. What changed is narrower: the one marker this issue was filed
+about now corrects itself instead of trusting the writer.
 
 ## Driving the chain (`/avenger-run`)
 

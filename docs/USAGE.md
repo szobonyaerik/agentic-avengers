@@ -129,7 +129,12 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 6. @avenger-backend-architect <spec>  -> tests/1-endpoint/ + test-mapping.md + src/...
       • Red -> green, one vertical slice at a time (skills/tdd): one failing test at the
         requirement's seam, then the minimal code to pass it, then the next slice.
-      • Setting status: done smoke-checks the phase suite (model called only if it fails).
+      • Set status: done LAST, after test-mapping.md has its rows and the phase suite is green.
+        The stamp is not believed on sight: it smoke-checks that spec's mapping and its phase
+        suite (model called only if it fails), and a stamp that fails either check is REVERTED to
+        status: in-progress (scripts/spec_done_guard.py) before the hook fails. A row whose
+        requirement-id cell is still the template's R<n>.<k>.<m> placeholder counts as no row.
+        A spec whose every requirement is `binding: none` owes no row and is never asked for one.
 
 # once every spec in the phase is green:
 7. @avenger-verifier 1-endpoint
@@ -148,12 +153,20 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • The loop is CAPPED at 3 attempts (scripts/verifier_attempts.py). At the cap: carry the
         remainder as known-open in handover.md, waive it, or escalate.
 
+7b. @avenger-breaker 1-endpoint   (ONLY when a spec in the phase declares criticality: critical)
+      • Then it is not optional: it writes breaker.json beside verdict.json - a `clean` verdict
+        naming what it attacked, or a `found` one naming its counterexample. A vacuous record is
+        refused like a missing one, and step 8 below is REFUSED without it
+        (scripts/breaker_gate.py). Waivable only through the disclosed-exception ledger
+        (exceptions.json, --rule breaker).
+
 8. @avenger-handover 1-endpoint
       • Writes the phase's CONTRACT CARD, handover.md — binding contracts, decisions, artifact
         links, next phase, hard-capped at 6144 bytes and checked. Everything else goes to
         handover-archive.md beside it, which no stage reads. Nothing is deleted.
       • Mirrors the verdict + any waived findings into handover.md. The hook checks verdict.json is
-        present and passing; it never calls a model.
+        present and passing, the Breaker record when one is owed, and that this phase answered every
+        `## Open items` row the prior card carried; it never calls a model.
 
 9. Ship: git commit (pre-commit floor checks staged specs' gate stamps + requirement cap + tests)
    -> PR (CI floor: + verifier pre-check + amendments + mutation).

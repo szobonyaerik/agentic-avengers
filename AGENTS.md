@@ -7,7 +7,8 @@ that Claude Code runs — one implementation, two runtimes. The git floor (pre-c
 `scripts/gate_ci.sh`) backstops them; all of it calls `gate_runner.py` on a fresh cross-family model.
 
 Gates fire when work is **declared done** (a spec reaching `status: done`, a `handover.md`), never on
-every code edit — you build with a red → green loop, so red is the expected state while you work.
+every code edit - and a `status: done` stamp is checked before it is believed (4c) - you build with a
+red → green loop, so red is the expected state while you work.
 Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs nothing.
 
 ## Conventions (always apply)
@@ -198,6 +199,22 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `scripts/verifier_review.sh` (`$VERIFIER_GATE_MODEL`), because every subagent here is Anthropic. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
    · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
    unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
+4c. **A `status: done` stamp is not a completion signal by itself** (issue #68). Its own implementer
+   writes it and used to keep working afterwards, so a wedge guard watching it fired 24 minutes
+   early and would have put two implementers in one worktree. The stamp is **self-correcting**
+   instead of merely documented: on the `spec-done` trigger `hook_verifier.sh` checks that the
+   spec's own `test-mapping.md` records a real row - only the **requirement-id cell** is read, and
+   one still carrying the template's `R<n>.<k>.<m>` syntax counts as nothing - and that the phase
+   suite is green, and either failing REVERTS the stamp to `status: in-progress`
+   (`scripts/spec_done_guard.py`) before failing the hook. So stamp `done` LAST, after the mapping
+   rows and a green suite. Three states fail the hook but leave the stamp exactly as written,
+   because the revert acts only on evidence scoped to the same thing it rewrites: a spec whose every
+   declared requirement is `binding: none` owes no row (4a) - a spec declaring no requirement at all
+   is its own stop, not that exemption; a red suite that could only be run repository-wide; and
+   `GATE_BYPASS`, which leaves it `done`, overridden and audited. It binds only the **transition**
+   into `done` (3e) - already `done` at committed HEAD means shipped, counted and named, never
+   reverted - and it is exactly as wide as its mechanism: a `PostToolUse` hook on
+   `Write|Edit|MultiEdit`, so a stamp written through Bash never reaches it.
 4a. **Tiered binding, then integration by default.** Every requirement declares `binding:` —
    **`e2e`** (an end user can observe it → carried by a **journey** with the other `e2e` requirements
    on its path, never its own test) · **`integration`** (visible *only* under concurrency, fault
@@ -306,7 +323,8 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 # per phase, in dependency order, per spec:
 @avenger-backend-architect <spec>         # or @avenger-frontend-developer
                                           # writes tests + code test-first (mode by work_kind),
-                                          # then sets status: done -> phase suite smoke-checked
+                                          # then sets status: done LAST -> mapping + phase suite
+                                          # checked; a premature stamp is REVERTED (4c)
 # once all specs in the phase are green:
 @avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
                                           # -> writes verdict.json; on pass the phase's tests LOCK
