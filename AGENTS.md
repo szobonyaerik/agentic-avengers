@@ -346,7 +346,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
-| `GATE_MODEL` | per-gate defaults | routes every gate to one model |
+| `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It does **not** route `VERIFIER_GATE_MODEL`: there are three gate models, not one. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
 | `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
 | `VERIFIER_SCOPE` | unset | `full` sends the Verifier the whole phase; by default the bundle carries only the specs whose text changed since the last completed review, names the rest as carried forward, and merges their findings back (an open carried finding still forces NO-GO). A spec still holding an open finding is never carried — a finding fixed in a test file changes no spec text, so carrying it would mean nothing ever regenerates it |

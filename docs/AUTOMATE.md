@@ -194,7 +194,7 @@ fail-closed gate self-halts the run instead of shipping junk.
 ### Env (export before launching)
 ```bash
 export AUTHOR_FAMILY=anthropic
-export GATE_MODEL=opencode-go/deepseek-v4-pro     # the spec gate (observe AND, unset, triage)
+export GATE_MODEL=opencode-go/deepseek-v4-pro     # the spec gate's observe pass, and its triage pass unless GATE_TRIAGE_MODEL is set
 export VERIFIER_GATE_MODEL=google/gemini-3.1-pro-preview   # the Verifier's review — its own default
 export GATE_PROVIDER=opencode
 export SPEC_REVIEW_MODE=auto                        # no human spec-review
