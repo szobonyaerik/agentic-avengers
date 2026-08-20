@@ -294,9 +294,9 @@ agentic-avengers/
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── pipeline_metrics.py    the emission points: gate calls, spec rounds, defects, skill loads
 │   ├── metrics_sink.py        fail-open bridge to firstmate's per-phase metrics CLI (no schema here)
-│   ├── plugin_release.py      the executing plugin copy vs. the merged repository: `check` (the
-│   │                          /avenger-run preflight: STALE stops a run, UNKNOWN is unenforced)
-│   │                          and `cut`, the one release step into the plugin cache
+│   ├── plugin_release.py      the executing plugin copy vs. the merged repository: `check` (STALE
+│   │                          stops a run, UNKNOWN is unenforced) and `cut`, the one release step
+│   ├── hook_plugin_release.sh PreToolUse: refuses to spawn an avenger stage on a STALE copy
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
@@ -385,7 +385,7 @@ scripts/sync_runtimes.sh             # regenerates the .opencode/ adapter
 A merged edit is still not what a run executes: phases run from the plugin release cached under
 `$CLAUDE_PLUGIN_ROOT`. Release it, then restart Claude Code so the harness re-reads the cache:
 ```text
-python3 scripts/plugin_release.py check   # is the executing copy stale against this repo? (also /avenger-run's preflight)
+python3 scripts/plugin_release.py check   # is the executing copy stale against this repo? (hook_plugin_release.sh refuses stage spawns on STALE)
 python3 scripts/plugin_release.py cut     # the one release step: copy the payload into the cache and re-point the install registry
 ```
 Rule, guarantees and env overrides: `skills/pipeline-conventions` (*Closing the release loop*).

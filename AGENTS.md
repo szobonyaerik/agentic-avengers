@@ -311,6 +311,17 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    phase** never reached the writer at all, so fix the ARGUMENT rather than repeating the command
    (exit 2, and `AVENGER_METRICS_OFF=1` does not quiet it). Full rule in
    `skills/pipeline-conventions/SKILL.md`.
+12. **A run against a stale plugin copy is refused, by a hook, not by anyone remembering.** Phases
+   execute the cached release under `$CLAUDE_PLUGIN_ROOT`, so a fix merged here is inert until
+   someone cuts a release. `scripts/plugin_release.py check` has always been able to say so;
+   `scripts/hook_plugin_release.sh` is what now acts on it, refusing the spawn of any `avenger-*`
+   stage while the executing copy is STALE. Remedy: `python3 scripts/plugin_release.py cut` from the
+   source checkout, then restart Claude Code. **`PreToolUse` is the event, deliberately** - the
+   stage-scoped hooks live on `SubagentStart`, which **cannot block** (exit 2 there only shows
+   stderr; the subagent runs anyway), so a halt written there enforces nothing. `UNKNOWN` (no source
+   repository resolvable - the normal state of a standalone install) proceeds untouched, as does
+   every failure to look; `GATE_BYPASS` proceeds and is audited. **opencode has no pre-spawn event**,
+   so on this runtime the `/avenger-run` §1 preflight report is the only signal - run it.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -403,6 +414,7 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
 | `SKILL_AUDIT_OFF` | unset | `1` disables the per-stage `SubagentStop` skill audit (`scripts/hook_skill_audit.sh`); the close-time audit at handover and in CI is unaffected |
 | `AVENGER_SOURCE_REPO` | unset | your checkout of this plugin's own repository, for the release-drift guard (`scripts/plugin_release.py check`, issue #65) — without it the guard only resolves a source when the project itself IS this plugin's repository (manifest `name` match), and otherwise reports `UNKNOWN` and is not enforced |
+| `PLUGIN_RELEASE_STAGES` | `avenger-` | which subagent types `scripts/hook_plugin_release.sh` refuses to spawn on a STALE executing copy (unanchored, case-insensitive). A bad regex fails OPEN - it must never refuse every spawn |
 | `AVENGER_PLUGIN_CACHE_ROOT` | `~/.claude/plugins/cache/erik-tools/plan-build-verify` | where `plugin_release.py cut` releases to; always pass `--cache-root` explicitly in tests, never the default |
 | `AVENGER_PLUGIN_PIN_PATH` | `~/.claude/plugins/installed_plugins.json` | the install registry `plugin_release.py cut` re-points at the release, so a harness actually loads it; always pass `--pin-path` (or `--no-pin`) explicitly in tests, never the default |
 

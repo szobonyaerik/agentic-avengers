@@ -1075,8 +1075,33 @@ fail-open path every measurement runs on, and the executing version is recorded 
 the one thing this row exists to prevent, and is invisible to any test using a double that enforces
 no schema.
 
-**The guard is a preflight, not a hope.** `/avenger-run` §1 runs `plugin_release.py check` before any
-phase executes: `STALE` (the executing copy's content differs from the merged repository) stops the
+**The halt EXECUTES; the preflight only makes it arrive earlier.** `check` was mechanical from the
+start and the STOP was not: `/avenger-run` §1 told the orchestrator to halt, and an orchestrator that
+never read that line, or read it and continued, ran every phase against stale code with no signal
+anywhere - the same defect class, one layer out from the one this section is about.
+`scripts/hook_plugin_release.sh` refuses instead. It is a **`PreToolUse`** hook, and it fires on the
+spawn of any `avenger-*` stage: the run stops at the last moment before stale code would build a
+phase, with nobody having to remember anything. `PreToolUse` deliberately, and not `SubagentStart`
+where every other stage-scoped hook here lives - that event **cannot block** (Claude Code documents
+exit 2 there as showing stderr to the user while the subagent proceeds anyway), so a halt written
+there would be prose with a shebang on it. The decision reads `tool_input.subagent_type`, never the
+spawn tool's NAME, which is `Task` in some harness versions and `Agent` in others; a hook keyed to
+the wrong name would silently never fire. `/avenger-run` §1 still runs the check, but now as a cheap
+early report: skipping it changes *when* the operator learns, never *whether* the run is stopped.
+
+**Everything that is not a verdict fails open**, and the boundary is the point of the whole thing: no
+`jq`, no `python3`, an unreadable payload, a bad `PLUGIN_RELEASE_STAGES` regex, or a checker that
+crashed lets the spawn through, said out loud on stderr rather than passing invisibly. The verdict is
+read as the exit code **and** the checker's own `STALE:` marker, because a Python traceback exits 1
+too and a crash arriving as a halt would prescribe "cut a release" for a defect a release cannot fix.
+Break-glass is the ordinary one: `GATE_BYPASS="reason"` proceeds and is logged through
+`bypass_log.sh` like every other gate. **opencode does not carry this** - its adapter hooks
+`tool.execute.after`, which has no pre-spawn moment to refuse at, so there the §1 preflight report is
+the only signal and says so. `tests/test_hook_plugin_release.py` proves the halt by removing it: the
+stale case goes red when the refusal, its wiring in `hooks/hooks.json`, or the marker check is taken
+out, and the never-halt cases are what keep it from being a bigger hammer than the finding.
+
+`STALE` (the executing copy's content differs from the merged repository) stops the
 run and names the fix; `UNKNOWN` (no source repository resolvable on this machine) is reported on
 stderr and left unenforced — the same applicability boundary every other check here draws around a
 scope it cannot resolve. **Two things resolve a source repository, and nothing else does**:

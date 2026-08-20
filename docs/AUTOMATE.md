@@ -117,11 +117,13 @@ What it does beyond the flow above:
   exits 1 with `error: repo not initialized` — a `.no-mistakes.yaml` existing says nothing about the
   gate repo, the post-receive hook, the remote or the DB record), and the **content** of that config:
   a scaffolded one still holding the template's `REPLACE_ME` token fails preflight, not the ship gate.
-- **Preflight also refuses a known-stale plugin, in both modes.** Phases execute the cached release
-  `$CLAUDE_PLUGIN_ROOT` resolves to, not the merged repository, so `scripts/plugin_release.py check`
-  runs before any phase does: `STALE` stops the run and names the release step, while `UNKNOWN` (no
-  source repository resolvable on this machine) is reported and never enforced. Rule and remedy:
-  `skills/pipeline-conventions` (*Closing the release loop*), wired at `commands/avenger-run.md` §1.
+- **A known-stale plugin is refused by a hook, in both modes.** Phases execute the cached release
+  `$CLAUDE_PLUGIN_ROOT` resolves to, not the merged repository, so `scripts/hook_plugin_release.sh`
+  (a `PreToolUse` hook) refuses the spawn of every `avenger-*` stage while the executing copy is
+  `STALE` - nothing here depends on the orchestrator reading a preflight line. `UNKNOWN` (no source
+  repository resolvable on this machine) is reported and never enforced, and so is every failure to
+  look. Preflight still runs `plugin_release.py check`, which only makes the operator learn earlier.
+  Rule and remedy: `skills/pipeline-conventions` (*Closing the release loop*).
 - **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
   triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
   run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,
