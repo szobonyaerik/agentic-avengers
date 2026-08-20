@@ -92,8 +92,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    event and renders it from the pointer in the agent prompt.
 3a. **The spec gate is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
    spawners lacking `@pytest.mark.subprocess("<why>")` — no model, both modes, on every spec write via
-   `hook_spec_gate.sh`. It is the only stage that can see cost: the observe pass, cross-family review and
-   verification all read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
+   `hook_spec_gate.sh`. It is the only stage that can see cost: the spec gate's observe pass and
+   verification both read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
    budget on purpose — one unchanged suite measured 66.43s to 137.76s across seven runs.
    `SUBPROC_CHECK_PATHS` points it at the real root when a project's tests are not at `tests/`; an
    absent root is CLEAN but reported on stderr, never a silent pass. **It is diff-scoped** (3e):
@@ -197,7 +197,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    replaced it is proof the stage RAN: every command `@avenger-verifier` relies on goes through
    `scripts/verifier_evidence.py record`, and `verdict.json` carries `execution.chain` naming that
    transcript — a pass with no transcript, or one whose chain does not match, is refused by the hook
-   and by CI. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
+   and by CI. Those logs are committed, so a command's output is **redacted and capped before it is
+   written** (`scripts/evidence_redaction.py`, both marked visibly, digest taken over the stored
+   bytes); redaction failing writes no log and records no run, and redaction by pattern is a
+   reduction of risk, not a guarantee. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
    · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
    unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
 4c. **A `status: done` stamp is not a completion signal by itself** (issue #68). Its own implementer
@@ -259,8 +262,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    missing cases and the phase routes back to the implementer. Not 100% on purpose. Baseline-guarded:
    a failing suite would otherwise score 1.0, since a mutant counts as killed whenever tests fail.
    **`advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: reports, never
-   blocks) · `enforce` (fails closed). An extra signal, **not** the independence mechanism — that is
-   the Verifier's test-quality review. When off, no mutation tool runs anywhere.
+   blocks) · `enforce` (fails closed). An extra signal, and the pipeline's **only** systematic
+   signal about non-discriminating tests now that the cross-family reading pass is gone — still
+   advisory, still not a wall, and named as partial cover rather than a replacement. When off, no
+   mutation tool runs anywhere.
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
    and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
    learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
@@ -338,7 +343,8 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
                                           # then sets status: done LAST -> mapping + phase suite
                                           # checked; a premature stamp is REVERTED (4c)
 # once all specs in the phase are green:
-@avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
+@avenger-verifier         <phase>         # suite + R-trace per `binding:` + ADVERSARIAL EXECUTION,
+                                          # both recorded through verifier_evidence.py
                                           # -> writes verdict.json; on pass the phase's tests LOCK
 @avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
                                           # then NOT optional: -> writes breaker.json, without which
@@ -401,6 +407,8 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `GATE_CALL_TIMEOUT` | `300` | seconds the provider call gets. The gate hooks refuse to run if their `hooks.json` budget cannot outlive it plus headroom — raise this and raise `hooks/hooks.json` with it |
 | `GATE_MIN_LATENCY_MS` | `250` | milliseconds below which a **reached** gate verdict is presumed not to have run and is refused (`cause=implausible-latency`). One measured phase recorded a 4 ms GO from a model gate and consumed it as a pass. `0` disables the check, loudly |
 | `VERIFIER_EVIDENCE_TIMEOUT` | `1800` | seconds one command recorded through `scripts/verifier_evidence.py` may run before its process group is killed |
+| `EVIDENCE_LOG_MAX_BYTES` | `262144` | bytes of a recorded command's output stored in its evidence log. The log is committed, so it is redacted (`scripts/evidence_redaction.py`) then capped, with a visible marker naming what was dropped; the digest covers the stored bytes |
+| `EVIDENCE_REDACT_EXTRA` | unset | one extra regex redacted out of an evidence log. An invalid one writes no log and records no run — never a silent skip, never a raw-bytes fallback |
 | `GATE_MODEL_FAMILY` | unset | declare a gate model's vendor family when `scripts/model_vendors.py` has no entry for it; without it an unknown vendor is refused, never guessed |
 | `GATE_RUNNER_SHA256` | unset | pin the gate runner by content digest. Callers already refuse a runner that cannot identify itself; this refuses any but the exact one named |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |

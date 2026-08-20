@@ -3,7 +3,7 @@
 #   default (pre-commit): staged-spec artifact checks + pytest                     (fast)
 #   --full (CI):          all artifact checks + cross-family + pytest + mutation   (thorough)
 #
-# NO MODEL RUNS HERE. Model-based gates (the Verifier's triage and test-quality review, the grill-me
+# NO MODEL RUNS HERE. Model-based gates (the Verifier's triage, the grill-me
 # spec review) run in-chat; this floor only checks their COMMITTED ARTIFACTS — `review_status:
 # approved` on specs, a passing `verdict.json` per phase — plus the suite, the static cross-family
 # assertion, and mutation if a team turned it on. See pipeline-conventions: "Where the models run".
@@ -132,6 +132,15 @@ fi
 #
 #      Exit 1 is the obligation; anything else could not DECIDE it, and the two are recorded under
 #      different names - a run naming the wrong cause sends the fix at the wrong thing.
+echo "• carried items: claims declared, the previous phase's answered, the last card's filed"
+python3 "$SCRIPT_DIR/carried_items.py" check --root "$ROOT"
+carried_rc=$?
+if [ "$carried_rc" -eq 1 ]; then
+  record_fail "carried-items"
+elif [ "$carried_rc" -ne 0 ]; then
+  record_fail "carried-items:undecidable"
+fi
+
 # 1be) Execution evidence — a phase does not close on a verdict with no proof that anything ran.
 #      `test_quality.reviewed` was a boolean the verifying agent wrote about itself; this reads a
 #      transcript a recorder produced. Enforced here as well as in scripts/hook_verifier.sh for the
@@ -142,19 +151,20 @@ fi
 #      every phase that closed before this rule existed has no transcript and cannot acquire one, so
 #      a full audit would fail a consumer repo's CI over a remedy that does not exist for it
 #      (CLAUDE.md §3a). `verifier_evidence.py sweep --all` is the audit for anyone who wants it.
+#
+#      Exit 1 is the obligation (evidence genuinely absent); anything else could not DECIDE it (a
+#      record nothing can parse), and the two are recorded under different names — the same split
+#      scripts/hook_verifier.sh makes for this check. "Record your runs" cannot repair malformed JSON.
 echo "• execution evidence: every closing phase's verdict names a transcript that ran"
-python3 "$SCRIPT_DIR/verifier_evidence.py" sweep --root "$ROOT" || record_fail "verifier:no-execution-evidence"
-
-echo "• carried items: claims declared, the previous phase's answered, the last card's filed"
-python3 "$SCRIPT_DIR/carried_items.py" check --root "$ROOT"
-carried_rc=$?
-if [ "$carried_rc" -eq 1 ]; then
-  record_fail "carried-items"
-elif [ "$carried_rc" -ne 0 ]; then
-  record_fail "carried-items:undecidable"
+python3 "$SCRIPT_DIR/verifier_evidence.py" sweep --root "$ROOT"
+evidence_rc=$?
+if [ "$evidence_rc" -eq 1 ]; then
+  record_fail "verifier:no-execution-evidence"
+elif [ "$evidence_rc" -ne 0 ]; then
+  record_fail "verifier:execution-evidence-undecidable"
 fi
 
-# 1be) Breaker — a phase that declares criticality: critical does not close without a Breaker record
+# 1bf) Breaker — a phase that declares criticality: critical does not close without a Breaker record
 #      (breaker.json). It was owed twice on one measured feature and ran neither time, with zero
 #      trace anywhere (issue #45): a stage that emits nothing is indistinguishable from one that never
 #      ran. Enforced here as well as in scripts/hook_verifier.sh, for the same reason the carried-items
@@ -305,8 +315,8 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
 # Default `advisory`, not `off`. It is deterministic, diff-scoped, needs no model below the
 # threshold, and every non-discriminating test this project ever caught was caught by mutation —
 # including two in one phase that neither spec gate nor a green 281-test suite surfaced. Advisory
-# never blocks, so the cost of the default being wrong is a line of output. It is still not the
-# independence mechanism; that is the Verifier's test-quality review.
+# never blocks, so the cost of the default being wrong is a line of output. It is still not a
+# dedicated reader for gamed tests — there is none; it is named as partial cover, not a replacement.
 MUTATION_POLICY="${MUTATION_POLICY:-advisory}"
 case "$MUTATION_POLICY" in
   enforce|advisory|off) ;;

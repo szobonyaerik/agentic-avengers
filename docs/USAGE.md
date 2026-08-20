@@ -138,11 +138,16 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
 
 # once every spec in the phase is green:
 7. @avenger-verifier 1-endpoint
-      • Cross-family (family B != the implementer's A). Runs the full phase suite, traces coverage
-        per requirement `binding:` — a `binding: e2e` id is covered by the journey that lists it,
-        `binding: none` is never a gap. It also READS THE TESTS over a bounded review set — the tests
-        mapped to the phase plus the test files it changed, and their direct helpers. A gamed test
-        (tautological / implementation-coupled / missing-negative) fails the phase even when green.
+      • Runs the full phase suite and traces coverage per requirement `binding:` — a `binding: e2e`
+        id is covered by the journey that lists it, `binding: none` is never a gap. It also DRIVES
+        ADVERSARIAL EXECUTION against a real collaborator on any requirement whose subject is a
+        secret, a resource lifetime or a concurrency invariant. Every command it relies on runs
+        through scripts/verifier_evidence.py, and verdict.json names that transcript: a pass with no
+        proof of execution is refused.
+      • There is NO dedicated reader for gamed tests. The cross-family reading pass was removed and
+        nothing inherits it; partial cover is the mutation gate, skills/tdd naming the anti-patterns
+        to the implementer while it writes, and the human spec-review. A gamed test noticed while
+        tracing coverage is still a fail — `gamed-test` stays in the verdict schema for exactly that.
       • Writes docs/features/<feat>/phases/1-endpoint/verdict.json. On pass the phase's tests LOCK.
       • Mutation runs by default in ADVISORY mode: it reports the score and its survivors and
         never blocks. MUTATION_POLICY=enforce blocks; MUTATION_POLICY=off runs nothing.

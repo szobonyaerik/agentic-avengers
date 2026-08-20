@@ -18,7 +18,7 @@ review_status: pending   # <!-- only the human reviewer sets this to 'approved',
 criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase,
                          #      and the phase then does NOT close without the Breaker's
                          #      breaker.json record beside verdict.json. -->
-readers: spec gate @ on write; implementer @ once; verifier bundle @ changed specs only
+readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
 ---
 
 # <Spec title>

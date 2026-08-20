@@ -105,6 +105,16 @@ python3 scripts/verifier_evidence.py record <phase-dir> --kind adversarial \
 
 A green suite is not a reason to skip this. It is the state this exists to disbelieve.
 
+**What the evidence log may carry.** These logs are committed - the gates read them in CI - and this
+is the one kind of run whose whole purpose is to surface a plaintext secret. So the recorder
+**redacts every known secret shape and caps the result before anything is written**, marks both
+(`[REDACTED:<pattern>:<n> bytes]`, `[TRUNCATED: …]`), and hashes the bytes it stored, so `check`
+still verifies the log on disk. Redaction is by pattern, which is a **reduction of risk, not a
+guarantee** - a value with no recognisable shape passes straight through. Plant something the set can
+see, and add a pattern to `scripts/evidence_redaction.py` when it cannot. If redaction fails, the run
+writes **no log and no entry** and is not recorded: there is no raw-log fallback, because a
+credential written into git history is not removed by a later commit.
+
 ## The cross-family reading pass is GONE - and what that leaves uncovered
 
 This stage used to have a third job: hand a bounded set of the phase's tests to a model on another

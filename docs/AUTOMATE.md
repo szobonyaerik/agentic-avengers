@@ -30,8 +30,8 @@ proceed, or follow `route_back` and retry the failed stage. One call replaces th
 task-analyst → solution-architect → implementation-planner → spec-writer
   → (the spec gate: observe → triage → decide, auto)              # per spec
   → per phase, per spec: backend/frontend-architect (tests + code, test-first)
-  → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
-                       LOCKS the suite)  → handover
+  → avenger-verifier (suite + trace per `binding:` + adversarial execution, both recorded
+                       through verifier_evidence.py → verdict.json, LOCKS the suite)  → handover
   → next phase … → e2e-author (once, after the final phase)
   → ship gate (no-mistakes: lint, docs, push, PR, CI) → retrospective triage
 ```
@@ -235,9 +235,11 @@ So an autonomous in-session run that somehow slipped a gate still gets caught at
 - Every gate is **cross-family + fail-closed** → stops on missing key, unreachable model, non-JSON, or
   same-family.
 - Every failure **routes back** to a specific stage rather than proceeding.
-- **The Verifier reviews the tests, not just the run** — the one independent judgement on a suite
-  whose author also wrote the code, on a bounded review set, persisted to `verdict.json`. After it
-  passes, the suite is **locked**: automation can't reshape a test to go green.
+- **The Verifier must prove it ran** — coverage judged per `binding:` and adversarial execution
+  against a real collaborator, both recorded through `verifier_evidence.py` and named by
+  `verdict.json`; a pass with no transcript is refused. Nothing reads the suite for gamed tests: that
+  pass was removed and nothing inherits it (partial cover: mutation, `skills/tdd`, spec-review).
+  After the Verifier passes, the suite is **locked**: automation can't reshape a test to go green.
 - **Break-glass** is the only override and it is logged + visible + recorded in `handover.md`.
 - The **git floor** re-checks at commit/PR.
 

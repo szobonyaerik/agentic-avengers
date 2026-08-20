@@ -498,7 +498,7 @@ def record_plugin_version(phase: str) -> bool:
 def open_verification_attempt(phase_dir: str) -> int | None:
     """The verification ATTEMPT this run belongs to, derived from the verdict record on disk.
 
-    It used to increment on every invocation of the Verifier's cross-family review script, which is
+    It used to increment on every invocation of the removed cross-family reading pass's script, which is
     not the same thing and reads as if it were. One measured phase recorded **8** — three review calls
     that timed out plus five diagnostic retries — while `verdict.json` correctly said `attempt: 1` and the
     real three-attempt cap sat at 1 of 3, never fired. Read against a cap of 3, that number says the

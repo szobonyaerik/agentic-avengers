@@ -22,9 +22,9 @@ They look like three defects. They are one, and this module is the one boundary 
 Closed has exactly three evidences, and no fourth is invented at a call site:
 
 1. **untouched** — the current change does not touch it (`changed_paths`, git). This module owns that
-   mechanism; `doc_read_path.py`, `verifier_precheck.py` and `subprocess_check.py` all ask here, and
-   `verifier_bundle_scope.py`, `spec_gate_cache.py` and the mutation gate already ran the same rule
-   before it had a name. When git cannot say what changed the scope is **unknowable**, so nothing is
+   mechanism; `doc_read_path.py`, `verifier_precheck.py`, `verifier_evidence.py` and
+   `subprocess_check.py` all ask here, and `spec_gate_cache.py` and the mutation gate already ran
+   the same rule before it had a name. When git cannot say what changed the scope is **unknowable**, so nothing is
    enforced and the caller says so out loud — falling back to enforcing everything is the hostage
    failure the scoping exists to remove.
 2. **shipped** — the artifact's own stamps say the pipeline is past it. A spec with `status: done`

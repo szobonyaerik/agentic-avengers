@@ -3,9 +3,9 @@
 A spec-driven, test-first agentic development pipeline that runs under **Claude Code** and
 **opencode**. Specialised agents plan a feature; a **quality wall** (one automated spec
 gate *and* a grill-me review) decides whether each spec is ready; the implementer then builds it
-**test-first**, one vertical slice at a time; and every phase is verified once — by a fresh
-cross-family model that reviews the tests as well as running them, plus cosmic-ray mutation — before
-the suite locks and it ships.
+**test-first**, one vertical slice at a time; and every phase is verified once — coverage traced
+per `binding:` and adversarial execution driven against a real collaborator, both recorded as proof
+the stage ran, plus cosmic-ray mutation — before the suite locks and it ships.
 
 The skill files (`SKILL.md`) and the gate brain (`gate_runner.py` + the rubric prompts) are a shared,
 portable core; the opencode surface is a thin adapter generated from canonical sources.
@@ -63,7 +63,7 @@ flowchart TD
         impl -->|"next spec"| sw
     end
 
-    impl -->|"all specs green"| ver{"avenger-verifier · family B is not A<br/>suite + coverage per binding + bounded TEST REVIEW"}
+    impl -->|"all specs green"| ver{"avenger-verifier<br/>suite + coverage per binding + ADVERSARIAL EXECUTION<br/>recorded through verifier_evidence.py"}
     ver -->|"cannot reach verdict"| stop(["fail-closed / stop"])
     ver -->|"senior override"| bg[/"break-glass · gate-overrides.log · bypassed on PR"/]
     ver -->|"code issue · wrong test · coverage gap"| impl
@@ -119,11 +119,15 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
                    refactor   -> baseline-first; behavior unchanged
   [repeat for each spec in the phase]
 
-  avenger-verifier (once per phase, cross-family) -> verdict.json
+  avenger-verifier (once per phase) -> verdict.json
                  full suite + coverage traced per requirement `binding:` (an e2e id is covered by
-                 its journey; `none` is never a gap) + a BOUNDED test-quality review:
-                 the tests mapped to the phase + test files it changed + their direct helpers.
-                 Tautological / implementation-coupled / missing-negative = fail, even when green.
+                 its journey; `none` is never a gap) + ADVERSARIAL EXECUTION against a real
+                 collaborator on secrets, resource lifetimes and concurrency invariants.
+                 Both are recorded through verifier_evidence.py: a pass with no transcript is
+                 refused, because a stage that emits nothing looks exactly like one that never ran.
+                 There is NO dedicated reader for gamed tests — the cross-family reading pass was
+                 removed and nothing inherits it; partial cover is mutation, skills/tdd and the
+                 human spec-review.
                  route-backs: code | wrong-gamed test | coverage gap -> implementer
   PASS -> THE PHASE SUITE LOCKS (locked-after-verify). Weakening a test then needs re-verification;
           adding one a later gate demands is always allowed.
@@ -163,11 +167,19 @@ The **implementer** does, test-first, using `skills/tdd` (vendored from
 [mattpocock/skills](https://github.com/mattpocock/skills), MIT — see `skills/tdd/ATTRIBUTION.md`):
 one seam, one failing test, the minimal code to pass it, repeat. Never the whole suite up front.
 
-That means the author of the code also authors its judge, so two controls buy the independence back:
-1. **The Verifier reviews the tests**, not just the run — on a *green* suite as well as a red one.
-   It is the only outside judgement that suite gets, and passing it is what locks it.
+That means the author of the code also authors its judge. **No stage reads the suite for gamed,
+tautological or implementation-coupled tests** — the cross-family pass that did returned GO with zero
+findings on a phase containing real defects and was removed, and nothing inherits it. What is left is
+named rather than implied:
+1. **The Verifier judges COVERAGE, not test quality** — per requirement `binding:`, on a *green*
+   suite as well as a red one, plus adversarial execution against a real collaborator. It must prove
+   it ran: `verdict.json` names a transcript `verifier_evidence.py` recorded, and a pass with none is
+   refused.
 2. **The suite locks at the Verifier.** Before it, the implementer owns `tests/`; after it, nobody
    edits them — later gates may demand *added* tests, never weakened ones.
+3. **Partial cover for gamed tests** — the mutation gate (advisory, deterministic, and the one signal
+   that has actually caught them here), `skills/tdd` naming the anti-patterns to the implementer
+   *while it writes*, and the human spec-review setting criteria a gamed test has to contradict.
 
 ### The three test modes (set by `work_kind`, all inside `skills/tdd`)
 - **greenfield** — red → green per vertical slice, at the requirement's seam.

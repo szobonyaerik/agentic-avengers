@@ -7,8 +7,11 @@ description: The implementer's test-driven development procedure — write tests
 
 You (the implementer) author **both the tests and the code** for a spec, in a **vertical** loop:
 one seam → one failing test → just enough code to pass → repeat. There is no separate test-author.
-The tests you write are reviewed independently by the Verifier (a different model family) and, once the
-phase passes, they **lock** (see `pipeline-conventions`: *locked-after-verify*).
+The Verifier judges their **coverage** against the requirement set and, once the phase passes, they
+**lock** (see `pipeline-conventions`: *locked-after-verify*). **Nothing reads them for gamed,
+tautological or implementation-coupled patterns** — the cross-family reading pass that did was
+removed and nothing inherits it, so the anti-patterns named below are yours to avoid while you write.
+The remaining cover is partial: the mutation gate, and the human spec-review's criteria.
 
 This is language-agnostic. Apply it in the project's stack (Python/Java/C++/TypeScript/…); the examples
 below are illustrative pseudocode, not a required language. Ground names and vocabulary in the codemap
@@ -95,7 +98,7 @@ feature: <feature>
 phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 stage: test-mapping
-readers: avenger-verifier @ per phase; verifier bundle @ changed specs only
+readers: avenger-verifier @ per phase
 ---
 | requirement id(s) | test name(s) | level | why |
 ```

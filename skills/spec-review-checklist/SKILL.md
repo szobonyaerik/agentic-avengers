@@ -33,8 +33,8 @@ defensible "yes".
 > journey tells you which journey broke, not which line. Accept that; it is what the granularity cost.
 
 ## Cost and blast radius
-The pipeline has no other stage that can see these. Every later stage — the spec gate, cross-family
-review, verification — reads for **correctness**, and none of the three below is incorrect.
+The pipeline has no other stage that can see these. Every later stage — the spec gate, verification —
+reads for **correctness**, and none of the three below is incorrect.
 
 - [ ] **Does any test this requirement implies spawn a subprocess, or does its runtime scale with the
       size of the suite?** If yes it does not belong in the default suite: mark it

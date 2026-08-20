@@ -63,7 +63,7 @@ deleted; the read directives changed.**
   first and not the second.
 - **The artifact half of `check` is diff-scoped** — it enforces what the current diff touches and
   *counts* the rest on stderr without blocking, the same "you are responsible for what you change"
-  rule as the verifier bundle, the spec re-gate cache and the mutation gate. That is what lets a
+  rule as the verifier evidence sweep, the spec re-gate cache and the mutation gate. That is what lets a
   repository full of pre-rule artifacts upgrade. `check --all` audits everything (CI's `--full`);
   when git cannot say what changed, nothing is enforced and the check says so out loud rather than
   falling back to enforcing everything.
@@ -194,7 +194,7 @@ sizes its budget for two — a budget sized for one is the 120s-hook-around-a-30
 The spec gate also carries the pipeline's **only cost gate**, in two parts. Mechanically,
 `scripts/subprocess_check.py` walks `tests/` for spawners lacking `@pytest.mark.subprocess("<why>")`
 — it runs on every spec write in **both** modes via `hook_spec_gate.sh`, no model, and it is the only
-stage that can see cost at all, since the observe pass, cross-family review and verification all read
+stage that can see cost at all, since the spec gate's observe pass and verification both read
 for *correctness* and an expensive test is not incorrect. Deliberately not a wall-clock budget: seven
 runs of one unchanged suite spanned 66.43s to 137.76s, so a runtime gate would fail green suites at
 random. A project whose tests are not at `tests/` points the check at them with
@@ -229,7 +229,7 @@ every spec write over 17 undeclared spawners in locked phases nobody had opened.
 
 Closed has exactly **three evidences**, and no call site invents a fourth: **untouched** (the diff
 does not touch it — `changed_paths`, the mechanism `doc_read_path.py`, `verifier_precheck.py`,
-`subprocess_check.py`, the verifier bundle, the spec re-gate cache and the mutation gate all now share;
+`subprocess_check.py`, `verifier_evidence.py`, the spec re-gate cache and the mutation gate all now share;
 when git cannot say what changed the scope is unknowable, so nothing is enforced and it is said out
 loud) · **shipped** (the artifact's own stamps say the pipeline is past it — a `status: done` spec
 cannot split, and **a rule whose remedy is unavailable is not a gate, it is a wedge**) · **excepted**
@@ -287,7 +287,15 @@ this rule existed can never acquire a transcript and a rule whose remedy is unav
 **What it does not claim:** there is no secret here, so an agent determined to fabricate a log and
 its digest still can. What is closed is the cheap path — a verdict with nothing behind it — and the
 one claim that matters most has an independent check on top, since both gates run the phase's tests
-themselves.
+themselves. **Those logs are committed, so what they may carry is bounded before anything is
+written**: `scripts/evidence_redaction.py` replaces every known secret shape with a marker naming it,
+then caps the result with an explicit truncation marker, and the digest is taken over **the stored
+bytes** so `check` still verifies the log on disk. The `adversarial` kind exists to plant a value and
+see what came back, so producing a credential is its EXPECTED case, and a credential in git is not
+removed by a later commit — which is why redaction failing writes **no log and no entry** rather than
+falling back to the raw bytes. **Redaction by pattern is a reduction of risk, not a guarantee**, and
+that is stated at the module rather than implied; nothing is ever pruned, since every entry is in the
+chain and its log is what `check` hashes, so the growth rule is one capped log per recorded command.
 
 Three test modes by `work_kind`, all inside `skills/tdd`: **greenfield** (red → green per vertical
 slice) · **migration** (parity-first — the *existing suite is the contract*, run it rather than
@@ -665,7 +673,7 @@ score + survivors, **never blocks**) · `enforce` (fails closed) · `off` (no mu
 anywhere). It was off; it is on because it is deterministic, diff-scoped, needs no model below the
 threshold, and every non-discriminating test this project has caught was caught by it. Advisory never
 blocks, so the cost of that default being wrong is a line of output. It is still an *extra* signal,
-**not** the independence mechanism — that is the Verifier's test-quality review. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
+**not** a replacement for a dedicated reader — there is none, and that gap is stated in §4 rather than implied. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
 `cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
 
 ### 6a. Gates fire on "done", not on every edit — and the "done" stamp is not believed on sight

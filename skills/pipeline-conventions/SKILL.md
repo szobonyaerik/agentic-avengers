@@ -78,7 +78,7 @@ deleted to fix this; the read directives changed.
 | `task-analysis.md` | the Solution Architect, **once, at feature start** | whole |
 | `overview.md` | planner + Spec Writer whole; **the spec gate and the human spec-review read the `## Contracts and Decisions` header only** | whole / header |
 | `plan.md` | the Spec Writer, per spec; phase-handover, per phase (the next phase's entry only) | whole |
-| `spec.md` | its own gates and its own implementer; the verifier bundle, changed specs only | whole |
+| `spec.md` | its own gates and its own implementer; the Verifier, per phase | whole |
 | `test-mapping.md` | the Verifier, per phase | **the table** |
 | `test-evidence.md` | **on route-back only** | whole |
 | `verdict.json` | phase-handover, feature close | whole; `report` ≤ 1500 chars |
@@ -99,7 +99,7 @@ Four rules follow from it, and each one is enforced rather than requested:
   template each writer works from carries the line, so a document authored as instructed passes.
   **That check is diff-scoped**: it enforces the artifacts the current diff touches and *counts* the
   rest on stderr without blocking, which is the same "you are responsible for what you change" rule
-  the verifier bundle, the spec re-gate cache and the mutation gate already run on — and what lets a
+  `verifier_evidence.py`, the spec re-gate cache and the mutation gate already run on — and what lets a
   repository already full of pre-rule artifacts upgrade without rewriting its history first.
   `check --all` audits everything (CI's `--full`); when git cannot say what changed, nothing is
   enforced and the check says so rather than falling back to enforcing everything.
@@ -107,8 +107,8 @@ Four rules follow from it, and each one is enforced rather than requested:
   needs rides in the frontmatter of the document that stage is already reading — `work_kind`,
   `criticality`, `binding` counts. This is what took `task-analysis.md` off the per-spec path.
 - **A locked phase leaves the read path.** Once the Verifier passes a phase, its `spec.md` files are
-  settled and a later phase reads that phase's **contract card**, not its specs. The only stage that
-  re-opens a verified spec is the verifier bundle, and only for specs the diff touched.
+  settled and a later phase reads that phase's **contract card**, not its specs. Nothing re-opens a
+  verified spec: the bundle that used to is gone with the cross-family reading pass.
 - **Change the directive where the reading is decided — the table — never one caller at a time.**
   `doc_read_path.py check --sources` scans `agents/`, `skills/`, `commands/` and `prompts/` and
   fails when a stage instruction names a document that left the read path. A guard bolted onto one
@@ -317,19 +317,20 @@ Three consequences worth stating outright:
     through one `run_pass` does not read as one call — and requires
     `hook timeout >= calls x call timeout + headroom`. A budget sized for one call is the 120s-hook
     -around-a-300s-call defect exactly, and a killed hook reports nothing at all.
-- **Verifier (per phase, cross-family) — narrowed to three jobs.** After every spec in the phase is
-  green, the Verifier runs the full suite, traces coverage, and puts the phase-mapped/changed tests
-  and their directly referenced helpers through a **targeted test-quality review on a cross-family
-  model** (the independence check). It expands only on explicit criticality or evidence, then passes
-  or routes back. Fail closed — a green suite with no completed review is an *unreviewed* phase, not
-  a pass. It persists `verdict.json`. **On pass, the phase's tests lock.**
+- **Verifier (per phase) — narrowed to TWO jobs.** After every spec in the phase is green, the
+  Verifier runs the full suite, traces coverage per `binding:`, and drives adversarial execution
+  against a real collaborator, then passes or routes back. Both jobs are recorded through
+  `scripts/verifier_evidence.py`, because a stage that emits nothing is indistinguishable from one
+  that never ran. Fail closed — a green suite with no **execution evidence** is an *unproven* phase,
+  not a pass. It persists `verdict.json`. **On pass, the phase's tests lock.**
   - **What it keeps, and why only these.** A scout measured all **46** of its findings across 8
     phases: only **3** were user-visible defects no other stage could have found — but **two of those
     were plaintext-credential leaks**, and that is what buys the stage. So it keeps exactly (a)
-    **coverage judged per `binding:`** against the requirement set, (b) **reading a green suite for
-    gamed, tautological and implementation-coupled tests**, and (c) **adversarial execution against a
-    real collaborator** on any requirement whose subject is a secret, a resource lifetime or a
-    concurrency invariant.
+    **coverage judged per `binding:`** against the requirement set, and (b) **adversarial execution
+    against a real collaborator** on any requirement whose subject is a secret, a resource lifetime
+    or a concurrency invariant. The third job — reading a green suite for gamed tests — is **gone**
+    with the cross-family pass that carried it, and nothing inherits it (see *The Verifier* below for
+    what that leaves uncovered, stated rather than implied).
   - **Its bookkeeping moved to a script.** **12 of 46 findings (26%)** were about the pipeline's own
     gate stamps, traceability rows and spec headings — 45% on the worst phase, where **attempts 2 and
     5 produced nothing but bookkeeping**, roughly 70 minutes and ~410k tokens for four
@@ -339,7 +340,7 @@ Three consequences worth stating outright:
     every spec still has its `## Acceptance criteria` heading. **A defect that recurred twice, six
     attempts apart, in one phase, because nothing checked it continuously** — so it runs on **every
     commit**, and **diff-scoped**, the same "you are responsible for what you change" rule as the
-    verifier bundle, the spec re-gate cache and the mutation gate: the phases the commit touches from
+    verifier evidence, the spec re-gate cache and the mutation gate: the phases the commit touches from
     `gate_ci.sh`, the **whole phase** at handover from `scripts/hook_verifier.sh`, and everything
     under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer repo's CI over
     locked phases nobody touched; when git cannot say what changed, nothing is enforced and the check
@@ -430,7 +431,7 @@ Three consequences worth stating outright:
 - **Ship gate (per feature, `no-mistakes`)** — runs **once**, after the last phase is verified and the
   e2e suite is written, on the feature branch. It covers what no avenger stage does: lint, docs,
   push, PR and CI. It does **not** replace the Verifier — it has no `R<n>.<k>.<m>` traceability, no
-  bounded test-quality review, and no `verdict.json`.
+  coverage judged per `binding:`, no recorded execution evidence, and no `verdict.json`.
   - **When it runs, and what stops it.** Wired as `/avenger-run` §4a, immediately **before** the
     retrospective triage so its findings feed that triage. It runs in interactive **and `--auto`**
     runs alike — it is not interactive-only. Under `--auto` the orchestrator drives the gate's
@@ -454,8 +455,8 @@ Three consequences worth stating outright:
     `~/.no-mistakes/config.yaml`). This is a **conscious exception to the cross-family rule below**,
     not an oversight and not a break-glass bypass: no-mistakes runs in the daemon's own disposable
     worktree with no shared context with the stage that wrote the code, so it decorrelates *context*
-    while accepting shared *family* blind spots. The per-phase gates — the spec gate,
-    verifier — are unaffected and stay cross-family.
+    while accepting shared *family* blind spots. The pipeline's one remaining per-phase MODEL gate —
+    the spec gate — is unaffected and stays cross-family.
 
 ## The applicability boundary — what a mechanical rule may bind
 
@@ -881,8 +882,7 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   suite, the static cross-family assertion, artifact presence (`review_status: approved`,
   `verdict.json` passing), and mutation only if a team turned it on. Auditable, can't be silently
   skipped.
-- **Model-based gates run in-chat** — the Verifier's triage and test-quality review, and the grill-me
-  spec review. CI only checks their **committed artifacts**. The one exception is the automated
+- **Model-based gates run in-chat** — the Verifier's triage, and the grill-me spec review. CI only checks their **committed artifacts**. The one exception is the automated
   **spec gate**, which is a hook and does call a model in-session (twice); it never runs in CI.
 
 ## Two learning logs — keep them apart

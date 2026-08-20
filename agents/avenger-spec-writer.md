@@ -58,7 +58,7 @@ criticality: standard | critical
 status: draft
 spec_gate: pending            # set to approved|blocked by THE spec gate (scripts/hook_spec_gate.sh)
 review_status: pending        # flipped to `approved` only by /spec-review (human grill-me)
-readers: spec gate @ on write; implementer @ once; verifier bundle @ changed specs only
+readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
 ---
 
 # <Spec title>

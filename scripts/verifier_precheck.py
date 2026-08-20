@@ -24,10 +24,11 @@ So they move here. Three checks, no model, run from `hook_verifier.sh` and from 
      deleted one, and the finding that caught it noted that no pipeline script parses the heading,
      so nothing broke - which is exactly the argument for a script that does.
 
-What this deliberately does NOT do is judge anything. Coverage judged per `binding:`, reading a green
-suite for gamed tests, and adversarial execution against secrets, resource lifetimes and concurrency
-invariants stay with the Verifier: they are the three jobs no script can do, and they produced all
-three of its user-visible defects.
+What this deliberately does NOT do is judge anything. Coverage judged per `binding:` and adversarial
+execution against secrets, resource lifetimes and concurrency invariants stay with the Verifier: they
+are the two jobs no script can do, and they produced all three of its user-visible defects. The third
+job it used to have - a dedicated reader for gamed tests - is gone with the cross-family reading pass
+that carried it, and nothing inherits it.
 
 **Scope: you are responsible for what you change.** Run with no target it checks the phases the
 current diff touches, which is what lets it run on *every* commit rather than only on `--full` - a
@@ -35,7 +36,7 @@ check that runs once at the end is exactly the "nothing checked it continuously"
 `--all` audits every phase in the repository, which is what CI's `--full` does. The distinction
 matters to a consumer repo upgrading to this version: a full audit would hard-fail its CI over
 locked, pre-rule phases nobody touched. It is the same rule as `scripts/doc_read_path.py` (whose
-`changed_paths()` this reuses rather than re-implementing), the verifier bundle, the spec re-gate
+`changed_paths()` this reuses rather than re-implementing), `verifier_evidence.py`, the spec re-gate
 cache and the mutation gate - and it behaves the same way at the edge: when git cannot say what
 changed, the scope is unknowable, so **nothing is enforced and the check says so out loud**. Falling
 back to enforcing everything is the hostage failure the scoping removes.

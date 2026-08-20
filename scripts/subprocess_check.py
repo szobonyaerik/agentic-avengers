@@ -2,8 +2,8 @@
 """Flag tests that spawn a subprocess without declaring it.
 
 A test that shells out costs a process launch every run, and a test that shells out to the *suite*
-costs a whole extra suite run. Four such tests once survived spec review, fidelity checking,
-cross-family review and per-phase verification across five phases of one feature — one suite run was
+costs a whole extra suite run. Four such tests once survived spec review, fidelity checking
+and per-phase verification across five phases of one feature — one suite run was
 really five, and they accounted for roughly five-sixths of its runtime. None of those stages could
 have caught them: every one reads for **correctness**, and a subprocess is not incorrect. It is
 expensive, and cost is not something a reader sees.
@@ -31,7 +31,7 @@ repository-wide when it shipped, and the first phase to meet it on a real reposi
 EVERY spec write over 17 undeclared spawners in locked phase-1 and phase-7 tests that the phase had
 never opened — the gate rejected before any model saw a body, and the only way forward was a logged
 break-glass over work nobody was doing. That is the hostage failure, and it is the same rule
-`doc_read_path.py`, `verifier_precheck.py`, the verifier bundle, the spec re-gate cache and the
+`doc_read_path.py`, `verifier_precheck.py`, `verifier_evidence.py`, the spec re-gate cache and the
 mutation gate already run on. `--all` audits the whole tree; it is deliberately NOT wired into CI,
 because a full audit on every commit would reinstate the hostage one layer out. When git cannot say
 what changed the scope is unknowable, so nothing is enforced and the check says so out loud.

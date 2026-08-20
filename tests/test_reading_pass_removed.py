@@ -120,24 +120,74 @@ def test_the_verdict_schema_and_its_template_no_longer_carry_the_self_reported_f
     assert f'"{REMOVED_VERDICT_FIELD}"' not in body
 
 
-def test_no_stage_is_instructed_to_do_the_reading_itself() -> None:
-    """The gap is left open on purpose. A stage told to read the suite for gamed patterns would be
-    same-family self-review under the removed gate's name - every subagent here is Anthropic."""
-    # Deliberately loose between the verb and its object: an instruction to do this can be phrased
-    # a dozen ways, and a regex that only matched the removed prompt's exact wording would catch
-    # only a copy-paste of it — which is the one form nobody would write.
-    banned = re.compile(
-        r"read\s+(?:\S+\s+){0,4}?(?:suites?|tests?|test set)\s+for\s+"
-        r"(?:gamed|tautological|implementation-coupled)",
-        re.IGNORECASE,
-    )
-    offenders = [
+#: An instruction to do the reading. **Inflected**: the form a real instruction takes is "it *reads*
+#: the phase's tests for gamed patterns" or "*reading* a green suite for gamed tests", and a pattern
+#: anchored on the bare stem `read ` matched neither - it passed on two live strings in this very
+#: repository while reading as the guard that kept them out. Deliberately loose between the verb and
+#: its object: a regex matching only the removed prompt's wording would catch a copy-paste of it,
+#: which is the one form nobody would write.
+READS_THE_SUITE = re.compile(
+    r"read(?:s|ing)?\s+(?:\S+\s+){0,4}?(?:suites?|tests?|test set)\s+for\s+"
+    r"(?:gamed|tautological|implementation-coupled)",
+    re.IGNORECASE,
+)
+
+#: The pass described as a LIVE stage rather than as a removed one. The regex above only sees the
+#: verb+object phrasing; the pass was also advertised as a noun - "a bounded test-quality review",
+#: "the cross-family reviewer" - in eight shipped documents that outlived the code. A stage
+#: instruction describing machinery that does not exist is how an agent rebuilds it by hand.
+DESCRIBES_A_LIVE_PASS = re.compile(
+    r"(?:bounded\s+)?test[-\s]quality\s+review"
+    r"|cross-family\s+review(?:er)?"
+    r"|verifier\s+bundle",
+    re.IGNORECASE,
+)
+
+
+def offenders_matching(pattern: re.Pattern[str]) -> list[str]:
+    """Shipped instructions and scripts matching `pattern`, minus the documents that explain it."""
+    return [
         str(path.relative_to(ROOT))
         for path in shipped_files()
         if str(path.relative_to(ROOT)) not in NARRATIVE
-        and banned.search(path.read_text(encoding="utf-8", errors="replace"))
+        and pattern.search(path.read_text(encoding="utf-8", errors="replace"))
     ]
-    assert offenders == [], offenders
+
+
+def test_no_stage_is_instructed_to_do_the_reading_itself() -> None:
+    """The gap is left open on purpose. A stage told to read the suite for gamed patterns would be
+    same-family self-review under the removed gate's name - every subagent here is Anthropic."""
+    assert offenders_matching(READS_THE_SUITE) == []
+
+
+def test_the_guard_catches_the_inflected_forms_an_instruction_is_actually_written_in() -> None:
+    """RED-first, on the two strings that were live in this repository while the guard read green.
+
+    A guard proven only by passing is not proven (issue #69). These are the exact bytes
+    `scripts/hook_verifier.sh` shipped, and the previous pattern matched neither.
+    """
+    for planted in (
+        "it traces coverage, reads the phase's tests for gamed patterns, and writes verdict.json.",
+        "reading a green suite for gamed tests",
+        "read the tests for gamed patterns",
+        "Read the phase's test set for tautological assertions",
+    ):
+        assert READS_THE_SUITE.search(planted), planted
+    # And it stays narrow enough to be usable: describing WHAT a gamed test is, is not an
+    # instruction to go looking for one.
+    for benign in (
+        "a gamed test noticed while tracing coverage is still a fail",
+        "read the spec for its acceptance criteria",
+    ):
+        assert not READS_THE_SUITE.search(benign), benign
+
+
+def test_no_stage_instruction_still_describes_the_pass_as_a_live_stage() -> None:
+    """The removal was complete in code and incomplete in text: the canonical rulebook every stage
+    loads still called the Verifier's job "a targeted test-quality review on a cross-family model",
+    and a live gate message still told the operator the stage would read the tests. Both were the
+    same defect as the machinery coming back, one layer out."""
+    assert offenders_matching(DESCRIBES_A_LIVE_PASS) == []
 
 
 def test_what_the_removal_leaves_uncovered_is_stated_rather_than_implied() -> None:

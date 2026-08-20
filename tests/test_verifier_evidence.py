@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import applicability  # noqa: E402
+import evidence_redaction  # noqa: E402
 import verifier_evidence as ve  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
@@ -290,10 +291,62 @@ def test_the_sweep_counts_untouched_phases_rather_than_blocking_them(phase: Path
     A full audit would fail a consumer repo's CI over a remedy that does not exist for it."""
     verdict_for(phase, chain="")
     # No git repository here, so the scope is unknowable: nothing is enforced, and it is said.
-    assert ve.sweep(Path.cwd()) == []
+    assert ve.sweep(Path.cwd()).failures == []
     assert "scope is unknowable" in capsys.readouterr().err
     # The deliberate audit still sees it.
-    assert ve.sweep(Path.cwd(), enforce_all=True) != []
+    assert ve.sweep(Path.cwd(), enforce_all=True).failures != []
+
+
+def test_one_unreadable_record_fails_only_the_phase_that_owns_it(phase: Path) -> None:
+    """RED before the containment: `due()` was called for every phase before the scope was applied,
+    and `load()` raises on a malformed record, so ONE corrupt file anywhere aborted the whole sweep
+    with a single undecidable error - holding every unrelated commit hostage, which is the exact
+    failure the applicability boundary exists to remove."""
+    record(phase)
+    verdict_for(phase)
+    other = phase.parent / "9-corrupt"
+    (other / "specs").mkdir(parents=True)
+    (other / "verdict.json").write_text('{"verdict": "pass"}', encoding="utf-8")
+    (other / ve.FILENAME).write_text("{ this is not json", encoding="utf-8")
+
+    result = ve.sweep(Path.cwd(), enforce_all=True)
+    assert len(result.undecidable) == 1 and "9-corrupt" in result.undecidable[0]
+    assert not any("1-alpha" in line for line in result.undecidable), \
+        "the good phase was still examined and still decided"
+    assert result.failures == [], "and it passes on its own evidence"
+
+
+def test_an_unreadable_record_exits_undecidable_rather_than_as_a_missing_obligation(
+    phase: Path,
+) -> None:
+    """Exit 1 means the obligation and exit 2 means it could not be DECIDED. `gate_ci.sh` records
+    them under different names: "record your runs" cannot repair a record nothing can parse."""
+    verdict_for(phase, chain="")
+    ve.record_path(phase).write_text("{ not json", encoding="utf-8")
+    result = run_cli("sweep", "--root", str(Path.cwd()), "--all")
+    assert result.returncode == ve.ERROR
+    assert "could not be decided" in result.stderr or "could not be read" in result.stderr
+
+
+def test_the_sweep_does_not_examine_a_phase_it_is_not_going_to_enforce(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scope is applied BEFORE `due()`, which recomputes `subject_digest` over every spec,
+    mapping and test file a phase owns. This runs on every commit, so examining a phase in order to
+    discard the answer re-hashes a repository's whole historical test corpus to produce a count."""
+    # A real record, so the digest path is actually reachable: a phase with no record short-circuits
+    # before any hashing, and a test built on one would pass whichever order the sweep used.
+    record(phase)
+    verdict_for(phase)
+    monkeypatch.setattr(applicability, "changed_paths", lambda _root: set())
+    examined: list[Path] = []
+    real = ve.subject_digest
+    monkeypatch.setattr(
+        ve, "subject_digest",
+        lambda phase_dir, root=None: (examined.append(Path(phase_dir)), real(phase_dir, root))[1],
+    )
+    assert ve.sweep(Path.cwd()) == ve.SweepResult([], [])
+    assert examined == [], "an out-of-scope phase is counted, never hashed"
 
 
 def test_the_rule_is_on_the_closed_set_with_a_call_site_that_reads_it() -> None:
@@ -374,3 +427,149 @@ def test_the_subject_digest_does_not_move_when_the_recorder_is_run_from_elsewher
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     assert ve.subject_digest(phase, project) == from_root
+
+
+# ── what a stored log is allowed to carry ────────────────────────────────────
+
+
+def echo_run(phase_dir: Path, text: str, kind: str = "suite") -> dict:
+    """A REAL child that prints `text`, so the redaction path is exercised on real captured output
+    rather than on a string handed straight to the redactor."""
+    entry, _rc = ve.record(phase_dir, kind, ["/bin/echo", text])
+    return entry
+
+
+def test_a_credential_the_adversarial_run_surfaced_never_reaches_the_log(phase: Path) -> None:
+    """RED without redaction: `adversarial` exists to plant a value and look at what came back, so
+    a reproduced leak wrote the credential into a committed file that no later commit scrubs."""
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    entry = echo_run(phase, f"connected as {secret}", kind="adversarial")
+    stored = (phase / entry["log"]).read_text(encoding="utf-8")
+    assert secret not in stored, "the log is committed; a live credential in it is permanent"
+    assert "[REDACTED:aws-access-key-id:" in stored, "a removed span is marked, never deleted"
+    assert "connected as" in stored, "only the secret goes - the evidence stays evidence"
+
+
+@pytest.mark.parametrize(
+    ("name", "line"),
+    [
+        ("url-credentials", "postgres://app:hunter2@db.internal:5432/prod"),
+        ("secret-assignment", "DATABASE_PASSWORD=s3cr3t-value"),
+        ("bearer-token", "Bearer abcdefghijklmnopqrstuvwxyz012345"),
+        ("github-token", "ghp_0123456789abcdefghijklmnopqrstuvwx"),
+        ("jwt", "eyJhbGciOi.eyJzdWIiOjEyMw.dBjftJeZ4CVPmB92K27u"),
+        ("private-key-block",
+         "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----"),
+    ],
+)
+def test_every_documented_secret_shape_is_removed_and_named(name: str, line: str) -> None:
+    out = evidence_redaction.redact(line)
+    assert f"[REDACTED:{name}:" in out, out
+    for token in ("hunter2", "s3cr3t-value", "abcdefghijklmnopqrstuvwxyz012345",
+                  "ghp_0123456789abcdefghijklmnopqrstuvwx", "MIIBOgIBAAJBAK"):
+        if token in line:
+            assert token not in out, out
+
+
+def test_the_note_is_redacted_too_because_it_names_what_was_planted(phase: Path) -> None:
+    """`--note "<what you planted>"` is the field the Verifier is instructed to describe the planted
+    value in, and it is stored on the record beside the log."""
+    entry, _rc = ve.record(phase, "adversarial", ["/bin/echo", "ok"],
+                           note="planted API_KEY=ZZ-live-credential-9999")
+    assert "ZZ-live-credential-9999" not in entry["note"]
+    assert "[REDACTED:secret-assignment:" in entry["note"]
+    assert "ZZ-live-credential-9999" not in ve.record_path(phase).read_text(encoding="utf-8")
+
+
+def test_a_stored_log_is_bounded_and_says_how_much_it_dropped(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RED without the cap: nothing bounded the file at all. RED without the marker: a cut log reads
+    as complete, and a later reader draws a conclusion from an absence that was really a cut."""
+    monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV, "2048")
+    entry = echo_run(phase, "x" * 20000)
+    stored = (phase / entry["log"]).read_text(encoding="utf-8")
+    assert len(stored.encode("utf-8")) <= 2048, "the cap binds the bytes that are stored"
+    assert "[TRUNCATED:" in stored and "bytes dropped" in stored
+    assert evidence_redaction.MAX_BYTES_ENV in stored, "the marker names the knob that cut it"
+    # Head AND tail survive: a suite log's failure summary is at the end.
+    assert stored.startswith("x") and stored.rstrip("\n").endswith("x")
+
+
+def test_the_digest_covers_exactly_the_capped_redacted_bytes_that_were_stored(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proof of execution is the point of this record; a digest over the RAW output would mean
+    `check` could never verify the log on disk again."""
+    monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV, "2048")
+    entry = echo_run(phase, "AKIAIOSFODNN7EXAMPLE " + "y" * 20000)
+    on_disk = (phase / entry["log"]).read_bytes()
+    assert entry["output_sha256"] == hashlib.sha256(on_disk).hexdigest()
+    assert entry["output_bytes"] == len(on_disk)
+    verdict_for(phase)
+    assert ve.problems(phase, verdict_path=phase / "verdict.json") == []
+
+
+def test_an_edited_log_still_fails_its_record_after_redaction(phase: Path) -> None:
+    """The integrity guard is unchanged by any of the above - asserted, not assumed."""
+    entry = echo_run(phase, "1 passed")
+    (phase / entry["log"]).write_text("1 passed (I promise)", encoding="utf-8")
+    found = ve.problems(phase)
+    assert any("does not hash to the recorded digest" in line for line in found), found
+
+
+def test_redaction_failing_writes_no_log_and_records_no_run(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FAIL CLOSED, proven by breaking it: turn the redactor into a raw-log fallback and this goes
+    green while a live credential lands in git. There is deliberately no such fallback."""
+    monkeypatch.setattr(
+        evidence_redaction, "prepare",
+        lambda _text: (_ for _ in ()).throw(evidence_redaction.RedactionError("pattern exploded")),
+    )
+    with pytest.raises(ve.EvidenceError) as exc:
+        ve.record(phase, "adversarial", ["/bin/echo", "AKIAIOSFODNN7EXAMPLE"])
+
+    assert "pattern exploded" in str(exc.value), "the stop names what failed"
+    assert "evidence_redaction.py" in str(exc.value), "and where the remedy is"
+    assert "does NOT count as recorded" in str(exc.value)
+    assert not ve.log_dir(phase).exists() or not any(ve.log_dir(phase).iterdir())
+    assert ve.load(phase)["runs"] == [], "a run whose log could not be written is not a run"
+
+
+def test_a_malformed_cap_is_a_named_config_failure_never_a_silent_default(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV, "lots")
+    with pytest.raises(ve.EvidenceError, match="lots"):
+        ve.record(phase, "suite", ["/bin/echo", "ok"])
+    assert ve.load(phase)["runs"] == []
+
+
+def test_an_uncompilable_extra_pattern_stops_the_run_rather_than_being_skipped(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pattern set is extendable, so a bad extension is a real failure mode - and skipping it
+    silently would store the raw bytes the extension was added to remove."""
+    monkeypatch.setenv(evidence_redaction.EXTRA_ENV, "([unclosed")
+    with pytest.raises(ve.EvidenceError, match=evidence_redaction.EXTRA_ENV):
+        ve.record(phase, "suite", ["/bin/echo", "ok"])
+    assert ve.load(phase)["runs"] == []
+
+
+def test_an_extra_pattern_extends_the_set_at_a_call_site(phase: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(evidence_redaction.EXTRA_ENV, r"INTERNAL-[0-9]{6}")
+    entry = echo_run(phase, "leaked INTERNAL-424242 here")
+    stored = (phase / entry["log"]).read_text(encoding="utf-8")
+    assert "INTERNAL-424242" not in stored
+    assert f"[REDACTED:{evidence_redaction.EXTRA_ENV.lower()}:" in stored
+
+
+def test_redaction_runs_before_the_cap_so_no_half_secret_survives_the_cut() -> None:
+    """Capping first would leave a truncated token in the kept region, where its own pattern no
+    longer fires and the surviving half still leaks."""
+    secret = "ghp_0123456789abcdefghijklmnopqrstuvwx"
+    text = "a" * 400 + secret + "b" * 400
+    out = evidence_redaction.cap(evidence_redaction.redact(text), 300)
+    assert "ghp_0123456789" not in out

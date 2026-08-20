@@ -153,6 +153,13 @@ it. Record the amendment ids folded into a verdict in its `amendments` array.
    found exactly this way, and neither was visible in the test set. Run it through the recorder:
    `verifier_evidence.py record <phase-dir> --kind adversarial --note "<what you planted>" -- <cmd>`.
    A green suite is not a reason to skip it; it is the reason to do it.
+   **The log is committed, so what it may carry is bounded.** The recorder redacts every known
+   secret shape out of the command's output and caps the result BEFORE writing, marking both, and
+   hashes what it stored — so a reproduced leak does not land in git, where no later commit removes
+   it. Redaction is by pattern, so it is a **reduction of risk, not a guarantee**: keep the planted
+   value recognisable (an `AKIA…`-shaped key, a `PASSWORD=` assignment) rather than a bare word, and
+   if it needs a shape the set does not know, add one — `scripts/evidence_redaction.py`. A run whose
+   output could not be redacted writes nothing and is not recorded; that is deliberate.
 
 4. **Mutation gate — `advisory` by DEFAULT** (`MUTATION_POLICY` = `advisory` | `enforce` | `off`).
    In advisory mode it runs, reports the score and its survivors, and **never blocks** — read the

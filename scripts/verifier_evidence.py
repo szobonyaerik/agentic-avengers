@@ -38,6 +38,19 @@ Plus a floor: a run recording **0 ms** did not fork a process. `PROCESS_FLOOR_MS
 rule `gate_plausibility.py` applies to a provider call - a number that contradicts itself is refused
 rather than believed.
 
+## What a log is allowed to carry
+
+The logs are committed - the gates read them in CI - so a recorded command's output goes through
+`evidence_redaction.prepare` **before it touches disk**: every known secret shape replaced by a
+marker naming it, then the whole capped to `EVIDENCE_LOG_MAX_BYTES` with an explicit truncation
+marker. `output_sha256` and `output_bytes` are computed over those STORED bytes, so `check` still
+verifies the log on disk against the record. Redaction failing writes **no log and no entry** - there
+is no raw-log fallback, because `adversarial` is the kind that exists to surface plaintext secrets
+and no later commit removes one from git history. **Redaction by pattern is a reduction of risk, not
+a guarantee**; the shapes it knows, how to extend them, and what passes straight through are stated
+in `evidence_redaction.py`. Nothing is ever pruned: every entry is in the chain and its log is what
+`check` hashes, so the growth rule is one capped log per recorded command.
+
 ## What this does NOT claim, said rather than implied
 
 There is no secret in this pipeline, so nothing an agent can invoke is unforgeable by that agent. An
@@ -64,11 +77,13 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import applicability  # noqa: E402
+import evidence_redaction  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
 
 OK = 0
@@ -335,11 +350,27 @@ def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = No
             f"that cannot start records nothing - fix the command and run it again."
         ) from exc
 
-    output = (result.stdout or "") + (result.stderr or "")
+    raw = (result.stdout or "") + (result.stderr or "")
+    # Redacted and capped BEFORE anything touches disk, and the digest is over what is stored, so
+    # `check` still verifies the log against the record. Fails closed with no raw-log fallback: the
+    # `adversarial` kind exists to surface plaintext secrets, and a credential written into git is
+    # not removed by any later commit.
+    try:
+        stored = evidence_redaction.prepare(raw)
+        stored_note = evidence_redaction.redact(note) if note else None
+    except evidence_redaction.RedactionError as exc:
+        raise EvidenceError(
+            f"the output of {argv[0]!r} could not be made safe to store ({exc}). NOTHING was "
+            f"written - no log, and no entry on the record - because output that cannot be redacted "
+            f"must never reach disk. This run does NOT count as recorded. Fix what failed "
+            f"(scripts/evidence_redaction.py, or {evidence_redaction.EXTRA_ENV} / "
+            f"{evidence_redaction.MAX_BYTES_ENV} if you set them) and run the command again."
+        ) from exc
+
     logs = log_dir(phase)
     logs.mkdir(parents=True, exist_ok=True)
     log_file = logs / f"{seq:02d}-{kind}.log"
-    log_file.write_text(output, encoding="utf-8")
+    log_file.write_text(stored, encoding="utf-8")
 
     entry = {
         "seq": seq,
@@ -349,14 +380,14 @@ def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = No
         "exit_code": int(result.returncode),
         "timed_out": bool(result.timed_out),
         "elapsed_ms": max(int(result.elapsed * 1000), 0),
-        "output_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
-        "output_bytes": len(output.encode("utf-8")),
+        "output_sha256": hashlib.sha256(stored.encode("utf-8")).hexdigest(),
+        "output_bytes": len(stored.encode("utf-8")),
         "log": log_file.relative_to(phase).as_posix(),
         "subject_digest": subject_digest(phase, base),
         "recorded_at": _now(),
     }
-    if note:
-        entry["note"] = note
+    if stored_note:
+        entry["note"] = stored_note
     data["runs"].append(entry)
     data["phase"] = phase.name
     save(phase, data)
@@ -540,7 +571,20 @@ def _phases(root: Path) -> list[Path]:
     return sorted({v.parent for v in Path(root).glob("docs/features/*/phases/*/verdict.json")})
 
 
-def sweep(root: Path, *, enforce_all: bool = False) -> list[str]:
+class SweepResult(NamedTuple):
+    """What the sweep decided, with the two outcomes kept apart.
+
+    `failures` is the OBLIGATION - a phase in scope whose verdict is not backed by evidence.
+    `undecidable` is a phase whose record could not be READ at all. They exit under different codes
+    and are recorded under different names, because a stop naming the wrong cause prescribes a
+    remedy that cannot repair it: "record your runs" does not fix malformed JSON.
+    """
+
+    failures: list[str]
+    undecidable: list[str]
+
+
+def sweep(root: Path, *, enforce_all: bool = False) -> SweepResult:
     """The obligation across the repository. **Diff-scoped unless `enforce_all`.**
 
     Diff-scoped even under `--full`, on `carried_items.check`'s precedent rather than
@@ -549,12 +593,22 @@ def sweep(root: Path, *, enforce_all: bool = False) -> list[str]:
     can - the remedy does not exist for it (CLAUDE.md §3a: a rule whose remedy is unavailable is a
     wedge, not a gate). `hook_verifier.sh` holds the phase being CLOSED, which the diff touches by
     construction, so nothing is lost; `sweep --all` is the audit for anyone who wants it.
+
+    The scope is applied BEFORE a phase is examined, for two reasons that are one rule. It is the
+    boundary's own discipline - an out-of-scope phase is counted and named, never read for a verdict
+    - and `due()` recomputes `subject_digest` over every spec, mapping and test file the phase owns,
+    which this runs on every commit. Examining a phase in order to discard the answer re-hashes a
+    repository's whole historical test corpus to produce a number.
+
+    A phase whose record cannot be read fails only ITSELF: the exception is caught here rather than
+    escaping the loop, because one corrupt record aborting the sweep holds every unrelated commit
+    hostage - the exact failure the applicability boundary exists to remove.
     """
     phases = _phases(root)
     if not phases:
         print(f"[verifier_evidence] no phases with a verdict under {root} - nothing to check",
               file=sys.stderr)
-        return []
+        return SweepResult([], [])
 
     scope: set[Path] | None = None
     if not enforce_all:
@@ -565,25 +619,28 @@ def sweep(root: Path, *, enforce_all: bool = False) -> list[str]:
                 f"unknowable and no phase is checked. Run `sweep --all` for a full audit.",
                 file=sys.stderr,
             )
-            return []
+            return SweepResult([], [])
 
     failures: list[str] = []
+    undecidable: list[str] = []
     unenforced = 0
     for phase in phases:
-        found = due(phase, verdict_path=phase / "verdict.json", root=Path(root))
-        if not found:
+        if not (enforce_all or applicability.touched(phase, scope)):  # type: ignore[arg-type]
+            unenforced += 1
             continue
-        if enforce_all or applicability.touched(phase, scope):  # type: ignore[arg-type]
-            failures.extend(f"{phase}: {line}" for line in found)
-        else:
-            unenforced += len(found)
+        try:
+            found = due(phase, verdict_path=phase / "verdict.json", root=Path(root))
+        except EvidenceError as exc:
+            undecidable.append(f"{phase}: {exc}")
+            continue
+        failures.extend(f"{phase}: {line}" for line in found)
     applicability.report_unenforced(
         "verifier_evidence",
         unenforced,
         "phase(s) predate this rule or are untouched - they are checked when you next change "
         "them, and `sweep --all` audits them now",
     )
-    return failures
+    return SweepResult(failures, undecidable)
 
 
 # --- CLI ----------------------------------------------------------------------------------------------
@@ -667,17 +724,31 @@ def _dispatch(args: argparse.Namespace) -> int:
         _print_remedy()
         return MISSING
 
-    failures = sweep(args.root, enforce_all=args.all)
-    if not failures:
-        return OK
-    print(
-        "verifier evidence: a phase closed on a verdict with no proof that anything ran:",
-        file=sys.stderr,
-    )
-    for line in failures:
-        print(f"  x {line}", file=sys.stderr)
-    _print_remedy()
-    return MISSING
+    result = sweep(args.root, enforce_all=args.all)
+    if result.undecidable:
+        # Reported first and exited under ERROR even when there are also real gaps: a run that could
+        # not READ a record has not decided the question, and claiming the obligation would send the
+        # fix at "record your runs" - a remedy that cannot repair a record nothing can parse.
+        print(
+            "verifier evidence: a phase's record could not be read, so the check could not be "
+            "decided:",
+            file=sys.stderr,
+        )
+        for line in result.undecidable:
+            print(f"  ! {line}", file=sys.stderr)
+    if result.failures:
+        print(
+            "verifier evidence: a phase closed on a verdict with no proof that anything ran:",
+            file=sys.stderr,
+        )
+        for line in result.failures:
+            print(f"  x {line}", file=sys.stderr)
+    if result.undecidable:
+        return ERROR
+    if result.failures:
+        _print_remedy()
+        return MISSING
+    return OK
 
 
 def _report_superseded(phase_dir: Path, root: Path) -> None:

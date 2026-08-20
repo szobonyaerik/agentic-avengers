@@ -3,8 +3,9 @@
 # on handover checks that the Verifier's committed artifact exists and passes.
 #
 # Why no model call here: the Verifier is an AGENT (agents/avenger-verifier.md), not a hook. It runs
-# in-chat on a cross-family model, reads the phase's tests for the anti-patterns in skills/tdd, and
-# persists docs/features/<f>/phases/<n>-<slug>/verdict.json. Model-based gates run in chat; mechanical
+# in-chat, traces coverage per `binding:`, drives adversarial execution against a real collaborator,
+# records both through verifier_evidence.py, and persists
+# docs/features/<f>/phases/<n>-<slug>/verdict.json. Model-based gates run in chat; mechanical
 # gates run in hooks and CI, which only check the committed artifacts. (pipeline-conventions: "Where
 # the models run".) The one exception in this repo is the spec gate, which is a model hook.
 #
@@ -217,8 +218,8 @@ PHASE_DIR="$(dirname "$FILE")"
 # The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
 # untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
 # is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
-# script can do: coverage judged per `binding:`, reading a green suite for gamed tests, and
-# adversarial execution against secrets, resource lifetimes and concurrency invariants.
+# script can do: coverage judged per `binding:`, and adversarial execution against secrets, resource
+# lifetimes and concurrency invariants.
 if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
   fail "verifier:precheck" \
     "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
@@ -314,8 +315,9 @@ if [ ! -f "$VERDICT" ]; then
   fail "verifier:no-verdict" \
     "verifier: no verdict.json next to $FILE." \
     "The phase cannot close on a green suite alone — a green suite the implementer wrote proves only" \
-    "that the author agreed with themselves. Run @avenger-verifier (a different model family) first;" \
-    "it traces coverage, reads the phase's tests for gamed patterns, and writes verdict.json."
+    "that the author agreed with themselves. Run @avenger-verifier first; it traces coverage per" \
+    "\`binding:\`, drives adversarial execution, records both through verifier_evidence.py, and" \
+    "writes verdict.json."
 fi
 
 V=$(jq -r '.verdict // "missing"' "$VERDICT" 2>/dev/null) || V="unparseable"
@@ -377,8 +379,8 @@ case "$V" in
     fi
     carried_items_gate
     # Which stage found each defect is the one field the record cannot recover afterwards (§6d).
-    # It used to be emitted by `verifier_review.sh` the moment the cross-family review produced its
-    # findings; that script is gone, and the verdict is now the only place those findings exist. So
+    # It used to be emitted by `verifier_review.sh` the moment the removed cross-family reading
+    # pass produced its findings; that script is gone, and the verdict is now the only place those findings exist. So
     # it is emitted here, over the same finding shape, from the one point every closing phase passes.
     #
     # Measurement, never a gate: `|| true`, over a sink that swallows its own failures, and the exit

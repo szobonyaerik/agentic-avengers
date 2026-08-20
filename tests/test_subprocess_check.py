@@ -1,7 +1,7 @@
 """Tests for the subprocess check.
 
 The defect this check exists for is a test that spawns a nested run of the whole suite: four of them
-survived spec review, fidelity checking, cross-family review and verification across five phases,
+survived spec review, fidelity checking and verification across five phases,
 because every one of those stages reads for correctness and none of them can see a subprocess.
 
 So the dangerous direction here is a MISS, and most of these pin "must still be flagged" cases —

@@ -3,7 +3,7 @@
 The check shipped fail-closed over the whole of `docs/features`, which fails any repository already
 running the pipeline the moment it upgrades — every historical handover is over the cap and none
 carries `readers:`, and none of that is something the current session did. Scoping enforcement to
-the diff is the rule `verifier_bundle_scope.py`, `spec_gate_cache.py` and the mutation gate already
+the diff is the rule `verifier_evidence.py`, `spec_gate_cache.py` and the mutation gate already
 run on, and it needs no grandfathering list to maintain.
 
 The dangerous direction runs BOTH ways, so both are pinned: an unchanged artifact must not block

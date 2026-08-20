@@ -2,7 +2,7 @@
 """What "still open" means for a finding in `verdict.json` - one rule, one owner.
 
 It lived in `verifier_bundle_scope.py`, which owned it because it is what kept a spec in the
-cross-family review bundle. That reading pass is gone (it returned GO with zero findings on a phase
+removed cross-family reading pass's bundle. That pass is gone (it returned GO with zero findings on a phase
 containing real defects, and the hypothesis testing whether it earned its cost returned unmeasured),
 and the bundle went with it - but the rule did not. `verifier_attempts.py` reads it to decide whether
 a phase at the attempt cap has actually ENDED its loop, and restating it there as "the findings array
