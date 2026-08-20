@@ -70,14 +70,22 @@ NARRATIVE = {
     "agents/avenger-verifier.md",
 }
 
-#: A negation immediately before the match. "**No stage** reads the suite for gamed tests" and
-#: "**Nothing** reads the suite for gamed tests" are the removal being stated, not a stage being
-#: instructed - and treating them as offences would force whole files (`README.md`,
-#: `docs/AUTOMATE.md`) into NARRATIVE, where a REAL stale claim would then ride along unseen.
+#: A negation of THIS verb - "**No stage** reads the suite for gamed tests", "**Nothing** reads the
+#: suite for gamed tests". Those are the removal being stated, not a stage being instructed, and
+#: treating them as offences would force whole files (`README.md`, `docs/AUTOMATE.md`) into
+#: NARRATIVE, where a REAL stale claim would then ride along unseen.
+#:
+#: **ADJACENCY, not proximity.** The first version allowed anything but `. : ;` between the negation
+#: and the verb, so a negation belonging to a NEIGHBOURING clause waved a real re-introduction
+#: through - including the one written in this repo's own house style, "gamed tests have no dedicated
+#: reader, so the Verifier reads the suite for gamed patterns", whose prefix appears verbatim in
+#: three shipped documents. The negation must now be the verb's own subject: itself, or one token
+#: before it, and that token may not carry a clause break of any kind (a comma ends the clause just
+#: as a full stop does). `without` is deliberately NOT in the set - "must without fail read the tests
+#: for gamed patterns" is an instruction, and nothing on disk relies on it.
 #: Checked against the run of text before the match rather than as a lookbehind, which `re` allows
 #: only at fixed width.
-NEGATED = re.compile(r"\b(?:no|nothing|never|neither|without)\b[^.:;\n]{0,40}$",
-                     re.IGNORECASE)
+NEGATED = re.compile(r"\b(?:no|nothing|never|neither)\b(?:\s+[^\s,;:.]+)?\s*$", re.IGNORECASE)
 NEGATION_WINDOW = 60
 
 
@@ -233,14 +241,39 @@ def test_the_guard_catches_the_inflected_forms_an_instruction_is_actually_writte
 def test_the_negation_filter_waves_through_the_removal_and_not_an_instruction() -> None:
     """The filter is what keeps `README.md` and `docs/AUTOMATE.md` GOVERNED instead of waved through
     as whole files. It has to be narrow enough that a real instruction cannot hide behind a nearby
-    "no": the window stops at a clause break, so only a negation of THIS verb counts."""
-    waved = "That means the author of the code also authors its judge. No stage reads the suite for gamed tests."
-    instruction = "There is no reason to skip it: read the tests for gamed patterns."
-    for text, expected in ((waved, True), (instruction, False)):
+    "no" - so the negation must be the reading verb's OWN subject, not one belonging to a
+    neighbouring clause.
+
+    The first version tested only two cases and neither crossed a comma, which is exactly why the
+    suite was green on a filter that waved three plausible re-introductions through. The false cases
+    below are the ones it waved; `instruction_house_style` is the likeliest of them, because its
+    prefix is written verbatim in CLAUDE.md, AGENTS.md and README.md, so it is how the next author
+    would open the sentence that puts the job back.
+    """
+    # Both are on disk today - README.md and docs/AUTOMATE.md - and both must stay waved.
+    waved = (
+        "That means the author of the code also authors its judge. **No stage** reads the suite "
+        "for gamed tests.",
+        "a pass with no transcript is refused. Nothing reads the suite for gamed tests: that pass "
+        "was removed",
+    )
+    instructions = (
+        "gamed tests have no dedicated reader, so the Verifier reads the suite for gamed patterns",
+        "There is no dedicated reader, so you read the tests for gamed patterns yourself",
+        "The Verifier must without fail read the tests for gamed patterns",
+        "There is no reason to skip it: read the tests for gamed patterns.",
+        "There is no reason, read the tests for gamed patterns.",
+    )
+    for text, expected in ((t, True) for t in waved):
         match = READS_THE_SUITE.search(text)
         assert match, text
         before = text[max(0, match.start() - NEGATION_WINDOW):match.start()]
-        assert bool(NEGATED.search(before)) is expected, text
+        assert bool(NEGATED.search(before)) is expected, f"must stay waved: {text}"
+    for text in instructions:
+        match = READS_THE_SUITE.search(text)
+        assert match, text
+        before = text[max(0, match.start() - NEGATION_WINDOW):match.start()]
+        assert not NEGATED.search(before), f"must be caught: {text}"
 
 
 def test_no_stage_instruction_still_describes_the_pass_as_a_live_stage() -> None:
