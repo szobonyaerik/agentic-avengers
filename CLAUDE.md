@@ -829,8 +829,19 @@ inert for every running phase until someone releases it. **Observed, not assumed
 `scripts/plugin_release.py` derives the executing version from `$CLAUDE_PLUGIN_ROOT` itself, never a
 constant a stale copy would carry unchanged, and `record_plugin_version` rides it into the phase's
 `gate_calls[]` at phase-open — an existing key, never a new top-level field, since firstmate's
-schema is closed (§6d). **Enforced, not folklore:** `/avenger-run` §1 runs `plugin_release.py check`
-before any phase executes and stops the run on `STALE` (content hash of the shipped payload —
+schema is closed (§6d). **Enforced by something that executes:**
+`scripts/hook_plugin_release.sh` is a **`PreToolUse`** hook that refuses to spawn any `avenger-*`
+stage while the executing copy is `STALE`, so the run stops immediately before stale code would
+build a phase - the halt used to be a sentence in `/avenger-run` §1 that an orchestrator had to read
+and obey, which is issue #69's class exactly. `PreToolUse` and not `SubagentStart`, where the other
+stage hooks live: that event cannot block, so a halt there would be prose with a shebang on it. It
+decides on `tool_input.subagent_type`, never the spawn tool's name (`Task` in some harness versions,
+`Agent` in others), and **everything that is not a verdict fails open** - no `jq`/`python3`, an
+unreadable payload, a bad regex, or a checker that crashed lets the spawn through and says so, since
+the verdict is the exit code **and** the checker's own `STALE:` marker (a traceback exits 1 too, and
+"cut a release" is the wrong remedy for a crash). `GATE_BYPASS` proceeds, audited. opencode has no
+pre-spawn event and does not carry it. §1 still runs `plugin_release.py check` as an early report -
+it changes when the operator learns, never whether the run is stopped - and `STALE` (content hash of the shipped payload - 
 including `docs/templates/`, not the rest of `docs/` — differs from `AVENGER_SOURCE_REPO`'s
 **committed HEAD**, never its working tree, so an in-progress edit reads as a separate `dirty` flag,
 never as STALE); `UNKNOWN` (no source repository resolvable — `AVENGER_SOURCE_REPO` unset and the

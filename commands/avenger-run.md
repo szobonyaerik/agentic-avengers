@@ -54,6 +54,15 @@ Run these before anything else, and stop with the fix if one fails:
   re-reads the refreshed cache. `UNKNOWN` (neither of those resolves a source repository on this
   machine) is not enforced — the check says so on stderr and the run continues — the same
   applicability boundary every other check in this repo draws around a scope it cannot resolve.
+
+  **This step no longer carries the halt, and this line is not what stops the run.**
+  `scripts/hook_plugin_release.sh` (a `PreToolUse` hook, `hooks/hooks.json`) refuses the spawn of
+  every `avenger-*` stage while the executing copy is STALE, so a run gets stopped whether or not
+  anyone reads this bullet - which is the whole point, since an orchestrator obeying a sentence was
+  the enforcement until now. Running it here only makes the operator learn at preflight instead of at
+  the first stage spawn, which is cheaper for them and nothing more. `UNKNOWN` stays unenforced in
+  both places. Under opencode there is no pre-spawn event to refuse at, so **this report is the only
+  signal that run gets** - do not skip it there.
 - **The §4a ship gate's three preconditions — the binary, an initialised repo, and a filled-in
   config.** All three are needed in interactive *and* `--auto` runs, and each is checked by
   *interrogating state*, never by printing advice and hoping:
