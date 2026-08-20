@@ -67,9 +67,14 @@ printf '%s' "$STAGE" | grep -qiE "$STAGES_RE" 2>/dev/null || exit 0
 
 REPORT=$(python3 "$SD/plugin_release.py" check 2>&1); RC=$?
 
-# Exit 0 is fresh OR unknown - both proceed, and the checker has already said which on its own
-# stderr. Only the STALE verdict below is a halt.
-[ "$RC" -eq 0 ] && exit 0
+# Exit 0 is fresh OR unknown - both proceed. The checker's own two-line report is relayed here
+# rather than dropped: it is captured with `2>&1` above, so without this the documented "unknown is
+# reported, never enforced" contract would be a claim nothing performed, and a standalone install
+# would see the same silence for "cannot tell" as for "clean" (§3a).
+if [ "$RC" -eq 0 ]; then
+  printf '%s\n' "$REPORT" >&2
+  exit 0
+fi
 
 if ! printf '%s\n' "$REPORT" | grep -q '\[plugin-release\] STALE:'; then
   printf '%s\n' \
@@ -79,11 +84,23 @@ if ! printf '%s\n' "$REPORT" | grep -q '\[plugin-release\] STALE:'; then
   exit 0
 fi
 
+# The finding is stated before the outcome is decided, and the outcome is stated by the branch that
+# takes it. Printing the whole refusal above this point told a bypassing operator that '$STAGE' "is
+# refused" one line before the spawn proceeded, which is the opposite of what happened.
 printf '%s\n' \
   "plugin release: STALE - this run is executing a plugin copy that is NOT the merged repository," \
-  "so merged fixes are not in effect and '$STAGE' is refused before it can build against them." \
+  "so merged fixes are not in effect for '$STAGE'." \
   "" \
-  "$REPORT" \
+  "$REPORT" >&2
+
+if [ -n "${GATE_BYPASS:-}" ]; then
+  printf '%s\n' \
+    "Proceeding on stale code under break-glass; the spawn is NOT blocked." >&2
+  exec "$SD/bypass_log.sh" "plugin-release"
+fi
+
+printf '%s\n' \
+  "The stage is refused before it can build against them." \
   "" \
   "Cut a release from your checkout of this plugin's own repository:" \
   "" \
@@ -91,8 +108,11 @@ printf '%s\n' \
   "" \
   "then restart Claude Code so the harness re-reads the refreshed cache, and start the run again." \
   "" \
+  "If that cut is refused because the version already holds different content, the payload has" \
+  "changed since it was released under that number: bump \"version\" in .claude-plugin/plugin.json" \
+  "first, then cut again." \
+  "" \
   "To proceed on stale code anyway, re-run with GATE_BYPASS=\"<reason>\" - visible and logged to" \
   "gate-overrides.log." >&2
 
-[ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "plugin-release"
 exit 2

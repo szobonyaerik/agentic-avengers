@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from test_plugin_release import make_plugin  # noqa: E402 - one fixture builder, not two
 
 HOOK = ROOT / "scripts" / "hook_plugin_release.sh"
+AUTOAPPROVE_HOOK = ROOT / "scripts" / "hook_autoapprove.sh"
 
 pytestmark = pytest.mark.subprocess(
     "the subject is a bash PreToolUse hook and the halt IS its exit code - running the logic any "
@@ -57,8 +59,17 @@ def spawn_payload(subagent_type: str = "avenger-backend-architect") -> str:
 
 
 def run_hook(payload: str, *, project: Path, env: dict[str, str] | None = None):
+    return _run(HOOK, payload, project=project, env=env)
+
+
+def run_autoapprove(payload: str, *, project: Path, env: dict[str, str] | None = None):
+    """The sibling PreToolUse hook `/avenger-run --auto` arms, driven over the same payload."""
+    return _run(AUTOAPPROVE_HOOK, payload, project=project, env=env)
+
+
+def _run(hook: Path, payload: str, *, project: Path, env: dict[str, str] | None = None):
     return subprocess.run(  # noqa: S603
-        ["bash", str(HOOK)],
+        ["bash", str(hook)],
         input=payload,
         capture_output=True,
         text=True,
@@ -118,6 +129,18 @@ def test_the_stop_names_the_remedy_in_the_operators_words(tmp_path):
     assert "GATE_BYPASS" in result.stderr
 
 
+def test_the_remedy_names_the_version_bump_that_cut_needs(tmp_path):
+    """`cut()` refuses to overwrite a version whose content already differs, so on any changed
+    payload that has not been renumbered the prescribed remedy exits 1 and the halt becomes a wedge
+    (CLAUDE.md §3a). The message the operator reads is the only place that corner is explained."""
+    executing, repo = stale_pair(tmp_path)
+
+    result = run_hook(spawn_payload(), project=tmp_path, env=drift_env(executing, repo))
+
+    assert ".claude-plugin/plugin.json" in result.stderr
+    assert "bump" in result.stderr.lower()
+
+
 def test_every_pipeline_stage_is_bound_not_just_the_implementers(tmp_path):
     executing, repo = stale_pair(tmp_path)
 
@@ -144,6 +167,10 @@ def test_an_honest_unknown_is_not_a_halt(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
+    assert "UNKNOWN" in result.stderr, (
+        "'reported, never enforced' is the contract - a checker whose report is captured and then "
+        "dropped makes 'cannot tell' and 'clean' look identical on every stage spawn"
+    )
 
 
 def test_a_foreign_subagent_is_not_this_hooks_business(tmp_path):
@@ -232,6 +259,49 @@ def test_break_glass_proceeds_and_is_audited(tmp_path):
     log = (tmp_path / "gate-overrides.log").read_text(encoding="utf-8")
     assert "gate:plugin-release" in log
     assert "captain ordered: release cut is queued" in log
+
+
+def test_break_glass_is_never_told_the_stage_was_refused(tmp_path):
+    """The finding is stated to everyone; the OUTCOME is stated by the branch that took it. An
+    operator who bypassed must not read "the stage is refused" one line above the spawn going
+    through, and must not be handed a remedy for a stop that did not happen."""
+    executing, repo = stale_pair(tmp_path)
+
+    result = run_hook(
+        spawn_payload(),
+        project=tmp_path,
+        env={**drift_env(executing, repo), "GATE_BYPASS": "captain ordered: release cut is queued"},
+    )
+
+    assert "STALE" in result.stderr, "the finding is still reported"
+    assert "refused" not in result.stderr.lower(), result.stderr
+    assert ".claude-plugin/plugin.json" not in result.stderr, (
+        "the hook's own remedy block belongs to the branch that actually stopped the spawn"
+    )
+
+
+def test_the_halt_outranks_auto_approval_in_an_unattended_run(tmp_path):
+    """`--auto` arms `scripts/hook_autoapprove.sh`, a matcher-less PreToolUse hook that answers the
+    very same stage spawn with `permissionDecision: allow`. Unattended is exactly where stale code
+    runs unwatched, so the precedence between the two is asserted rather than assumed: Claude Code
+    documents exit 2 on a blocking event as the decision whether or not a sibling printed JSON, and
+    this drives both hooks over one payload the way hooks.json does. It goes red if the halt ever
+    stops out-ranking the allow, and the allow assertion is what keeps it from proving nothing."""
+    executing, repo = stale_pair(tmp_path)
+    (tmp_path / ".avenger-auto").write_text(str(time.time()), encoding="utf-8")
+    payload = spawn_payload()
+    env = drift_env(executing, repo)
+
+    approval = run_autoapprove(payload, project=tmp_path, env=env)
+
+    assert approval.returncode == 0, approval.stderr
+    decision = json.loads(approval.stdout)["hookSpecificOutput"]["permissionDecision"]
+    assert decision == "allow", f"the competing hook did not allow this spawn: {approval.stdout}"
+
+    halt = run_hook(payload, project=tmp_path, env=env)
+
+    assert halt.returncode == STALE_EXIT, halt.stderr
+    assert "STALE" in halt.stderr
 
 
 def test_hooks_json_runs_the_halt_at_an_event_that_can_actually_block():
