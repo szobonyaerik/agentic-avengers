@@ -678,6 +678,23 @@ def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
 #: and every finding would count as a product defect.
 VERIFIER_KIND_REAL = {"code": True, "gamed-test": False, "coverage-gap": False}
 
+#: What `recorded_by` says about every defect THIS pipeline writes: a stage caught it and the same
+#: stage emitted it as it ran. There is no route through this module a person reaches by hand — the
+#: `defect` command is run by the stage that caught something, and the other two routes read an
+#: artifact a script produced — so `stage` is a statement about the writer, never an inference about
+#: the caller. A person transcribing a defect after the fact is a different producer: they use
+#: firstmate's own CLI and state `operator` there, which is why nothing here can emit that value.
+#:
+#: It answers a different question from `found_by`, and neither is derived from the other:
+#: `found_by` is WHAT caught the defect, this is WHO wrote it down.
+RECORDED_BY = "stage"
+
+#: The keys of a defect entry this pipeline will give up rather than lose the entry over.
+#: `recorded_by` landed in firstmate's record on 2026-08-20; the record's key surface is closed, so
+#: an older firstmate refuses an entry carrying it. Losing the provenance of one defect is a lost
+#: measurement; losing the defect is a lost defect, and measurement is never allowed to cost that.
+DEFECT_OPTIONAL_FIELDS = ("recorded_by",)
+
 
 def record_defect(
     phase: str,
@@ -695,18 +712,24 @@ def record_defect(
     This is the field that showed the running suite catching 3 of 15 real defects while mutation,
     probes, review and direct execution caught the rest — and it is the one fact in the whole record
     that cannot be recovered after the run.
+
+    Every defect this module writes also carries `recorded_by: stage` (`RECORDED_BY`), because every
+    route here IS a stage emitting as it runs. Left off, a phase's defects would be indistinguishable
+    from the phases whose defects a person transcribed afterwards — the two phases that were, and
+    whose provenance survived only as prose, which is the whole reason the field exists.
     """
     fields: dict[str, object] = {
         "id": identifier,
         "summary": _clean(summary) or identifier,
         "real": bool(real),
         "found_by": found_by,
+        "recorded_by": RECORDED_BY,
         "stage_reached": stage_reached,
         "severity": severity,
     }
     if found_by == "other":
         fields["found_by_note"] = _clean(found_by_note) or "unclassified"
-    return sink.add(phase, "defects", **fields)
+    return sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)
 
 
 def record_verifier_findings(phase_dir: str, verdict_path: str) -> int:

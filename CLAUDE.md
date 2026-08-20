@@ -796,7 +796,16 @@ phase directory is still uncommitted · **which stage found each defect** (`veri
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
 defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
-inline prose. **Off unless `fm-pipeline-metrics.sh` is on `PATH` or `AVENGER_METRICS_CMD` names it**,
+inline prose. **`recorded_by` is a different question — WHO wrote the defect down, never derived from
+what caught it — and every route in `pipeline_metrics.py` answers `stage`**, because every one of them
+IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]`, held
+single by test so a fourth route cannot land unstamped, and nothing here can emit `operator` (a person
+transcribing afterwards is a different producer, using firstmate's own CLI). Its **third answer is
+absence**, meaning the record predates the field, which is why an unstamped emission would read as one
+of the two phases whose defects were entered by hand. Nothing back-fills. A firstmate too old to know
+the field refuses the whole entry over it — its key surface is closed — so the sink retries once
+without the keys the caller named droppable and the defect lands with its provenance simply absent:
+**a lost measurement, never a lost defect, and never a blocked phase.** **Off unless `fm-pipeline-metrics.sh` is on `PATH` or `AVENGER_METRICS_CMD` names it**,
 and an unconfigured run says so once rather than recording nothing in silence; `AVENGER_METRICS_OFF=1`
 disables it. opencode records everything its adapter drives, minus skill loads (no read/spawn event).
 
