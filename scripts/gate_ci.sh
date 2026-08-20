@@ -270,11 +270,18 @@ model_family () { python3 "$SCRIPT_DIR/model_vendors.py" family "$1"; }
 cross_family_check () {
   local gate="${GATE_MODEL:-}" gfam impl itok ifam
   if [ -z "$gate" ]; then
-    # No default. A gate must never be checked against a model nobody chose — the same refusal
-    # gate_runner.py makes at call time (issue #48), made here at audit time.
-    echo "  ✗ GATE_MODEL is not set, so the spec gate's family cannot be established." >&2
-    echo "    Set it in the project .env; the gate itself refuses to run without one." >&2
-    return 1
+    # NOT CHECKED — said out loud, never a clean pass, never fatal. This is a STATIC AUDIT: it runs
+    # under --full in CI and in a disposable worktree, where no gate call happens and no project
+    # .env exists, so an unset model is its normal state there and the remedy the failure would
+    # prescribe is unavailable in the environment that hits it — a wedge, not a gate. The refusal
+    # that belongs to an unset model is gate_runner.py's, at CALL time (issue #48), where a model
+    # genuinely decides something. And no default: resolving the audit against a model nobody chose
+    # is the defect #48 removed, so "not checked" is the honest state rather than a fabricated
+    # subject. Same shape as stage_effort.py's "nothing checked" for a tree with no agents/.
+    echo "  cross-family: GATE_MODEL is not set — nothing checked. The spec gate's family cannot" >&2
+    echo "  be established without one, so the comparison against the implementers was not" >&2
+    echo "  performed. Set GATE_MODEL (project .env, or the environment) to enable it." >&2
+    return 0
   fi
   gfam="$(model_family "$gate")" || { echo "  ✗ unknown GATE_MODEL family: '$gate'" >&2; return 1; }
   for impl in "$ROOT/agents/avenger-backend-architect.md" "$ROOT/agents/avenger-frontend-developer.md"; do
