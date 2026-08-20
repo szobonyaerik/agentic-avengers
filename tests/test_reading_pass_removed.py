@@ -60,15 +60,28 @@ INSTRUCTION_DIRS = ("agents", "skills", "commands", "prompts")
 #: suite. A file earns a place only if it states the removal in the affirmative ("the third job WAS
 #: X, and it is gone"); a file that states it in the negative is handled by `NEGATED` below and stays
 #: governed.
+#:
+#: The two documents the Verifier itself runs on - `agents/avenger-verifier.md` and
+#: `skills/verifier-triage/SKILL.md` - are deliberately NOT here. They sat in this set and matched
+#: neither pattern, so they were exempted for nothing while being the likeliest place for the
+#: instruction to come back: a planted "read the phase tests for gamed patterns" landed green in
+#: both, and red in every other agent definition. They state the removal in the negative, which
+#: `NEGATED` already handles, so they earn no place by the rule above.
 NARRATIVE = {
     "CLAUDE.md",
     # The historical transformation brief, superseded by pipeline-conventions per its own
     # frontmatter. It records what the pipeline WAS at each step; a stage does not run on it.
     "AVENGERS.md",
     "skills/pipeline-conventions/SKILL.md",
-    "skills/verifier-triage/SKILL.md",
-    "agents/avenger-verifier.md",
 }
+
+#: Where the instruction would be re-acquired if it came back: the documents the Verifier stage
+#: actually runs on. Named here so the exemption set cannot quietly grow to cover them again -
+#: `offenders_matching` skips a NARRATIVE file whole, and these two must never be skipped.
+VERIFIER_STAGE_INSTRUCTIONS = (
+    "agents/avenger-verifier.md",
+    "skills/verifier-triage/SKILL.md",
+)
 
 #: A negation of THIS verb - "**No stage** reads the suite for gamed tests", "**Nothing** reads the
 #: suite for gamed tests". Those are the removal being stated, not a stage being instructed, and
@@ -214,6 +227,23 @@ def test_no_stage_is_instructed_to_do_the_reading_itself() -> None:
     """The gap is left open on purpose. A stage told to read the suite for gamed patterns would be
     same-family self-review under the removed gate's name - every subagent here is Anthropic."""
     assert offenders_matching(READS_THE_SUITE) == []
+
+
+def test_the_verifier_own_stage_instructions_are_governed_not_exempted() -> None:
+    """The exemption is per FILE, so the one it must never cover is the Verifier's own brief.
+
+    Both of these sat in `NARRATIVE` while matching neither pattern - exempted for nothing, and
+    exempted exactly where the instruction would be written if it came back. Planting "read the
+    phase tests for gamed patterns" in either passed the guard above while failing in every other
+    agent definition, which is the whole-file-waved-through failure `NARRATIVE`'s own comment warns
+    about. They are governed, and this pins them there."""
+    for rel in VERIFIER_STAGE_INSTRUCTIONS:
+        assert (ROOT / rel).is_file(), f"{rel} is missing"
+        assert rel not in NARRATIVE, (
+            f"{rel} is the document the Verifier runs on - exempting it lets the removed "
+            f"instruction come back with a green suite"
+        )
+        assert rel in {str(p.relative_to(ROOT)) for p in governed_files()}, f"{rel} is not scanned"
 
 
 def test_the_guard_catches_the_inflected_forms_an_instruction_is_actually_written_in() -> None:
