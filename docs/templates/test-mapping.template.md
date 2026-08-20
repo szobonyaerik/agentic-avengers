@@ -4,14 +4,13 @@ phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 stage: test-mapping
 created: YYYY-MM-DD
-readers: avenger-verifier @ per phase; verifier bundle @ changed specs only
+readers: avenger-verifier @ per phase
 ---
 
-<!-- The TABLE and nothing else. This file is re-bundled to the cross-family reviewer on every
-     verifier attempt, so a phase pays for it once per attempt — which is why mutation evidence,
-     route-back history, build order, deviations and tests covering no requirement live in
-     test-evidence.md beside it, opened on route-back only. Nothing is deleted; the sidecar is
-     committed.
+<!-- The TABLE and nothing else. This file is read on every verifier attempt, so a phase pays for
+     it once per attempt — which is why mutation evidence, route-back history, build order,
+     deviations and tests covering no requirement live in test-evidence.md beside it, opened on
+     route-back only. Nothing is deleted; the sidecar is committed.
 
      `binding:` says whether a requirement gets a test and where; `level` says how it is driven.
      Every requirement not marked `binding: none` appears in some row. A journey is one row at

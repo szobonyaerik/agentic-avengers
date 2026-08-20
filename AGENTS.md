@@ -92,8 +92,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    event and renders it from the pointer in the agent prompt.
 3a. **The spec gate is also the only cost gate.** `scripts/subprocess_check.py` walks `tests/` for
    spawners lacking `@pytest.mark.subprocess("<why>")` — no model, both modes, on every spec write via
-   `hook_spec_gate.sh`. It is the only stage that can see cost: the observe pass, cross-family review and
-   verification all read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
+   `hook_spec_gate.sh`. It is the only stage that can see cost: the spec gate's observe pass and
+   verification both read for *correctness*, and an expensive test is not incorrect. Not a wall-clock
    budget on purpose — one unchanged suite measured 66.43s to 137.76s across seven runs.
    `SUBPROC_CHECK_PATHS` points it at the real root when a project's tests are not at `tests/`; an
    absent root is CLEAN but reported on stderr, never a silent pass. **It is diff-scoped** (3e):
@@ -115,7 +115,7 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    through `spec_gate_state` like every other stamp — the remedy no longer exists, and
    a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
    `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
-   `breaker`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
+   `breaker`, `execution-evidence`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
    all, and named on stderr when it applies — and `bypass_log.sh` **exits 2 (blocking) when it
    cannot append**, so an override nobody could log is not an override. **A phase closed with a recorded
@@ -184,19 +184,29 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
    `@avenger-verifier` passes it; from then they are **locked** and weakening one needs
-   re-verification (adding is always allowed). **The Verifier is narrowed to three jobs** — coverage
-   per `binding:`, reading a green suite for gamed tests, and adversarial execution on secrets,
-   resource lifetimes and concurrency invariants — because 26% of its measured findings were
+   re-verification (adding is always allowed). **The Verifier is narrowed to TWO jobs** — coverage
+   per `binding:`, and adversarial execution on secrets, resource lifetimes and concurrency
+   invariants — because 26% of its measured findings were
    bookkeeping about its own stamps, which `scripts/verifier_precheck.py` now decides mechanically on
    every commit, diff-scoped to the phases that commit touches (the whole phase at handover, and
    everything under `gate_ci.sh --full`). **Verification is capped at 3 attempts per phase** (`verifier_attempts.py`): 16 of
    20 measured re-attempts were the Verifier routing back to itself. At the cap, carry the remainder
-   as known-open, waive it, or escalate. Because the code's author wrote its judge, the
-   **tests get read** over a bounded review set — tests mapped to the phase ∪ test files it changed,
-   plus directly referenced helpers — for tautological / implementation-coupled / missing-negative
-   patterns, and `wrong-gamed test` / `coverage gap` route back alongside `code`. `@avenger-verifier`
-   picks the set and persists `verdict.json`; the judgement runs cross-family via
-   `scripts/verifier_review.sh` (`$VERIFIER_GATE_MODEL`), because every subagent here is Anthropic. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
+   as known-open, waive it, or escalate. The third job it used to have — a dedicated reader for
+   gamed tests — is gone: the **cross-family reading pass** returned GO with zero findings on a phase
+   with real defects, and **nothing inherits it**, because a stage reading its own family's suite is
+   self-review under the removed gate's name. What that leaves uncovered is said rather than implied:
+   gamed tests have no dedicated reader, and the partial cover is the mutation gate (advisory,
+   deterministic, the one signal that has actually caught them here), `skills/tdd` naming the
+   anti-patterns to the implementer *while it writes*, and the human spec-review setting criteria a
+   gamed test has to contradict. `gamed-test` stays in the verdict schema for one raised in passing.
+   What
+   replaced it is proof the stage RAN: every command `@avenger-verifier` relies on goes through
+   `scripts/verifier_evidence.py record`, and `verdict.json` carries `execution.chain` naming that
+   transcript — a pass with no transcript, or one whose chain does not match, is refused by the hook
+   and by CI. Those logs are committed, so a command's output is **redacted and capped before it is
+   written** (`scripts/evidence_redaction.py`, both marked visibly, digest taken over the stored
+   bytes); redaction failing writes no log and records no run, and redaction by pattern is a
+   reduction of risk, not a guarantee. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
    · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
    unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
 4c. **A `status: done` stamp is not a completion signal by itself** (issue #68). Its own implementer
@@ -238,7 +248,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `binding: e2e` requirements are *phase*-level and live with the phase's tests; this ceiling governs
    `tests/e2e/<feature>/` only.
 5. **Phases run in dependency/risk order**, one at a time, fully through build-and-verify.
-6. **Fresh model ≠ author** — every per-phase gate runs on a cross-family model (family ≠ author).
+6. **Fresh model ≠ author, where a model gate still exists.** The model that *forms a gate's
+   judgement* must not share the implementer's family. Every subagent here is Anthropic, so no agent
+   is itself cross-family: the surviving model gate is the **spec gate**, and CI asserts its family
+   statically against `$GATE_MODEL` (unset = not checked, said out loud, never a clean pass).
    The one sanctioned exception is the feature-close `no-mistakes` ship gate (`.no-mistakes.yaml`),
    documented in `skills/pipeline-conventions/SKILL.md`.
 7. **Gates fail closed, and a stop names its own cause.** A gate that cannot reach a verdict (incl.
@@ -258,8 +271,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    missing cases and the phase routes back to the implementer. Not 100% on purpose. Baseline-guarded:
    a failing suite would otherwise score 1.0, since a mutant counts as killed whenever tests fail.
    **`advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: reports, never
-   blocks) · `enforce` (fails closed). An extra signal, **not** the independence mechanism — that is
-   the Verifier's test-quality review. When off, no mutation tool runs anywhere.
+   blocks) · `enforce` (fails closed). An extra signal, and the pipeline's **only** systematic
+   signal about non-discriminating tests now that the cross-family reading pass is gone — still
+   advisory, still not a wall, and named as partial cover rather than a replacement. When off, no
+   mutation tool runs anywhere.
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
    and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
    learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
@@ -337,7 +352,8 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
                                           # then sets status: done LAST -> mapping + phase suite
                                           # checked; a premature stamp is REVERTED (4c)
 # once all specs in the phase are green:
-@avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
+@avenger-verifier         <phase>         # suite + R-trace per `binding:` + ADVERSARIAL EXECUTION,
+                                          # both recorded through verifier_evidence.py
                                           # -> writes verdict.json; on pass the phase's tests LOCK
 @avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
                                           # then NOT optional: -> writes breaker.json, without which
@@ -395,14 +411,15 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
-| `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It does **not** route `VERIFIER_GATE_MODEL`: there are three gate models, not one. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
+| `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
-| `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
-| `VERIFIER_SCOPE` | unset | `full` sends the Verifier the whole phase; by default the bundle carries only the specs whose text changed since the last completed review, names the rest as carried forward, and merges their findings back (an open carried finding still forces NO-GO). A spec still holding an open finding is never carried — a finding fixed in a test file changes no spec text, so carrying it would mean nothing ever regenerates it |
 | `GATE_CALL_TIMEOUT` | `300` | seconds the provider call gets. The gate hooks refuse to run if their `hooks.json` budget cannot outlive it plus headroom — raise this and raise `hooks/hooks.json` with it |
+| `GATE_MIN_LATENCY_MS` | `250` | milliseconds below which a **reached** gate verdict is presumed not to have run and is refused (`cause=implausible-latency`). One measured phase recorded a 4 ms GO from a model gate and consumed it as a pass. `0` disables the check, loudly |
+| `VERIFIER_EVIDENCE_TIMEOUT` | `1800` | seconds one command recorded through `scripts/verifier_evidence.py` may run before its process group is killed |
+| `EVIDENCE_LOG_MAX_BYTES` | `262144` | bytes of a recorded command's output stored in its evidence log. The log is committed, so it is redacted (`scripts/evidence_redaction.py`) then capped, with a visible marker naming what was dropped; the digest covers the stored bytes |
+| `EVIDENCE_REDACT_EXTRA` | unset | one extra regex redacted out of an evidence log. An invalid one writes no log and records no run — never a silent skip, never a raw-bytes fallback |
 | `GATE_MODEL_FAMILY` | unset | declare a gate model's vendor family when `scripts/model_vendors.py` has no entry for it; without it an unknown vendor is refused, never guessed |
 | `GATE_RUNNER_SHA256` | unset | pin the gate runner by content digest. Callers already refuse a runner that cannot identify itself; this refuses any but the exact one named |
-| `VERIFIER_SRC_LIMIT` | `400000` | max chars of **review-set source** sent to that model — it does *not* bound the whole bundle, whose specs, test-mappings and test output are extra and uncounted. A set **over** the cap is refused (exit 2) *before* the model is called — a truncated review is an unreviewed phase. Raise it only to what the gate model can actually read, or split the set |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |

@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gate_errors import GateError, classify_provider_failure  # noqa: E402
+from gate_plausibility import FloorMisconfigured, implausible, provider_floor_ms  # noqa: E402
 from gate_timeouts import call_timeout  # noqa: E402
 from model_vendors import UnknownVendor, model_family  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
@@ -357,6 +358,13 @@ def main():
             except OSError as exc:
                 raise GateError("io", f"cannot read the gate's inputs: {exc}") from exc
 
+        # Read BEFORE the call, so a malformed floor is a configuration failure the operator gets
+        # at once rather than a surprise thrown away after a paid round trip.
+        try:
+            floor = provider_floor_ms()
+        except FloorMisconfigured as exc:
+            raise GateError("config", str(exc)) from exc
+
         call = call_opencode if args.provider == "opencode" else call_openrouter
         raw = call(args.model, rubric, artifact)
         verdict = extract_verdict(raw, args.json_key)
@@ -367,6 +375,15 @@ def main():
                 f"'{args.json_key}'",
                 raw,
             )
+        # A REACHED verdict whose latency is impossible for this model did not come from this model.
+        # Phase 10 records a 4 ms GO — less time than the provider CLI takes to start — and it was
+        # consumed as a pass. Applied to every reached verdict, pass and fail alike: a NO-GO in 4 ms
+        # did not run either, and the two stops name different causes. Deliberately NOT applied to
+        # the failure paths above, which never reached a provider and record the near-zero latency
+        # that says so.
+        why = implausible(elapsed_ms(), floor=floor, model=args.model, provider=args.provider)
+        if why is not None:
+            raise GateError("implausible-latency", why, raw)
     except GateError as e:  # any failure is a hard stop, and it says which failure
         # The cause PR 1 gave it: a timeout kill, a 402 and an unreachable provider are three
         # different numbers in the record, not one "it failed". Recorded after the stop is rendered.

@@ -124,7 +124,6 @@ def test_a_path_with_no_phase_resolves_to_none():
 def test_the_stage_is_read_off_the_rubric_it_judges_against():
     assert metrics.stage_from_rubric("prompts/spec-gate-observe.md") == "spec-gate-observe"
     assert metrics.stage_from_rubric("prompts/spec-gate-triage.md") == "spec-gate-triage"
-    assert metrics.stage_from_rubric("prompts/verifier-review.md") == "verifier"
     assert metrics.stage_from_rubric(None) == "unknown"
 
 
@@ -665,20 +664,25 @@ def test_plugin_version_recording_never_fails_the_phase_open(stub_sink, monkeypa
 
 
 def declared_finding_kinds() -> set[str]:
-    """The finding vocabulary the cross-family reader is actually told to emit."""
-    prompt = (ROOT / "prompts" / "verifier-review.md").read_text(encoding="utf-8")
-    match = re.search(r'"kind"\s*:\s*"([a-z|-]+)"', prompt)
-    assert match, "prompts/verifier-review.md no longer declares a `kind` vocabulary"
+    """The finding vocabulary the verdict schema is actually told to emit.
+
+    Read from `skills/verifier-triage`, which owns that schema. It used to be read from the
+    cross-family reader's prompt; that pass is gone, and the schema is where the vocabulary lived
+    all along — the prompt restated it.
+    """
+    schema = (ROOT / "skills" / "verifier-triage" / "SKILL.md").read_text(encoding="utf-8")
+    match = re.search(r'"kind"\s*:\s*"([a-z|-]+)"', schema)
+    assert match, "skills/verifier-triage no longer declares a `kind` vocabulary"
     return set(match.group(1).split("|"))
 
 
 def test_every_finding_kind_the_verifier_emits_has_a_recorded_meaning():
     """Keyed on the emitted vocabulary, not on prose triage labels.
 
-    An unmatched kind falls back to `real=True`, so a map keyed on words the reader never emits
+    An unmatched kind falls back to `real=True`, so a map keyed on words the Verifier never emits
     records every gamed test and every coverage gap as a genuine product defect — destroying the
-    split `found_by` exists for. This asserts against the schema in the prompt itself, so changing
-    the verifier's vocabulary moves the map instead of silently invalidating it.
+    split `found_by` exists for. This asserts against the verdict schema itself, so changing the
+    verifier's vocabulary moves the map instead of silently invalidating it.
     """
     assert set(metrics.VERIFIER_KIND_REAL) == declared_finding_kinds()
 
@@ -992,7 +996,11 @@ def run_gate(project: Path, spec: Path, provider: str, stdout=None) -> subproces
          "--rubric", str(rubric), "--target", str(spec), "--author-family", "anthropic",
          "--model", "deepseek/deepseek-chat"],
         text=True, check=False,
-        env={**os.environ, "PATH": f"{binary.parent}:{os.environ['PATH']}", "HOME": str(project)},
+        # The stub answers in milliseconds — what gate_plausibility.py refuses as a call that
+        # cannot have happened. Switched off here so these tests pin the metrics emission rather
+        # than the floor; tests/test_gate_plausibility.py drives the floor itself end to end.
+        env={**os.environ, "PATH": f"{binary.parent}:{os.environ['PATH']}", "HOME": str(project),
+             "GATE_MIN_LATENCY_MS": "0"},
         **streams,
     )
 

@@ -64,7 +64,7 @@ def make_plugin(root: Path, version: str = "1.0.0", *, extra_files: dict[str, st
         ("skills", "example-skill/SKILL.md", "# example skill\n"),
         ("commands", "example-command.md", "# example command\n"),
         ("prompts", "example-prompt.md", "# example prompt\n"),
-        ("scripts", "verifier_review_check.py", "PARTIAL_MARKERS = ['fixed']\n"),
+        ("scripts", "verifier_evidence.py", "PARTIAL_MARKERS = ['fixed']\n"),
         ("hooks", "hooks.json", "{}\n"),
         ("docs/templates", "env.example", "# example env\n"),
     ):
@@ -166,7 +166,7 @@ def test_a_stale_cached_copy_and_a_fixed_repo_report_different_versions(tmp_path
     stale_cache = make_plugin(tmp_path / "cache" / "0.10.2", version="0.10.2")
     fixed_repo = make_plugin(
         tmp_path / "repo", version="0.10.3",
-        extra_files={"scripts/verifier_review_check.py": "PARTIAL_MARKERS = ['nothing-stale-here']\n"},
+        extra_files={"scripts/verifier_evidence.py": "PARTIAL_MARKERS = ['nothing-stale-here']\n"},
     )
 
     assert pr.plugin_version(stale_cache) == "0.10.2"
@@ -182,8 +182,8 @@ def test_content_hash_ignores_pycache_and_pyc(tmp_path):  # noqa: F811
 
     cache_dir = tmp_path / "scripts" / "__pycache__"
     cache_dir.mkdir()
-    (cache_dir / "verifier_review_check.cpython-311.pyc").write_bytes(b"\x00\x01")
-    (tmp_path / "scripts" / "verifier_review_check.pyc").write_bytes(b"\x00\x01")
+    (cache_dir / "verifier_evidence.cpython-311.pyc").write_bytes(b"\x00\x01")
+    (tmp_path / "scripts" / "verifier_evidence.pyc").write_bytes(b"\x00\x01")
 
     assert pr.content_hash(tmp_path) == baseline
 
@@ -192,7 +192,7 @@ def test_content_hash_changes_when_a_shipped_file_changes(tmp_path):  # noqa: F8
     make_plugin(tmp_path)
     before = pr.content_hash(tmp_path)
 
-    (tmp_path / "scripts" / "verifier_review_check.py").write_text(
+    (tmp_path / "scripts" / "verifier_evidence.py").write_text(
         "PARTIAL_MARKERS = ['fixed', 'also this']\n", encoding="utf-8"
     )
 
@@ -277,8 +277,8 @@ def test_check_detects_drift_red_then_green(tmp_path):  # noqa: F811
 
     fresh_cache = make_plugin(
         tmp_path / "cache" / "0.10.3", version="0.10.3",
-        extra_files={"scripts/verifier_review_check.py": (
-            (repo / "scripts" / "verifier_review_check.py").read_text(encoding="utf-8")
+        extra_files={"scripts/verifier_evidence.py": (
+            (repo / "scripts" / "verifier_evidence.py").read_text(encoding="utf-8")
         )},
     )
     green = pr.check(executing=fresh_cache, source=repo)
@@ -303,7 +303,7 @@ def test_cut_copies_only_the_shipped_payload(tmp_path):  # noqa: F811
     target = pr.cut(repo, cache_root)
 
     assert target == cache_root / "1.2.3"
-    assert (target / "scripts" / "verifier_review_check.py").is_file()
+    assert (target / "scripts" / "verifier_evidence.py").is_file()
     assert (target / "hooks" / "hooks.json").is_file()
     assert (target / "docs" / "templates" / "env.example").is_file()  # shipped payload
     assert not (target / "docs" / "notes.md").exists()  # sibling to templates — not shipped
@@ -336,7 +336,7 @@ def test_cut_refuses_to_overwrite_a_version_with_different_content(tmp_path):  #
     cache_root = tmp_path / "cache"
     pr.cut(repo, cache_root)
 
-    (repo / "scripts" / "verifier_review_check.py").write_text(
+    (repo / "scripts" / "verifier_evidence.py").write_text(
         "PARTIAL_MARKERS = ['changed but version was not bumped']\n", encoding="utf-8"
     )
 
@@ -465,7 +465,7 @@ def test_check_compares_committed_head_not_working_tree(tmp_path):  # noqa: F811
     baseline = pr.check(executing=cached, source=repo)
     assert baseline.status == "fresh" and baseline.dirty is False
 
-    (repo / "scripts" / "verifier_review_check.py").write_text(
+    (repo / "scripts" / "verifier_evidence.py").write_text(
         "PARTIAL_MARKERS = ['fixed', 'mid-edit, not committed yet']\n", encoding="utf-8"
     )
 
@@ -506,7 +506,7 @@ def test_check_falls_back_to_working_tree_hash_for_a_non_git_source(tmp_path):  
     result = pr.check(executing=cached, source=repo)
     assert result.status == "fresh" and result.dirty is False
 
-    (repo / "scripts" / "verifier_review_check.py").write_text("PARTIAL_MARKERS = ['changed']\n", encoding="utf-8")
+    (repo / "scripts" / "verifier_evidence.py").write_text("PARTIAL_MARKERS = ['changed']\n", encoding="utf-8")
     edited = pr.check(executing=cached, source=repo)
     assert edited.status == "stale" and edited.dirty is False  # no HEAD concept — same as before
 
@@ -514,7 +514,7 @@ def test_check_falls_back_to_working_tree_hash_for_a_non_git_source(tmp_path):  
 def test_cli_check_prints_a_dirty_note_but_stays_exit_0(tmp_path):  # noqa: F811
     repo = git_repo(tmp_path / "repo", version="1.0.0")
     cached = pr.cut(repo, tmp_path / "cache")
-    (repo / "scripts" / "verifier_review_check.py").write_text(
+    (repo / "scripts" / "verifier_evidence.py").write_text(
         "PARTIAL_MARKERS = ['fixed', 'wip']\n", encoding="utf-8"
     )
 
@@ -891,7 +891,7 @@ def test_a_checkout_nested_below_the_git_top_level_is_not_a_false_stale(tmp_path
     cached = pr.cut(nested, tmp_path / "cache")
     assert pr.check(executing=cached, source=nested).status == "fresh"
 
-    (nested / "scripts" / "verifier_review_check.py").write_text("PARTIAL = ['wip']\n", encoding="utf-8")
+    (nested / "scripts" / "verifier_evidence.py").write_text("PARTIAL = ['wip']\n", encoding="utf-8")
     result = pr.check(executing=cached, source=nested)
     assert result.status == "fresh" and result.dirty is True
 

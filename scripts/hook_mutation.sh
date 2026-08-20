@@ -15,8 +15,9 @@
 #   off            - skipped entirely; no mutation tool runs anywhere.
 #   advisory (DEFAULT) - runs everything and reports the score and the missing cases, never blocks.
 #   enforce        - below threshold or unscorable STOPS the phase.
-# Mutation is an EXTRA signal, not the pipeline's independence mechanism — independence is the
-# Verifier's test-quality review (agents/avenger-verifier.md). Only `enforce` fails closed.
+# Mutation is an EXTRA signal. With the cross-family reading pass gone it is the only systematic
+# signal about non-discriminating tests — partial cover, not a dedicated reader. Only `enforce`
+# fails closed.
 # The Verifier invokes this when the policy is on; it is not a standalone quality bar.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (gate_runner, prompts, bypass_log)
@@ -39,7 +40,7 @@ MUTATION_POLICY="${MUTATION_POLICY:-advisory}"
 case "$MUTATION_POLICY" in
   enforce|advisory) ;;
   off)
-    echo "mutation: skipped (MUTATION_POLICY=off). Independence rests on the Verifier's test-quality review." >&2
+    echo "mutation: skipped (MUTATION_POLICY=off). No systematic signal about non-discriminating tests remains." >&2
     exit 0 ;;
   *)
     echo "mutation: MUTATION_POLICY='$MUTATION_POLICY' is not one of enforce|advisory|off (fail closed)" >&2

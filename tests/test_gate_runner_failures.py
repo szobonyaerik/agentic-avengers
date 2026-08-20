@@ -59,6 +59,11 @@ def gate(tmp_path: Path):
             # An empty project dir, so no repo .env leaks into the run.
             "CLAUDE_PROJECT_DIR": str(tmp_path),
             "PIDFILE": str(tmp_path / "grandchild.pid"),
+            # The stub answers in milliseconds, which is precisely what
+            # `scripts/gate_plausibility.py` refuses as a call that cannot have happened. That
+            # refusal has its own end-to-end tests (tests/test_gate_plausibility.py); here it is
+            # switched off so these tests keep pinning the failure taxonomy rather than the floor.
+            "GATE_MIN_LATENCY_MS": "0",
             **env_over,
         }
         return subprocess.run(
@@ -164,7 +169,7 @@ def test_the_runner_refuses_a_bare_cli_invocation_with_no_model_before_any_provi
 ) -> None:
     """The runner's own refusal, proven at the CLI and through no caller.
 
-    Every in-repo caller (`hook_spec_gate.sh`, `verifier_review.sh`, `gate_ci.sh`) resolves a model
+    Every in-repo caller (`hook_spec_gate.sh`, `gate_ci.sh`) resolves a model
     from its own documented default before it ever spawns this script, so nothing in the pipeline
     reaches this branch today and no caller-driven test can cover it. It is kept as defence in depth
     for a future direct caller, and defence nothing exercises is a claim — so this invokes

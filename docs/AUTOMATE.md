@@ -30,8 +30,8 @@ proceed, or follow `route_back` and retry the failed stage. One call replaces th
 task-analyst → solution-architect → implementation-planner → spec-writer
   → (the spec gate: observe → triage → decide, auto)              # per spec
   → per phase, per spec: backend/frontend-architect (tests + code, test-first)
-  → avenger-verifier (cross-family: suite + trace + bounded test review → verdict.json,
-                       LOCKS the suite)  → handover
+  → avenger-verifier (suite + trace per `binding:` + adversarial execution, both recorded
+                       through verifier_evidence.py → verdict.json, LOCKS the suite)  → handover
   → next phase … → e2e-author (once, after the final phase)
   → ship gate (no-mistakes: lint, docs, push, PR, CI) → retrospective triage
 ```
@@ -42,8 +42,9 @@ Route-backs it must honor (all already emitted by the gates):
   diff once it has been implemented (`commands/avenger-run.md` §6 names the cases that still owe a
   full pass).
 - verifier code failure → back to `avenger-backend-architect`.
-- verifier **test-quality** finding (tautological / off-seam / untraced requirement) → back to the
-  implementer to ADD or rewrite its own not-yet-locked tests. Verification is capped at **3 attempts
+- verifier **coverage gap** (a requirement no row covers, judged per `binding:`) → back to the
+  implementer to ADD the missing case. Nothing reads the suite for gamed tests any more: that pass
+  was removed and nothing inherits it (`skills/verifier-triage`). Verification is capped at **3 attempts
   per phase** (`scripts/verifier_attempts.py`); at the cap the remainder is carried as known-open in
   `handover.md`, waived, or escalated — a fourth attempt is not one of the three.
 - breaker counterexample, or a surviving mutant under `MUTATION_POLICY=enforce` → back to the
@@ -197,14 +198,13 @@ fail-closed gate self-halts the run instead of shipping junk.
 ```bash
 export AUTHOR_FAMILY=anthropic
 export GATE_MODEL=opencode-go/deepseek-v4-pro     # the spec gate's observe pass, and its triage pass unless GATE_TRIAGE_MODEL is set
-export VERIFIER_GATE_MODEL=google/gemini-3.1-pro-preview   # the Verifier's review — its own default
 export GATE_PROVIDER=opencode
 export SPEC_REVIEW_MODE=auto                        # no human spec-review
 # OpenCode auth present (opencode-go creds). For the git floor (pre-commit/CI) instead:
 #   GATE_PROVIDER=openrouter + OPENROUTER_API_KEY + GATE_MODEL=openrouter/deepseek/deepseek-v4-pro
-# There are THREE gate models, not one — GATE_MODEL does not route them all. GATE_TRIAGE_MODEL
-# follows GATE_MODEL when unset; VERIFIER_GATE_MODEL does NOT, and keeping it on a third family is
-# the point of it. All three are documented together in docs/templates/env.example.
+# There are TWO gate models: GATE_MODEL and GATE_TRIAGE_MODEL, which follows it when unset. The
+# Verifier's cross-family reading pass was removed, so the spec gate is the only model gate left.
+# Both are documented together in docs/templates/env.example.
 ```
 
 ### Headless Claude Code (print mode)
@@ -236,9 +236,11 @@ So an autonomous in-session run that somehow slipped a gate still gets caught at
 - Every gate is **cross-family + fail-closed** → stops on missing key, unreachable model, non-JSON, or
   same-family.
 - Every failure **routes back** to a specific stage rather than proceeding.
-- **The Verifier reviews the tests, not just the run** — the one independent judgement on a suite
-  whose author also wrote the code, on a bounded review set, persisted to `verdict.json`. After it
-  passes, the suite is **locked**: automation can't reshape a test to go green.
+- **The Verifier must prove it ran** — coverage judged per `binding:` and adversarial execution
+  against a real collaborator, both recorded through `verifier_evidence.py` and named by
+  `verdict.json`; a pass with no transcript is refused. Nothing reads the suite for gamed tests: that
+  pass was removed and nothing inherits it (partial cover: mutation, `skills/tdd`, spec-review).
+  After the Verifier passes, the suite is **locked**: automation can't reshape a test to go green.
 - **Break-glass** is the only override and it is logged + visible + recorded in `handover.md`.
 - The **git floor** re-checks at commit/PR.
 

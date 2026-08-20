@@ -3,7 +3,7 @@
 SRC_SETS in `scripts/install.sh` is the whole opencode distribution: whatever is not in it does not
 exist in a vendored repo. It has rotted three times in a row, always the same class of defect — a
 shipped file invoking a file nobody added to the list (pipeline_observations.py, mutation_run.sh,
-verifier_review_check.py) — and every one of them was caught by a human reading a diff.
+verifier_evidence.py) — and every one of them was caught by a human reading a diff.
 
 So this derives the expectation instead of restating it: it enumerates every
 `${CLAUDE_PLUGIN_ROOT}/scripts/…` and `$SD/…` reference in the repo and asserts each one is covered

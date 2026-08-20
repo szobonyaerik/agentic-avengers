@@ -7,8 +7,11 @@ description: The implementer's test-driven development procedure — write tests
 
 You (the implementer) author **both the tests and the code** for a spec, in a **vertical** loop:
 one seam → one failing test → just enough code to pass → repeat. There is no separate test-author.
-The tests you write are reviewed independently by the Verifier (a different model family) and, once the
-phase passes, they **lock** (see `pipeline-conventions`: *locked-after-verify*).
+The Verifier judges their **coverage** against the requirement set and, once the phase passes, they
+**lock** (see `pipeline-conventions`: *locked-after-verify*). **Nothing reads them for gamed,
+tautological or implementation-coupled patterns** — the cross-family reading pass that did was
+removed and nothing inherits it, so the anti-patterns named below are yours to avoid while you write.
+The remaining cover is partial: the mutation gate, and the human spec-review's criteria.
 
 This is language-agnostic. Apply it in the project's stack (Python/Java/C++/TypeScript/…); the examples
 below are illustrative pseudocode, not a required language. Ground names and vocabulary in the codemap
@@ -78,10 +81,9 @@ sentence of why. Everything else you would otherwise write there goes to **`test
 the same directory: mutation evidence, route-back history, build order, deviations from the spec, and
 tests covering no requirement. **Nothing is deleted; the sidecar is committed.**
 
-The reason is where each file sits on the read path. `test-mapping.md` is re-bundled to the
-cross-family reviewer on every verifier attempt, so a phase pays for it once per attempt; one
-measured feature had **59.3% of its test-mappings as prose outside any table** — 285 KB — riding
-along on every one of those attempts. `test-evidence.md` is opened **on route-back only**, by the
+The reason is where each file sits on the read path. `test-mapping.md` is read by the Verifier on
+every attempt, so a phase pays for it once per attempt; one measured feature had **59.3% of its
+test-mappings as prose outside any table** — 285 KB — riding along on every one of those attempts. `test-evidence.md` is opened **on route-back only**, by the
 implementer fixing the finding and by the Verifier checking it, which is exactly when that prose is
 worth its tokens.
 
@@ -96,7 +98,7 @@ feature: <feature>
 phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 stage: test-mapping
-readers: avenger-verifier @ per phase; verifier bundle @ changed specs only
+readers: avenger-verifier @ per phase
 ---
 | requirement id(s) | test name(s) | level | why |
 ```

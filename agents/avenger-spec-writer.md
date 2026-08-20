@@ -58,7 +58,7 @@ criticality: standard | critical
 status: draft
 spec_gate: pending            # set to approved|blocked by THE spec gate (scripts/hook_spec_gate.sh)
 review_status: pending        # flipped to `approved` only by /spec-review (human grill-me)
-readers: spec gate @ on write; implementer @ once; verifier bundle @ changed specs only
+readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
 ---
 
 # <Spec title>
@@ -215,8 +215,8 @@ id and its own `binding:`, like any other. It does not mean a sentence in Scope 
   4.87 lines of test per line of source, and no stage anywhere pushed back. Default to `e2e`. Reach
   for `integration` when you can name the failure an e2e is blind to, and prefer `none` over inventing
   a test for a property CI already fails on.
-- **Cost is yours to control, because no later stage can see it.** The spec gate's observe pass,
-  the cross-family review and verification all read for correctness; none of them can see that a test spawns a subprocess or that
+- **Cost is yours to control, because no later stage can see it.** The spec gate's observe pass and
+  verification both read for correctness; neither can see that a test spawns a subprocess or that
   its runtime scales with the suite. Do not write a requirement whose only verification is shelling
   out. If one is unavoidable, say so in the spec and justify it in a sentence.
 - **"Additive" is a claim you must check.** A new constraint on an existing interface that rejects a

@@ -31,10 +31,6 @@ PASSING = {
     "verdict": "pass",
     "attempt": 3,
     "findings": [],
-    "test_quality": {
-        "reviewed": True,
-        "scope": {"test_files": ["tests/demo/1-a/test_x.py"]},
-    },
 }
 
 
@@ -76,6 +72,26 @@ def write_spec(
     )
 
 
+def record_evidence(project: Path, kind: str = "suite") -> str:
+    """Record one real run through `verifier_evidence.py` and return the transcript's chain head.
+
+    A real subprocess, not a hand-written record: that is the whole point of the artifact, and a
+    fixture that fabricated one would test the check against exactly the shape it exists to refuse.
+    Recorded AFTER the specs are written, because the record binds to their content.
+    """
+    subprocess.run(
+        [sys.executable, str(project / "scripts" / "verifier_evidence.py"),
+         "record", str(phase_dir(project)), "--kind", kind, "--", "/bin/echo", "1 passed"],
+        cwd=project, check=True, capture_output=True,
+    )
+    chain = subprocess.run(
+        [sys.executable, str(project / "scripts" / "verifier_evidence.py"),
+         "chain", str(phase_dir(project))],
+        cwd=project, check=True, capture_output=True, text=True,
+    )
+    return chain.stdout.strip()
+
+
 def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     """Write the phase's verdict history: the archives, then the live verdict as the last entry."""
     for number, findings, result in series[:-1]:
@@ -97,7 +113,10 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     }
     if result == "pass":
         verdict["findings"] = []
-        verdict["test_quality"] = PASSING["test_quality"]
+        verdict["execution"] = {
+            "evidence": "verification-evidence.json",
+            "chain": record_evidence(project),
+        }
     (phase_dir(project) / "verdict.json").write_text(json.dumps(verdict))
 
 
@@ -800,3 +819,60 @@ def test_an_undecidable_stamp_check_does_not_rewrite_the_spec(project: Path) -> 
     assert "could not be DECIDED" in result.stderr
     assert "records no" not in result.stderr
     assert "status: done" in spec_path.read_text()
+
+
+# ── a pass must prove it EXECUTED ────────────────────────────────────────────────────────────────
+#
+# This is the check that replaced `test_quality.reviewed`, a boolean the verifying agent wrote about
+# itself and which both this hook and CI accepted as the phase's independence. Each test below drives
+# the hook RED on a state that must not close, then repairs exactly that state and drives it GREEN —
+# issue #69's rule that a guard proven only by passing is not proven.
+
+
+def test_a_passing_verdict_with_no_transcript_does_not_close_the_phase(project: Path) -> None:
+    """The exact state every pre-existing pass was in: a verdict saying `pass`, and nothing else."""
+    write_spec(project)
+    (phase_dir(project) / "verdict.json").write_text(json.dumps({
+        "verdict": "pass", "attempt": 1, "findings": [],
+    }))
+    refused = run_hook(project)
+    assert refused.returncode == 2
+    assert "no execution evidence" in refused.stderr.lower() or "proves the verification ran" in refused.stderr
+    assert "verification-evidence.json" in refused.stderr, "the refusal names the artifact"
+
+    # Repair it the way the message prescribes, and nothing else changes.
+    chain = record_evidence(project)
+    (phase_dir(project) / "verdict.json").write_text(json.dumps({
+        "verdict": "pass", "attempt": 1, "findings": [],
+        "execution": {"evidence": "verification-evidence.json", "chain": chain},
+    }))
+    assert run_hook(project).returncode == 0
+
+
+def test_a_verdict_that_names_a_different_transcript_does_not_close_the_phase(project: Path) -> None:
+    """A verdict written against one set of runs cannot be paired with another."""
+    write_spec(project)
+    record_evidence(project)
+    (phase_dir(project) / "verdict.json").write_text(json.dumps({
+        "verdict": "pass", "attempt": 1, "findings": [],
+        "execution": {"evidence": "verification-evidence.json", "chain": "0" * 64},
+    }))
+    refused = run_hook(project)
+    assert refused.returncode == 2
+    assert "different set of runs" in refused.stderr
+
+
+def test_an_unreadable_transcript_is_not_reported_as_a_missing_one(project: Path) -> None:
+    """Two different stops with two different remedies. Collapsed into one, a corrupt record is
+    reported as evidence that was never recorded, and 'run the commands again' cannot repair JSON."""
+    write_spec(project)
+    chain = record_evidence(project)
+    (phase_dir(project) / "verification-evidence.json").write_text("{ not json")
+    (phase_dir(project) / "verdict.json").write_text(json.dumps({
+        "verdict": "pass", "attempt": 1, "findings": [],
+        "execution": {"evidence": "verification-evidence.json", "chain": chain},
+    }))
+    refused = run_hook(project)
+    assert refused.returncode == 2
+    assert "could not be DECIDED" in refused.stderr
+    assert "recording a run will not repair it" in refused.stderr
