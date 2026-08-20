@@ -228,9 +228,10 @@ write the spec again; the gate skips an unchanged body by design, so an edit is 
   asking you to keep it on one line. The Verifier's per-finding waiver
   (`verdict.json` `break_glass` + `waiver_reason`) is logged through that same writer, so a
   multi-paragraph waiver reason is safe too.
-- **Gate models**: three variables, documented together in `docs/templates/env.example` — `GATE_MODEL`
-  (gemini) runs the spec gate's **observe** pass, `GATE_TRIAGE_MODEL` runs its cheaper **triage**
-  pass, and `VERIFIER_GATE_MODEL` (gemini) runs the Verifier's test-quality review. Set
+- **Gate models**: two variables, documented together in `docs/templates/env.example` — `GATE_MODEL`
+  (gemini) runs the spec gate's **observe** pass and `GATE_TRIAGE_MODEL` runs its cheaper **triage**
+  pass. There is no third: the Verifier's cross-family reading pass was removed, and the spec gate is
+  the pipeline's only remaining model gate. Set
   `GATE_MODEL=<id>` to route the observe pass, e.g. `export GATE_MODEL=opencode-go/deepseek-v4-pro`
   (OpenCode's DeepSeek V4 Pro, provider `opencode`). Keep `AUTHOR_FAMILY` a different family than
   `GATE_MODEL` or the gate fails closed. Left unset, `GATE_TRIAGE_MODEL` now **defaults to
@@ -245,10 +246,14 @@ write the spec again; the gate skips an unchanged body by design, so an edit is 
 - **Code not under `src/`?** Update the path glob in `hook_verifier.sh`, `gate_ci.sh`,
   `.opencode/plugin/pipeline-gates.ts`, and `module-path` in `cosmic-ray.toml`.
 - **A gate "stops" unexpectedly** — that's fail-closed. Check: `OPENROUTER_API_KEY` set? gate model a
-  different family than `AUTHOR_FAMILY`? provider reachable? The stderr says which. The Verifier's
-  review adds two of its own: a review set over `VERIFIER_SRC_LIMIT` (refused before the model is
-  called) and a verdict that shows no sign of having read the set. Neither is worked around by
-  dropping files — see `skills/verifier-triage`.
+  different family than `AUTHOR_FAMILY`? provider reachable? The stderr says which. One cause is
+  worth knowing by name: `implausible-latency` means the verdict came back faster than the call can
+  physically be made, so it is presumed not to have run — check the provider and the runner rather
+  than the spec, and set `GATE_MIN_LATENCY_MS` only if your model genuinely is that fast.
+- **A phase will not close on a passing verdict** — check whether it carries execution evidence.
+  `python3 scripts/verifier_evidence.py check <phase-dir> --verdict <phase-dir>/verdict.json` names
+  exactly what is missing and what would satisfy it. The usual cause is a verification command run
+  outside the recorder, or specs/tests edited after the transcript was recorded.
 - **A subagent is sent back at its own stop** - that's the per-stage skill audit
   (`scripts/hook_skill_audit.sh` on `SubagentStop`), asking the same question the close-time audit
   asks, early enough that the remedy is opening the named `SKILL.md` in that stage. It never stops

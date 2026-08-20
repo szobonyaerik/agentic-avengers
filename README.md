@@ -220,8 +220,7 @@ agentic-avengers/
 │                          pipeline-retrospective, e2e-author, …)
 ├── commands/              pipeline-init.md, spec-review.md
 ├── hooks/                 hooks.json  (Claude Code in-session gates)
-├── prompts/               spec-gate-observe.md, spec-gate-triage.md, verifier-review.md,
-│                          project-setup.md
+├── prompts/               spec-gate-observe.md, spec-gate-triage.md, project-setup.md
 ├── docs/templates/        spec / plan / overview / task-analysis / handover (+ archive) /
 │                          test-mapping / test-evidence / verdict templates
 ├── docs/rubrics/          overview + plan rubrics
@@ -289,7 +288,10 @@ agentic-avengers/
 │   │                          Binds only the transition into `done` (already `done` at committed
 │   │                          HEAD = shipped, counted not reverted); `binding: none`-only specs,
 │   │                          an unscoped red suite and `GATE_BYPASS` fail without rewriting it
-│   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
+│   ├── verifier_evidence.py   the Verifier's transcript: every command it ran, that command's exit
+│   │                          code, measured wall clock, output digest and the digest of the specs
+│   │                          and tests it ran against. A pass with no transcript is refused
+│   ├── gate_plausibility.py   refuses a reached gate verdict too fast to have been a real call
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── pipeline_metrics.py    the emission points: gate calls, spec rounds, defects, skill loads

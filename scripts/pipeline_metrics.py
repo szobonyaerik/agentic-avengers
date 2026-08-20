@@ -46,7 +46,7 @@ CLI, for the shell emission points (all fail open, all exit 0, except `defect` �
     pipeline_metrics.py spec-round <spec.md>
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
     pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
-    pipeline_metrics.py verifier-findings <phase-dir> <verifier-review.json>
+    pipeline_metrics.py verifier-findings <phase-dir> <verdict.json>
     pipeline_metrics.py mutation-survivors <phase-dir> <mutation-score.json>
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
     pipeline_metrics.py skill-required --stage <s>
@@ -109,7 +109,6 @@ TESTS_COLLECTED = re.compile(r"^(\d+) tests? collected", re.MULTILINE)
 RUBRIC_STAGE = {
     "spec-gate-observe.md": "spec-gate-observe",
     "spec-gate-triage.md": "spec-gate-triage",
-    "verifier-review.md": "verifier",
 }
 
 #: Every `gate_errors` cause, mapped onto firstmate's `(verdict, failure_cause)` pair. PR 1 made a
@@ -121,6 +120,9 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
     "provider-payment-required": ("error", "http-402"),
     "provider-unreachable": ("error", "provider-unreachable"),
     "no-verdict": ("error", "unparseable"),
+    # Not `unparseable`: the reply parsed fine. What failed is the CLAIM that a provider
+    # produced it, so it is an error whose cause is the gate not having run.
+    "implausible-latency": ("error", "other"),
     "config": ("error", "other"),
     "cross-family": ("error", "other"),
     "unknown-vendor": ("error", "other"),
@@ -496,9 +498,9 @@ def record_plugin_version(phase: str) -> bool:
 def open_verification_attempt(phase_dir: str) -> int | None:
     """The verification ATTEMPT this run belongs to, derived from the verdict record on disk.
 
-    It used to increment on every invocation of `verifier_review.sh`, which is not the same thing
-    and reads as if it were. One measured phase recorded **8** — three cross-family review calls that
-    timed out plus five diagnostic retries — while `verdict.json` correctly said `attempt: 1` and the
+    It used to increment on every invocation of the Verifier's cross-family review script, which is
+    not the same thing and reads as if it were. One measured phase recorded **8** — three review calls
+    that timed out plus five diagnostic retries — while `verdict.json` correctly said `attempt: 1` and the
     real three-attempt cap sat at 1 of 3, never fired. Read against a cap of 3, that number says the
     cap failed and a declared hypothesis was disproved. Both would have been false, and the metric is
     the only thing that said so.
@@ -669,13 +671,12 @@ def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
 
 # --- defects: which stage found each one ---------------------------------------------------------
 
-#: The Verifier's finding kinds — the vocabulary `prompts/verifier-review.md` and
-#: `skills/verifier-triage` actually emit — mapped onto what the defect actually is. A gamed test and
-#: a coverage gap are defects in the TEST SET — real cost, but they must not inflate the count of
-#: genuine product defects, which is the number `found_by` exists to split. `tests/` asserts these
-#: keys against the schema in `prompts/verifier-review.md`, so a change to the verifier's vocabulary
-#: moves this map instead of silently invalidating it: an unmatched kind falls back to `real=True`
-#: and every finding would count as a product defect.
+#: The Verifier's finding kinds — the vocabulary `skills/verifier-triage`'s verdict schema declares
+#: — mapped onto what the defect actually is. A gamed test and a coverage gap are defects in the TEST
+#: SET — real cost, but they must not inflate the count of genuine product defects, which is the
+#: number `found_by` exists to split. `tests/` asserts these keys against that schema, so a change to
+#: the verifier's vocabulary moves this map instead of silently invalidating it: an unmatched kind
+#: falls back to `real=True` and every finding would count as a product defect.
 VERIFIER_KIND_REAL = {"code": True, "gamed-test": False, "coverage-gap": False}
 
 #: What `recorded_by` says about every defect THIS pipeline writes: a stage caught it and the same
@@ -733,7 +734,13 @@ def record_defect(
 
 
 def record_verifier_findings(phase_dir: str, verdict_path: str) -> int:
-    """Turn the cross-family review's findings into defects attributed to the Verifier."""
+    """Turn the phase verdict's findings into defects attributed to the Verifier.
+
+    It used to read `.verifier-review.json`, the cross-family reading pass's own output, emitted by
+    that script the moment it produced findings. That pass is gone; `verdict.json` carries the same
+    `findings[]` shape and is now the only place they exist, so `hook_verifier.sh` emits from it at
+    the handover — the one point every closing phase passes. Idempotent by finding id, as before.
+    """
     phase = resolve_phase(phase_dir)
     if phase is None:
         return 0

@@ -603,7 +603,7 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   `skills/spec-review-checklist` still owes a full pass (a changed requirement set, Scope,
   Interfaces / contracts, `work_kind` or `binding:`, and a Verifier **coverage-gap** route-back, where
   the question is what the spec failed to require). Verifier code failure
-  → implementer. Verifier test-quality finding → implementer, to fix or add its own tests. Breaker
+  → implementer. Verifier coverage gap → implementer, to add the missing case. Breaker
   counterexample → implementer, additions only.
 
 **Record what the friction says about the pipeline.** Every retry, route-back, repeated NO-GO and

@@ -3,7 +3,14 @@
     "`amendments` holds requirement-id references ONLY — [\"A1\", \"A2\"] — and nothing else. The",
     "records themselves live in the phase's amendments.json; a verdict then reads 'verified at",
     "attempt N, plus amendments A1..An'. It is the one schema extension since the schema was frozen,",
-    "made at the schema (skills/verifier-triage) rather than as a bespoke top-level key."
+    "made at the schema (skills/verifier-triage) rather than as a bespoke top-level key.",
+    "",
+    "`execution` replaced `test_quality`, at the schema, for the same reason: `test_quality.reviewed`",
+    "was a boolean the verifying agent wrote about itself and every gate believed. `chain` is the",
+    "head of the hash chain over verification-evidence.json's recorded runs; the gates refuse a pass",
+    "whose chain does not match the transcript on disk. `run` no longer carries a family comparison:",
+    "the cross-family reading pass it described is gone, and a field asserting an independence",
+    "nothing performs reads as coverage that is not there."
   ],
   "feature": "<feature>",
   "phase": "<n>-<slug>",
@@ -20,10 +27,7 @@
   "amendments": ["A1"],
   "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say>",
   "run": {
-    "at": "YYYY-MM-DDThh:mm:ssZ",
-    "verifier_family": "<B>",
-    "implementer_family": "<A>",
-    "cross_family_ok": true
+    "at": "YYYY-MM-DDThh:mm:ssZ"
   },
   "tests": {
     "total": 0,
@@ -35,15 +39,10 @@
     "traced": 0,
     "untraced": []
   },
-  "test_quality": {
-    "reviewed": true,
-    "scope": {
-      "mode": "targeted",
-      "test_files": [],
-      "dependency_files": [],
-      "expansion_reasons": []
-    },
-    "reviewed_by": "<VERIFIER_GATE_MODEL \u2014 must not be the implementer's family>"
+  "execution": {
+    "evidence": "verification-evidence.json",
+    "chain": "<scripts/verifier_evidence.py chain <phase-dir> \u2014 the transcript this verdict stands on>",
+    "runs": 0
   },
   "findings": [
     {

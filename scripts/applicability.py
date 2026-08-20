@@ -88,9 +88,10 @@ FILENAME = "exceptions.json"
 #: **Every entry here is read by a named call site** — `spec-gate` by `pipeline_state.py` and by
 #: `verifier_precheck.py` (the stale-stamp check — the only remedy that clears it without a live gate
 #: provider), `spec-review` and `verdict` by `pipeline_state.py`, `requirement-cap` by
-#: `requirement_cap.py`. That is the same rule this module states about a ledger entry: one nothing
+#: `requirement_cap.py`, `breaker` by `breaker_gate.py`, `execution-evidence` by
+#: `verifier_evidence.py`. That is the same rule this module states about a ledger entry: one nothing
 #: reads is an exception that does not exist, and it would be discovered as a phase wedged on a rule
-#: someone believed was waived. So a fifth entry is a deliberate edit here **together with the call
+#: someone believed was waived. So a further entry is a deliberate edit here **together with the call
 #: site that reads it**, never ahead of one. The cost gate is deliberately absent: it needs the
 #: *untouched* evidence, not this one, and a rule nothing consults would be a promise with no
 #: mechanism behind it.
@@ -100,6 +101,7 @@ RULES: dict[str, str] = {
     "verdict": "the Verifier's passing verdict for a phase",
     "requirement-cap": "the requirement cap's split trigger on a spec",
     "breaker": "a Breaker record owed by a phase that declares criticality: critical",
+    "execution-evidence": "the recorded transcript proving a phase's verification actually ran",
 }
 
 #: Every document the read-path table governs declares who reads it, in the document. JSON has no
@@ -114,6 +116,7 @@ READERS = [
     "verifier_precheck.py @ per spec, resolving a stale spec-gate stamp",
     "phase-handover @ per phase",
     "breaker_gate.py @ per phase, resolving the Breaker obligation",
+    "verifier_evidence.py @ per phase, resolving the execution-evidence obligation",
 ]
 
 

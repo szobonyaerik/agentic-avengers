@@ -10,8 +10,25 @@ fixing anything itself.
 
 ## Pre-flight
 
-Confirm your model family ≠ the implementer's family. If equal → emit `fail` with reason
-`same-family-verification` and stop.
+**Run everything through the recorder.** A verdict is consumable only when a transcript backs it:
+
+```bash
+python3 scripts/verifier_evidence.py record <phase-dir> --kind suite -- pytest -q tests/<feature>/<n>-<slug>
+python3 scripts/verifier_evidence.py record <phase-dir> --kind adversarial --note "<what you planted>" -- <cmd>
+python3 scripts/verifier_evidence.py chain <phase-dir>   # -> verdict.json "execution": {"chain": …}
+```
+
+`record` runs the command in its own process group, writes its combined output to a log beside the
+record, and stores the argv, exit code, **measured** wall clock, the sha256 of that output and a
+digest of the specs and tests it ran against. It returns the command's own exit code — it never
+swallows a failure. `check` refuses a record whose log does not hash to its digest, whose runs
+predate a change to the phase's specs or tests, that holds no passing `suite` run, or whose chain
+the verdict does not name. `scripts/hook_verifier.sh` and `gate_ci.sh` both run it.
+
+This replaced `test_quality.reviewed` — a boolean the verifying agent wrote about itself, which both
+gates accepted as the phase's independence. Every refusal names what would satisfy it; if a phase
+genuinely cannot produce a transcript, disclose it
+(`applicability.py record <phase-dir> --rule execution-evidence …`) rather than omitting it.
 
 Then run the **mechanical pre-check**, which owns what used to be a quarter of this stage's output:
 
@@ -70,83 +87,55 @@ top of the binding the gate approved.
 
 Never edit code or tests. Triage and route only.
 
-## Test-quality review (the independence check)
-The implementer wrote the phase's tests, so read the tests that can carry its mistakes — **not the
-entire repository suite**. Mechanical execution remains broad; semantic reading is targeted.
+## Adversarial execution (what actually buys this stage)
 
-### Who does the reading
+A scout measured all 46 findings this stage produced across 8 phases of one feature. **3 of 46** were
+user-visible defects no other stage could have found - and **two of those were plaintext-credential
+leaks**, found by planting an adversarial value and executing it against a real Postgres. Not by
+reading anything.
 
-You select the review set; **a cross-family model reads it.** Every subagent in this runtime is
-Anthropic, so the Verifier agent cannot itself be decorrelated from the implementer — opus-vs-sonnet
-is the same vendor and the same blind spots. Hand the set to:
+So on any requirement whose subject is a **secret**, a **resource lifetime**, or a **concurrency
+invariant**: plant a value a real deployment would produce, drive it through the real collaborator,
+and look at what came back - the log line, the stored row, the connection still open. Record it:
 
 ```bash
-scripts/verifier_review.sh <phase-dir> <review-set-file>...
+python3 scripts/verifier_evidence.py record <phase-dir> --kind adversarial \
+    --note "planted a password containing a URL-unsafe character" -- <the command that drives it>
 ```
 
-which bundles the specs (only those changed since the last completed review — the rest are named as
-carried forward and their findings merged back; `skills/pipeline-conventions`), their mappings, the
-test run and the sources, judges them on
-`$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`) via `gate_runner.py`, and writes
-`<phase-dir>/.verifier-review.json` with findings already carrying deterministic ids. `gate_runner`
-refuses a same-family model. It also refuses **before** the model call when the review set exceeds
-`VERIFIER_SRC_LIMIT` (default 400000 chars), and **after** it when the verdict names none of
-the files it was handed or reports itself as partial — a truncated or hollow review is an
-unreviewed phase, not a pass. Raise the cap to what the gate model can actually read, or split
-the set and merge findings; never drop files to fit. Fold those findings into `verdict.json` verbatim — you may add findings
-it missed, never delete or downgrade one it raised. Record the scope you chose (and `reviewed_by`) in
-`test_quality`; a `pass` that records no completed review is rejected by both the hook and CI.
+A green suite is not a reason to skip this. It is the state this exists to disbelieve.
 
-### Build the review set (deterministic, token-bounded)
-1. Read the phase specs, acceptance criteria, and every `test-mapping.md` **table** once. The
-   `test-evidence.md` beside each mapping is **not** part of this pass — open it only when you are
-   routing a finding back or checking a fix to one, which is the moment its mutation evidence and
-   route-back history are worth their tokens.
-2. Build the review set as the union of:
-  - every test authored or ported for the phase and named in `test-mapping.md`; and
-  - every test file changed by the phase, even if the mapping omitted it. Use the repository diff
-    from the clean phase-start baseline (normally `HEAD` before the uncommitted phase); if unrelated
-    work makes that baseline ambiguous, fail closed and ask for the phase diff boundary.
-3. An authored/ported test missing from `test-mapping.md` is a `coverage gap`; do not silently exclude
-  it to save tokens.
-4. For each review-set test, follow only **directly referenced** fixtures, helpers, custom assertions,
-  snapshots, or test-data builders that supply setup or expected values. Read each dependency once.
-  Do not recursively explore unrelated production code or unchanged tests.
-5. Record the reviewed test files, dependency files, and any expansion reason in the verdict. Point to
-  files; do not paste their contents into the verdict.
+## The cross-family reading pass is GONE - and what that leaves uncovered
 
-### Expand only on evidence
-Expand beyond the default set only when:
-- the spec/plan marks the surface critical or security-sensitive — include the tests for that surface;
-- a changed shared test helper can alter assertions outside the mapped tests — include its affected
-  test family;
-- mappings or the phase diff are missing/ambiguous — fail closed unless the affected scope can be
-  established; or
-- a suspicious pattern in a reviewed test requires one-hop context to classify it.
+This stage used to have a third job: hand a bounded set of the phase's tests to a model on another
+vendor's family and have it read them for tautological, implementation-coupled and missing-negative
+patterns. That pass **returned GO with zero findings on a phase that contained real defects**, and
+the hypothesis testing whether it earned its cost came back unmeasured. It is removed.
 
-Expansion is **affected-surface only**, never an automatic read of the whole inherited suite. Stop
-when the question that triggered expansion is resolved. A large repository is not itself a reason to
-expand.
+**Nothing inherits it, and that is deliberate.** Doing the reading yourself would be same-family
+self-review wearing the removed gate's name: you are an Anthropic model and so is the implementer,
+and opus-vs-sonnet is not decorrelation.
 
-Within that review set, flag as a `wrong/gamed test`:
-- **Tautological** — expected value recomputes the implementation; the test can never disagree with
-  the code.
-- **Implementation-coupled** — asserts on internals/private methods/call counts, or verifies through a
-  side channel instead of the public interface.
-- **Missing negative/edge** — a requirement whose acceptance criteria name a failure condition that no
-  test covers.
-- **Unrealistically-shaped external identifiers** — a fixture whose values for an external system's
-  identifiers have a shape no real deployment produces. 1,009 passing tests used ids an order of
-  magnitude smaller than the real ones, against an `int32` column, and a credential-refusal path
-  raised before it could fire: the control shipped non-functional behind a green suite, and the
-  defect was found by the delivery gate driving a real value, not by any of those tests.
-A gamed test is a `fail` even when the suite is green.
+**What is genuinely uncovered now, stated rather than implied:** gamed, tautological and
+implementation-coupled tests have no dedicated reader. What still touches them is partial and named:
+
+- the **mutation gate** (`MUTATION_POLICY=advisory` by default) kills non-discriminating tests
+  deterministically, diff-scoped, with no model below the threshold - the one signal that has
+  actually caught them in this repository, and still advisory rather than a wall;
+- **`skills/tdd`** names the anti-patterns to the implementer *while it writes*, which is earlier and
+  cheaper than catching them afterwards;
+- the **human spec-review** sets acceptance criteria a gamed test has to contradict.
+
+If you notice a gamed test while tracing coverage or executing adversarially, raise it - `gamed-test`
+is still in the verdict schema and a gamed test is still a `fail` on a green suite. Just do not read
+the suite for them as a stage, and never record a review that did not happen.
+
 
 ## Record which stage found each defect
 
-`scripts/verifier_review.sh` already records the cross-family review's own findings as defects
-attributed to `verifier`, and `hook_mutation.sh` records what mutation found. **What no script can
-see is the rest of what you catch** — a Breaker counterexample, a bug found by driving the real path
+`scripts/hook_verifier.sh` records every finding in your `verdict.json` as a defect attributed to
+`verifier` when the phase closes, and `hook_mutation.sh` records what mutation found. **What no
+script can see is the rest of what you catch** — a Breaker counterexample, a bug found by driving the real path
 by hand, one found by reading the code outside any gate. That attribution is the single most valuable
 number the pipeline produces about itself (one phase set showed the running suite catching 3 of 15
 genuine defects) and it is **unrecoverable once the run is over**, so record it while you have it:
@@ -213,11 +202,11 @@ artifact class the pipeline produces. Two rules keep it from growing without any
 - **`report` is capped at 1500 characters.** It is free prose, and its job is the *headline
   judgement plus anything the structured fields cannot say* — a disagreement you are recording
   rather than acting on, an ambiguity, a scope note. It is not a place to narrate `tests`,
-  `coverage`, `findings` or `test_quality` a second time in sentences; every consumer of this file
+  `coverage`, `findings` or `execution` a second time in sentences; every consumer of this file
   reads the structured fields. One measured phase's `report` was 12,991 characters.
-- **The schema is frozen.** Add a finding, not a bespoke top-level key. `amendments` is the one
-  extension since it was frozen, and it was made **here, at the schema**, which is the sanctioned way
-  and the only one: it is an array of amendment **ids** — the records themselves live in
+- **The schema is frozen.** Add a finding, not a bespoke top-level key. `amendments` was the first
+  extension since it was frozen, and `execution` (replacing `test_quality`) the second; both were
+  made **here, at the schema**, which is the sanctioned way and the only one: it is an array of amendment **ids** — the records themselves live in
   `amendments.json`, so the verdict gains one short line rather than a nested ledger. A verdict then
   reads *verified at attempt N, plus amendments A1..An*. One feature's verdicts grew
   `judgement_w29`, `judgement_synchronisation_audit`, `judgement_with_for_update` and
@@ -290,15 +279,12 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
                              "archived_to": "verdict-attempt-1.json" } ],
   "amendments": ["A1", "A2"],
   "report": "<= 1500 chars: the headline judgement, plus only what the structured fields cannot say",
-  "run": { "at": "YYYY-MM-DDThh:mm:ssZ", "verifier_family": "<B>", "implementer_family": "<A>",
-           "cross_family_ok": true },
+  "run": { "at": "YYYY-MM-DDThh:mm:ssZ" },
   "tests": { "total": 0, "passed": 0, "failed": 0 },
   "coverage": { "requirements": 0, "traced": 0, "untraced": [] },
-  "test_quality": { "reviewed": true,
-                    "scope": { "mode": "targeted|expanded",
-                               "test_files": ["..."],
-                               "dependency_files": ["..."],
-                               "expansion_reasons": [] } },
+  "execution": { "evidence": "verification-evidence.json",
+                 "chain": "<scripts/verifier_evidence.py chain <phase-dir>>",
+                 "runs": 0 },
   "findings": [
     {
       "id": "<12-char hash>",

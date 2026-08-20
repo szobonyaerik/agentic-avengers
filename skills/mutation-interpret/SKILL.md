@@ -1,6 +1,6 @@
 ---
 name: mutation-interpret
-description: How to run and interpret the mutation gate per language. It runs in `advisory` mode by default - deterministic, diff-scoped, and never blocking - and it is an extra signal, not the pipeline's independence mechanism (that is the Verifier's test-quality review). Use whenever MUTATION_POLICY is advisory or enforce.
+description: How to run and interpret the mutation gate per language. It runs in `advisory` mode by default - deterministic, diff-scoped, and never blocking - and with the Verifier's cross-family reading pass removed it is the pipeline's only systematic signal about non-discriminating tests - still advisory, still not a wall. Use whenever MUTATION_POLICY is advisory or enforce.
 ---
 
 # mutation-interpret

@@ -78,10 +78,9 @@ sentence of why. Everything else you would otherwise write there goes to **`test
 the same directory: mutation evidence, route-back history, build order, deviations from the spec, and
 tests covering no requirement. **Nothing is deleted; the sidecar is committed.**
 
-The reason is where each file sits on the read path. `test-mapping.md` is re-bundled to the
-cross-family reviewer on every verifier attempt, so a phase pays for it once per attempt; one
-measured feature had **59.3% of its test-mappings as prose outside any table** — 285 KB — riding
-along on every one of those attempts. `test-evidence.md` is opened **on route-back only**, by the
+The reason is where each file sits on the read path. `test-mapping.md` is read by the Verifier on
+every attempt, so a phase pays for it once per attempt; one measured feature had **59.3% of its
+test-mappings as prose outside any table** — 285 KB — riding along on every one of those attempts. `test-evidence.md` is opened **on route-back only**, by the
 implementer fixing the finding and by the Verifier checking it, which is exactly when that prose is
 worth its tokens.
 

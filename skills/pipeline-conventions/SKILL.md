@@ -149,9 +149,9 @@ Three consequences worth stating outright:
   covered by the journey that lists it and a `binding: none` one is never a gap — reading the old
   one-test-per-id rule here would route back a coverage gap on every requirement the spec
   deliberately left unbound, and hand the suite straight back its lost multiplier. The rule is in
-  `skills/verifier-triage`, and `prompts/verifier-review.md` carries it for the cross-family reader.
-- **Cost is only visible at the spec gate.** Its observe pass, the cross-family review and
-  verification all read for **correctness**, and an expensive test is not incorrect.
+  `skills/verifier-triage`.
+- **Cost is only visible at the spec gate.** Its observe pass and verification both read for
+  **correctness**, and an expensive test is not incorrect.
   `scripts/subprocess_check.py` is the mechanical half of that gate: an AST walk over `tests/` for
   spawners without `@pytest.mark.subprocess("<why>")`. It runs on every spec write in **both** modes
   via `scripts/hook_spec_gate.sh`, over `$SUBPROC_CHECK_PATHS` when a project's tests are not at
@@ -366,29 +366,30 @@ Three consequences worth stating outright:
     the **loop**, so a `pass` whose findings are all `fixed` or waived clears it — waiving the
     remainder is one of the three remedies above, and a check its own prescribed remedy cannot satisfy
     is a wedge, not a gate. "Still open" is not restated: it is `open_findings`, imported from
-    `verifier_bundle_scope`. A verdict of **`fail`** at or past the cap is what stops.
-  - **The bundle is scoped to the specs that changed.** It used to re-send every `spec.md` and every
-    `test-mapping.md` on every attempt — one measured ~832k tokens, and one phase had to be split
-    into four chunks to fit a context at all. The diff-only rule above covers spec *re-gates* and
-    never reached this bundle. `scripts/verifier_bundle_scope.py` sends only the specs whose text
-    changed since the last completed review, names the rest in the bundle as carried forward, and
-    merges their findings back into this run's verdict — **an open carried finding still forces
-    NO-GO**, so the scope shrinks the prompt, never the bar. **A spec that still holds an OPEN
-    finding is never carried**, however unchanged its text is: a `gamed test` finding is fixed in a
-    TEST file, so `spec.md` and `test-mapping.md` never change, and a spec that is never re-bundled
-    is a finding that is never regenerated — one that used to hold the phase at NO-GO forever with
-    no way out but deleting the state file. It goes back to the cross-family reader instead, and
-    clears or reappears on its own evidence; the token saving is given up only on the specs actually
-    under repair, which is exactly where economising is wrong. No state, a lost state file, nothing
-    changed, or `VERIFIER_SCOPE=full` sends the whole phase; the safe direction costs tokens, not
-    coverage.
+    `verdict_findings`. A verdict of **`fail`** at or past the cap is what stops.
+  - **A verdict must evidence its own execution.** The stage used to record
+    `test_quality.reviewed: true` — a boolean it wrote about itself, which both `hook_verifier.sh`
+    and `gate_ci.sh` accepted as the phase's independence, so a stage that skipped its work was
+    indistinguishable from one that did it. Every command the Verifier relies on now runs through
+    `scripts/verifier_evidence.py record`, which stores the argv, the exit code, the **measured**
+    wall clock, the sha256 of the command's output and a digest of the specs and tests it ran
+    against; `verdict.json` carries `execution.chain`, the head of the hash chain over those runs.
+    A pass with no transcript, a transcript with no passing `suite` run, a log that does not hash to
+    its recorded digest, runs recorded against content that has since changed, or a verdict whose
+    chain does not match the record on disk — each is refused, by the hook and by CI, with the
+    remedy named at the refusal. Diff-scoped on the applicability boundary even under `--full`, and
+    waivable through the disclosed-exception ledger (`--rule execution-evidence`), because a phase
+    that closed before this rule existed can never acquire a transcript for it.
+
 - **Mutation gate — `advisory` by DEFAULT.** `MUTATION_POLICY` = `advisory` (default: runs, reports
   the score and its survivors, **never blocks**) · `enforce` (fails closed) · `off` (runs no mutation
   tool anywhere). It was off by default; it is on because it is deterministic, diff-scoped, needs no
   model below `MUTATION_MIN_SCORE`, and **every non-discriminating test this project has ever caught
   was caught by mutation** — including two in one phase that neither spec gate nor a green 281-test
   suite surfaced. Advisory never blocks, so the cost of the default being wrong is a line of output.
-  It is still **not** the independence mechanism — the Verifier's test-quality review is.
+  With the cross-family reading pass removed it is now the pipeline's **only** systematic signal
+  about non-discriminating tests — still advisory, still not a wall, and named as partial cover
+  rather than a replacement (see *The Verifier* below).
 - **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
   spec in the phase declares `criticality: critical`). Not optional in practice: it was owed on
   every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that
@@ -474,7 +475,7 @@ locked phase-1 and phase-7 tests the phase had never opened. Three defects, one 
 Closed has exactly **three evidences**, and a call site never invents a fourth:
 
 1. **untouched** — the current change does not touch it (`changed_paths`, git). This is the rule
-   `verifier_bundle_scope.py`, `spec_gate_cache.py`, `doc_read_path.py`, `verifier_precheck.py` and
+   `verifier_evidence.py`, `spec_gate_cache.py`, `doc_read_path.py`, `verifier_precheck.py` and
    the mutation gate already ran before it had a name. **When git cannot say what changed the scope
    is unknowable, so nothing is enforced and the check says so out loud** — falling back to enforcing
    everything is the hostage failure the scoping removes.
@@ -738,17 +739,34 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   *weakening*, not *adding*: a Breaker counterexample or a surviving mutant routes back to the
   implementer to add a case. **A locked phase also leaves the read path**: its specs are settled, so
   a later phase reads its **contract card** instead — see *The document read path* above.
-- **Independence lives in the Verifier:** because the implementer writes its own tests, a different
-  model family reads the bounded phase review set for tautological / implementation-coupled /
-  missing-edge anti-patterns and routes gamed tests back. Full test execution stays broad; semantic
-  reading does not scan unrelated unchanged tests.
-- **Fresh model ≠ author:** the model that *forms the judgement* must not share the implementer's
-  family. Every subagent here is Anthropic, so the Verifier **agent** cannot itself be cross-family —
-  it orchestrates, and delegates the reading of the tests to `scripts/verifier_review.sh` →
-  `gate_runner.py` on `$VERIFIER_GATE_MODEL` (default `google/gemini-3.1-pro-preview`). `gate_runner` refuses
-  a same-family model, and CI asserts the same statically. Opus-vs-Sonnet is **not** decorrelation.
-  The **only** sanctioned exception is the feature-close `no-mistakes` ship gate above, which is
-  same-family on purpose and documented as such — every *per-phase* gate stays cross-family.
+- **The Verifier's value is EXECUTION, not reading.** Across 8 measured phases it produced 46
+  findings; 3 were user-visible defects no other stage could have found, and **two of those were
+  plaintext-credential leaks found by planting an adversarial value and running it against a real
+  Postgres**. So it keeps two jobs: coverage judged per `binding:`, and adversarial execution on
+  secrets, resource lifetimes and concurrency invariants. Both are recorded through
+  `verifier_evidence.py`, because a stage that emits nothing is indistinguishable from one that
+  never ran.
+- **The cross-family reading pass is GONE, and nothing inherits it.** A different vendor's model used
+  to read the bounded phase review set for tautological / implementation-coupled / missing-edge
+  patterns. It returned GO with zero findings on a phase containing real defects, and the hypothesis
+  testing whether it earned its cost came back unmeasured. **What that leaves uncovered is stated
+  rather than implied:** gamed tests have no dedicated reader. The remaining cover is partial and
+  named — the mutation gate (advisory, deterministic, the one signal that has actually caught them
+  here), `skills/tdd` naming the anti-patterns to the implementer *while it writes*, and the human
+  spec-review setting criteria a gamed test would have to contradict. `gamed-test` stays in the
+  verdict schema for a finding raised in passing; nothing reads the suite for them as a stage.
+- **Fresh model ≠ author, where a model gate still exists.** The model that *forms a gate's
+  judgement* must not share the implementer's family. Every subagent here is Anthropic, so no agent
+  is itself cross-family — the surviving model gate is the **spec gate**, whose `gate_runner.py`
+  refuses a same-family model and whose family CI asserts statically against `$GATE_MODEL`.
+  Opus-vs-Sonnet is **not** decorrelation. The **only** sanctioned exception is the feature-close
+  `no-mistakes` ship gate above, which is same-family on purpose and documented as such.
+- **A gate verdict must be physically possible.** `scripts/gate_plausibility.py` refuses any reached
+  verdict whose measured latency is below `GATE_MIN_LATENCY_MS` (default 250 ms): one measured phase
+  recorded a **4 ms GO** from a model gate — less time than the provider CLI takes to start — and it
+  was consumed as a pass. Applied to pass and fail alike, and never to a refusal that reached no
+  provider, which records its near-zero latency on purpose. `GATE_MIN_LATENCY_MS=0` disables it and
+  says so on every call.
 - **Under `--auto`, prose belongs in a file and the command reads it — never on the command line.**
   `hook_autoapprove.sh` matches its hard-deny regex against the **whole** Bash command string, so it
   matches **content, not intent**: any author-written prose passed as a command-line argument can
@@ -949,10 +967,10 @@ seeded skill requirement never overwrites an observed load, whichever order the 
 | a gate the harness **killed** mid-call | the hook's own signal trap | the runner it killed cannot report its own death — this is what tells a kill apart from a NO-GO |
 | spec rounds, each round's **size in bytes**, requirement count | `hook_spec_gate.sh`, on a body the gate cache says changed | one spec grew 25k → 51k while being rewritten to satisfy a gate and nothing noticed |
 | the spec gate's own arithmetic: observations in, **blocking** out, **notes** out | `spec_gate_triage.py`, where the verdict is derived from them | a filter that blocks everything and one that blocks nothing are otherwise indistinguishable without reading a transcript |
-| the **count** of verification attempts, and nothing about what each one changed | `verifier_review.sh`, **derived from `verdict.json` and its archives** — never counted per invocation | that script runs several times inside one attempt (a timed-out call, a diagnostic retry); one phase recorded **8** against a real attempt of 1 and a cap of 3 that had never fired, and read against that cap the number says the cap failed. Retries stay visible in `gate_calls[]` with their `failure_cause` — only the attribution was wrong. Repeated calls converge |
+| the **count** of verification attempts, and nothing about what each one changed | **derived from `verdict.json` and its archives** — never counted per invocation | that script runs several times inside one attempt (a timed-out call, a diagnostic retry); one phase recorded **8** against a real attempt of 1 and a cap of 3 that had never fired, and read against that cap the number says the cap failed. Retries stay visible in `gate_calls[]` with their `failure_cause` — only the attribution was wrong. Repeated calls converge |
 | tests before and after — **collected pytest test items** (`pytest --collect-only`, minus the test root's `e2e/`), the same population `hook_verifier.sh`'s own `pytest -q` reports, **never `def test_` lines** | `hook_spec_gate.sh` (first spec write) and the orchestrator's `phase-close` (after the phase's commit) | counted **the same way at both ends**, so the delta is a real delta and not two counting methods. A static count of test *functions* put 917/973 in the record against 1092/1164 observed in the same phase — a parametrized function is one `def` and several items (issue #46). The collection is bounded by `gate_timeouts.collect_timeout()` and runs in its own process group; a collection that cannot answer leaves the field **absent**, never 0 |
 | the phase's **close** and the `elapsed_minutes` it took | the orchestrator, running `phase-close` itself immediately after the phase's own commit (`commands/avenger-run.md` §5) - **never a hook** | close means **landed**, not implemented. `handover.md` being *written* is the Verifier's precondition, not the phase landing: an amendment can still reopen the phase, the Verifier can still route it back, and the commit can still be blocked, so a stamp taken there understates the phase by verification, route-backs and close - its most expensive stages - and the too-early number is indistinguishable from a good one (issue #46). `hook_verifier.sh` cannot see the commit land, so it no longer stamps; `record_phase_close` refuses the write itself while anything under the phase directory is still uncommitted (`applicability.changed_paths`, the same git scope every other check uses), so a misordered caller records **nothing** rather than a false close |
-| **which stage found each defect** | `verifier_review.sh`, `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
+| **which stage found each defect** | `hook_verifier.sh` (over `verdict.json` at phase close), `hook_mutation.sh`, and the `defect` command for stages a script cannot see | the single most valuable field, and the only one **unrecoverable after the run** |
 | which skills each stage actually loaded | `hook_skill_load.sh`, `hook_ponytail.sh` | an instruction to load a skill is not a load |
 
 **One asked-for fact is deliberately not built.** "Verification attempts, **and what each one
@@ -1045,7 +1063,7 @@ Each shape opens with its own marker and **no marker contains another**, because
 stage matches on. Whichever fired, the defect did not land, and `found_by` is not recoverable once
 the phase moves on.
 
-**The Verifier's own attribution (`verifier-findings`, from `verifier_review.sh`) stays
+**The Verifier's own attribution (`verifier-findings`, from `hook_verifier.sh` at phase close) stays
 non-blocking** — it runs behind `|| true` and never fails the phase — **but its stderr is not
 discarded.** It is the highest-volume defect-attribution path there is, and a run that dropped every
 verifier-attributed defect must not look like a run that found none.

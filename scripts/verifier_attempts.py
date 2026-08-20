@@ -50,12 +50,13 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# "Still open" is ONE rule — `status: open` and not waived by break-glass — and `verifier_bundle_scope`
-# already owns it, because it is what keeps a spec in the review set. Restating it here as "the
-# findings array is empty" made the cap unclearable by the very remedy its own message prescribes:
-# waive the remainder, the Verifier writes `pass` with `bypassed: true` and the waived findings still
-# in the array, and CI stayed red with no action left that could clear it.
-from verifier_bundle_scope import open_findings  # noqa: E402
+# "Still open" is ONE rule — `status: open` and not waived by break-glass — and `verdict_findings`
+# owns it. Restating it here as "the findings array is empty" made the cap unclearable by the very
+# remedy its own message prescribes: waive the remainder, the Verifier writes `pass` with
+# `bypassed: true` and the waived findings still in the array, and CI stayed red with no action left
+# that could clear it. (It used to live in `verifier_bundle_scope`, which scoped the cross-family
+# review bundle; that pass is gone and the rule moved house rather than being copied.)
+from verdict_findings import open_findings  # noqa: E402
 
 WITHIN = 0
 CAPPED = 1

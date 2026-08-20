@@ -88,13 +88,9 @@ if [ "$FULL" -eq 1 ]; then
       if [ "$(jq -r '.bypassed // false' "$vd" 2>/dev/null)" = "true" ]; then
         echo "  ⚠ verdict is 'pass' with waived findings (bypassed: true) — visible bypass, not a clean green." >&2
       fi
-      # Same rule as the in-session hook: a pass must evidence the cross-family test-quality review.
-      rv="$(jq -r '.test_quality.reviewed // false' "$vd" 2>/dev/null)"
-      nf="$(jq -r '[.test_quality.scope.test_files[]?] | length' "$vd" 2>/dev/null || echo 0)"
-      if [ "$rv" != "true" ] || [ "${nf:-0}" -eq 0 ]; then
-        echo "  ✗ verdict is 'pass' but records no completed test-quality review (reviewed=$rv, ${nf:-0} files)." >&2
-        record_fail "verifier:unreviewed"
-      fi
+      # Same rule as the in-session hook: a pass must PROVE it executed. Diff-scoped through
+      # verifier_evidence.py's own sweep below, not here — this loop walks every handover in the
+      # tree, and a phase that closed before this rule existed has no transcript and never can.
     fi
     # The verification loop is capped at 3 attempts per phase. Enforced here as well as in the
     # in-session hook (scripts/hook_verifier.sh): a cap only a hook can apply is a cap that stops
@@ -136,6 +132,19 @@ fi
 #
 #      Exit 1 is the obligation; anything else could not DECIDE it, and the two are recorded under
 #      different names - a run naming the wrong cause sends the fix at the wrong thing.
+# 1be) Execution evidence — a phase does not close on a verdict with no proof that anything ran.
+#      `test_quality.reviewed` was a boolean the verifying agent wrote about itself; this reads a
+#      transcript a recorder produced. Enforced here as well as in scripts/hook_verifier.sh for the
+#      same reason the attempt cap is: a rule only an in-session hook applies stops existing the
+#      moment the phase is driven another way.
+#
+#      DIFF-SCOPED even under --full, on carried_items' precedent rather than verifier_precheck's:
+#      every phase that closed before this rule existed has no transcript and cannot acquire one, so
+#      a full audit would fail a consumer repo's CI over a remedy that does not exist for it
+#      (CLAUDE.md §3a). `verifier_evidence.py sweep --all` is the audit for anyone who wants it.
+echo "• execution evidence: every closing phase's verdict names a transcript that ran"
+python3 "$SCRIPT_DIR/verifier_evidence.py" sweep --root "$ROOT" || record_fail "verifier:no-execution-evidence"
+
 echo "• carried items: claims declared, the previous phase's answered, the last card's filed"
 python3 "$SCRIPT_DIR/carried_items.py" check --root "$ROOT"
 carried_rc=$?
@@ -237,9 +246,11 @@ echo "• stage effort: every stage declares it, and no document claims one noth
 python3 "$SCRIPT_DIR/stage_effort.py" check --root "$ROOT" || record_fail "stage-effort"
 
 # 1c) Cross-family assertion — on the model that actually FORMS THE JUDGEMENT.
-#     Checking the Verifier agent's own `model:` would be meaningless here: every subagent in this
-#     runtime is Anthropic, so the agent can never differ in family from the implementer. What must be
-#     decorrelated is $VERIFIER_GATE_MODEL, the model scripts/verifier_review.sh sends the tests to.
+#     Checking an agent's own `model:` would be meaningless here: every subagent in this runtime is
+#     Anthropic, so no agent can differ in family from the implementer. What must be decorrelated is
+#     $GATE_MODEL, the model the spec gate judges on — the pipeline's one remaining model gate now
+#     that the Verifier's cross-family reading pass is gone. Re-pointed rather than deleted: the
+#     invariant is unchanged, only the gate it is asked about still exists.
 model_token () { grep -m1 '^model:' "$1" 2>/dev/null | sed 's/.*:[[:space:]]*//;s/[[:space:]].*//' | tr '[:upper:]' '[:lower:]'; }
 # One vendor table, not two. This used to carry its own `case` over four vendors; a second copy of
 # the pipeline's only independence primitive is a copy that drifts, and the one that drifted first
@@ -247,23 +258,30 @@ model_token () { grep -m1 '^model:' "$1" 2>/dev/null | sed 's/.*:[[:space:]]*//;
 # non-zero here, so the caller's loud refusal below is unchanged.
 model_family () { python3 "$SCRIPT_DIR/model_vendors.py" family "$1"; }
 cross_family_check () {
-  local gate="${VERIFIER_GATE_MODEL:-google/gemini-3.1-pro-preview}" gfam impl itok ifam
-  gfam="$(model_family "$gate")" || { echo "  ✗ unknown VERIFIER_GATE_MODEL family: '$gate'" >&2; return 1; }
+  local gate="${GATE_MODEL:-}" gfam impl itok ifam
+  if [ -z "$gate" ]; then
+    # No default. A gate must never be checked against a model nobody chose — the same refusal
+    # gate_runner.py makes at call time (issue #48), made here at audit time.
+    echo "  ✗ GATE_MODEL is not set, so the spec gate's family cannot be established." >&2
+    echo "    Set it in the project .env; the gate itself refuses to run without one." >&2
+    return 1
+  fi
+  gfam="$(model_family "$gate")" || { echo "  ✗ unknown GATE_MODEL family: '$gate'" >&2; return 1; }
   for impl in "$ROOT/agents/avenger-backend-architect.md" "$ROOT/agents/avenger-frontend-developer.md"; do
     [ -f "$impl" ] || continue
     itok="$(model_token "$impl")"
     ifam="$(model_family "$itok")" || { echo "  ✗ unknown implementer model family in $(basename "$impl"): '$itok'" >&2; return 1; }
     if [ "$gfam" = "$ifam" ]; then
-      echo "  ✗ VERIFIER_GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2
       echo "    Same-family verification is theater — point it at another vendor." >&2
       return 1
     fi
   done
-  echo "  verifier judgement runs on '$gate' (family '$gfam'); implementers are '$ifam'."
+  echo "  the spec gate judges on '$gate' (family '$gfam'); implementers are '$ifam'."
   return 0
 }
 if [ "$FULL" -eq 1 ]; then
-  echo "• cross-family: verifier vs implementers"
+  echo "• cross-family: spec gate vs implementers"
   cross_family_check || record_fail "cross-family"
 fi
 

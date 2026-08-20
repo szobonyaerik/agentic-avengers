@@ -329,17 +329,26 @@ case "$V" in
       fail "verifier:inconsistent" \
         "verifier: verdict.json says 'pass' but still carries $OPEN open finding(s). Fail closed."
     fi
-    # A pass must prove the cross-family test-quality review actually happened. Without this an agent
-    # could write 'pass' having only run the suite — which is exactly the self-review this gate exists
-    # to prevent (pipeline-conventions: "Fresh model ≠ author").
-    REVIEWED=$(jq -r '.test_quality.reviewed // false' "$VERDICT" 2>/dev/null)
-    NFILES=$(jq -r '[.test_quality.scope.test_files[]?] | length' "$VERDICT" 2>/dev/null || echo 0)
-    if [ "$REVIEWED" != "true" ] || [ "${NFILES:-0}" -eq 0 ]; then
-      fail "verifier:unreviewed" \
-        "verifier: verdict.json is 'pass' but records no completed test-quality review" \
-        "(test_quality.reviewed=$REVIEWED, ${NFILES:-0} file(s) in scope)." \
-        "A green suite the implementer wrote is not evidence. Run scripts/verifier_review.sh over the" \
-        "bounded review set on a cross-family model, then record its scope and findings in verdict.json."
+    # A pass must PROVE it executed. This used to read `test_quality.reviewed` — a boolean the
+    # verifying agent wrote about itself, which a stage that skipped its work could set just as
+    # easily as one that did it. `verifier_evidence.py` reads a transcript a RECORDER produced:
+    # commands, exit codes, measured wall clock, the sha256 of each run's output, and the digest of
+    # the specs and tests it ran against. The verdict must name that transcript's chain, so a pass
+    # cannot be paired with runs from a different attempt or a different tree.
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it, and the two carry
+    # different tags and different messages — the same split the Breaker, carried-items and
+    # attempt-cap checks make, and the rule CLAUDE.md § Gates states as "every stop names which".
+    python3 "$SD/verifier_evidence.py" check "$PHASE_DIR" --verdict "$VERDICT"; ev_rc=$?
+    if [ "$ev_rc" -eq 1 ]; then
+      fail "verifier:no-execution-evidence" \
+        "verifier: verdict.json is 'pass' but nothing proves the verification ran (named above)." \
+        "A green suite the implementer wrote is not evidence, and neither is a verdict that says so."
+    elif [ "$ev_rc" -ne 0 ]; then
+      fail "verifier:execution-evidence-undecidable" \
+        "verifier: whether this phase's verification actually ran could not be DECIDED (cause" \
+        "above) — this is not missing evidence, and recording a run will not repair it. A check" \
+        "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
     # A phase that declares criticality: critical routes the Breaker (commands/avenger-run.md §4) —
     # and on one measured feature it was owed twice and ran neither time, with zero trace anywhere in
@@ -367,6 +376,16 @@ case "$V" in
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
     carried_items_gate
+    # Which stage found each defect is the one field the record cannot recover afterwards (§6d).
+    # It used to be emitted by `verifier_review.sh` the moment the cross-family review produced its
+    # findings; that script is gone, and the verdict is now the only place those findings exist. So
+    # it is emitted here, over the same finding shape, from the one point every closing phase passes.
+    #
+    # Measurement, never a gate: `|| true`, over a sink that swallows its own failures, and the exit
+    # below is unaffected by whether anything was written. Its stderr is deliberately NOT discarded —
+    # this is the pipeline's highest-volume defect-attribution path, and swallowing the diagnostic
+    # would leave a run that dropped every verifier defect looking like one that found none.
+    python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$VERDICT" >/dev/null || true
     exit 0 ;;
   fail)
     # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts

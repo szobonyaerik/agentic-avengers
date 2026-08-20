@@ -58,14 +58,16 @@ def test_every_hook_that_can_reach_the_gate_is_checked() -> None:
 
 
 def test_a_hook_that_never_calls_the_gate_is_not_forced_to_wait_for_one() -> None:
-    """hook_verifier.sh only names verifier_review.sh in a message; it does not run it."""
+    """hook_verifier.sh runs mechanical checks and the suite; it reaches no provider call."""
     assert not reaches_gate_runner(SCRIPTS / "hook_verifier.sh", SCRIPTS)
 
 
 def test_the_gate_hooks_are_derived_from_what_they_call_not_from_a_list() -> None:
     """A hook that starts calling the gate is covered without anyone updating this module."""
     assert reaches_gate_runner(SCRIPTS / "hook_spec_gate.sh", SCRIPTS)
-    assert reaches_gate_runner(SCRIPTS / "verifier_review.sh", SCRIPTS)
+    # The negative half, which is what makes the positive one mean something: a script in the same
+    # directory that does NOT reach the runner must not be swept in by the walk.
+    assert not reaches_gate_runner(SCRIPTS / "verifier_evidence.py", SCRIPTS)
 
 
 def test_a_hook_that_calls_the_gate_twice_needs_a_budget_for_two_calls() -> None:

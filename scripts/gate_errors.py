@@ -28,6 +28,7 @@ CAUSES = {
     "provider-payment-required": "the provider refused for billing reasons (402, credit, quota)",
     "provider-error": "the provider returned an error this classifier could not categorise",
     "no-verdict": "the provider replied, but the reply contained no JSON verdict",
+    "implausible-latency": "a verdict came back faster than the call itself can be made, so it is presumed not to have run (scripts/gate_plausibility.py)",
     "io": "a file the gate needs could not be read or written",
     "internal": "the gate itself failed in a way it does not recognise — a defect in the gate",
 }
