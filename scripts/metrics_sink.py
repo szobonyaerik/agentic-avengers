@@ -275,7 +275,13 @@ def assignment(key: str, value: object) -> str:
     return f"{key}:={json.dumps(value)}"
 
 
-def _write(verb: str, phase: str, head: list[str], fields: dict[str, object]) -> bool:
+def _write(
+    verb: str,
+    phase: str,
+    head: list[str],
+    fields: dict[str, object],
+    optional: tuple[str, ...] = (),
+) -> bool:
     if not ensure(phase):
         return False
     argv = [verb, phase, *head, *(assignment(k, v) for k, v in fields.items())]
@@ -283,9 +289,33 @@ def _write(verb: str, phase: str, head: list[str], fields: dict[str, object]) ->
     if result is None:
         return False
     if result[0] != 0:
+        dropped = tuple(key for key in optional if key in fields)
+        if dropped and _write_without(verb, phase, head, fields, dropped):
+            note(
+                f"phase {phase}: this writer refused {', '.join(dropped)} (exit {result[0]}) — the "
+                f"entry is recorded without it, so the field is a lost measurement rather than a "
+                f"lost entry: {result[2].strip()}"
+            )
+            return True
         note(f"phase {phase}: {verb} refused (exit {result[0]}): {result[2].strip()}")
         return False
     return True
+
+
+def _write_without(
+    verb: str, phase: str, head: list[str], fields: dict[str, object], dropped: tuple[str, ...]
+) -> bool:
+    """Retry the write with `dropped` removed. One retry, no recursion, no second `ensure`.
+
+    This is what a version skew between this pipeline and firstmate's record costs: the record's key
+    surface is CLOSED, so a writer that predates a field refuses the whole entry over it, taking
+    every other field down with it. The caller names which of its keys may be given up, and only
+    those; the retry either lands the rest of the entry or the original refusal stands and is
+    reported unchanged.
+    """
+    kept = {key: value for key, value in fields.items() if key not in dropped}
+    retry = run(verb, phase, *head, *(assignment(k, v) for k, v in kept.items()))
+    return retry is not None and retry[0] == 0
 
 
 def set_fields(phase: str, **fields: object) -> bool:
@@ -293,11 +323,17 @@ def set_fields(phase: str, **fields: object) -> bool:
     return _write("set", phase, [], fields)
 
 
-def add(phase: str, collection: str, **fields: object) -> bool:
+def add(phase: str, collection: str, _optional: tuple[str, ...] = (), **fields: object) -> bool:
     """Upsert one entry into a collection, by its identity field.
 
     Re-emitting the same identity converges on one entry rather than appending a second, which is
     what lets an emission point fire on every observation without the caller tracking what it has
     already said.
+
+    `_optional` names the entry's keys this pipeline would rather lose than lose the entry over — a
+    field a writer too old to know it will refuse. It is underscored because every other name here
+    is a field of the record, and `**fields` would otherwise let a schema key of the same name be
+    swallowed by the parameter instead of written. The sink still knows nothing about the schema:
+    which keys are droppable is the CALLER's statement, made where the entry is composed.
     """
-    return _write("add", phase, [collection], fields)
+    return _write("add", phase, [collection], fields, optional=_optional)

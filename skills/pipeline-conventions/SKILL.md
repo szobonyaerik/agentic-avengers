@@ -995,6 +995,25 @@ no exec bit. Reporting the first for the second hands the reader a remedy they a
 phase boundaries are recorded there too; it has no subagent-start or read event, so skill loads are
 not.
 
+**`recorded_by` says WHO wrote the defect down, and every route here says `stage`.** It is a
+different question from `found_by` — what CAUGHT it — and neither is derived from the other. The
+field has three answers and the third is the point: `stage` (the stage that caught it emitted it as
+it ran), `operator` (a person transcribed it afterwards), and **absent, meaning the record predates
+the field**, which a reader must not resolve to either. Two phases' defects were entered by hand and
+that fact survived only as prose; an unstamped emission from this pipeline would be indistinguishable
+from one of those. So `record_defect` stamps every defect it writes — the `defect` command, the
+verifier's findings and the mutation survivors alike — and **that is the single write to `defects[]`
+in the module**, held single by test, so a fourth route cannot land unstamped. Nothing here can emit
+`operator`: a person transcribing after the fact is a different producer and states it through
+firstmate's own CLI. **Nothing back-fills** — a record written before the field stays valid exactly
+as it is.
+
+**Version skew costs the field, never the defect.** firstmate's key surface is closed, so a writer
+older than a field refuses the whole entry over it — which would take `found_by`, the one
+unrecoverable field, down with it. The sink retries once without the keys the CALLER named as
+droppable (`_optional`; the sink still knows nothing about the schema), so the defect lands, the
+provenance is simply absent, and the loss is said on stderr. It stays measurement, not a gate.
+
 **`defect` is the one command that is loud about failing (issue #66).** Every other emission point
 runs from a hook's `|| true` and must stay exit-0 no matter what. `defect` is run directly by the
 stage that caught something, off any hook, so nothing else is fail-open on its behalf — an emission
