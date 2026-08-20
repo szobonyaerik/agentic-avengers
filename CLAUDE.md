@@ -8,7 +8,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
 - Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
-- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `breaker.json`, `handover.md`, `handover-archive.md`)
+- Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `verification-evidence.json` + its `evidence/` logs, `breaker.json`, `handover.md`, `handover-archive.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
 ```yaml
@@ -235,8 +235,8 @@ loud) · **shipped** (the artifact's own stamps say the pipeline is past it — 
 cannot split, and **a rule whose remedy is unavailable is not a gate, it is a wedge**) · **excepted**
 (a disclosed exception on the phase's ledger, `exceptions.json` beside `verdict.json`).
 
-The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`, each one read
-by a named call site — and a rule outside it is a hard failure naming what was invented, never a silent
+The **rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`,
+`execution-evidence`, each one read by a named call site — and a rule outside it is a hard failure naming what was invented, never a silent
 no-op: a ledger entry nothing reads is an exception that does not exist. An exception is **narrow**
 (one rule, one subject, one phase), **audited or not recorded** (through `bypass_log.sh` into
 `gate-overrides.log`, and a failure to log records nothing), and **never silent** — a resolver that
@@ -614,9 +614,9 @@ avenger stage does: lint, docs, push, PR, CI. Its pipeline agent is pinned to An
 (`.no-mistakes.yaml`, plus `agent_args_override` in `~/.no-mistakes/config.yaml`), a **deliberate
 divergence** from the cross-family rule: it runs in the daemon's own disposable worktree with no
 shared context with the stage that wrote the code, so it decorrelates *context* while accepting
-shared *family* blind spots. It is not a break-glass bypass, and every **per-phase** gate (the spec
-gate, the verifier) stays cross-family. While a run is active it owns both findings and fixes, so
-the route-back-to-implementer rule is suspended for its duration.
+shared *family* blind spots. It is not a break-glass bypass, and the pipeline's one remaining
+per-phase MODEL gate, the spec gate, is unaffected and stays cross-family. While a run is active it
+owns both findings and fixes, so the route-back-to-implementer rule is suspended for its duration.
 
 It is wired as **`/avenger-run` §4a**, before the retrospective triage so that what it catches feeds
 the retrospective — a defect the ship gate finds that no avenger stage covers is the most useful

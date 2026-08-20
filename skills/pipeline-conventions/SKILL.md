@@ -46,6 +46,8 @@ The implementer authors **both tests and code** test-first (there is no separate
         test-evidence.md          # mutation evidence, route-back history, build order, deviations
       verdict.json                # the Verifier's persisted verdict for the phase
       verdict-attempt-<n>.json    # a superseded attempt, archived out of verdict.json
+      verification-evidence.json  # the Verifier's transcript: every command it ran, recorded
+      evidence/                   # one redacted, capped log per recorded command (committed)
       breaker.json                # the Breaker's record — only on a phase declaring criticality: critical
       handover.md                 # the phase's CONTRACT CARD, written after the Verifier passes
       handover-archive.md         # everything the card does not carry
@@ -83,6 +85,7 @@ deleted to fix this; the read directives changed.
 | `test-evidence.md` | **on route-back only** | whole |
 | `verdict.json` | phase-handover, feature close | whole; `report` ≤ 1500 chars |
 | `verdict-attempt-<n>.json` | **nobody** — archive | — |
+| `verification-evidence.json` | `verifier_evidence.py` at phase close (`hook_verifier.sh`, `gate_ci.sh`); `avenger-verifier`, writing `verdict.json`'s `execution` block | whole |
 | `breaker.json` | `breaker_gate.py` at phase close (`hook_verifier.sh`, `gate_ci.sh`); `pipeline_state.py` resolving the next stage | whole |
 | `handover.md` | the Spec Writer (prior cards), the spec gate and the human spec-review (the immediately prior card), e2e-author | **the card, ≤ 6144 bytes** |
 | `handover-archive.md` | **nobody** — archive | — |
@@ -495,10 +498,11 @@ python3 scripts/applicability.py list <phase-dir>
 python3 scripts/applicability.py check <phase-dir> --rule verdict --subject 8-clickup-client
 ```
 
-- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker` —
-  and every one of them is read by a named call site. A rule outside it is a hard error naming what
-  was invented, never a silent no-op: a ledger entry nothing reads is an exception that does not
-  exist, and it would surface as a phase wedged on a rule everybody believed was waived. A sixth is a
+- **The rule set is CLOSED** — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`,
+  `execution-evidence`, and every one of them is read by a named call site. A rule outside it is a
+  hard error naming what was invented, never a silent no-op: a ledger entry nothing reads is an
+  exception that does not exist, and it would surface as a phase wedged on a rule everybody believed
+  was waived. A further one is a
   deliberate edit to `applicability.RULES` together with the call site that reads it —
   `subprocess-cost` was dropped from the set for exactly that reason: the cost gate uses the
   *untouched* evidence, not this one.

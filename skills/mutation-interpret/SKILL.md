@@ -6,9 +6,10 @@ description: How to run and interpret the mutation gate per language. It runs in
 # mutation-interpret
 
 The mutation gate runs in **`advisory` mode by default**: it computes the score, reports the score
-and its survivors, and **never blocks**. It is an *extra* signal of test strength, **not** the
-independence mechanism — independence comes from the Verifier reading the implementer's tests for
-anti-patterns.
+and its survivors, and **never blocks**. It is an *extra* signal of test strength, **not** a
+dedicated reader for gamed tests; there is none. The cross-family reading pass that did that job
+was removed and nothing inherits it, so this gate is named as *partial cover* alongside
+`skills/tdd` and the human spec-review, never as a replacement (`skills/verifier-triage`).
 
 It used to be off by default. It is on because it is deterministic (`scripts/mutation_score.py`,
 never a model), diff-scoped (`cr-filter-git`), costs no model call below the threshold, and **every

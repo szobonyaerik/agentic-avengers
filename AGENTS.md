@@ -115,7 +115,7 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    through `spec_gate_state` like every other stamp — the remedy no longer exists, and
    a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
    `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
-   `breaker`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
+   `breaker`, `execution-evidence`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
    all, and named on stderr when it applies — and `bypass_log.sh` **exits 2 (blocking) when it
    cannot append**, so an override nobody could log is not an override. **A phase closed with a recorded
@@ -248,7 +248,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `binding: e2e` requirements are *phase*-level and live with the phase's tests; this ceiling governs
    `tests/e2e/<feature>/` only.
 5. **Phases run in dependency/risk order**, one at a time, fully through build-and-verify.
-6. **Fresh model ≠ author** — every per-phase gate runs on a cross-family model (family ≠ author).
+6. **Fresh model ≠ author, where a model gate still exists.** The model that *forms a gate's
+   judgement* must not share the implementer's family. Every subagent here is Anthropic, so no agent
+   is itself cross-family: the surviving model gate is the **spec gate**, and CI asserts its family
+   statically against `$GATE_MODEL` (unset = not checked, said out loud, never a clean pass).
    The one sanctioned exception is the feature-close `no-mistakes` ship gate (`.no-mistakes.yaml`),
    documented in `skills/pipeline-conventions/SKILL.md`.
 7. **Gates fail closed, and a stop names its own cause.** A gate that cannot reach a verdict (incl.

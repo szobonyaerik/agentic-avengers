@@ -291,7 +291,8 @@ human to poll and a foreground `poll` would hang the run indefinitely.
    owed on every phase-8 and phase-9 spec of one feature and ran on neither (issue #45) — so it is
    now the same mechanical gate as everything else here, not a reminder.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
-   Read survivors as candidate missing cases. It is still not the independence mechanism.
+   Read survivors as candidate missing cases. It is still not a dedicated reader for gamed tests;
+   there is none, and this is partial cover rather than a replacement (`skills/verifier-triage`).
 3. **Carried items** - the handover hook runs **three** carried-items checks and refuses the card if
    any of them fails, so three separate things can stop this phase closing: the *previous* phase's
    card has an item with no answer here (`verifier:carried`); this phase's own new card states

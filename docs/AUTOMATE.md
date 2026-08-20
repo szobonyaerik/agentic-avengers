@@ -42,8 +42,9 @@ Route-backs it must honor (all already emitted by the gates):
   diff once it has been implemented (`commands/avenger-run.md` §6 names the cases that still owe a
   full pass).
 - verifier code failure → back to `avenger-backend-architect`.
-- verifier **test-quality** finding (tautological / off-seam / untraced requirement) → back to the
-  implementer to ADD or rewrite its own not-yet-locked tests. Verification is capped at **3 attempts
+- verifier **coverage gap** (a requirement no row covers, judged per `binding:`) → back to the
+  implementer to ADD the missing case. Nothing reads the suite for gamed tests any more: that pass
+  was removed and nothing inherits it (`skills/verifier-triage`). Verification is capped at **3 attempts
   per phase** (`scripts/verifier_attempts.py`); at the cap the remainder is carried as known-open in
   `handover.md`, waived, or escalated — a fourth attempt is not one of the three.
 - breaker counterexample, or a surviving mutant under `MUTATION_POLICY=enforce` → back to the
