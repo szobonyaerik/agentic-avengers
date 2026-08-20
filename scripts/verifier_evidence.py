@@ -44,7 +44,13 @@ The logs are committed - the gates read them in CI - so a recorded command's out
 `evidence_redaction.prepare` **before it touches disk**: every known secret shape replaced by a
 marker naming it, then the whole capped to `EVIDENCE_LOG_MAX_BYTES` with an explicit truncation
 marker. `output_sha256` and `output_bytes` are computed over those STORED bytes, so `check` still
-verifies the log on disk against the record. Redaction failing writes **no log and no entry** - there
+verifies the log on disk against the record. **The command line goes through the same redactor**:
+the record is committed too, and the `adversarial` kind is documented to plant a recognisably
+credential-shaped value, so `psql "postgres://app:hunter2@db/prod"` puts the secret on the argv
+before the child ever prints anything. The stored argv is what `entry_digest` hashes, so redacting
+it costs the chain nothing. The child's working directory is deliberately NOT recorded: it had no
+reader, was outside the digest, and an absolute developer path in a committed artifact is a
+disclosure with nothing bought for it. Redaction failing writes **no log and no entry** - there
 is no raw-log fallback, because `adversarial` is the kind that exists to surface plaintext secrets
 and no later commit removes one from git history. **Redaction by pattern is a reduction of risk, not
 a guarantee**; the shapes it knows, how to extend them, and what passes straight through are stated
@@ -358,12 +364,13 @@ def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = No
     try:
         stored = evidence_redaction.prepare(raw)
         stored_note = evidence_redaction.redact(note) if note else None
+        stored_argv = [evidence_redaction.redact(word) for word in argv]
     except evidence_redaction.RedactionError as exc:
         raise EvidenceError(
-            f"the output of {argv[0]!r} could not be made safe to store ({exc}). NOTHING was "
-            f"written - no log, and no entry on the record - because output that cannot be redacted "
-            f"must never reach disk. This run does NOT count as recorded. Fix what failed "
-            f"(scripts/evidence_redaction.py, or {evidence_redaction.EXTRA_ENV} / "
+            f"this run could not be made safe to store ({exc}). NOTHING was written - no log, and "
+            f"no entry on the record - because neither a command's output nor the command line "
+            f"itself may reach disk unredacted. This run does NOT count as recorded. Fix what "
+            f"failed (scripts/evidence_redaction.py, or {evidence_redaction.EXTRA_ENV} / "
             f"{evidence_redaction.MAX_BYTES_ENV} if you set them) and run the command again."
         ) from exc
 
@@ -375,8 +382,7 @@ def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = No
     entry = {
         "seq": seq,
         "kind": kind,
-        "argv": list(argv),
-        "cwd": str(base),
+        "argv": stored_argv,
         "exit_code": int(result.returncode),
         "timed_out": bool(result.timed_out),
         "elapsed_ms": max(int(result.elapsed * 1000), 0),

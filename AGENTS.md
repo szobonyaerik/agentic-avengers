@@ -184,16 +184,22 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 4. **The implementer writes the tests, test-first; locked-after-verify.** Red → green per vertical
    slice (`skills/tdd`), never the whole suite up front. The implementer owns the phase's tests until
    `@avenger-verifier` passes it; from then they are **locked** and weakening one needs
-   re-verification (adding is always allowed). **The Verifier is narrowed to three jobs** — coverage
-   per `binding:`, reading a green suite for gamed tests, and adversarial execution on secrets,
-   resource lifetimes and concurrency invariants — because 26% of its measured findings were
+   re-verification (adding is always allowed). **The Verifier is narrowed to TWO jobs** — coverage
+   per `binding:`, and adversarial execution on secrets, resource lifetimes and concurrency
+   invariants — because 26% of its measured findings were
    bookkeeping about its own stamps, which `scripts/verifier_precheck.py` now decides mechanically on
    every commit, diff-scoped to the phases that commit touches (the whole phase at handover, and
    everything under `gate_ci.sh --full`). **Verification is capped at 3 attempts per phase** (`verifier_attempts.py`): 16 of
    20 measured re-attempts were the Verifier routing back to itself. At the cap, carry the remainder
-   as known-open, waive it, or escalate. Because the code's author wrote its judge, the
-   the **cross-family reading pass is gone** — it returned GO with zero findings on a phase with real
-   defects, and nothing inherits it (what that leaves uncovered is named in `CLAUDE.md` §4). What
+   as known-open, waive it, or escalate. The third job it used to have — a dedicated reader for
+   gamed tests — is gone: the **cross-family reading pass** returned GO with zero findings on a phase
+   with real defects, and **nothing inherits it**, because a stage reading its own family's suite is
+   self-review under the removed gate's name. What that leaves uncovered is said rather than implied:
+   gamed tests have no dedicated reader, and the partial cover is the mutation gate (advisory,
+   deterministic, the one signal that has actually caught them here), `skills/tdd` naming the
+   anti-patterns to the implementer *while it writes*, and the human spec-review setting criteria a
+   gamed test has to contradict. `gamed-test` stays in the verdict schema for one raised in passing.
+   What
    replaced it is proof the stage RAN: every command `@avenger-verifier` relies on goes through
    `scripts/verifier_evidence.py record`, and `verdict.json` carries `execution.chain` naming that
    transcript — a pass with no transcript, or one whose chain does not match, is refused by the hook

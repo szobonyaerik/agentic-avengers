@@ -573,3 +573,79 @@ def test_redaction_runs_before_the_cap_so_no_half_secret_survives_the_cut() -> N
     text = "a" * 400 + secret + "b" * 400
     out = evidence_redaction.cap(evidence_redaction.redact(text), 300)
     assert "ghp_0123456789" not in out
+
+
+def test_a_credential_on_the_command_line_never_reaches_the_committed_record(phase: Path) -> None:
+    """RED without argv redaction. The record is committed exactly like the log, and this is the
+    LIKELIEST carrier: `agents/avenger-verifier.md` documents `--kind adversarial -- <cmd>` and tells
+    the Verifier to keep the planted value recognisably credential-shaped, so the documented happy
+    path puts the secret on the command line before the child prints anything."""
+    ve.record(phase, "adversarial",
+              ["/bin/echo", "postgres://app:hunter2@db/prod", "AWS_SECRET_ACCESS_KEY=zzz-live-9999"])
+
+    written = ve.record_path(phase).read_text(encoding="utf-8")
+    assert "hunter2" not in written
+    assert "zzz-live-9999" not in written
+    assert "[REDACTED:url-credentials:" in written
+    assert "[REDACTED:secret-assignment:" in written
+    # The command still identifies itself - redaction removes the secret, not the evidence.
+    assert "/bin/echo" in written
+
+
+def test_the_stored_argv_is_what_the_chain_hashes_so_redacting_it_costs_nothing(phase: Path) -> None:
+    """`entry_digest` hashes the STORED argv and `check` recomputes from what is on disk, so the
+    redaction cannot desynchronise a verdict from its transcript."""
+    ve.record(phase, "suite", ["/bin/echo", "TOKEN=abcd-secret-1234"])
+    verdict_for(phase)
+    assert ve.problems(phase, verdict_path=phase / "verdict.json") == []
+
+
+def test_the_record_does_not_carry_an_absolute_developer_path(phase: Path) -> None:
+    """`cwd` had no reader and was outside the digest, so it bought nothing for the disclosure."""
+    entry = ve.record(phase, "suite", ["/bin/echo", "ok"])[0]
+    assert "cwd" not in entry
+    assert str(Path.cwd()) not in ve.record_path(phase).read_text(encoding="utf-8")
+
+
+def test_argv_redaction_failing_writes_no_log_and_records_no_run(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same fail-closed rule as the log: no raw-argv fallback, and the stop names what failed."""
+    real = evidence_redaction.redact
+
+    def only_argv_fails(text: str) -> str:
+        if "AKIA" in text:
+            raise evidence_redaction.RedactionError("pattern exploded")
+        return real(text)
+
+    monkeypatch.setattr(evidence_redaction, "redact", only_argv_fails)
+    # The child prints NOTHING, so the output path redacts cleanly and only the argv path can fail.
+    # Echoing the secret instead would make the output raise first and the assertions below would
+    # hold whether or not argv is redacted at all - a test green for the wrong reason.
+    with pytest.raises(ve.EvidenceError) as exc:
+        ve.record(phase, "adversarial",
+                  ["/bin/sh", "-c", "exit 0", "AKIAIOSFODNN7EXAMPLE"])
+
+    assert "pattern exploded" in str(exc.value)
+    assert "does NOT count as recorded" in str(exc.value)
+    assert "AKIAIOSFODNN7EXAMPLE" not in str(exc.value), "the stop must not leak what it refused"
+    assert not ve.log_dir(phase).exists() or not any(ve.log_dir(phase).iterdir())
+    assert ve.load(phase)["runs"] == []
+
+
+def test_a_ceiling_too_small_to_hold_its_own_truncation_marker_is_refused_by_name(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RED before the floor: `EVIDENCE_LOG_MAX_BYTES=64` produced a 117-byte log - a config value
+    that silently did not bind, which is the class of defect this whole change is about."""
+    monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV, "64")
+    with pytest.raises(ve.EvidenceError, match="floor"):
+        ve.record(phase, "suite", ["/bin/echo", "ok"])
+    assert ve.load(phase)["runs"] == []
+
+    monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV,
+                       str(evidence_redaction.MIN_MAX_BYTES))
+    entry = ve.record(phase, "suite", ["/bin/echo", "x" * 5000])[0]
+    stored = (phase / entry["log"]).read_bytes()
+    assert len(stored) <= evidence_redaction.MIN_MAX_BYTES, "the ceiling now means what it says"
+    assert "[TRUNCATED:" in stored.decode("utf-8")

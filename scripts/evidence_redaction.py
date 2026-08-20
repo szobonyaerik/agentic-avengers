@@ -44,7 +44,9 @@ silent skip.
 
 ## What bounds the phase directory
 
-`EVIDENCE_LOG_MAX_BYTES` (default 256 KiB) caps **each stored log**. Nothing is ever pruned: every
+`EVIDENCE_LOG_MAX_BYTES` (default 256 KiB, floor `MIN_MAX_BYTES`) caps **each stored log**, and the
+stored bytes never exceed it - a ceiling too small to hold the marker that would say it bit is
+refused by name rather than quietly overshot. Nothing is ever pruned: every
 entry is in the record's hash chain and its log is what `check` hashes, so deleting one - even a
 superseded one - would turn a verifiable transcript into a missing-log failure with no remedy. The
 growth rule is therefore stated rather than enforced by deletion: **one capped log per recorded
@@ -62,6 +64,12 @@ import re
 #: part a reader opens the log for.
 DEFAULT_MAX_BYTES = 256 * 1024
 MAX_BYTES_ENV = "EVIDENCE_LOG_MAX_BYTES"
+
+#: The smallest ceiling that can MEAN anything. The truncation marker is ~120-160 bytes, so below
+#: this a "cap" would be satisfied by the marker alone and the stored log would come out LARGER than
+#: the number that was set - a config value that silently does not bind, which is the same class of
+#: defect as the rest of this module. Refused by name instead, like a malformed value.
+MIN_MAX_BYTES = 256
 
 #: One extra regex, for a call site with a secret shape this set does not know. Whole match redacted.
 EXTRA_ENV = "EVIDENCE_REDACT_EXTRA"
@@ -115,6 +123,17 @@ def max_bytes() -> int:
         raise RedactionError(f"{MAX_BYTES_ENV}={raw!r} is not an integer number of bytes") from exc
     if value <= 0:
         raise RedactionError(f"{MAX_BYTES_ENV}={raw!r} must be a positive number of bytes")
+    return _checked_ceiling(value, MAX_BYTES_ENV)
+
+
+def _checked_ceiling(value: int, source: str) -> int:
+    """A ceiling that is big enough to hold the marker that says it bit. Refused by name if not."""
+    if value < MIN_MAX_BYTES:
+        raise RedactionError(
+            f"{source}={value} is below the {MIN_MAX_BYTES}-byte floor: the truncation marker alone "
+            f"is longer than that, so the stored log would exceed the very ceiling being set. Set "
+            f"it to {MIN_MAX_BYTES} or more."
+        )
     return value
 
 
@@ -168,14 +187,19 @@ def redact(text: str) -> str:
 
 def cap(text: str, limit: int | None = None) -> str:
     """The stored log, bounded - head and tail kept, the middle dropped behind a visible marker."""
-    ceiling = max_bytes() if limit is None else limit
+    ceiling = max_bytes() if limit is None else _checked_ceiling(limit, "limit")
     data = text.encode("utf-8")
     total = len(data)
     if total <= ceiling:
         return text
     reserve = len(TRUNCATED_MARKER.format(n=total, total=total, limit=ceiling,
                                           env=MAX_BYTES_ENV).encode("utf-8"))
-    keep = max(ceiling - reserve, 0)
+    keep = ceiling - reserve
+    if keep <= 0:
+        raise RedactionError(
+            f"a {ceiling}-byte ceiling cannot hold this log's {reserve}-byte truncation marker, so "
+            f"the stored log would exceed it. Raise {MAX_BYTES_ENV} above {reserve}."
+        )
     head, tail = keep // 2, keep - keep // 2
     dropped = total - head - tail
     marker = TRUNCATED_MARKER.format(n=dropped, total=total, limit=ceiling, env=MAX_BYTES_ENV)

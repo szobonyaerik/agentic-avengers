@@ -49,13 +49,36 @@ INSTRUCTION_DIRS = ("agents", "skills", "commands", "prompts")
 
 #: Files that are allowed to NAME the removed pass, because their job is to explain that it is gone.
 #: A history that cannot be written down is a decision nobody can audit later.
+#:
+#: This only means anything for a file the guards actually OPEN. `CLAUDE.md` and `AGENTS.md` sat here
+#: while `shipped_files()` walked neither, so the set read as "scanned and exempted" when the truth
+#: was "never scanned" - a guard that appears to cover a file it never opens is worse than one that
+#: visibly does not. `governed_files()` below is now the one corpus, and this set does the exempting
+#: it always looked like it was doing.
+#: Kept as small as it can be. Every entry is a whole FILE waved through, so a stale live claim
+#: anywhere in one escapes - `AGENTS.md` sat here and shipped "narrowed to three jobs" past a green
+#: suite. A file earns a place only if it states the removal in the affirmative ("the third job WAS
+#: X, and it is gone"); a file that states it in the negative is handled by `NEGATED` below and stays
+#: governed.
 NARRATIVE = {
     "CLAUDE.md",
-    "AGENTS.md",
+    # The historical transformation brief, superseded by pipeline-conventions per its own
+    # frontmatter. It records what the pipeline WAS at each step; a stage does not run on it.
+    "AVENGERS.md",
     "skills/pipeline-conventions/SKILL.md",
     "skills/verifier-triage/SKILL.md",
     "agents/avenger-verifier.md",
 }
+
+#: A negation immediately before the match. "**No stage** reads the suite for gamed tests" and
+#: "**Nothing** reads the suite for gamed tests" are the removal being stated, not a stage being
+#: instructed - and treating them as offences would force whole files (`README.md`,
+#: `docs/AUTOMATE.md`) into NARRATIVE, where a REAL stale claim would then ride along unseen.
+#: Checked against the run of text before the match rather than as a lookbehind, which `re` allows
+#: only at fixed width.
+NEGATED = re.compile(r"\b(?:no|nothing|never|neither|without)\b[^.:;\n]{0,40}$",
+                     re.IGNORECASE)
+NEGATION_WINDOW = 60
 
 
 def shipped_files() -> list[Path]:
@@ -66,6 +89,28 @@ def shipped_files() -> list[Path]:
             if path.is_file() and "__pycache__" not in path.parts:
                 found.append(path)
     return found
+
+
+def governed_files() -> list[Path]:
+    """Every document this removal binds - ONE corpus, so the guards cannot disagree about scope.
+
+    `shipped_files()` alone is the canonical stage instructions, and it misses the documents an agent
+    most reliably reads: `AGENTS.md` (shipped through install.sh's SRC_SETS), `CLAUDE.md` (the
+    project rulebook), `README.md` and `docs/`. Each guard used to widen the corpus for itself or not
+    at all, which is how a stale "narrowed to three jobs" survived in `AGENTS.md` with a green suite.
+    Root markdown is GLOBBED rather than listed: a corpus that has to be extended by hand is one a
+    new document silently escapes.
+    """
+    seen: dict[str, Path] = {}
+    for path in [
+        *shipped_files(),
+        *ROOT.glob("*.md"),
+        *(ROOT / "docs").rglob("*.md"),
+        ROOT / "docs" / "templates" / "env.example",
+    ]:
+        if path.is_file() and "__pycache__" not in path.parts:
+            seen.setdefault(str(path.relative_to(ROOT)), path)
+    return list(seen.values())
 
 
 def test_the_pass_and_its_machinery_are_gone() -> None:
@@ -90,10 +135,7 @@ def test_nothing_shipped_still_invokes_the_removed_scripts() -> None:
 
 def test_the_env_vars_that_configured_it_are_gone_from_every_shipped_document() -> None:
     offenders = []
-    for path in [*shipped_files(), *(ROOT / "docs").rglob("*.md"),
-                 ROOT / "docs" / "templates" / "env.example", ROOT / "README.md"]:
-        if not path.is_file() or "__pycache__" in path.parts:
-            continue
+    for path in governed_files():
         text = path.read_text(encoding="utf-8", errors="replace")
         for name in REMOVED_ENV:
             if name in text:
@@ -145,13 +187,19 @@ DESCRIBES_A_LIVE_PASS = re.compile(
 
 
 def offenders_matching(pattern: re.Pattern[str]) -> list[str]:
-    """Shipped instructions and scripts matching `pattern`, minus the documents that explain it."""
-    return [
-        str(path.relative_to(ROOT))
-        for path in shipped_files()
-        if str(path.relative_to(ROOT)) not in NARRATIVE
-        and pattern.search(path.read_text(encoding="utf-8", errors="replace"))
-    ]
+    """Every governed document matching `pattern`, minus the ones whose job is to explain it."""
+    offenders: list[str] = []
+    for path in governed_files():
+        rel = str(path.relative_to(ROOT))
+        if rel in NARRATIVE:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in pattern.finditer(text):
+            before = text[max(0, match.start() - NEGATION_WINDOW):match.start()]
+            if not NEGATED.search(before):
+                offenders.append(rel)
+                break
+    return offenders
 
 
 def test_no_stage_is_instructed_to_do_the_reading_itself() -> None:
@@ -180,6 +228,19 @@ def test_the_guard_catches_the_inflected_forms_an_instruction_is_actually_writte
         "read the spec for its acceptance criteria",
     ):
         assert not READS_THE_SUITE.search(benign), benign
+
+
+def test_the_negation_filter_waves_through_the_removal_and_not_an_instruction() -> None:
+    """The filter is what keeps `README.md` and `docs/AUTOMATE.md` GOVERNED instead of waved through
+    as whole files. It has to be narrow enough that a real instruction cannot hide behind a nearby
+    "no": the window stops at a clause break, so only a negation of THIS verb counts."""
+    waved = "That means the author of the code also authors its judge. No stage reads the suite for gamed tests."
+    instruction = "There is no reason to skip it: read the tests for gamed patterns."
+    for text, expected in ((waved, True), (instruction, False)):
+        match = READS_THE_SUITE.search(text)
+        assert match, text
+        before = text[max(0, match.start() - NEGATION_WINDOW):match.start()]
+        assert bool(NEGATED.search(before)) is expected, text
 
 
 def test_no_stage_instruction_still_describes_the_pass_as_a_live_stage() -> None:
