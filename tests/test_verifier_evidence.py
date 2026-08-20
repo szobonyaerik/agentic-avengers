@@ -195,6 +195,18 @@ def test_a_run_recording_no_elapsed_time_did_not_start_a_process(phase: Path) ->
     assert found and "below the" in found[0] and "floor for starting a process" in found[0]
 
 
+def test_a_sub_millisecond_run_still_records_above_the_floor(phase: Path) -> None:
+    """The floor means 'no process started', never 'a fast machine'.
+
+    Truncating the measured seconds made it the latter: a real fork+exec costs under a millisecond on
+    a fast CI runner, `int(0.0007 * 1000)` is 0, and the floor then refused a run that happened. The
+    conversion is asserted clock-free, so the guard is proven rather than the machine.
+    """
+    assert ve.elapsed_ms(0.0000007) >= ve.PROCESS_FLOOR_MS
+    assert ve.elapsed_ms(0.0) == 0                    # a zero measurement is still zero
+    assert ve.elapsed_ms(1.5) == 1500                 # and a real duration is unchanged
+
+
 def test_evidence_recorded_against_different_content_is_refused(phase: Path) -> None:
     """Evidence is only evidence about what it was recorded against. RED after the tests change,
     GREEN once the commands are re-run against the tree that is actually there."""

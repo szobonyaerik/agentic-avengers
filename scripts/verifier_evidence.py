@@ -79,6 +79,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -115,8 +116,9 @@ KINDS = ("suite", "coverage", "adversarial", "other")
 #: tests verified nothing, whatever else it did.
 REQUIRED_KIND = "suite"
 
-#: Milliseconds below which a recorded run did not start a process. A fork+exec of even `/bin/true`
-#: costs more than this on every platform this runs on; 0 ms is a hand-written number.
+#: Milliseconds below which a recorded run did not start a process. `elapsed_ms` rounds a measured
+#: duration UP, so any run that took any time at all records at least this; 0 ms is a hand-written
+#: number rather than a fast machine.
 PROCESS_FLOOR_MS = 1
 
 #: Seconds a recorded command may run before its process group is killed. Generous, because the
@@ -323,6 +325,17 @@ def save(phase_dir: Path, data: dict) -> Path:
 # --- record ---------------------------------------------------------------------------------------
 
 
+def elapsed_ms(seconds: float) -> int:
+    """Milliseconds for a MEASURED duration, rounded UP for anything that took any time at all.
+
+    Truncating here made the floor machine-dependent: a real fork+exec of `/bin/sh` costs under a
+    millisecond on a fast runner, and `int(0.0007 * 1000)` is 0 - the one value `_entry_problems`
+    reads as "no process was ever started", so a run that genuinely happened was refused on fast
+    hardware and accepted on slow. Only a duration that measured zero records 0.
+    """
+    return max(math.ceil(seconds * 1000), 0)
+
+
 def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = None,
            root: Path | None = None) -> tuple[dict, int]:
     """Run `argv`, capture what it did, and append it to the phase's record.
@@ -385,7 +398,7 @@ def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = No
         "argv": stored_argv,
         "exit_code": int(result.returncode),
         "timed_out": bool(result.timed_out),
-        "elapsed_ms": max(int(result.elapsed * 1000), 0),
+        "elapsed_ms": elapsed_ms(result.elapsed),
         "output_sha256": hashlib.sha256(stored.encode("utf-8")).hexdigest(),
         "output_bytes": len(stored.encode("utf-8")),
         "log": log_file.relative_to(phase).as_posix(),
