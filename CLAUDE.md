@@ -796,7 +796,16 @@ phase directory is still uncommitted · **which stage found each defect** (`veri
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
 defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
-inline prose. **Off unless `fm-pipeline-metrics.sh` is on `PATH` or `AVENGER_METRICS_CMD` names it**,
+inline prose. **`recorded_by` is a different question — WHO wrote the defect down, never derived from
+what caught it — and every route in `pipeline_metrics.py` answers `stage`**, because every one of them
+IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]`, held
+single by test so a fourth route cannot land unstamped, and nothing here can emit `operator` (a person
+transcribing afterwards is a different producer, using firstmate's own CLI). Its **third answer is
+absence**, meaning the record predates the field, which is why an unstamped emission would read as one
+of the two phases whose defects were entered by hand. Nothing back-fills. A firstmate too old to know
+the field refuses the whole entry over it — its key surface is closed — so the sink retries once
+without the keys the caller named droppable and the defect lands with its provenance simply absent:
+**a lost measurement, never a lost defect, and never a blocked phase.** **Off unless `fm-pipeline-metrics.sh` is on `PATH` or `AVENGER_METRICS_CMD` names it**,
 and an unconfigured run says so once rather than recording nothing in silence; `AVENGER_METRICS_OFF=1`
 disables it. opencode records everything its adapter drives, minus skill loads (no read/spawn event).
 
@@ -829,11 +838,22 @@ inert for every running phase until someone releases it. **Observed, not assumed
 `scripts/plugin_release.py` derives the executing version from `$CLAUDE_PLUGIN_ROOT` itself, never a
 constant a stale copy would carry unchanged, and `record_plugin_version` rides it into the phase's
 `gate_calls[]` at phase-open — an existing key, never a new top-level field, since firstmate's
-schema is closed (§6d). **Enforced, not folklore:** `/avenger-run` §1 runs `plugin_release.py check`
-before any phase executes and stops the run on `STALE` (content hash of the shipped payload —
-including `docs/templates/`, not the rest of `docs/` — differs from `AVENGER_SOURCE_REPO`'s
-**committed HEAD**, never its working tree, so an in-progress edit reads as a separate `dirty` flag,
-never as STALE); `UNKNOWN` (no source repository resolvable — `AVENGER_SOURCE_REPO` unset and the
+schema is closed (§6d). **Enforced by something that executes:**
+`scripts/hook_plugin_release.sh` is a **`PreToolUse`** hook that refuses to spawn any `avenger-*`
+stage while the executing copy is `STALE`, so the run stops immediately before stale code would
+build a phase - the halt used to be a sentence in `/avenger-run` §1 that an orchestrator had to read
+and obey, which is issue #69's class exactly. `PreToolUse` and not `SubagentStart`, where the other
+stage hooks live: that event cannot block, so a halt there would be prose with a shebang on it. It
+decides on `tool_input.subagent_type`, never the spawn tool's name (`Task` in some harness versions,
+`Agent` in others), and **everything that is not a verdict fails open** - no `jq`/`python3`, an
+unreadable payload, a bad regex, or a checker that crashed lets the spawn through and says so, since
+the verdict is the exit code **and** the checker's own `STALE:` marker (a traceback exits 1 too, and
+"cut a release" is the wrong remedy for a crash). `GATE_BYPASS` proceeds, audited. opencode has no
+pre-spawn event and does not carry it. §1 still runs `plugin_release.py check` as an early report -
+it changes when the operator learns, never whether the run is stopped. `STALE` is a content hash of
+the shipped payload - including `docs/templates/`, not the rest of `docs/` - differing from
+`AVENGER_SOURCE_REPO`'s **committed HEAD**, never its working tree, so an in-progress edit reads as a
+separate `dirty` flag, never as STALE; `UNKNOWN` (no source repository resolvable — `AVENGER_SOURCE_REPO` unset and the
 project's plugin manifest `name` does not match the executing copy's) is reported, never enforced.
 **The release step is one command, not done until a harness would load it** — `plugin_release.py cut
 --repo <path> --cache-root <path>` — that refuses to overwrite a version whose content already

@@ -13,6 +13,10 @@ double agrees with whatever it was written to agree with. It skips when firstmat
 The double implements `init`, `show`, `set` and `add` only — the four the sink uses — and it
 enforces neither the schema nor the ledger invariant, on purpose. Anything that depends on those
 belongs in a `real_sink` test.
+
+It does carry one lever the real CLI cannot be asked for: `DOUBLE_REFUSE_KEY` names entry keys it
+refuses, which is how a firstmate too OLD to know a field is reproduced. The installed CLI is always
+the current one, so version skew is the one behaviour only a double can stand in for.
 """
 
 from __future__ import annotations
@@ -49,6 +53,16 @@ if forced:
 if argv and argv[0] == os.environ.get("DOUBLE_REFUSE"):
     sys.stderr.write("refusing %s on purpose\n" % argv[0])
     sys.exit(3)
+
+# An OLDER firstmate: its key surface is closed, so an entry carrying a key it does not know is
+# refused whole. Named keys, not a schema — the double still enforces nothing on its own.
+unknown = [k for k in (os.environ.get("DOUBLE_REFUSE_KEY") or "").split(",") if k]
+if argv[:1] == ["add"]:
+    for item in argv[3:]:
+        key = item.split("=")[0].rstrip(":")
+        if key in unknown:
+            sys.stderr.write("unknown key %s in defects entry\n" % key)
+            sys.exit(3)
 
 def path_for(phase):
     return os.path.join(store, "phase-%02d.json" % int(phase))
@@ -131,7 +145,7 @@ def _clean_env(monkeypatch) -> None:
     monkeypatch.delenv("AVENGER_METRICS_OFF", raising=False)
     for name in ("PHASE", "PHASE_DIR", "SPEC", "SPEC_PATH", "STAGE", "ATTEMPT", "LOG"):
         monkeypatch.delenv(f"AVENGER_METRICS_{name}", raising=False)
-    for name in ("DOUBLE_EXIT", "DOUBLE_REFUSE"):
+    for name in ("DOUBLE_EXIT", "DOUBLE_REFUSE", "DOUBLE_REFUSE_KEY"):
         monkeypatch.delenv(name, raising=False)
     _reset_sink(monkeypatch)
 

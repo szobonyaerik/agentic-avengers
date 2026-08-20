@@ -1152,3 +1152,126 @@ def test_a_defect_found_by_other_carries_its_note(real_sink):  # noqa: F811
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert stored(home, "08")["defects"][0]["found_by_note"]
+
+
+# --- recorded_by: the pipeline says the PIPELINE wrote it down ------------------------------------
+
+
+def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(stub_sink):  # noqa: F811,E501
+    """All three routes, because a route left unstamped reads as a record predating the field.
+
+    `recorded_by` has three answers and absence is one of them: it means the record is older than
+    the field, and a reader must not resolve it to either value. So a defect this pipeline emitted
+    but did not stamp is not "unlabelled", it is labelled as something else entirely — and it is
+    exactly the phases whose defects a person transcribed by hand that absence is reserved for.
+    """
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    verdict = phase_dir / ".verifier-review.json"
+    verdict.write_text(json.dumps({"verdict": "NO-GO", "findings": [
+        {"id": "aaa", "kind": "code", "target": "src/token.py", "instruction": "off-by-one"},
+    ]}), encoding="utf-8")
+    score = phase_dir / "score.json"
+    score.write_text(json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8")
+
+    metrics.record_defect("08", identifier="D1", summary="caught by hand-run seam",
+                          found_by="execution", real=True, stage_reached="verification",
+                          severity="security")
+    metrics.record_verifier_findings(str(phase_dir), str(verdict))
+    metrics.record_mutation_survivors(str(phase_dir), str(score))
+
+    defects = stored(store, "08")["defects"]
+    assert {d["id"] for d in defects} == {"D1", "verifier-aaa", "mutation-survivors"}
+    assert [d["recorded_by"] for d in defects] == ["stage"] * 3
+
+
+def test_no_defect_reaches_the_record_except_through_the_stamping_point():
+    """The guard against a FOURTH route: one `defects` write, so a new one cannot skip the stamp.
+
+    Stamping every current route says nothing about the next one. `record_defect` is the single
+    write, and this is what keeps it single — a new emission point either goes through it and is
+    stamped, or turns this red.
+    """
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "pipeline_metrics.py").read_text(
+        encoding="utf-8"
+    )
+    assert source.count('"defects"') == 1
+    assert 'sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)' in source
+
+
+def test_recorded_by_is_never_derived_from_what_caught_the_defect(stub_sink):  # noqa: F811
+    """Two questions, two fields. `found_by` varies; the recorder does not."""
+    _, store, _ = stub_sink
+
+    for index, found_by in enumerate(("breaker", "mutation", "ci", "human-review")):
+        metrics.record_defect("08", identifier=f"D{index}", summary=found_by, found_by=found_by,
+                              real=True, stage_reached="implementation", severity="correctness")
+
+    defects = stored(store, "08")["defects"]
+    assert {d["found_by"] for d in defects} == {"breaker", "mutation", "ci", "human-review"}
+    assert {d["recorded_by"] for d in defects} == {"stage"}
+
+
+def test_a_firstmate_too_old_for_the_field_loses_the_field_and_keeps_the_defect(
+    stub_sink, monkeypatch, capsys,  # noqa: F811
+):
+    """Version skew costs the measurement, never the entry.
+
+    firstmate's key surface is CLOSED — a writer that predates `recorded_by` refuses the whole entry
+    over it, taking `found_by` down with it, and `found_by` is the one field in the record that
+    cannot be recovered after the run. So the write is retried without the key the caller named as
+    droppable, the defect lands, and the loss is said out loud on stderr.
+    """
+    _, store, log = stub_sink
+    monkeypatch.setenv("DOUBLE_REFUSE_KEY", "recorded_by")
+
+    assert metrics.record_defect("08", identifier="D1", summary="a real one",
+                                 found_by="execution", real=True, stage_reached="verification",
+                                 severity="security") is True
+
+    defect = stored(store, "08")["defects"][0]
+    assert "recorded_by" not in defect          # absent, not guessed at, and never `null`
+    assert defect["found_by"] == "execution" and defect["summary"] == "a real one"
+
+    writes = [call for call in read_calls(log) if call[:1] == ["add"]]
+    assert len(writes) == 2                     # the stamped write, then one retry without the key
+    assert any(field.startswith("recorded_by=") for field in writes[0])
+    assert not any(field.startswith("recorded_by=") for field in writes[1])
+
+    captured = capsys.readouterr()
+    assert captured.out == ""                   # every caller's stdout is somebody's protocol
+    assert "recorded_by" in captured.err        # a lost measurement is never a silent one
+
+
+def test_a_refusal_that_is_not_about_the_new_field_still_fails(stub_sink, monkeypatch, capsys):  # noqa: F811,E501
+    """The downgrade is one retry of a named key, not a blanket "try again without the hard parts".
+
+    A writer refusing every `add` refuses the retry too, so the emission fails exactly as it did
+    before the field existed — `defect`'s loud exit still has something to be loud about.
+    """
+    _, _, log = stub_sink
+    monkeypatch.setenv("DOUBLE_REFUSE", "add")
+
+    assert metrics.record_defect("08", identifier="D1", summary="a real one",
+                                 found_by="execution", real=True, stage_reached="verification",
+                                 severity="security") is False
+
+    assert capsys.readouterr().out == ""
+    assert len([call for call in read_calls(log) if call[:1] == ["add"]]) == 2
+
+
+def test_the_real_writer_validates_a_defect_this_pipeline_stamped(real_sink):  # noqa: F811
+    """The claim the double cannot make: `recorded_by: stage` is a value firstmate's enum accepts."""
+    _, home = real_sink
+
+    assert metrics.record_defect("08", identifier="D1", summary="a real one",
+                                 found_by="execution", real=True, stage_reached="verification",
+                                 severity="security") is True
+
+    result = subprocess.run(  # noqa: S603
+        [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stored(home, "08")["defects"][0]["recorded_by"] == "stage"

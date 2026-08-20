@@ -25,6 +25,12 @@
         "hooks": [
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_autoapprove.sh\"", "timeout": 10 }
         ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_plugin_release.sh\"", "timeout": 30 }
+        ]
       }
     ],
     "PostToolUse": [
