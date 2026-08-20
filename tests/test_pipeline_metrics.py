@@ -5,9 +5,12 @@ Three properties are load-bearing and each has its own group below.
 **Emitted during the run.** Nothing here reconstructs anything at the end, so every emission point
 is driven the way its caller drives it and the record is read straight off disk afterwards.
 
-**Never able to fail a phase.** The CLI is asserted to exit 0 with the record unwritable, which is
-the shape a real failure takes: a hook runs `pipeline_metrics.py …` and a non-zero exit there would
-stop the turn.
+**Never able to fail a phase, except `defect`.** The CLI is asserted to exit 0 with the record
+unwritable, which is the shape a real failure takes: a hook runs `pipeline_metrics.py …` and a
+non-zero exit there would stop the turn. `defect` is the deliberate exception and has its own group
+below: a stage runs it directly, off any hook's `|| true`, so an emission it could not write is
+asserted to exit non-zero and say so on stderr — the breaks-the-recorder cases are what prove that
+guard goes red rather than green.
 
 **Attributed to the fact, not to the caller.** A spec round is idempotent by content, so any number
 of callers may report the same write; a seeded skill requirement never overwrites an observed load,
@@ -26,13 +29,24 @@ from pathlib import Path
 
 import pytest
 
-from metrics_support import read_calls, real_sink, stored, stub_sink, write_spec  # noqa: F401
+from metrics_support import (  # noqa: F401
+    git_init,
+    git_land,
+    read_calls,
+    real_sink,
+    stored,
+    stub_sink,
+    write_spec,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
+import gate_timeouts  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
+import plugin_release  # noqa: E402
+import proc_group  # noqa: E402
 
 pytestmark = pytest.mark.subprocess(
     "every emission point writes through a real writer process, which is the whole mechanism"
@@ -409,22 +423,171 @@ def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_
 
 
 def test_the_suite_is_counted_the_same_way_at_both_ends(stub_sink):  # noqa: F811
+    """`count_tests` counts collected pytest ITEMS, not `def test_` lines — issue #46.
+
+    A parametrized function is one `def` and several collected items: the static count the emitter
+    used to write disagreed with every suite run `hook_verifier.sh` itself reports, by exactly that
+    gap (917/973 recorded against 1092/1164 observed in the phase that filed #46). One `def` with
+    three parametrize cases below proves the field now carries the SAME population pytest itself
+    reports, not merely a different but internally-consistent one.
+    """
     project, store, _ = stub_sink
-    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
     tests = project / "tests"
     tests.mkdir()
     (tests / "test_a.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    git_land(project, "open")
 
-    metrics.record_phase_open(phase_dir)
+    metrics.record_phase_open(str(phase_dir))
     (tests / "test_b.py").write_text(
-        "async def test_two():\n    pass\ndef test_three():\n    pass\n", encoding="utf-8"
+        "import pytest\n"
+        "@pytest.mark.parametrize('n', [1, 2, 3])\n"
+        "def test_two(n):\n"
+        "    pass\n",
+        encoding="utf-8",
     )
-    metrics.record_phase_close(phase_dir)
+    (phase_dir / "handover.md").write_text("landed", encoding="utf-8")
+    git_land(project, "close")
+    metrics.record_phase_close(str(phase_dir))
 
     record = stored(store, "08")
-    assert record["tests_before"] == 1 and record["tests_after"] == 3
+    assert record["tests_before"] == 1
+    # 1 pre-existing item + 3 parametrize cases from one `def` — not 2 `def`s.
+    assert record["tests_after"] == 4
     assert record["opened"] is not None and record["closed"] is not None
     assert record["elapsed_minutes"] == 0
+
+
+def test_the_collection_is_bounded_the_way_every_child_on_a_hook_path_is(monkeypatch, tmp_path):
+    """It runs inside `hook_spec_gate.sh`, so it goes through `proc_group.run_bounded`.
+
+    `subprocess.run(cmd, capture_output=True, timeout=…)` stops the process it started and nothing
+    else: xdist workers keep the inherited pipes open and the drain that follows the kill has no
+    bound of its own, which turns the timeout into the unbounded hang that gets the whole hook
+    killed — and a killed spec-gate hook reports no verdict at all.
+    """
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.delenv("SUBPROC_CHECK_PATHS", raising=False)
+    seen = {}
+
+    def fake(cmd, timeout, cwd=None):
+        seen.update(cmd=cmd, timeout=timeout, cwd=cwd)
+        return proc_group.ChildResult(0, "7 tests collected in 0.1s\n", "", 0.1, False)
+
+    monkeypatch.setattr(metrics.proc_group, "run_bounded", fake)
+
+    assert metrics.count_tests() == 7
+    assert seen["timeout"] == gate_timeouts.collect_timeout()
+    assert seen["cwd"] == str(tmp_path)
+
+
+def test_a_wedged_collection_counts_nothing_rather_than_taking_the_hook_with_it(
+    monkeypatch, tmp_path
+):
+    """The smaller bound is the one that has to bind: a collection that blows it leaves the field
+    absent — the meaning "not counted" already had — instead of the hook being killed mid-gate."""
+    (tmp_path / "tests").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        metrics.proc_group,
+        "run_bounded",
+        lambda cmd, timeout, cwd=None: proc_group.ChildResult(
+            -9, "300 tests collected in 60s\n", "", 61.0, True
+        ),
+    )
+
+    assert metrics.count_tests() is None
+
+
+def test_the_ignored_e2e_directory_follows_the_test_root(monkeypatch, tmp_path):
+    """`--ignore=tests/e2e` was a literal, so a project pointing `SUBPROC_CHECK_PATHS` at
+    `src/tests` counted `src/tests/e2e` items that the suite run it claims parity with excludes."""
+    (tmp_path / "src" / "tests").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "src/tests")
+    seen = {}
+
+    def fake(cmd, timeout, cwd=None):
+        seen["cmd"] = cmd
+        return proc_group.ChildResult(0, "0 tests collected in 0.1s\n", "", 0.1, False)
+
+    monkeypatch.setattr(metrics.proc_group, "run_bounded", fake)
+    metrics.count_tests()
+
+    assert f"--ignore={tmp_path / 'src' / 'tests' / 'e2e'}" in seen["cmd"]
+    assert str(tmp_path / "src" / "tests") in seen["cmd"]
+
+
+def test_pytest_is_the_one_on_path_when_there_is_one(monkeypatch):
+    """`hook_verifier.sh` runs the binary off `PATH`. Where that pytest is not importable by the
+    interpreter running this hook, `-m pytest` collects nothing and the field silently disappears —
+    where the static count it replaced always produced a number."""
+    monkeypatch.setattr(metrics.shutil, "which", lambda _name: "/usr/local/bin/pytest")
+    assert metrics.pytest_argv() == ["/usr/local/bin/pytest"]
+
+    monkeypatch.setattr(metrics.shutil, "which", lambda _name: None)
+    assert metrics.pytest_argv() == [sys.executable, "-m", "pytest"]
+
+
+# --- close is LANDED, not implemented — issue #46 -------------------------------------------------
+
+
+def test_a_handover_write_alone_does_not_close_the_phase(stub_sink):  # noqa: F811
+    """Reproduces the defect: a handover.md WRITE, with nothing committed, used to stamp `closed`.
+
+    This is the guard going red on the exact shape #46 described — an amendment still open, a
+    further Verifier finding, a suite hang blocking the commit, nothing pushed. Simulated here as
+    "the phase directory is not committed at all", which is every one of those cases from the
+    emitter's point of view: it has no commit to point at.
+    """
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text("{}", encoding="utf-8")
+    metrics.record_phase_open(str(phase_dir))
+    git_land(project, "open")  # only the open is committed
+
+    (phase_dir / "handover.md").write_text("draft", encoding="utf-8")  # NOT committed
+    assert metrics.record_phase_close(str(phase_dir)) is False
+
+    record = stored(store, "08")
+    assert record["closed"] is None
+    assert record["elapsed_minutes"] is None
+    assert record["tests_after"] is None
+
+
+def test_a_phase_with_no_repo_at_all_does_not_close_either(stub_sink):  # noqa: F811
+    """A producer that cannot observe landing must not claim it — including when it cannot ask git."""
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    metrics.record_phase_open(str(phase_dir))
+
+    (phase_dir / "handover.md").write_text("draft", encoding="utf-8")
+    assert metrics.record_phase_close(str(phase_dir)) is False
+    assert stored(store, "08")["closed"] is None
+
+
+def test_the_close_lands_once_the_phase_directory_is_actually_committed(stub_sink):  # noqa: F811
+    """The green case: committing the phase (`avenger-run.md` §5) is what unblocks the stamp."""
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text("{}", encoding="utf-8")
+    metrics.record_phase_open(str(phase_dir))
+    git_land(project, "open")
+
+    (phase_dir / "handover.md").write_text("landed", encoding="utf-8")
+    git_land(project, "close")
+    assert metrics.record_phase_close(str(phase_dir)) is True
+
+    record = stored(store, "08")
+    assert record["closed"] is not None
 
 
 def test_opening_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
@@ -436,6 +599,66 @@ def test_opening_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
     metrics.record_phase_open(phase_dir)
 
     assert stored(store, "08")["opened"] == opened
+
+
+# --- plugin version: issue #65, riding on an existing key rather than a new one --------------------
+
+
+def test_phase_open_records_which_plugin_copy_executed(stub_sink, monkeypatch):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    stale = plugin_release.DriftResult(
+        status="stale", executing_version="0.10.2", source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+    )
+    monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
+
+    metrics.record_phase_open(phase_dir)
+
+    calls = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(calls) == 1
+    assert calls[0]["verdict"] == "NO-GO"
+    assert "executing_version=0.10.2" in calls[0]["note"]
+    assert "source_version=0.10.3" in calls[0]["note"]
+
+
+def test_plugin_version_recording_never_adds_a_new_top_level_field(stub_sink):  # noqa: F811
+    """firstmate's schema is closed and its producer contract is 'add no key'
+    (pipeline-conventions §6d) — a new field is firstmate's decision, not this repo's. This must
+    ride on an existing collection, the way `record_triage_decision` already does."""
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    metrics.record_phase_open(phase_dir)
+
+    record = stored(store, "08")
+    assert "plugin_version" not in record
+    assert any(c["stage"] == metrics.PLUGIN_VERSION_STAGE for c in record["gate_calls"])
+
+
+def test_plugin_version_recording_is_idempotent_across_repeated_opens(stub_sink):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    metrics.record_phase_open(phase_dir)
+    metrics.record_phase_open(phase_dir)
+
+    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(rows) == 1
+
+
+def test_plugin_version_recording_never_fails_the_phase_open(stub_sink, monkeypatch):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("plugin_release blew up")
+
+    monkeypatch.setattr(plugin_release, "check", boom)
+
+    assert metrics.record_phase_open(phase_dir) is True
+    assert stored(store, "08")["opened"] is not None
 
 
 # --- which stage found each defect -------------------------------------------------------------------
@@ -582,6 +805,163 @@ def test_a_usage_error_is_still_a_usage_error():
     assert run_cli("no-such-command").returncode != 0
 
 
+# --- `defect` is the deliberate exception: it must be loud when it fails (issue #66) --------------
+
+
+DEFECT_ARGS = (
+    "defect", "--phase-ref", "docs/features/demo/phases/08-slug",
+    "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+)
+
+
+def test_a_bare_defect_cli_invocation_records_with_no_human_intervention(stub_sink):  # noqa: F811
+    """The happy path: a bare CLI invocation, inheriting only the fixture's environment, records."""
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stored(store, "08")["defects"][0]["id"] == "D1"
+
+
+def test_a_defect_that_cannot_be_written_because_the_writer_refuses_fails_loudly(stub_sink, monkeypatch):  # noqa: F811,E501
+    """Break the recorder (the writer exits non-zero) and confirm the guard goes red, not green."""
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("DOUBLE_EXIT", "3")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert "D1" in result.stderr
+    assert not (store / "phase-08.json").exists()
+
+
+def test_a_writer_that_refuses_is_reported_as_retryable(stub_sink, monkeypatch):  # noqa: F811
+    """A configured writer that failed the write is a cause the stage can fix, so it is told to."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("DOUBLE_EXIT", "3")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert "re-run this exact command" in result.stderr
+    assert "DO NOT re-run" not in result.stderr
+
+
+def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch):  # noqa: F811
+    """Unset the writer entirely — the "unconfigured" half of the guard, not just "refused"."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")  # no fm-pipeline-metrics.sh reachable by any other name either
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert "D1" in result.stderr
+
+
+def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, monkeypatch):  # noqa: F811,E501
+    """The remedy is the operator's, not the stage's: "fix the cause and re-run" here is a loop.
+
+    A standalone install with no firstmate home is the documented normal state of this repo, so the
+    stage has to be able to tell "your write failed, try again" from "nothing can record here".
+    """
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert "NO METRICS WRITER CONFIGURED" in result.stderr
+    assert "DO NOT re-run" in result.stderr
+    assert "re-run this exact command" not in result.stderr
+    assert "AVENGER_METRICS_OFF=1" in result.stderr   # the other reachable resolution, named
+
+
+def test_no_failure_marker_contains_another():
+    """A stage discriminates on these, and substring matching is how it does it."""
+    markers = (metrics.DEFECT_WRITE_FAILED, metrics.DEFECT_NO_WRITER, metrics.DEFECT_BAD_PHASE_REF)
+    assert len(set(markers)) == len(markers)
+    for marker in markers:
+        assert [other for other in markers if marker in other] == [marker]
+
+
+def test_an_unresolvable_phase_ref_is_the_arguments_fault_not_the_writers(stub_sink):  # noqa: F811
+    """A working writer and a --phase-ref that names nothing: neither existing message is true.
+
+    Routed through the write-failed shape, the stage is told the write failed and to re-run this
+    exact command — which can only fail identically, because the command is what is wrong.
+    """
+    project, store, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+
+    result = run_cli(
+        "defect", "--phase-ref", "docs/features/demo/nowhere-in-particular",
+        "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+    )
+
+    assert result.returncode == metrics.USAGE_ERROR
+    assert metrics.DEFECT_BAD_PHASE_REF in result.stderr
+    assert metrics.DEFECT_WRITE_FAILED not in result.stderr
+    assert metrics.DEFECT_NO_WRITER not in result.stderr
+    assert "re-run this exact command" not in result.stderr
+    assert "DO NOT re-run it" not in result.stderr   # the OTHER shape's instruction, verbatim
+    assert "D1" in result.stderr and "nowhere-in-particular" in result.stderr
+    assert not (store / "phase-08.json").exists()
+
+
+def test_an_unresolvable_phase_ref_stays_loud_when_metrics_are_off(stub_sink, monkeypatch):  # noqa: F811,E501
+    """`AVENGER_METRICS_OFF=1` is a choice about RECORDING; it does not make a bad argument fine."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+
+    result = run_cli(
+        "defect", "--phase-ref", "docs/features/demo/nowhere-in-particular",
+        "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+    )
+
+    assert result.returncode == metrics.USAGE_ERROR
+    assert metrics.DEFECT_BAD_PHASE_REF in result.stderr
+
+
+def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(stub_sink, monkeypatch, tmp_path):  # noqa: F811,E501
+    """The one state where "configured" and "resolvable" disagree — and the loop it used to cause.
+
+    `configured()` says yes, so the stage is told to fix the cause and re-run; the cause line it is
+    sent to must therefore name the exec bit, not an unset variable the operator has already set.
+    """
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    inert = tmp_path / "inert-fm-pipeline-metrics.sh"
+    inert.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    inert.chmod(0o600)
+    monkeypatch.setenv("AVENGER_METRICS_CMD", str(inert))
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode != 0
+    assert metrics.DEFECT_WRITE_FAILED in result.stderr
+    assert "not an executable file" in result.stderr
+    assert "AVENGER_METRICS_CMD is unset" not in result.stderr
+
+
+def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monkeypatch):  # noqa: F811,E501
+    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
+    project, _, _ = stub_sink
+    write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+
+    result = run_cli(*DEFECT_ARGS)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
 # --- driven through the real gate runner, which is where every gate call passes -------------------------
 
 #: A provider that answers, and one that refuses for billing reasons — the shape once read as a
@@ -680,10 +1060,12 @@ def test_the_gate_answers_before_it_measures_itself(stub_sink, monkeypatch, tmp_
 def test_a_populated_record_validates(real_sink):  # noqa: F811
     """The claim the double cannot make: what this pipeline writes is a valid v1 record."""
     project, home = real_sink
+    git_init(project)
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n- R8.1.2 two\n")
     phase_dir = str(spec.parents[2])
     (project / "tests").mkdir()
     (project / "tests" / "test_a.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    git_land(project, "open")
 
     metrics.record_phase_open(phase_dir)
     metrics.record_spec_round(str(spec))
@@ -701,6 +1083,7 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
                               evidence="", loaded=False)
     metrics.record_defect("08", identifier="D1", summary="a real one", found_by="execution",
                           real=True, stage_reached="verification", severity="security")
+    git_land(project, "close")
     metrics.record_phase_close(phase_dir)
 
     result = subprocess.run(  # noqa: S603
@@ -713,8 +1096,47 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     assert record["specs"][0]["requirements"] == 2
     assert record["spec_rounds"] == 1 and record["verification_attempts"] == 1
     assert record["tests_before"] == 1 and record["tests_after"] == 1
-    assert {c["verdict"] for c in record["gate_calls"]} == {"GO", "killed"}
+    gate_calls = [c for c in record["gate_calls"] if c["stage"] != metrics.PLUGIN_VERSION_STAGE]
+    assert {c["verdict"] for c in gate_calls} == {"GO", "killed"}
     assert record["defects"][0]["found_by"] == "execution"
+
+
+def test_the_plugin_version_row_survives_the_real_writers_closed_verdict_enum(real_sink, monkeypatch):  # noqa: F811,E501
+    """The claim the double cannot make, for the row issue #65 exists to write.
+
+    `gate_calls[].verdict` is a closed enum firstmate owns, and its writer refuses a row `validate`
+    would refuse. A drift status carried through verbatim ("STALE") is not in that enum, so the row
+    was dropped, the refusal was swallowed by the fail-open path, and the executing version was
+    recorded nowhere — invisible to every `stub_sink` test, because the double enforces no schema.
+    """
+    project, home = real_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    stale = plugin_release.DriftResult(
+        status="stale", executing_version="0.10.2", source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+    )
+    monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
+
+    metrics.record_phase_open(str(spec.parents[2]))
+
+    rows = [c for c in stored(home, "08")["gate_calls"]
+            if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "NO-GO"
+    assert "status=stale" in rows[0]["note"] and "executing_version=0.10.2" in rows[0]["note"]
+
+    result = subprocess.run(  # noqa: S603
+        [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_every_drift_status_maps_onto_the_verdict_enum_firstmate_owns():
+    """A status added to `plugin_release` must not silently reintroduce an out-of-enum verdict."""
+    allowed = {"GO", "REVIEW", "NO-GO", "error", "killed"}
+    assert set(metrics.PLUGIN_VERSION_VERDICTS.values()) <= allowed
+    assert set(metrics.PLUGIN_VERSION_VERDICTS) == {"fresh", "stale", "unknown"}
 
 
 def test_a_defect_found_by_other_carries_its_note(real_sink):  # noqa: F811

@@ -7,7 +7,8 @@ that Claude Code runs — one implementation, two runtimes. The git floor (pre-c
 `scripts/gate_ci.sh`) backstops them; all of it calls `gate_runner.py` on a fresh cross-family model.
 
 Gates fire when work is **declared done** (a spec reaching `status: done`, a `handover.md`), never on
-every code edit — you build with a red → green loop, so red is the expected state while you work.
+every code edit - and a `status: done` stamp is checked before it is believed (4c) - you build with a
+red → green loop, so red is the expected state while you work.
 Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs nothing.
 
 ## Conventions (always apply)
@@ -49,8 +50,28 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    Everything else is a **note**; notes never block and land in `spec-notes.md`. The observe pass is
    given a `## CONTEXT (reference only)` block (`scripts/spec_gate_context.py`) — the overview's
    `## Contracts and Decisions` section and the immediately prior phase's contract card, and nothing
-   else — because half of `contradiction` is a contract those declare. Absent context is normal and
-   never fails the gate.
+   else — because half of `contradiction` is a contract those declare. Absent context (heading
+   present, genuinely nothing under it yet) is normal and never fails the gate, but **three shapes
+   are DEGRADED, not absent**: no `## Contracts and Decisions` heading at all; a heading whose
+   section is only boilerplate (an HTML comment — the unfilled template ships one under this exact
+   heading, so the emptiness test strips comments before judging a section empty); or `overview.md`
+   missing/unreadable outright (no exemption for a legitimate "none yet" - a recorded exception
+   records against a phase directory, and this feature has none yet either, so there is nowhere for
+   one to live). Any of the three means the reader can never find that feature's contracts, for
+   every spec it ever gates. `spec_gate_context.py` exits **3** for any of them and `hook_spec_gate.sh`
+   folds a `CONTEXT DEGRADED` banner into the persisted report instead of discarding the exit code —
+   carrying the builder's own per-shape cause line, since a record naming the wrong one of the three
+   prescribes a remedy already applied. **Any other non-zero exit banners too**, as a hook-authored
+   `UNAVAILABLE` cause: a builder that could not run at all costs the same half of `contradiction`,
+   but it is fixed in the script, not in the overview. Nothing escapes the builder as a traceback:
+   1 is a `check` finding, 2 is a usage error or an unexpected failure, and a crash arriving as 1
+   would read as the routine "treat as absent" this item exists to remove.
+   Still not a gate failure, no longer a clean-looking pass.
+   `spec_gate_context.py check [--all]`
+   walks every feature directory (not just existing overview files, since a missing one can never be
+   a changed path) for the same three shapes, runs from `gate_ci.sh`, and is diff-scoped (3e) **even
+   under `--full`** — the carried-items precedent (4f), because a full CI audit would fail every
+   pre-rule overview at once; `check --all` is the audit somebody runs by hand.
 3b. **Requirements are capped at 12 per spec, as a SPLIT trigger.** `scripts/requirement_cap.py` runs
    *before* any paid call; over the cap the spec splits into siblings under the same phase. No gate
    ever rejects a spec for being large — a rejection for size is one more thing to grow around, and
@@ -93,8 +114,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    scope enforces nothing and says so), **shipped** (`status: done` in the spec's frontmatter, read
    through `spec_gate_state` like every other stamp — the remedy no longer exists, and
    a rule whose remedy is unavailable is a wedge, not a gate), **excepted** (`exceptions.json` beside
-   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, each read by a
-   named call site — and an unknown rule is a hard failure naming what was invented. Every exception
+   `verdict.json`). The rule set is CLOSED — `spec-gate`, `spec-review`, `verdict`, `requirement-cap`,
+   `breaker`, each read by a named call site — and an unknown rule is a hard failure naming what was invented. Every exception
    is narrow (one rule, one subject, one phase), audited through `bypass_log.sh` or not recorded at
    all, and named on stderr when it applies — and `bypass_log.sh` **exits 2 (blocking) when it
    cannot append**, so an override nobody could log is not an override. **A phase closed with a recorded
@@ -102,6 +123,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    forever. `pipeline_state.py --from-phase <n>` steps over earlier phases for one invocation and
    answers **nothing feature-wide** over them: with any phase skipped the stage is `unknown`, never
    `done` or `e2e-author`.
+3h. **The Breaker obligation — a critical phase does not close without a record.** All four phase-8
+   specs and all four phase-9 specs of one measured feature declared `criticality: critical`, which
+   routes the Breaker; it was owed twice and ran neither time, with zero trace anywhere in that
+   feature's docs or tests, because nothing checked for it. `scripts/breaker_gate.py` closes that: a
+   phase owing a Breaker run does not close without a valid `breaker.json` beside `verdict.json` (a
+   `clean` verdict naming what it attacked, or a `found` verdict naming its counterexample — a vacuous
+   record is refused the same as a missing one). Enforced by `hook_verifier.sh` and `gate_ci.sh`
+   (diff-scoped, `check --all` audits) and reported by `pipeline_state.py` as `stage: breaker`, and
+   waivable only through the same disclosed-exception ledger as every other rule here.
 3c. **Amendments — change a verified phase without re-verifying all of it.**
    `scripts/amendments.py` records the requirement ids a post-verification change touched; **only
    those re-verify**, and the verdict reads *verified at attempt N, plus amendments A1..An*
@@ -128,7 +158,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    carries no `#<number>` or issue URL - a presence check, never a judgement about the claim.
    Ids are scoped by the card that declared them; which card is in force is
    `spec_gate_context.prior_phase`'s decision, imported rather than re-derived. A pre-rule card with
-   no section owes nothing, so a repository upgrades instead of being held hostage.
+   no section owes nothing, so a repository upgrades instead of being held hostage - but a section
+   that is present and declares neither an item nor an explicit `none` is undecidable, not empty, and
+   fails closed (exit 2) until the prior card is rewritten as the documented table.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
    What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
    restated in a table — a second statement of a fact is what every promise-versus-enforcement gap
@@ -167,6 +199,22 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `scripts/verifier_review.sh` (`$VERIFIER_GATE_MODEL`), because every subagent here is Anthropic. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
    · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
    unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
+4c. **A `status: done` stamp is not a completion signal by itself** (issue #68). Its own implementer
+   writes it and used to keep working afterwards, so a wedge guard watching it fired 24 minutes
+   early and would have put two implementers in one worktree. The stamp is **self-correcting**
+   instead of merely documented: on the `spec-done` trigger `hook_verifier.sh` checks that the
+   spec's own `test-mapping.md` records a real row - only the **requirement-id cell** is read, and
+   one still carrying the template's `R<n>.<k>.<m>` syntax counts as nothing - and that the phase
+   suite is green, and either failing REVERTS the stamp to `status: in-progress`
+   (`scripts/spec_done_guard.py`) before failing the hook. So stamp `done` LAST, after the mapping
+   rows and a green suite. Three states fail the hook but leave the stamp exactly as written,
+   because the revert acts only on evidence scoped to the same thing it rewrites: a spec whose every
+   declared requirement is `binding: none` owes no row (4a) - a spec declaring no requirement at all
+   is its own stop, not that exemption; a red suite that could only be run repository-wide; and
+   `GATE_BYPASS`, which leaves it `done`, overridden and audited. It binds only the **transition**
+   into `done` (3e) - already `done` at committed HEAD means shipped, counted and named, never
+   reverted - and it is exactly as wide as its mechanism: a `PostToolUse` hook on
+   `Write|Edit|MultiEdit`, so a stamp written through Bash never reaches it.
 4a. **Tiered binding, then integration by default.** Every requirement declares `binding:` —
    **`e2e`** (an end user can observe it → carried by a **journey** with the other `e2e` requirements
    on its path, never its own test) · **`integration`** (visible *only* under concurrency, fault
@@ -248,11 +296,20 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    observes it, through `scripts/metrics_sink.py` into firstmate's `fm-pipeline-metrics.sh`. The
    schema is theirs (`docs/pipeline-metrics.md`); this repo adds no key and keeps no second store.
    **Measurement, never a gate**: every failure is swallowed and logged to `.avenger-metrics.log`,
-   and no metrics call can fail a phase. Emission attaches to the fact — inside `gate_runner.py`,
+   and no metrics call from a hook can fail a phase (`defect` excepted — see below). Emission
+   attaches to the fact — inside `gate_runner.py`,
    not once per caller — so a new gate is instrumented by existing. Record a defect no script can
    see (Breaker, a probe, running the real path) with `scripts/pipeline_metrics.py defect`, whose
    `--summary` follows rule 10. Off unless `fm-pipeline-metrics.sh` is on `PATH` or
-   `AVENGER_METRICS_CMD` names it, and an unconfigured run says so once. Full rule in
+   `AVENGER_METRICS_CMD` names it, and an unconfigured run says so once. **`defect` is the one
+   exception to "never fail a phase"**: it runs directly (never from a hook's `|| true`), so a call
+   that could not be written exits non-zero and says why on stderr (issue #66). Its marker says which
+   of three failures it is: a **configured writer that failed the write** is retryable, so fix the
+   cause and re-run the exact command (exit 1); **no writer configured at all** (nothing on `PATH`,
+   `AVENGER_METRICS_CMD` unset) is terminal and the operator's to fix, so do NOT re-run it - record
+   that the defect went unrecorded and move on (exit 1); a **`--phase-ref` that resolves to no
+   phase** never reached the writer at all, so fix the ARGUMENT rather than repeating the command
+   (exit 2, and `AVENGER_METRICS_OFF=1` does not quiet it). Full rule in
    `skills/pipeline-conventions/SKILL.md`.
 
 ## Running it
@@ -266,10 +323,14 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 # per phase, in dependency order, per spec:
 @avenger-backend-architect <spec>         # or @avenger-frontend-developer
                                           # writes tests + code test-first (mode by work_kind),
-                                          # then sets status: done -> phase suite smoke-checked
+                                          # then sets status: done LAST -> mapping + phase suite
+                                          # checked; a premature stamp is REVERTED (4c)
 # once all specs in the phase are green:
 @avenger-verifier         <phase>         # cross-family: suite + R-trace + bounded TEST REVIEW
                                           # -> writes verdict.json; on pass the phase's tests LOCK
+@avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
+                                          # then NOT optional: -> writes breaker.json, without which
+                                          # the handover below is refused (see 3h)
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md
 # once the FINAL phase of the feature is green:
 @avenger-backend-architect --e2e <feature> # 1-3 feature-level e2e tests -> tests/e2e/<feature>/
@@ -317,13 +378,13 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 |---|---|---|
 | `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip) |
 | `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
-| `GATE_TRIAGE_MODEL` | `deepseek/deepseek-chat` | the spec gate's cheaper triage pass; must not be the author's family |
+| `GATE_TRIAGE_MODEL` | `GATE_MODEL` | the spec gate's cheaper triage pass; must not be the author's family. Unset, it now defaults to `GATE_MODEL` — the model the operator already configured and proved reachable — never to a hardcoded model on its own provider (issue #48) |
 | `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
 | `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
-| `GATE_MODEL` | per-gate defaults | routes every gate to one model |
+| `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It does **not** route `VERIFIER_GATE_MODEL`: there are three gate models, not one. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
 | `VERIFIER_GATE_MODEL` | `google/gemini-3.1-pro-preview` | model the Verifier's test-quality review runs on; must not be the implementer's family |
 | `VERIFIER_SCOPE` | unset | `full` sends the Verifier the whole phase; by default the bundle carries only the specs whose text changed since the last completed review, names the rest as carried forward, and merges their findings back (an open carried finding still forces NO-GO). A spec still holding an open finding is never carried — a finding fixed in a test file changes no spec text, so carrying it would mean nothing ever regenerates it |
@@ -335,12 +396,15 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
 | `AVENGER_METRICS_CMD` | looked up on `PATH` | path to firstmate's `fm-pipeline-metrics.sh`; without it a run records no metrics and says so once |
-| `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently |
+| `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently, and is the only thing that keeps `pipeline_metrics.py defect` quiet when it cannot record instead of exiting 1 |
 | `AVENGER_METRICS_PROJECT` | the git repository's name | the record's `project`, which scopes every firstmate lookup |
-| `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this` exceeds it — raise it and raise `hooks/hooks.json` with it |
+| `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this + suite collections x COLLECT_TIMEOUT_S` exceeds it — raise it and raise `hooks/hooks.json` with it |
 | `AVENGER_METRICS_LOG` | `<project>/.avenger-metrics.log` | where the fail-open path writes what it could not record; gitignore it |
 | `SKILL_LOAD_OFF` | unset | `1` disables the skill-load observation hook |
 | `SKILL_AUDIT_OFF` | unset | `1` disables the per-stage `SubagentStop` skill audit (`scripts/hook_skill_audit.sh`); the close-time audit at handover and in CI is unaffected |
+| `AVENGER_SOURCE_REPO` | unset | your checkout of this plugin's own repository, for the release-drift guard (`scripts/plugin_release.py check`, issue #65) — without it the guard only resolves a source when the project itself IS this plugin's repository (manifest `name` match), and otherwise reports `UNKNOWN` and is not enforced |
+| `AVENGER_PLUGIN_CACHE_ROOT` | `~/.claude/plugins/cache/erik-tools/plan-build-verify` | where `plugin_release.py cut` releases to; always pass `--cache-root` explicitly in tests, never the default |
+| `AVENGER_PLUGIN_PIN_PATH` | `~/.claude/plugins/installed_plugins.json` | the install registry `plugin_release.py cut` re-points at the release, so a harness actually loads it; always pass `--pin-path` (or `--no-pin`) explicitly in tests, never the default |
 
 ## Maintaining this file
 

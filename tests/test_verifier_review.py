@@ -62,7 +62,7 @@ def run(phase_dir: Path, files: list[Path], **env_over) -> subprocess.CompletedP
 
 
 def run_with_stub_model(
-    phase_dir: Path, files: list[Path], tmp_path: Path
+    phase_dir: Path, files: list[Path], tmp_path: Path, **env_over
 ) -> tuple[subprocess.CompletedProcess, str]:
     """Run the bundler against a stubbed model CLI, returning the process and the prompt it sent."""
     bindir = tmp_path / "bin"
@@ -80,6 +80,7 @@ def run_with_stub_model(
         VERIFIER_GATE_MODEL="google/gemini-3.1-pro-preview",
         AUTHOR_FAMILY="anthropic",
         VERIFIER_TEST_CAPTURE=str(capture),
+        **env_over,
     )
     return proc, capture.read_text() if capture.exists() else ""
 
@@ -331,3 +332,87 @@ def test_the_carried_notice_uses_none_of_the_words_that_fail_the_substance_check
     notice = prompt.split("=== SPECS CARRIED FORWARD")[1].split("=== SPEC REQUIREMENTS")[0].lower()
     assert not [m for m in PARTIAL_MARKERS if m in notice]
     assert "complete set you were asked to review" in notice
+
+
+# ── defect attribution: non-blocking, but never silent ──────────────────────────────────────────
+# This is the pipeline's highest-volume defect-attribution path. It must never fail the phase, and it
+# must never fail invisibly either: a run that dropped every verifier-attributed defect used to look
+# exactly like a run that found none.
+
+
+#: A model that reports one finding, so the run has a defect to attribute in the first place.
+STUB_OPENCODE_FINDING = """#!/bin/sh
+for last; do :; done
+printf '%s' "$last" > "$VERIFIER_TEST_CAPTURE"
+echo '{"verdict":"NO-GO","report":"Reviewed test_a.py: it asserts through the seam but pins the \
+implementation rather than the behaviour.","route_back":"implementer","findings":[{"kind":"gamed \
+test","spec_id":"1.1","target":"test_a.py","instruction":"assert on the observable behaviour"}]}'
+"""
+
+#: A metrics writer that answers every call EXCEPT the defect write, which is the one this asserts
+#: on. A writer that refused everything would fail the gate runner's own emission too, and both
+#: processes say the same words on stderr — so the assertion could not tell which call was heard.
+REFUSES_DEFECTS = """#!/bin/sh
+if [ "$1" = "show" ]; then echo '{}'; exit 0; fi
+for arg in "$@"; do
+  if [ "$arg" = "defects" ]; then
+    echo 'refusing the defects write on purpose' >&2
+    exit 1
+  fi
+done
+exit 0
+"""
+
+
+def metrics_env(tmp_path: Path, body: str) -> dict:
+    """Environment pointing the sink at a stub writer, with its diagnostics log out of the repo."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    writer = tmp_path / "fm-pipeline-metrics.sh"
+    writer.write_text(body)
+    writer.chmod(writer.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return {
+        "AVENGER_METRICS_CMD": str(writer),
+        "AVENGER_METRICS_OFF": "",
+        "AVENGER_METRICS_PROJECT": "unit-test",
+        "AVENGER_METRICS_LOG": str(tmp_path / "metrics.log"),
+    }
+
+
+def run_with_finding(tmp_path: Path, **env_over) -> tuple[subprocess.CompletedProcess, Path]:
+    """A review that produces one finding, so `verifier-findings` has something to write."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    phase_dir = phase(tmp_path)
+    src = tmp_path / "test_a.py"
+    src.write_text("def test_a():\n    assert True\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    stub = bindir / "opencode"
+    stub.write_text(STUB_OPENCODE_FINDING)
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    proc = run(
+        phase_dir,
+        [src],
+        PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        GATE_PROVIDER="opencode",
+        VERIFIER_GATE_MODEL="google/gemini-3.1-pro-preview",
+        AUTHOR_FAMILY="anthropic",
+        VERIFIER_TEST_CAPTURE=str(tmp_path / "prompt.txt"),
+        **env_over,
+    )
+    return proc, phase_dir
+
+
+def test_a_failed_defect_attribution_is_visible_on_stderr(tmp_path: Path) -> None:
+    proc, _ = run_with_finding(tmp_path, **metrics_env(tmp_path, REFUSES_DEFECTS))
+
+    assert "refusing the defects write on purpose" in proc.stderr, proc.stderr
+
+
+def test_a_failed_defect_attribution_still_does_not_fail_the_review(tmp_path: Path) -> None:
+    """Removing the silence must not have turned measurement into a gate."""
+    ok, broken_root = tmp_path / "ok", tmp_path / "broken"
+    healthy, _ = run_with_finding(ok, **metrics_env(ok, "#!/bin/sh\nexit 0\n"))
+    proc, phase_dir = run_with_finding(broken_root, **metrics_env(broken_root, REFUSES_DEFECTS))
+
+    assert proc.returncode == healthy.returncode, proc.stderr
+    assert (phase_dir / ".verifier-review.json").exists()

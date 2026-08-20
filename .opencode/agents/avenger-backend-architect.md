@@ -130,10 +130,12 @@ cost are in `skills/tdd` and `skills/pipeline-conventions` § *The document read
    regressions. `tests/e2e/` is feature-level and runs at feature close — not here. Surface
    pre-existing failures in your summary; never silently skip them.
 8. **Lint/format** with the project's configured tooling — must be clean.
-9. **Update the spec frontmatter**: set `status: done`. This is a declaration that the spec's tests
-   are green and mapped. When every spec in the phase is done, hand the phase to
-   `avenger-verifier` — a different model family — which runs the suite, traces coverage, reads your
-   tests, and writes `verdict.json`.
+9. **Update the spec frontmatter**: set `status: done`, LAST, after `test-mapping.md` has its rows
+   and the phase suite is green. This is not just a convention — `hook_verifier.sh` checks both the
+   instant the stamp lands and REVERTS it back to `status: in-progress` if either is not yet true
+   (issue #68), so writing it early only costs you a failed hook and a stamp you have to redo. When
+   every spec in the phase is done, hand the phase to `avenger-verifier` — a different model family —
+   which runs the suite, traces coverage, reads your tests, and writes `verdict.json`.
 10. **Summary**: what you implemented, any deviations, pre-existing failures, and anything you routed
     back to `avenger-spec-writer`.
 

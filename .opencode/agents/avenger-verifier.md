@@ -218,5 +218,7 @@ it. Record the amendment ids folded into a verdict in its `amendments` array.
 
 ## On a clean phase
 
-Emit `pass` with the evidence. For critical/security paths, hand to `avenger-breaker` (optional).
-Otherwise the phase proceeds to `avenger-handover`.
+Emit `pass` with the evidence. When any spec in the phase declares `criticality: critical`, hand
+to `avenger-breaker` — **not optional**: it persists `breaker.json`, and without a valid one the
+handover is refused (`scripts/breaker_gate.py`). Otherwise the phase proceeds to
+`avenger-handover`.

@@ -264,6 +264,11 @@ scope_rc=$?
 # finding this review reached is attributed to the Verifier the moment it exists — after `finalize`,
 # so findings carried forward from a narrower bundle are attributed too. Measurement, never a gate:
 # the exit code below is the review's, untouched by whether this wrote anything.
-python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$OUT" >/dev/null 2>&1 || true
+#
+# Its stderr is deliberately NOT discarded. This is the highest-volume defect-attribution path in the
+# pipeline, and swallowing the diagnostic leaves a run in which every verifier-attributed defect was
+# dropped looking exactly like a run that found nothing — the failure `defect`'s loud exit exists to
+# remove, one call site over. `|| true` stays: this must never fail the phase. Only the silence goes.
+python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$OUT" >/dev/null || true
 
 exit $rc

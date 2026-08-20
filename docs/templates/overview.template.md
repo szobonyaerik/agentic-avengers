@@ -13,7 +13,9 @@ readers: avenger-implementation-planner @ once; avenger-spec-writer @ per spec (
      the spec gate reads THIS SECTION ONLY, once per spec. So everything a later spec can
      CONTRADICT belongs here: interfaces and their signatures, decisions with what each one costs,
      and the invariants that hold across phases. One line each, pointing at where it is defined.
-     Do not rename this heading — it is a read target. -->
+     Do not rename this heading — it is a read target. Do not ship it holding only this comment
+     either: `scripts/spec_gate_context.py` treats a comment-only section as DEGRADED, the same gap
+     as a missing heading, for every spec the feature ever gates. -->
 
 ## Summary
 <!-- 2–4 sentences: what it does and the SHAPE of the solution. -->

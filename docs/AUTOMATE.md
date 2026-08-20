@@ -83,8 +83,8 @@ So the orchestrator is **`commands/avenger-run.md`**, which turns the main sessi
 orchestrator. It is not the "static list of stages" this file previously dismissed: it branches on
 gate verdicts and retries, because the routing lives in the command body and the *position* comes from
 `scripts/pipeline_state.py` — a deterministic resolver that reads spec frontmatter stamps
-(`spec_gate`, `review_status`, `status`), `verdict.json`, `amendments.json` and `exceptions.json`, and
-returns the one stage the feature owes next. A phase closed with a **recorded exception**
+(`spec_gate`, `review_status`, `status`), `verdict.json`, `amendments.json`, `exceptions.json` and
+`breaker.json`, and returns the one stage the feature owes next. A phase closed with a **recorded exception**
 (`scripts/applicability.py`) is read as CLOSED rather than incomplete — without that, one phase closed
 under a disclosed captain-ordered cap parked the resolver forever and `--auto` could not start a phase
 again. `--from-phase <n>` enters at a named phase and names every phase it stepped over; with any phase
@@ -97,8 +97,10 @@ What it does beyond the flow above:
   and at each `/spec-review`. `--auto` removes both and sets `SPEC_REVIEW_MODE=auto`.
 - **2 retries per stage**, then halts with the artifact, verdict and route-back reason. Mutation halts
   on the second bounce of the same phase.
-- **Breaker only on `criticality: critical`** (a spec frontmatter field); mutation only per
-  `MUTATION_POLICY`.
+- **Breaker only on `criticality: critical`** (a spec frontmatter field) — and such a phase does not
+  close without the Breaker's `breaker.json` record beside `verdict.json`, so the resolver reports
+  `stage: breaker` until one exists and the handover hook refuses the card without it
+  (`scripts/breaker_gate.py`); mutation only per `MUTATION_POLICY`.
 - **Branches once, commits per verified phase, plus twice at feature close**: the e2e stage's output
   *before* the ship gate, because §4a's precondition is a clean tree that already contains
   `tests/e2e/<feature>/`; then the retrospective artifacts written *after* it, guided by
@@ -115,6 +117,11 @@ What it does beyond the flow above:
   exits 1 with `error: repo not initialized` — a `.no-mistakes.yaml` existing says nothing about the
   gate repo, the post-receive hook, the remote or the DB record), and the **content** of that config:
   a scaffolded one still holding the template's `REPLACE_ME` token fails preflight, not the ship gate.
+- **Preflight also refuses a known-stale plugin, in both modes.** Phases execute the cached release
+  `$CLAUDE_PLUGIN_ROOT` resolves to, not the merged repository, so `scripts/plugin_release.py check`
+  runs before any phase does: `STALE` stops the run and names the release step, while `UNKNOWN` (no
+  source repository resolvable on this machine) is reported and never enforced. Rule and remedy:
+  `skills/pipeline-conventions` (*Closing the release loop*), wired at `commands/avenger-run.md` §1.
 - **Logs pipeline observations as they happen** and triages them at `done`. `--auto` records but never
   triages - there is nobody to poll - so the log stays `triage: pending` and the next *interactive*
   run's preflight sweep surfaces it, across every feature. That sweep is the only recovery path,
@@ -187,11 +194,15 @@ fail-closed gate self-halts the run instead of shipping junk.
 ### Env (export before launching)
 ```bash
 export AUTHOR_FAMILY=anthropic
-export GATE_MODEL=opencode-go/deepseek-v4-pro     # all gates on DeepSeek V4 Pro via OpenCode
+export GATE_MODEL=opencode-go/deepseek-v4-pro     # the spec gate's observe pass, and its triage pass unless GATE_TRIAGE_MODEL is set
+export VERIFIER_GATE_MODEL=google/gemini-3.1-pro-preview   # the Verifier's review — its own default
 export GATE_PROVIDER=opencode
 export SPEC_REVIEW_MODE=auto                        # no human spec-review
 # OpenCode auth present (opencode-go creds). For the git floor (pre-commit/CI) instead:
 #   GATE_PROVIDER=openrouter + OPENROUTER_API_KEY + GATE_MODEL=openrouter/deepseek/deepseek-v4-pro
+# There are THREE gate models, not one — GATE_MODEL does not route them all. GATE_TRIAGE_MODEL
+# follows GATE_MODEL when unset; VERIFIER_GATE_MODEL does NOT, and keeping it on a third family is
+# the point of it. All three are documented together in docs/templates/env.example.
 ```
 
 ### Headless Claude Code (print mode)

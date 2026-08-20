@@ -28,6 +28,12 @@ All of it was mechanically decidable, and `verifier_precheck.py` decides it on e
 reports something, say so and let it be fixed mechanically; do **not** turn it into a `verdict.json`
 finding and do not spend an attempt on it.
 
+A **stale gate stamp** is cleared by writing the spec again to re-gate it, or — when the gate
+provider cannot be reached, which is when re-gating is unavailable — by recording a disclosed
+`spec-gate` exception for that spec (`applicability.py record <phase-dir> --rule spec-gate --subject
+<n>.<k>-<subslug> --reason-file <f>`), which the pre-check reads. An **amendment does not clear it**:
+it re-verifies requirement ids here, and never touches the spec-gate hash the pre-check compares.
+
 **Three attempts, and route-backs are bundled.** 16 of 20 re-attempts were this stage routing back
 to itself. Raise everything you can see in one pass, with your uncertainty stated, rather than
 holding a finding for the next attempt. At the cap: carry the remainder as known-open in
@@ -161,8 +167,32 @@ command string, so prose that merely *names* a denied command denies the command
 `mutation`, `running-suite`, `probe`, `execution`, `measurement`, `human-review`, `ci`, `other` (which
 then needs `--found-by-note`). Add `--not-real` for a defect in a test, fixture or artifact: it cost
 real time and belongs in the record, but it must not inflate the count of genuine product defects.
-This is measurement, never a gate — the command exits 0 whatever happens, and a phase never waits on
-it.
+This is measurement, but `defect` is the one emission command that is **loud about failing** (issue
+#66): it runs directly rather than from a hook's `|| true`, so an emission that could not be written
+exits non-zero and prints why on stderr, unless `AVENGER_METRICS_OFF=1` is set (configured behaviour,
+not a failure). Read which of the three failures it names before doing anything:
+
+- **`DEFECT NOT RECORDED - WRITE FAILED`** (exit 1), which also says **"re-run this exact command"** -
+  a writer is configured and the write itself failed. Retryable and yours: read the `[metrics]` line
+  above it, fix the cause, and re-run the exact command.
+- **`DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED`** (exit 1), which also says **"DO NOT
+  re-run it"** - nothing on `PATH`, `AVENGER_METRICS_CMD` unset. **Terminal, and not yours to fix.**
+  It is the expected state of a standalone install with no firstmate home and every retry fails
+  identically, so **do not re-run it**: note in your verdict report that the defect could not be
+  recorded, and carry on. Under `--auto` it is worth surfacing to the operator rather than looping
+  on.
+- **`DEFECT NOT RECORDED - UNRESOLVABLE --phase-ref`** (exit **2**, the usage-error code) - the
+  writer was never reached and nothing about it is known to be wrong: **the argument is.** Yours to
+  fix, but by CHANGING the command, not repeating it: re-run with a `--phase-ref` naming an existing
+  phase directory or a path inside one, such as `docs/features/<feature>/phases/<n>-<slug>`.
+  `AVENGER_METRICS_OFF=1` does not quiet this one - turning emission off is a statement about
+  recording, not a licence to name a phase that does not exist.
+
+Read the marker to its end: all three messages open `DEFECT NOT RECORDED`, so that stem alone decides
+nothing, and the re-run sentence no longer separates them either. No marker contains another, which
+is what makes the full marker safe to match on.
+
+Either way the defect did not land, and `found_by` is not recoverable once the phase moves on.
 
 ## The verdict is a persisted artifact
 The verdict is not chat-only. Write it to disk at

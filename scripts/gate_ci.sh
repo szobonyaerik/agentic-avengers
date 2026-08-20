@@ -145,6 +145,24 @@ elif [ "$carried_rc" -ne 0 ]; then
   record_fail "carried-items:undecidable"
 fi
 
+# 1be) Breaker — a phase that declares criticality: critical does not close without a Breaker record
+#      (breaker.json). It was owed twice on one measured feature and ran neither time, with zero
+#      trace anywhere (issue #45): a stage that emits nothing is indistinguishable from one that never
+#      ran. Enforced here as well as in scripts/hook_verifier.sh, for the same reason the carried-items
+#      obligation is — a rule only an in-session hook applies stops existing the moment the phase is
+#      driven another way. DIFF-SCOPED even under --full, for the same reason carried-items is: this
+#      obligation lands on a phase directory tree every consumer repo already has on disk, and the
+#      in-session hook already holds it on the phase being CLOSED, which the diff touches by
+#      construction. `breaker_gate.py check --all` is there for anyone who wants the audit.
+echo "• breaker: a critical phase has a valid Breaker record"
+python3 "$SCRIPT_DIR/breaker_gate.py" check --root "$ROOT"
+breaker_rc=$?
+if [ "$breaker_rc" -eq 1 ]; then
+  record_fail "breaker"
+elif [ "$breaker_rc" -ne 0 ]; then
+  record_fail "breaker:undecidable"
+fi
+
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
 #      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY
@@ -183,6 +201,26 @@ READ_PATH_ARGS="check --sources"
 [ "$FULL" -eq 1 ] && READ_PATH_ARGS="check --sources --all"
 if ! python3 "$SCRIPT_DIR/doc_read_path.py" $READ_PATH_ARGS "$ROOT"; then
   record_fail "read-path"
+fi
+
+# 1bcx) Every overview.md carries the `## Contracts and Decisions` heading the spec gate's CONTEXT
+#       block reads (scripts/spec_gate_context.py). Without it, `contradiction` — one of the four
+#       things that block a spec — can only ever be checked against the prior phase's card, never
+#       the feature's own contracts, and the spec gate used to report that absence on stderr and
+#       PASS regardless (issue #57: eleven phases of clickup-agents). The heading is already
+#       mandated by docs/templates/overview.template.md; this is what verifies real overviews carry
+#       it.
+#
+#       DIFF-SCOPED even under --full, on the carried-items precedent above rather than the read
+#       path's: `overview.md` is a document class every consumer repo already has on disk, written
+#       long before this heading was checked, so a full CI audit would fail every one of those
+#       features at once the day this ships — the hostage failure the scoping exists to remove.
+#       Nothing is lost: a feature is checked the moment someone works under it, which is where the
+#       remedy (fill in the heading) is actually available. `spec_gate_context.py check --all` is
+#       there for anyone who wants the audit, deliberately by hand.
+echo "• overview contracts heading: docs/features/*/overview.md"
+if ! python3 "$SCRIPT_DIR/spec_gate_context.py" check "$ROOT"; then
+  record_fail "overview-contracts-heading"
 fi
 
 # 1bd) Per-stage reasoning effort — declared where the harness reads it, and nowhere else claimed.

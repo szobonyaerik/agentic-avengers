@@ -20,10 +20,19 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+# The helpers below spawn the real git binary, and they belong to no test function - the module-level
+# helper shape `scripts/subprocess_check.py` accepts a file-wide declaration for. Every phase-close
+# emission point asks git whether the phase LANDED, so a double would prove the double.
+pytestmark = pytest.mark.subprocess(
+    "record_phase_close's landing check asks the real git binary whether the phase directory is "
+    "committed, so these fixtures build real repositories"
+)
 
 #: A writer that records its argv and keeps just enough state for read-modify-write to work.
 DOUBLE = r'''#!/usr/bin/env python3
@@ -186,6 +195,19 @@ def stored(store_or_home: Path, phase: str) -> dict:
     return json.loads(
         (store_or_home / "data" / "pipeline-metrics" / f"phase-{phase}.json").read_text("utf-8")
     )
+
+
+def git_init(project: Path) -> None:
+    """A real repo at `project` — `record_phase_close`'s landing check needs one to answer at all."""
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=project, check=True)
+
+
+def git_land(project: Path, message: str = "land") -> None:
+    """Commit everything under `project` — what makes a phase directory LANDED for issue #46."""
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=project, check=True)
 
 
 def write_spec(project: Path, phase: int, spec: str, body: str) -> Path:

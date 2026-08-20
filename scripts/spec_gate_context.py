@@ -25,15 +25,56 @@ path declares and no more**:
 Both are derived from the spec's own path, never asked of a model:
 `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`.
 
-**Missing pieces are normal, and are never an error.** Phase 1 has no prior card; a feature may have
-no contracts section yet; a spec may sit outside the layout entirely. Each absent part is omitted and
-named on stderr, so a gate running with no context is visible rather than silent. Nothing here can
-fail the gate: the block is reference material, and the observe pass is told not to raise
-observations *about* it.
+**Missing pieces are normal, and are never an error** - with one exception. Phase 1 has no prior
+card; a feature may not have written any contracts yet; a spec may sit outside the layout entirely.
+Each of those is omitted and named on stderr, so a gate running with no context is visible rather
+than silent. Nothing here fails the gate: the block is reference material, and the observe pass is
+told not to raise observations *about* it.
+
+There are three exceptions, and all three are `degraded=True`:
+
+- `overview.md` existing but carrying no `## Contracts and Decisions` heading at all
+  (clickup-agents' overview never has, across 11 phases - it uses `## Interfaces & contracts` and
+  `## Key decisions & trade-offs` instead). That is not "not written yet"; it is the heading this
+  reader looks for not existing.
+- `overview.md` carrying the heading but nothing under it except boilerplate - an HTML comment, or
+  the instructional text `docs/templates/overview.template.md` ships under this exact heading. A
+  freshly-templated overview LOOKS filled in at this heading and carries nothing a spec could
+  contradict; treating that as "included" is the same defect wearing the shape every project that
+  starts from the template actually has.
+- `overview.md` missing or unreadable outright. A feature with no overview yet loses the same half
+  of `contradiction` as one with the wrong heading, and there is no silent exemption for it here.
+  This one has no ledger to fall back on either: `applicability.excepted` records against a PHASE
+  directory, and a feature with no overview yet has no phase directory - there is nowhere for a
+  recorded exception to live at that point in the pipeline. So this reader does not special-case it;
+  it reports the same degraded state a broken overview would, for as long as the overview is missing.
+
+Any of the three means `contradiction` - one of the four things that BLOCK a spec - can only ever be
+checked against the prior phase's card, never against the feature's own contracts, and every spec in
+the feature pays for it. Reporting that on stderr and nothing else was the defect this module shipped
+with: eleven phases read "reported success" while the gate quietly checked a fraction of what it
+claimed to. `build()` marks each of these `degraded=True` and `main()` exits **3** for it (never 1 or
+2, which mean something else on this gate) - still not a gate failure, but no longer a state
+indistinguishable from "nothing to carry yet". The caller decides what to do with that signal; it
+must not be discarded with `|| true`. `check()` below is the other half: it finds every feature on
+disk in one of these three states, independent of any one spec being gated.
+
+A section that is genuinely blank - the heading is there, nothing is written under it, not even a
+comment - stays the ordinary, non-degraded "not written yet" case: a feature early in planning. That
+is the one absence this module still treats as normal, and the only one.
 
 Usage:
-    spec_gate_context.py <spec.md>    the block on stdout (empty when there is none),
-                                      what was included and what was absent on stderr
+    spec_gate_context.py <spec.md>          the block on stdout (empty when there is none), what was
+                                            included/absent/degraded on stderr, exit 3 iff degraded
+    spec_gate_context.py check [--all] [root]
+                                             every overview.md missing the heading, diff-scoped
+                                            unless --all; exit 1 iff any is in scope and missing it
+
+Either way, an unexpected failure exits **2** with its cause, never 1 and never a traceback: 1 is a
+finding and 3 is a degraded context, so a crash arriving as either would be read as a fact about the
+overview rather than about this script. "Unreadable" is decided in one place (`UNREADABLE`) and
+includes a file whose bytes are not UTF-8 - that is a document this reader cannot carry, which is
+the third degraded shape above, not a crash.
 """
 
 from __future__ import annotations
@@ -44,6 +85,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The diff-scope mechanism every check on this boundary shares, and the one line every such check
+# prints when it counted a finding instead of enforcing it.
+from applicability import changed_paths, report_unenforced, touched  # noqa: E402
 
 # The contract card's cap belongs to the read-path table, which owns every extent in this file. A
 # literal 6144 here would be a second statement of it, and the second statement is the one that
@@ -61,6 +106,13 @@ PHASE_DIR = re.compile(r"^(\d+)-")
 
 MARKER = "## CONTEXT (reference only)"
 
+#: What "unreadable" means at every read site here, stated once. `read_text(encoding="utf-8")`
+#: raises `UnicodeDecodeError` - a `ValueError`, not an `OSError` - on a file whose bytes are not
+#: UTF-8, and a document this reader cannot decode carries exactly as much context as one that is
+#: not there. Catching only `OSError` made that shape a traceback and exit 1, which the caller reads
+#: as "could not build, treat as absent" - the silent clean pass this module exists to remove.
+UNREADABLE = (OSError, UnicodeDecodeError)
+
 
 def layout(spec: Path) -> tuple[Path, int] | None:
     """(feature directory, phase number) for `spec`, or None when it is outside the layout."""
@@ -77,28 +129,71 @@ def layout(spec: Path) -> tuple[Path, int] | None:
     return Path(*parts[:index]), int(number.group(1))
 
 
-def contracts_section(text: str) -> str | None:
-    """The `## Contracts and Decisions` section of an overview, heading included, or None.
+#: Boilerplate this reader must not count as real contracts: an HTML comment. The template's own
+#: instructional text under this exact heading lives inside one (`docs/templates/overview.template.md`),
+#: so a freshly-templated, never-filled-in overview matches this and nothing else needs to.
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
-    Ends at the next heading of the SAME OR SHALLOWER level, so a contract written under its own
-    `### ` subheading stays inside the section rather than truncating it - and the section still
-    stops well short of the whole document, which is the extent the read path grants this reader.
-    That level rule is `md_section.slice_section`'s; what stays here is the policy - the heading line
-    is carried into the block, and a section with nothing under it is no context at all.
+
+class Contracts(NamedTuple):
+    """What `## Contracts and Decisions` looks like in one overview, as this reader may see it.
+
+    `heading` is whether the heading exists at all. `body` is the section's MEANINGFUL content -
+    comments stripped - or None when there is none to send. `boilerplate` is True for the specific
+    case in between: the section has visible characters, so it is not simply unwritten, but every
+    one of them is inside an HTML comment - it LOOKS filled in and carries nothing a spec could
+    contradict. `heading=True, body=None, boilerplate=False` is the one truly ordinary case: the
+    heading is there and genuinely nothing is written under it yet.
     """
+
+    heading: bool
+    body: str | None
+    boilerplate: bool
+
+
+def contracts(text: str) -> Contracts:
+    """`Contracts` for one overview's text. ONE slice answers every question this reader asks, and
+    this is the only place the slice arguments are written - two calls with the same arguments are
+    two things to keep in step, and one of them drifts."""
     found = slice_section(text, CONTRACTS_HEADING, min_level=2, allow_trailing=True)
     if found is None:
-        return None
-    return "".join(found).strip() or None
+        return Contracts(False, None, False)
+    _, body = found
+    # The heading LINE always makes `"".join(found)` non-empty, so emptiness is judged on the body
+    # alone - a heading with nothing under it, not "a heading" (which is never nothing).
+    if not body.strip():
+        return Contracts(True, None, False)
+    if not _COMMENT.sub("", body).strip():
+        return Contracts(True, None, True)
+    # Comments are stripped from what is CARRIED as well as from what is judged. Judging on the
+    # stripped text and sending the raw section would ship the template's own instructional comment
+    # into the observe pass under "these are the binding contracts the spec must not contradict" -
+    # presenting "do not rename this heading" to the model as a contract. One text, one meaning.
+    return Contracts(True, _COMMENT.sub("", "".join(found)).strip(), False)
 
 
-def overview_contracts(feature_dir: Path) -> str | None:
-    """The feature overview's contracts section, or None when there is no overview or no section."""
+def contracts_section(text: str) -> str | None:
+    """The carried body alone, for callers with no use for the rest of `contracts()` - which owns
+    every rule about what that body is and when it is None."""
+    return contracts(text).body
+
+
+def overview_state(feature_dir: Path) -> Contracts | None:
+    """`contracts()` for the feature overview, or None when there is no readable `overview.md`.
+
+    One read of one file answers everything `build()` needs. Reading it twice - once for the
+    section, once to ask whether the heading was there at all - is the same file opened twice per
+    spec gated, on the read path this module exists to hold the line on.
+
+    None is a THIRD degraded shape, not a softer version of "not written yet": a feature with no
+    readable overview at all loses the same half of `contradiction` as one with the wrong heading or
+    a boilerplate-only section, and `build()` treats it exactly that way.
+    """
     try:
         text = (feature_dir / "overview.md").read_text(encoding="utf-8")
-    except OSError:
+    except UNREADABLE:
         return None
-    return contracts_section(text)
+    return contracts(text)
 
 
 class Card(NamedTuple):
@@ -149,7 +244,7 @@ def prior_card(feature_dir: Path, phase: int) -> Card | None:
         return None
     try:
         raw = (directory / "handover.md").read_text(encoding="utf-8")
-    except OSError:
+    except UNREADABLE:
         return None
     encoded = raw.encode("utf-8")
     truncated = len(encoded) > HANDOVER_MAX_BYTES
@@ -159,29 +254,80 @@ def prior_card(feature_dir: Path, phase: int) -> Card | None:
     return Card(directory.name, card, truncated) if card else None
 
 
-def build(spec: Path) -> tuple[str, list[str]]:
-    """(the CONTEXT block, one note per part included or absent). An empty block is a normal answer."""
+def build(spec: Path) -> tuple[str, list[str], bool]:
+    """(the CONTEXT block, one note per part included/absent/degraded, whether it is degraded).
+
+    An empty block with `degraded=False` is a normal answer - phase 1 has no prior card, a feature
+    may have the heading with genuinely nothing under it yet. `degraded=True` means one of the three
+    shapes named at the top of this module - no `## Contracts and Decisions` heading at all, that
+    heading holding only boilerplate, or no readable `overview.md` at all - so `contradiction` loses
+    half of what it is defined to check for every spec in the feature, not just this one. Each shape
+    names its own remedy in its own note, because the caller carries that line verbatim. The caller
+    decides what to do with the signal; this function only refuses to make it indistinguishable from
+    "nothing to carry yet".
+    """
     where = layout(spec)
     if where is None:
-        return "", [f"absent: {spec} is outside docs/features/<feature>/phases/… — no context"]
+        return (
+            "",
+            [
+                f"absent: {spec} is outside docs/features/<feature>/phases/… — no context"
+            ],
+            False,
+        )
     feature_dir, phase = where
 
     notes: list[str] = []
     parts: list[str] = []
+    degraded = False
 
-    contracts = overview_contracts(feature_dir)
-    if contracts:
-        parts.append(contracts)
-        notes.append(f"included: {feature_dir.name}/overview.md — ## Contracts and Decisions only")
+    state = overview_state(feature_dir)
+    if state is None:
+        degraded = True
+        notes.append(
+            f"DEGRADED: no readable overview.md in {feature_dir.name} — contradiction can only be "
+            f"checked against the prior phase's card, never this feature's own contracts, for "
+            f"EVERY spec in this feature, for as long as the overview stays missing. There is no "
+            f"exemption for a feature that genuinely has none yet, and no tolerated degraded state "
+            f"to settle for: `spec_gate_context.py check` in gate_ci.sh blocks the commit as soon "
+            f"as this feature directory is touched. Write overview.md before writing specs under "
+            f"it."
+        )
+    elif state.body:
+        parts.append(state.body)
+        notes.append(
+            f"included: {feature_dir.name}/overview.md — ## Contracts and Decisions only"
+        )
+    elif not state.heading:
+        degraded = True
+        notes.append(
+            f"DEGRADED: no ## Contracts and Decisions heading in {feature_dir.name}/overview.md — "
+            f"contradiction can only be checked against the prior phase's card, never this "
+            f"feature's own contracts, for EVERY spec in this feature. "
+            f"See docs/templates/overview.template.md."
+        )
+    elif state.boilerplate:
+        degraded = True
+        notes.append(
+            f"DEGRADED: ## Contracts and Decisions in {feature_dir.name}/overview.md holds only "
+            f"boilerplate (an HTML comment, e.g. the unfilled template) — nothing a spec could "
+            f"contradict, the same gap as a missing heading, for EVERY spec in this feature."
+        )
     else:
-        notes.append(f"absent: no ## Contracts and Decisions section in {feature_dir.name}/overview.md")
+        notes.append(
+            f"absent: no ## Contracts and Decisions section in {feature_dir.name}/overview.md"
+        )
 
     card = prior_card(feature_dir, phase)
     if card:
-        parts.append(f"### Contract card carried forward from phase {card.phase}\n\n{card.body}")
+        parts.append(
+            f"### Contract card carried forward from phase {card.phase}\n\n{card.body}"
+        )
         bound = (
             f" — TRUNCATED to the first {HANDOVER_MAX_BYTES} bytes; that handover is over the "
-            f"contract-card cap" if card.truncated else ""
+            f"contract-card cap"
+            if card.truncated
+            else ""
         )
         notes.append(
             f"included: phases/{card.phase}/handover.md — the immediately prior phase's card{bound}"
@@ -190,26 +336,166 @@ def build(spec: Path) -> tuple[str, list[str]]:
         notes.append(f"absent: no prior phase card before phase {phase}")
 
     if not parts:
-        return "", notes
+        return "", notes, degraded
     preamble = (
         "These are the binding contracts the spec under review must not contradict. They are "
         "BACKGROUND: do not make observations about them, and do not judge them. Use them only to "
         "notice where the spec under review contradicts one."
     )
-    return "\n\n".join([MARKER, preamble, *parts]), notes
+    return "\n\n".join([MARKER, preamble, *parts]), notes, degraded
+
+
+# --- check: every overview.md on disk, independent of any one spec being gated -------------------
+
+
+def check(root: Path, *, enforce_all: bool = False) -> list[str]:
+    """Every feature under `docs/features/` whose overview cannot carry its contracts: a missing or
+    unreadable `overview.md`, one with no `## Contracts and Decisions` heading, or one where that
+    heading holds only boilerplate.
+
+    This is the other half of the fix: `build()` reports degradation per spec gated, which only ever
+    surfaces the defect one spec write at a time and only for a project someone is actively working
+    on. This finds it directly, for every feature on disk, the moment an overview is written, edited,
+    or never written at all - the heading contract the template already states
+    (`docs/templates/overview.template.md`) made explicit and CHECKED rather than merely written down.
+
+    Diff-scoped like every other check on this applicability boundary (`scripts/applicability.py`):
+    a feature the current change did not touch is COUNTED on stderr, never blocked. That is not a
+    grandfathering exception written for this issue - it is what lets a project with years of
+    pre-rule overviews (clickup-agents included) adopt this check without every one of them failing
+    CI on day one.
+
+    **`gate_ci.sh` keeps it diff-scoped even under `--full`**, on `carried_items.py`'s precedent
+    rather than `doc_read_path.py`'s: this obligation lands on a document class every consumer repo
+    already has on disk, so a full audit wired into CI would fail its build over overviews written
+    before the rule existed. `check(..., enforce_all=True)` - the `--all` flag - audits every
+    feature regardless of scope, and is deliberately something a person runs, not something CI runs
+    unconditionally.
+    """
+    features = root / "docs" / "features"
+    if not features.is_dir():
+        print(f"[spec_gate_context] no {features} — nothing to check", file=sys.stderr)
+        return []
+
+    scope: set[Path] | None = None
+    if not enforce_all:
+        scope = changed_paths(root)
+        if scope is None:
+            print(
+                f"[spec_gate_context] git cannot say what changed under {root}, so the scope is "
+                f"unknowable and no feature is enforced. Run `check --all` for a full audit.",
+                file=sys.stderr,
+            )
+            return []
+
+    problems: list[str] = []
+    unenforced = 0
+    for feature in sorted(p for p in features.iterdir() if p.is_dir()):
+        overview = feature / "overview.md"
+        # The FEATURE DIRECTORY, never `overview.md` itself: a missing overview can never appear as
+        # a changed path, so scoping on the artifact would make that shape permanently
+        # unenforceable. `applicability.touched` already answers "this path, or anything under it",
+        # which is exactly the question — a second copy of the containment rule is the one that
+        # drifts.
+        in_scope = enforce_all or touched(feature, scope or set())
+
+        try:
+            text = overview.read_text(encoding="utf-8")
+        except UNREADABLE as exc:
+            message = (
+                f"{feature}: no readable overview.md ({exc}) — the spec gate's CONTEXT block can "
+                f"never carry this feature's contracts without one, so `contradiction` is checked "
+                f"only against the prior phase's card, for every spec this feature ever gates, "
+                f"until a readable UTF-8 overview.md exists. There is no exemption for it: this "
+                f"feature has no phase "
+                f"directory yet either, so there is nowhere for a recorded exception to live."
+            )
+        else:
+            state = contracts(text)
+            if not state.heading:
+                message = (
+                    f"{overview}: no ## Contracts and Decisions heading — the spec gate's CONTEXT "
+                    f"block can never carry this feature's contracts, so `contradiction` is checked "
+                    f"only against the prior phase's card, for every spec this feature ever gates. "
+                    f"Add the heading (see docs/templates/overview.template.md)."
+                )
+            elif state.boilerplate:
+                message = (
+                    f"{overview}: ## Contracts and Decisions holds only boilerplate (an HTML "
+                    f"comment, e.g. the unfilled template) — nothing a spec could contradict, the "
+                    f"same gap as a missing heading."
+                )
+            else:
+                continue
+
+        if in_scope:
+            problems.append(message)
+        else:
+            unenforced += 1
+
+    report_unenforced(
+        "spec_gate_context",
+        unenforced,
+        "with no usable ## Contracts and Decisions content - checked when that feature is next "
+        "touched, and `check --all` audits them now",
+    )
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 1:
-        print("usage: spec_gate_context.py <spec.md>", file=sys.stderr)
+    """Exit 0 clean · 1 the `check` subcommand found an in-scope feature · 3 the built block is
+    degraded · 2 anything unexpected.
+
+    That last one is the reason this wrapper exists. Every code here means one thing to the hook,
+    and an uncaught exception used to exit 1 - the same code `check` uses for a real finding, and a
+    code `hook_spec_gate.sh` reads as "could not build, treat as absent, never fail the gate". A
+    crash arriving as a routine absence is the silent clean pass this module was written to remove,
+    so it gets a code no other outcome uses, and its cause on stderr rather than a traceback.
+    """
+    try:
+        return _run(list(sys.argv[1:] if argv is None else argv))
+    except Exception as exc:  # noqa: BLE001 - the point is that NOTHING escapes as exit 1
+        print(
+            f"[spec_gate_context] unexpected failure ({type(exc).__name__}: {exc}) — this is "
+            f"neither a degraded context nor a finding. Nothing was built.",
+            file=sys.stderr,
+        )
         return 2
-    block, notes = build(Path(args[0]))
+
+
+def _run(args: list[str]) -> int:
+    if args and args[0] == "check":
+        rest = args[1:]
+        enforce_all = "--all" in rest
+        positional = [a for a in rest if a != "--all"]
+        root = Path(positional[0]) if positional else Path(".")
+        problems = check(root, enforce_all=enforce_all)
+        for problem in problems:
+            print(f"[spec_gate_context] {problem}", file=sys.stderr)
+        if problems:
+            return 1
+        print("[spec_gate_context] clean", file=sys.stderr)
+        return 0
+
+    if len(args) != 1:
+        print(
+            "usage: spec_gate_context.py <spec.md> | spec_gate_context.py check [--all] [root]",
+            file=sys.stderr,
+        )
+        return 2
+    block, notes, degraded = build(Path(args[0]))
     for note in notes:
         print(f"  spec-gate context: {note}", file=sys.stderr)
+    if degraded:
+        print(
+            "  spec-gate context: DEGRADED — contradiction cannot be checked against this "
+            "feature's own contracts. This is reported, not swallowed: the caller must not "
+            "discard this exit code.",
+            file=sys.stderr,
+        )
     if block:
         print(block)
-    return 0
+    return 3 if degraded else 0
 
 
 if __name__ == "__main__":

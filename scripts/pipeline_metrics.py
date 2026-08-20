@@ -14,9 +14,27 @@ leaves its numbers behind. Phase 8 died and was recovered three times; every one
 would have lost the lot under a write-at-the-end design. So each fact is written by the stage that
 sees it, at the moment it sees it, and no stage is trusted to remember anything for later.
 
-**Writing metrics can never fail a phase.** Everything here funnels through `metrics_sink`, which
-swallows every failure and reports it as `False`. This module adds no `sys.exit` of its own on an
-emission path and its CLI exits 0 even when nothing could be written. Measurement, not a gate.
+**Writing metrics can never fail a phase — except the one command nothing wraps in `|| true`.**
+Everything here funnels through `metrics_sink`, which swallows every failure and reports it as
+`False`. Every emission point but one is called from a hook's fail-open path and this module adds no
+`sys.exit` of its own there — its CLI exits 0 even when nothing could be written. `defect` is the
+exception: it is the single field the record exists for, the only one unrecoverable after the run,
+and it is always run directly by a stage rather than from a hook, so nothing else is fail-open on its
+behalf. A `defect` call that could not be written exits 1 and says why on stderr (issue #66) — a
+recorder that quietly does nothing is indistinguishable from one with nothing to record.
+
+That loud exit comes in THREE SHAPES, because the remedy is a different party's in each. When a
+writer IS configured and the write failed, the stage can fix the cause and re-run the exact command,
+so the message says so (exit 1). When NO writer is configured at all - nothing on `PATH`,
+`AVENGER_METRICS_CMD` unset - that is a standing property of the environment, the expected state of a
+standalone install with no firstmate home, and re-running only fails identically; that message is
+addressed to the operator, says the defect could not be recorded, and tells the stage to move on
+rather than loop (exit 1). When `--phase-ref` resolves to no phase, nothing about the writer is known
+to be wrong and the ARGUMENT is what must change, so that one exits `USAGE_ERROR` (2), the same code
+a mistyped command already gets. Each shape opens with its own marker and none of the three contains
+another, because that stem is what a stage discriminates on.
+`AVENGER_METRICS_OFF=1` is none of them: it is a deliberate choice, and stays silent - except for the
+bad argument, which it does not quiet, for the same reason it does not quiet a parse error.
 
 Emission is attached to the *fact*, not to the caller. `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
@@ -24,7 +42,7 @@ existing. `record_spec_round` is idempotent by CONTENT — it reuses the shipped
 cache to remember which body it last counted — so any caller may call it on any spec write and the
 record converges instead of double-counting a round.
 
-CLI, for the shell emission points (all fail open, all exit 0):
+CLI, for the shell emission points (all fail open, all exit 0, except `defect` — see above):
     pipeline_metrics.py spec-round <spec.md>
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
     pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
@@ -33,6 +51,7 @@ CLI, for the shell emission points (all fail open, all exit 0):
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
     pipeline_metrics.py skill-required --stage <s>
     pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...
+        (exits 1 when the write failed or no writer is configured, 2 when --phase-ref names no phase)
     pipeline_metrics.py phase-open <phase-dir>
     pipeline_metrics.py phase-close <phase-dir>
 """
@@ -43,13 +62,18 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import applicability  # noqa: E402
+import gate_timeouts  # noqa: E402
 import metrics_sink as sink  # noqa: E402
+import plugin_release  # noqa: E402
+import proc_group  # noqa: E402
 import skill_contract  # noqa: E402
 import verifier_attempts  # noqa: E402
 from spec_gate_cache import keep, normalized, previous, split_spec  # noqa: E402
@@ -64,11 +88,15 @@ SPEC_IN_PATH = re.compile(r"(?:^|/)specs/(\d{1,2})\.(\d+)-[^/]+")
 #: Requirement ids as pipeline-conventions defines them: `R<n>.<k>.<m>`.
 REQUIREMENT_ID = re.compile(r"\bR\d+\.\d+\.\d+\b")
 
-#: A test function, for the suite-size count. Deliberately a static count rather than a pytest
-#: collection: it never fails on an import error, costs nothing, and — the point — `tests_before`
-#: and `tests_after` are counted the SAME way, so their difference is a real delta and not an
-#: artifact of two different counting methods.
-TEST_FUNCTION = re.compile(r"^\s*(?:async\s+)?def\s+test_", re.MULTILINE)
+#: `pytest --collect-only -q`'s own summary line ("123 tests collected in 0.4s" / "1 test collected
+#: in ..."). `count_tests` parses this rather than counting `def test_` lines statically (issue #46):
+#: a static count gives the number of test FUNCTIONS, while every suite run this pipeline reports —
+#: `hook_verifier.sh`'s own `pytest -q` — reports the number of collected test ITEMS, and a
+#: parametrized function is one `def` and several items. One field, `tests_before`/`tests_after`,
+#: was carrying two different populations under one name (917/973 recorded against 1092/1164
+#: observed in the same phase); this is what makes it the SAME population as the number every
+#: verifier run already prints.
+TESTS_COLLECTED = re.compile(r"^(\d+) tests? collected", re.MULTILINE)
 
 #: Which rubric a gate is judging against says which stage made the call, with no caller to ask.
 #:
@@ -400,6 +428,68 @@ def _spec_rounds(record: dict | None) -> int:
     )
 
 
+#: The stage a plugin-version row belongs to, mirroring `TRIAGE_DECIDE_STAGE`: no model runs here
+#: either, and the row exists so the fact has a place in the ledger rather than nowhere at all.
+PLUGIN_VERSION_STAGE = "plugin-version"
+PLUGIN_VERSION_MODEL = "none (scripts/plugin_release.py)"
+
+#: `gate_calls[].verdict` is a CLOSED enum firstmate owns — `GO|REVIEW|NO-GO|error|killed` — and its
+#: writer refuses any row `validate` would refuse. A drift status passed through verbatim ("STALE")
+#: is not in it, so the row is rejected, the refusal is swallowed by the fail-open path every
+#: measurement here runs on, and the executing version ends up recorded NOWHERE, which is the one
+#: thing this row exists to prevent. So the status is MAPPED, and the untranslated token stays in
+#: `note` where free text is allowed: a stale copy reads as the rejection it is, a fresh one as GO,
+#: and an unresolvable comparison as `NO_VERDICT` for the reason that token exists elsewhere in this
+#: file — answered, but no judgement made. A status with no mapping is said out loud rather than
+#: silently re-inventing an out-of-enum verdict.
+PLUGIN_VERSION_VERDICTS = {"fresh": "GO", "stale": "NO-GO", "unknown": NO_VERDICT}
+
+
+def record_plugin_version(phase: str) -> bool:
+    """Record which plugin copy actually executed this phase (issue #65).
+
+    Not a new top-level field: firstmate's schema is closed and its producer contract is "add no
+    key" (pipeline-conventions §6d) — a new field is firstmate's decision, not this repo's. This
+    follows the precedent `record_triage_decision` already set for a fact firstmate has no field
+    for: an ordinary `gate_calls` row on EXISTING keys, carrying the detail in `note`, bounded free
+    text the schema already has. `id` is fixed per phase, so a phase that opens its record more than
+    once (a concurrent hook, a resumed run) converges on one row instead of appending duplicates.
+
+    `plugin_release.check()` derives the version from the copy that is actually running — never a
+    static constant a stale cached copy would carry unchanged just the same as a fresh one.
+    """
+    try:
+        result = plugin_release.check()
+        note = (
+            f"status={result.status} executing_version={result.executing_version} "
+            f"source_version={result.source_version} root={result.executing_root}"
+        )
+        verdict = PLUGIN_VERSION_VERDICTS.get(result.status)
+        if verdict is None:
+            sink.note(
+                f"plugin drift status {result.status!r} has no mapped verdict — "
+                f"recorded as {NO_VERDICT}"
+            )
+            verdict = NO_VERDICT
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{PLUGIN_VERSION_STAGE}",
+            stage=PLUGIN_VERSION_STAGE,
+            spec=None,
+            attempt=1,
+            model=PLUGIN_VERSION_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=verdict,
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"plugin version not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 # --- verification attempts, suite size, phase boundaries -----------------------------------------
 
 
@@ -445,18 +535,57 @@ def test_root() -> Path:
     return root / (declared.split(os.pathsep)[0] if declared else "tests")
 
 
+def pytest_argv() -> list[str]:
+    """How to invoke pytest, preferring the SAME `pytest` `hook_verifier.sh` runs.
+
+    That hook runs the binary off `PATH`; running `-m pytest` under whichever interpreter happens to
+    be executing this hook is a different program whenever the two disagree, and where pytest is on
+    `PATH` but not importable here it is no program at all — collection prints no summary line and
+    the field silently disappears, where the static count it replaced always produced a number. The
+    interpreter form stays as the fallback for an install where only that one exists.
+    """
+    found = shutil.which("pytest")
+    return [found] if found else [sys.executable, "-m", "pytest"]
+
+
 def count_tests() -> int | None:
-    """Suite size, counted statically. None when there is no test root to count."""
+    """Suite size: the number of items `pytest --collect-only` would run, minus e2e.
+
+    The SAME population `hook_verifier.sh` reports when it runs the phase's suite (`pytest -q`,
+    `--ignore=<test root>/e2e` on the full-suite fallback) — collected test items, not `def test_`
+    lines (issue #46). Both the collected root and the ignored e2e directory come from
+    `test_root()`, so a project that points `SUBPROC_CHECK_PATHS` elsewhere excludes ITS e2e
+    directory rather than a `tests/e2e` that does not exist there.
+
+    Bounded through `proc_group.run_bounded`, never `subprocess.run(timeout=…)`: this runs inside
+    `hook_spec_gate.sh`, and a raw timeout stops the process it started and nothing else — leaving
+    xdist workers holding the inherited pipes and turning the bound into the unbounded hang that
+    gets the whole hook killed. The budget is `gate_timeouts.collect_timeout()`, which is the same
+    number that module checks the hook's headroom against.
+
+    None on anything that stops collection from answering — no test root, no pytest, a timeout, an
+    import error — the same "not counted" the prior static count used, so `record_phase_open`/
+    `record_phase_close` still treat a None here as "skip the field", never a 0.
+    """
     root = test_root()
     if not root.is_dir():
         return None
-    total = 0
-    for path in sorted(root.rglob("*.py")):
-        try:
-            total += len(TEST_FUNCTION.findall(path.read_text(encoding="utf-8")))
-        except OSError:
-            continue
-    return total
+    project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+    argv = [*pytest_argv(), "-q", "--collect-only", f"--ignore={root / 'e2e'}", str(root)]
+    try:
+        result = proc_group.run_bounded(
+            argv, gate_timeouts.collect_timeout(), cwd=str(project_root)
+        )
+    except OSError:
+        return None
+    if result.timed_out:
+        sink.note(
+            f"suite size not counted: collection exceeded {gate_timeouts.collect_timeout()}s "
+            f"({result.elapsed:.0f}s measured) and its process group was killed"
+        )
+        return None
+    match = TESTS_COLLECTED.search(result.stdout)
+    return int(match.group(1)) if match else None
 
 
 def record_phase_open(phase_dir: str) -> bool:
@@ -464,6 +593,7 @@ def record_phase_open(phase_dir: str) -> bool:
     phase = resolve_phase(phase_dir)
     if phase is None or not sink.ensure(phase):
         return False
+    record_plugin_version(phase)
     record = sink.show(phase) or {}
     fields: dict[str, object] = {}
     if record.get("opened") is None:
@@ -475,10 +605,43 @@ def record_phase_open(phase_dir: str) -> bool:
     return sink.set_fields(phase, **fields) if fields else True
 
 
+def _phase_landed(phase_dir: Path) -> bool | None:
+    """Whether `phase_dir` has LANDED — nothing under it left uncommitted.
+
+    `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
+    implementation completion understates the phase by verification, route-backs and close — its
+    most expensive stages — and the too-early number is indistinguishable from a good one (issue
+    #46). `handover.md` being written is not landing: it is the Verifier's own precondition, checked
+    by `hook_verifier.sh` *after* this file exists, and a phase can still gain an open amendment, a
+    further Verifier finding, or a blocked handover before its commit happens.
+
+    Landing IS observable, though — `commands/avenger-run.md` §5 commits everything under the phase
+    directory the moment it actually lands — so this checks the one thing every caller can see
+    without being told who they are or when they think they are: `applicability.changed_paths`,
+    reused rather than re-derived so this agrees with every other "what did the diff touch" question
+    in the pipeline. True once nothing under `phase_dir` is modified, staged, or untracked. None when
+    git cannot answer (no repo, no `git` on PATH) — never read as "landed".
+    """
+    scope = applicability.changed_paths(phase_dir)
+    if scope is None:
+        return None
+    return not applicability.touched(phase_dir, scope)
+
+
 def record_phase_close(phase_dir: str) -> bool:
-    """Stamp when the phase landed, the suite it landed with, and the wall clock it took."""
+    """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
+
+    Refuses the write while `phase_dir` is not yet landed (issue #46) — a producer that cannot
+    observe landing must not claim it, and this one now can. Called at the wrong moment, this is a
+    no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on why.
+    """
     phase = resolve_phase(phase_dir)
     if phase is None:
+        return False
+    landed = _phase_landed(Path(phase_dir))
+    if landed is not True:
+        why = "still has uncommitted changes" if landed is False else "git could not say whether it has landed"
+        sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
     record = sink.show(phase) or {}
     closed = _now()
@@ -762,7 +925,10 @@ def _build_parser() -> argparse.ArgumentParser:
     required.add_argument("--stage", required=True)
 
     defect = sub.add_parser("defect", help="record a defect and what caught it")
-    defect.add_argument("--phase-ref", required=True)
+    defect.add_argument("--phase-ref", required=True,
+                        help="a phase directory, a path inside one, or a bare phase number; one "
+                             "that resolves to no phase exits 2 rather than reporting a failed "
+                             "write, because the argument is what must change")
     defect.add_argument("--id", required=True, dest="identifier")
     defect.add_argument("--summary", required=True)
     defect.add_argument("--found-by", required=True)
@@ -779,8 +945,25 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dispatch(args: argparse.Namespace) -> None:
-    """Run one CLI command. Prints nothing to stdout except a value the caller asked for."""
+class UnresolvablePhaseRef(Exception):
+    """A `--phase-ref` that names no phase — the ARGUMENT is the cause, not the writer.
+
+    Kept distinct from every emission failure because the remedy is: routed through the write-failed
+    shape, a stage is told the write failed and to "re-run this exact command", which can only fail
+    identically, since the command is what is wrong. That is the retry loop the two-shape split
+    exists to end, one cause further out.
+    """
+
+
+def _dispatch(args: argparse.Namespace) -> bool | None:
+    """Run one CLI command. Prints nothing to stdout except a value the caller asked for.
+
+    Returns whether the record was written, but only `main`'s handling of `defect` reads it. Every
+    other command here is called from a hook's `|| true` fail-open path (`hook_spec_gate.sh`,
+    `hook_verifier.sh`, `hook_mutation.sh`) and must keep exiting 0 no matter what — a non-zero exit
+    there would stop the turn over a missing number. `defect` is the one command a stage runs
+    directly, off that path, specifically so it can be told whether its own catch landed.
+    """
     if args.command == "spec-round":
         value = record_spec_round(args.spec)
         print(value if value is not None else 1)
@@ -809,29 +992,121 @@ def _dispatch(args: argparse.Namespace) -> None:
             print(name)
     elif args.command == "defect":
         phase = _phase_of_ref(args.phase_ref)
-        if phase:
-            record_defect(phase, identifier=args.identifier, summary=args.summary,
-                          found_by=args.found_by, real=not args.not_real,
-                          stage_reached=args.stage_reached, severity=args.severity,
-                          found_by_note=args.found_by_note)
+        if phase is None:
+            sink.note(
+                f"defect {args.identifier} not recorded: --phase-ref {args.phase_ref!r} does not "
+                "resolve to a phase"
+            )
+            raise UnresolvablePhaseRef(args.phase_ref)
+        return record_defect(phase, identifier=args.identifier, summary=args.summary,
+                              found_by=args.found_by, real=not args.not_real,
+                              stage_reached=args.stage_reached, severity=args.severity,
+                              found_by_note=args.found_by_note)
     elif args.command == "phase-open":
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
         record_phase_close(args.phase_dir)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Always 0 on an emission path: a phase must never fail because a number went unrecorded."""
+    """0 on every emission path except `defect`, which is loud on purpose.
+
+    Every other command here runs from a hook's `|| true` fail-open path, so a phase must never fail
+    because a number went unrecorded. `defect` is different: it is the one field the record exists
+    for and the only one unrecoverable after the run (`skills/pipeline-conventions` §6d), and it is
+    always run directly by a stage rather than from a hook — so nothing anywhere is fail-open on its
+    behalf. A recorder that quietly does nothing there is indistinguishable from one with nothing to
+    record, which is exactly the failure this repairs — so an emission that could not be written
+    exits non-zero and says why on stderr, unless the operator explicitly turned emission off via
+    `AVENGER_METRICS_OFF=1`, which is configured behaviour rather than a failure.
+
+    The non-zero exit is one code and two messages, split on whether the remedy is the stage's to
+    apply. A configured writer that refused, hung or could not write is retryable, so that message
+    asks for exactly that. No writer configured anywhere is not: it is the documented state of a
+    standalone install, it will fail the same way on every attempt, and a stage told to "fix the
+    cause and re-run" there loops instead of working, so that message is terminal, addressed to the
+    operator, and says to move on.
+
+    A `--phase-ref` that resolves to no phase is neither of those: nothing about the writer is
+    wrong, the ARGUMENT is. It carries its own marker and exits `USAGE_ERROR` — the code
+    `parse_args` already returns for a caller that typed the command wrong, which is what this is.
+    `AVENGER_METRICS_OFF=1` does not quiet it, for the same reason it does not quiet a parse error:
+    turning emission off is a statement about recording, not a licence to pass an argument that
+    names nothing.
+    """
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:   # a usage error is the caller's bug, and is worth the nonzero exit
-        return int(exc.code or 2)
+        return int(exc.code or USAGE_ERROR)
     try:
-        _dispatch(args)
+        ok = _dispatch(args)
+    except UnresolvablePhaseRef:
+        print(_defect_phase_ref_message(args), file=sys.stderr)
+        return USAGE_ERROR
     except Exception as exc:  # noqa: BLE001 — measurement never fails the thing it measures
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
+        ok = False if args.command == "defect" else None
+    if args.command == "defect" and ok is False and os.environ.get("AVENGER_METRICS_OFF") != "1":
+        print(_defect_failure_message(args), file=sys.stderr)
+        return 1
     return 0
+
+
+#: The markers a stage reads to tell a retryable `defect` failure from a terminal one, and both from
+#: a caller that named a phase that does not exist. NO ONE OF THEM CONTAINS ANOTHER, and
+#: `tests/test_pipeline_metrics.py` holds them to it: a reader matching the retryable marker against
+#: either other message would be told to re-run a command that can only fail the same way, which is
+#: the loop this split exists to end.
+DEFECT_WRITE_FAILED = "DEFECT NOT RECORDED - WRITE FAILED"
+DEFECT_NO_WRITER = "DEFECT NOT RECORDED - NO METRICS WRITER CONFIGURED"
+DEFECT_BAD_PHASE_REF = "DEFECT NOT RECORDED - UNRESOLVABLE --phase-ref"
+
+#: What a caller that typed the command wrong exits with, whichever layer caught it.
+USAGE_ERROR = 2
+
+
+def _defect_lost(args: argparse.Namespace) -> str:
+    """What every unrecorded `defect` says first, whatever stopped it."""
+    return (
+        f"{args.identifier} (found_by={args.found_by}) was NOT written to the metrics record. This "
+        "is the single field the record exists for and it cannot be reconstructed once the run is "
+        "over."
+    )
+
+
+def _defect_phase_ref_message(args: argparse.Namespace) -> str:
+    """What a `defect` whose `--phase-ref` names no phase says: fix the argument, not the writer."""
+    return (
+        f"{sink.PREFIX} {DEFECT_BAD_PHASE_REF}: {_defect_lost(args)} The metrics writer was never "
+        f"reached and nothing about it is known to be wrong: --phase-ref {args.phase_ref!r} does "
+        "not resolve to a phase, so there was no record to write to. The remedy is the ARGUMENT, "
+        "not the writer: re-run with a --phase-ref naming an existing phase directory (or a path "
+        "inside one), such as docs/features/<feature>/phases/<n>-<slug>. Re-running it UNCHANGED "
+        "fails identically."
+    )
+
+
+def _defect_failure_message(args: argparse.Namespace) -> str:
+    """What a `defect` that could not be written says, in the two shapes it comes in."""
+    lost = _defect_lost(args)
+    if sink.configured():
+        return (
+            f"{sink.PREFIX} {DEFECT_WRITE_FAILED}: {lost} A metrics writer IS configured for this "
+            "run, so the write itself failed and the remedy is yours: see the [metrics] diagnostic "
+            "above for the cause, fix it, and re-run this exact command."
+        )
+    return (
+        f"{sink.PREFIX} {DEFECT_NO_WRITER}: {lost} No writer is "
+        "configured for this run: fm-pipeline-metrics.sh is not on PATH and AVENGER_METRICS_CMD is "
+        "unset. That is the expected state of a standalone install with no firstmate home, and it "
+        "is a standing property of this environment rather than something this command can repair. "
+        "DO NOT re-run it - it will fail identically. Move on with the phase. FOR THE OPERATOR: "
+        "point AVENGER_METRICS_CMD at firstmate's own fm-pipeline-metrics.sh to record defects, or "
+        "set AVENGER_METRICS_OFF=1 to record none deliberately and silently. Under --auto this is "
+        "worth surfacing rather than looping on."
+    )
 
 
 if __name__ == "__main__":

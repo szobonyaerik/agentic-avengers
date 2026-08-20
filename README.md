@@ -71,7 +71,7 @@ flowchart TD
     ver -->|"capped at 3 attempts — then carry / waive / escalate"| stop
     ver -->|"pass — TESTS LOCK"| mut{"mutation<br/>advisory (default) / enforce / off"}
     mut -->|"survivors · enforce only"| impl
-    mut --> brk["breaker<br/>optional · critical paths"]
+    mut --> brk["breaker<br/>critical paths · breaker.json or no close"]
     brk -->|"counterexample"| impl
     brk --> ho["handover"]
     ho -.-> hoA[/"handover.md · contract card, capped at 6144 bytes · rest → handover-archive.md · PROJECT_STATE"/]
@@ -129,7 +129,11 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
           adding one a later gate demands is always allowed.
   mutation (MUTATION_POLICY advisory by default — runs, reports, never blocks | enforce | off)
                  an extra signal, NOT the independence mechanism
-  breaker (critical paths) -> counterexample -> implementer adds the test, fixes the code
+  breaker (criticality: critical) -> counterexample -> implementer adds the test, fixes the code
+                 persists breaker.json beside verdict.json - a `clean` verdict naming what it
+                 ATTACKED, or `found` naming its counterexample. A critical phase does not close
+                 without one, and a vacuous record is refused like a missing one
+                 (scripts/breaker_gate.py).
   handover -> .../phases/<n>-<slug>/handover.md   CONTRACT CARD, hard cap 6144 bytes
                  binding contracts + decisions + artifact links + next phase; mirrors the verdict
                  and any waived findings. Everything else -> handover-archive.md, which NO stage
@@ -232,10 +236,19 @@ agentic-avengers/
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
-│   │                          + read path + stage effort + verifier pre-check + amendments
-│   │                          + carried items + cosmic-ray + break-glass)
+│   │                          + read path + overview contracts heading + stage effort
+│   │                          + verifier pre-check + amendments + carried items + breaker record
+│   │                          + cosmic-ray + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
 │   ├── spec_gate_state.py     the one place a spec's gate stamp is read (legacy stamps included)
+│   ├── spec_gate_context.py   the gate's `## CONTEXT (reference only)` block: the overview's
+│   │                          `## Contracts and Decisions` section + the prior phase's card. Three
+│   │                          shapes are DEGRADED, not absent - no such heading, a heading holding
+│   │                          only boilerplate, or no readable overview.md at all - exit 3, and the
+│   │                          hook folds the builder's own cause into the persisted report; any
+│   │                          other non-zero exit banners as UNAVAILABLE, never as a clean pass.
+│   │                          `check [--all]` (diff-scoped even under --full, from gate_ci.sh)
+│   │                          finds every feature in one of those three states
 │   ├── requirement_cap.py     12 requirements per spec, counted before the gate — a SPLIT trigger
 │   ├── spec_notes.py          the known-open list: notes that never block, read once by the implementer
 │   ├── spec_rubric.py         the gate's rubric rendered for the WRITER, from the gate's own
@@ -243,6 +256,10 @@ agentic-avengers/
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
 │   │                          the phase does not close
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
+│   ├── breaker_gate.py        the Breaker's record: a phase declaring `criticality: critical` does
+│   │                          not close without a valid breaker.json (a vacuous one is refused like
+│   │                          a missing one). Authoritative at the handover hook, diff-scoped in CI
+│   │                          (`check --all` audits), and the `stage: breaker` the resolver reports
 │   ├── applicability.py       the one boundary every mechanical check binds on: OPEN it blocks,
 │   │                          CLOSED it counts and names (untouched | shipped | excepted). Owns
 │   │                          the diff scope and the per-phase exceptions.json ledger
@@ -266,11 +283,20 @@ agentic-avengers/
 │   │                          `table` renders the allocation. It does NOT observe what a stage ran
 │   │                          at, and opencode does not carry the key at all
 │   ├── spec_gate_cache.py     body each gate last approved + the verdict it last reached, so a re-gate stays in the diff
+│   ├── spec_done_guard.py     a spec's `status: done` is not believed on sight: on the stamp's
+│   │                          arrival the verifier hook checks that spec's test-mapping row and its
+│   │                          phase suite, and REVERTS the stamp to `in-progress` if either fails.
+│   │                          Binds only the transition into `done` (already `done` at committed
+│   │                          HEAD = shipped, counted not reverted); `binding: none`-only specs,
+│   │                          an unscoped red suite and `GATE_BYPASS` fail without rewriting it
 │   ├── verifier_bundle_scope.py  sends the Verifier only the specs that changed; carries the rest
 │   ├── mutation_score.py      deterministic mutation verdict (baseline-guarded; no model call)
 │   ├── mutation_target.py     is there anything to mutate? (the gate's only legal skip)
 │   ├── pipeline_metrics.py    the emission points: gate calls, spec rounds, defects, skill loads
 │   ├── metrics_sink.py        fail-open bridge to firstmate's per-phase metrics CLI (no schema here)
+│   ├── plugin_release.py      the executing plugin copy vs. the merged repository: `check` (the
+│   │                          /avenger-run preflight: STALE stops a run, UNKNOWN is unenforced)
+│   │                          and `cut`, the one release step into the plugin cache
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
@@ -355,6 +381,14 @@ scripts/sync_runtimes.sh             # regenerates the .opencode/ adapter
 ```
 `AGENTS.md` carries the opencode conventions and is hand-maintained from
 `skills/pipeline-conventions/SKILL.md` — update it only when the rules themselves change.
+
+A merged edit is still not what a run executes: phases run from the plugin release cached under
+`$CLAUDE_PLUGIN_ROOT`. Release it, then restart Claude Code so the harness re-reads the cache:
+```text
+python3 scripts/plugin_release.py check   # is the executing copy stale against this repo? (also /avenger-run's preflight)
+python3 scripts/plugin_release.py cut     # the one release step: copy the payload into the cache and re-point the install registry
+```
+Rule, guarantees and env overrides: `skills/pipeline-conventions` (*Closing the release loop*).
 
 ---
 

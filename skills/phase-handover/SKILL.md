@@ -62,6 +62,19 @@ handover.
 **No item the previous phase carried is unanswered.** `python3 scripts/carried_items.py due
 <phase-dir>` must exit 0 - see *Open items carry your PREDICTIONS too* below. Discharge them as you
 build; a batch of them discovered at the close is a phase that never read its predecessor's card.
+**Exit 2 there is a different failure and its remedy is on the PREVIOUS card**: the prior phase's
+section is present and declares neither an item nor an explicit `none`, so what you inherit cannot be
+determined and `discharge` cannot repair it. Rewrite that card's section as the documented table
+before continuing.
+
+**A phase that owes a Breaker run has a record of one.** `python3 scripts/breaker_gate.py due
+<phase-dir>` must exit 0. Any spec declaring `criticality: critical` routes the Breaker, and the
+phase does not close without its `breaker.json` beside `verdict.json` - a `clean` verdict naming what
+it attacked, or a `found` verdict naming its counterexample; a vacuous record is refused the same as
+a missing one, because a stage that emits nothing is indistinguishable from one that never ran. If it
+is outstanding, run `avenger-breaker` rather than writing the card - `scripts/hook_verifier.sh`
+enforces this on the handover write, so a card written without it will not land. A deliberate waiver
+is a disclosed exception (`scripts/applicability.py record ... --rule breaker`), never a silence.
 
 **No amendment is owed re-verification.** `python3 scripts/amendments.py due <phase-dir>` must exit
 0. A phase does not close over a pending security amendment, nor over a pending ordinary one on a
@@ -192,6 +205,14 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
 
 - **Your own card must state what it carries** - a row per item, or an explicit `none` row.
   **Silence is not `none`.** A phase does not close on a card that says nothing here.
+- **Write the rows as the table above, and nothing else.** The parser reads markdown table rows and
+  the literal `none`; a bullet list (`- OBS-1 | ... | ...`) and the template's own unfilled
+  placeholder rows (`OBS-<n>`, `FWD-<n>`) are **not items**, and a section holding only those states
+  neither an item nor `none`. That is the third state, and it is undecidable, not empty: your own
+  close fails on it, and so does the next phase's `due` (exit 2), whose only remedy is to come back
+  and rewrite **your** card. The shape is a closed set with a loud refusal, deliberately not widened
+  to accept a second row layout - which is why phase 9's bullet rows read as nothing carried and
+  OBS-1 through OBS-4 were never answered.
 - **The next phase must answer every row you leave**, and does not close until it has: `built` into a
   spec, `tested`, or `declined` with a stated reason. An item that still applies further out is
   declined there and **re-carried on that phase's own card** - that is how a claim about phases 9-12
@@ -295,8 +316,8 @@ summary, the binding-contracts table, the decisions list, the artifact links, th
 verdict (plus any waived findings), the mutation line, an **Open items section that says what this
 phase carries forward or explicitly says `none`**, and a `next` value (a phase slug, `e2e` if this
 was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean, and
-`python3 scripts/carried_items.py declared <phase-dir>`, `… due <phase-dir>` and
-`… filed <phase-dir>` all exit 0.
+`python3 scripts/carried_items.py declared <phase-dir>`, `… due <phase-dir>`,
+`… filed <phase-dir>` and `python3 scripts/breaker_gate.py due <phase-dir>` all exit 0.
 
 **And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
 codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you

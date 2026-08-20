@@ -63,6 +63,9 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
      phase must handle). The NEXT phase must answer every row - built, tested, or declined with a
      reason (scripts/carried_items.py) - and does not close until it has.
      A row, or an explicit `none` row. SILENCE IS NOT NONE, and this section is checked.
+     REPLACE OR DELETE THE PLACEHOLDER ROWS BELOW - they are not items, so a section holding only
+     them says nothing, which is undecidable rather than empty: it fails this phase's close and the
+     next phase's `carried_items.py due` (exit 2). Table rows only; a bullet list is not read.
      The mirror obligation - how THIS phase answered the PREVIOUS card's rows - is not narrated here:
      it lives in carried.json beside verdict.json (`scripts/carried_items.py list <phase-dir>`).
      ON THE LAST CARD (frontmatter `next:` is `e2e` or `ship`) no phase follows to answer these, so

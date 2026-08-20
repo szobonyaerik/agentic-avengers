@@ -116,6 +116,31 @@ def test_a_writer_that_is_not_executable_is_not_a_writer(tmp_path, monkeypatch):
     assert sink.cli() is None
 
 
+def test_a_named_but_unexecutable_writer_is_not_reported_as_an_unset_one(
+    tmp_path, monkeypatch, capsys
+):
+    """`defect` sends its reader HERE for the cause, so a cause that is false costs a retry loop.
+
+    An operator who copied firstmate's script without the exec bit has already applied the remedy
+    "set AVENGER_METRICS_CMD", so being handed it again leaves them nothing to do but re-run.
+    """
+    inert = tmp_path / "fm-pipeline-metrics.sh"
+    inert.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    inert.chmod(0o600)
+    monkeypatch.setenv("AVENGER_METRICS_CMD", str(inert))
+    monkeypatch.setenv("AVENGER_METRICS_LOG", str(tmp_path / "log"))
+    monkeypatch.setattr(sink, "_announced", False)
+    monkeypatch.setattr(sink, "_writer_unusable", False)
+
+    assert sink.enabled() is False
+
+    errors = capsys.readouterr().err
+    assert str(inert) in errors
+    assert "not an executable file" in errors
+    assert "AVENGER_METRICS_CMD is unset" not in errors
+    assert "is not on PATH" not in errors
+
+
 def test_nothing_is_ever_written_to_stdout(stub_sink, monkeypatch):  # noqa: F811
     """A hook's stdout is a JSON protocol; one diagnostic line there corrupts it."""
     monkeypatch.setenv("DOUBLE_EXIT", "3")

@@ -69,10 +69,18 @@ sys.path.insert(0, str(HERE))
 # the same moment: the cap read `0/12` and this check reported zero ids owed a trace, so it passed
 # vacuously on the very spec it exists to hold. A second copy of a rule is the copy that drifts.
 # The diff scope comes from `applicability.py`, which owns the whole boundary this check sits on.
-from applicability import changed_paths, touched  # noqa: E402
+from applicability import (  # noqa: E402
+    ApplicabilityError,
+    changed_paths,
+    excepted,
+    report_unenforced,
+    touched,
+)
 from requirement_cap import declared_bindings  # noqa: E402
 
-ACCEPTANCE_HEADING = re.compile(r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE)
+ACCEPTANCE_HEADING = re.compile(
+    r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE
+)
 
 
 def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
@@ -109,7 +117,9 @@ def traced_ids(phase_dir: Path) -> set[str]:
     found: set[str] = set()
     for mapping in phase_dir.glob("specs/*/test-mapping.md"):
         try:
-            found.update(re.findall(r"R\d+\.\d+\.\d+", mapping.read_text(encoding="utf-8")))
+            found.update(
+                re.findall(r"R\d+\.\d+\.\d+", mapping.read_text(encoding="utf-8"))
+            )
         except OSError:
             continue
     return found
@@ -120,7 +130,13 @@ def stamp_fresh(spec: Path) -> bool | None:
     for gate in ("gate", "review", "fidelity"):
         try:
             result = subprocess.run(  # noqa: S603 - fixed argv, no shell
-                [sys.executable, str(HERE / "spec_gate_cache.py"), "check", str(spec), gate],
+                [
+                    sys.executable,
+                    str(HERE / "spec_gate_cache.py"),
+                    "check",
+                    str(spec),
+                    gate,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -133,6 +149,32 @@ def stamp_fresh(spec: Path) -> bool | None:
         if result.returncode == 2:
             return None
     return False
+
+
+def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:
+    """Why a stale spec-gate stamp is not blocking, or None when it still blocks.
+
+    A stamp goes stale whenever the spec body no longer matches what the gate judged — the same
+    condition whether the body changed because it needs re-gating or because the gate provider was
+    unreachable when it should have been re-run. Re-gating is the remedy that clears it under
+    ordinary circumstances; a disclosed **exception** (`applicability.py`, rule `spec-gate`) is the
+    one that still clears it when the provider is down, since recording an exception makes no gate
+    call at all. An amendment does not: it re-verifies requirement ids at the Verifier, and never
+    touches the spec-gate hash this check reads.
+
+    An unreadable exception ledger grants nothing and says so — under-report, exactly as the
+    resolver does everywhere else on this boundary.
+    """
+    try:
+        record = excepted(phase_dir, "spec-gate", spec.resolve().parent.name)
+    except ApplicabilityError as exc:
+        print(
+            f"[verifier_precheck] {phase_dir.name} has an exception ledger this cannot read "
+            f"({exc}). No exception is granted.",
+            file=sys.stderr,
+        )
+        return None
+    return record.describe() if record else None
 
 
 def check_phase(phase_dir: Path) -> list[str]:
@@ -165,18 +207,33 @@ def check_phase(phase_dir: Path) -> list[str]:
 
         fresh = stamp_fresh(spec)
         if fresh is False:
-            out.append(
-                f"{spec}: the spec body has changed since the gate judged it — the spec is UNGATED "
-                f"at this commit. Write it again to re-gate, or amend it explicitly "
-                f"(scripts/amendments.py)."
-            )
+            why = excepted_stamp(phase_dir, spec)
+            if why is not None:
+                report_unenforced(
+                    "verifier_precheck",
+                    1,
+                    f"{spec} stamp is stale but a recorded exception covers it — {why}",
+                )
+            else:
+                out.append(
+                    f"{spec}: the spec body has changed since the gate judged it — the spec is "
+                    f"UNGATED at this commit. Write it again to re-gate, or record a disclosed "
+                    f"exception (scripts/applicability.py record {phase_dir} --rule spec-gate "
+                    f"--subject {spec.resolve().parent.name} --reason-file <f>)."
+                )
         elif fresh is None:
-            out.append(f"{spec}: gate-stamp freshness could not be decided (fail closed).")
+            out.append(
+                f"{spec}: gate-stamp freshness could not be decided (fail closed)."
+            )
     return out
 
 
 def phase_dirs(root: Path) -> list[Path]:
-    return sorted(p.parent for p in Path(root).glob("docs/features/*/phases/*/specs") if p.is_dir())
+    return sorted(
+        p.parent
+        for p in Path(root).glob("docs/features/*/phases/*/specs")
+        if p.is_dir()
+    )
 
 
 def changed_phase_dirs(root: Path) -> list[Path] | None:
@@ -195,14 +252,19 @@ def changed_phase_dirs(root: Path) -> list[Path] | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phases", nargs="*", type=Path)
-    parser.add_argument("--all", action="store_true", help="every phase under docs/features/")
+    parser.add_argument(
+        "--all", action="store_true", help="every phase under docs/features/"
+    )
     parser.add_argument("--root", default=".", type=Path)
     args = parser.parse_args(argv)
 
     if args.all:
         targets, mode = phase_dirs(args.root), "--all: every phase under docs/features/"
     elif args.phases:
-        targets, mode = list(args.phases), "the phase directories named on the command line"
+        targets, mode = (
+            list(args.phases),
+            "the phase directories named on the command line",
+        )
     else:
         scoped = changed_phase_dirs(args.root)
         if scoped is None:
@@ -214,15 +276,22 @@ def main(argv: list[str] | None = None) -> int:
             return CLEAN
         targets, mode = scoped, "diff-scoped: the phases this diff touches"
 
-    print(f"  verifier pre-check scope — {mode} ({len(targets)} phase(s))", file=sys.stderr)
+    print(
+        f"  verifier pre-check scope — {mode} ({len(targets)} phase(s))",
+        file=sys.stderr,
+    )
     if not targets:
-        print("  (no phases with specs in scope — nothing to pre-check)", file=sys.stderr)
+        print(
+            "  (no phases with specs in scope — nothing to pre-check)", file=sys.stderr
+        )
         return CLEAN
 
     findings: list[str] = []
     for phase in targets:
         if not Path(phase).is_dir():
-            print(f"[verifier_precheck] no such phase directory: {phase}", file=sys.stderr)
+            print(
+                f"[verifier_precheck] no such phase directory: {phase}", file=sys.stderr
+            )
             return ERROR
         findings.extend(check_phase(Path(phase)))
 

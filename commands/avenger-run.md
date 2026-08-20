@@ -38,6 +38,22 @@ Run these before anything else, and stop with the fix if one fails:
   that will halt at the first gate. The key may live in the project `.env`; in a linked worktree that
   gitignored file stays behind in the primary checkout, and `scripts/load_env.sh` deliberately falls
   back to it — check both places before declaring it missing.
+- **The executing plugin is not known-stale against its source repository (issue #65).** Phases run
+  from the copy `$CLAUDE_PLUGIN_ROOT` resolves to — a cached release snapshot, not this repository —
+  so a fix merged and never released is invisible from inside a run. Ask the copy that is actually
+  about to execute, not a constant a stale copy would carry unchanged:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/plugin_release.py" check
+  ```
+
+  Exit `1` (`STALE`) means the executing copy's content differs from the merged repository at
+  `AVENGER_SOURCE_REPO` (or from this project, when its plugin manifest `name` says this project *is*
+  that repository) — stop, and tell the operator to release before continuing: `python3
+  scripts/plugin_release.py cut` from the source checkout, then restart Claude Code so the harness
+  re-reads the refreshed cache. `UNKNOWN` (neither of those resolves a source repository on this
+  machine) is not enforced — the check says so on stderr and the run continues — the same
+  applicability boundary every other check in this repo draws around a scope it cannot resolve.
 - **The §4a ship gate's three preconditions — the binary, an initialised repo, and a filled-in
   config.** All three are needed in interactive *and* `--auto` runs, and each is checked by
   *interrogating state*, never by printing advice and hoping:
@@ -143,7 +159,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/applicability.py" record <phase-dir> \
   --rule spec-review --subject <n>.<k>-<subslug> --reason-file <file> --recorded-by <who>
 ```
 
-Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`; one rule and one
+Rules: `spec-gate`, `spec-review`, `verdict`, `requirement-cap`, `breaker`; one rule and one
 subject each, audited to `gate-overrides.log`. `--from-phase <n>` steps over earlier phases for one
 invocation without recording anything, and names what it skipped. It never answers a feature-wide
 question over them: with any phase stepped over the stage is `unknown` — not a stage to act on, but
@@ -163,6 +179,7 @@ Map the stage to a subagent and invoke it with the feature id, the artifact path
 | `spec-review` | `/plan-build-verify:spec-review <spec_path>` (add `--auto` when running unattended) — the **human** sign-off; the machine gate already ran on write |
 | `implementer` | `plan-build-verify:avenger-backend-architect`, or `avenger-frontend-developer` when the spec is UI. It writes tests **and** code, test-first |
 | `verifier` | `plan-build-verify:avenger-verifier` for the phase — then §4 |
+| `breaker` | `plan-build-verify:avenger-breaker` for the phase — it persists `breaker.json`, which is what lets the resolver move past this stage (see §4) |
 | `handover` | `plan-build-verify:avenger-handover` for the phase — then §5 |
 | `e2e-author` | The implementer once, in `e2e-author` mode, for the whole feature — **then commit its output, see §5** |
 | `done` | **Ship gate (§4a), retrospective triage (§4b), the second feature-close commit (§5), then** report and stop |
@@ -252,12 +269,18 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 
 ## 4. After the Verifier passes a phase
 
-1. **Breaker** — only if the resolver reports `criticality: critical` for the phase. Invoke
-   `plan-build-verify:avenger-breaker` — it runs at the effort its own definition declares, which
-   you neither pass nor override. A counterexample routes back to the
+1. **Breaker** — when the resolver reports `stage: breaker` (any spec in the phase declares
+   `criticality: critical` and no valid `breaker.json` exists yet — `scripts/breaker_gate.py`).
+   Invoke `plan-build-verify:avenger-breaker` — it runs at the effort its own definition declares,
+   which you neither pass nor override. It persists `breaker.json` beside `verdict.json`, naming its
+   verdict and what it actually attacked; **this is not optional documentation, it is what the
+   handover hook and CI check for** — a critical phase with no record does not close
+   (`scripts/hook_verifier.sh`, `scripts/gate_ci.sh`). A counterexample routes back to the
    implementer to **add** a test (the suite is locked; additions only). **It is never folded into
    verification**: it found phase 8's credential leaks by constructing inputs, which is a different
-   instrument from reading a test set.
+   instrument from reading a test set. **This step used to be a sentence nobody enforced** — it was
+   owed on every phase-8 and phase-9 spec of one feature and ran on neither (issue #45) — so it is
+   now the same mechanical gate as everything else here, not a reminder.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
    Read survivors as candidate missing cases. It is still not the independence mechanism.
 3. **Carried items** - the handover hook runs **three** carried-items checks and refuses the card if
@@ -470,6 +493,17 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
 - After each phase has a passing `verdict.json` **and** its `handover.md`, commit everything for that
   phase with a conventional-commit message naming the phase and the verdict, e.g.
   `feat(<feature>): phase 2-api verified (12 tests, verdict pass)`.
+- **Stamp the phase's close right after that commit, not before.** `handover.md` being *written* is
+  the Verifier's precondition, not the phase landing — an amendment can still reopen it, the Verifier
+  can still route it back, or a suite hang can still block the commit above. `record_phase_close`
+  (issue #46) refuses to write `closed` while anything under the phase directory is uncommitted, so
+  run it only once this commit has actually happened:
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_metrics.py" phase-close \
+    "docs/features/<feature-id>/phases/<n>-<slug>"
+  ```
+  Run directly by you as the orchestrating stage, the same way `defect` is (§6d) — no hook can see
+  this commit land, so no hook can stamp it.
 - **Every `-m` below is a fixed template with only an id and a verdict substituted**, so it stays
   inline: the *prose belongs in a file* rule (`skills/pipeline-conventions`) turns on whether an
   author could have phrased the value differently. Do not improvise a commit subject that quotes what

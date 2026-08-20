@@ -15,7 +15,9 @@ spec_gate: pending       # <!-- pending | approved | blocked — THE machine gat
 review_status: pending   # <!-- only the human reviewer sets this to 'approved', after grill-me.
                          #      Under SPEC_REVIEW_MODE=auto the gate carries it, because in an
                          #      unattended run the machine gate is the whole wall. -->
-criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase -->
+criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase,
+                         #      and the phase then does NOT close without the Breaker's
+                         #      breaker.json record beside verdict.json. -->
 readers: spec gate @ on write; implementer @ once; verifier bundle @ changed specs only
 ---
 

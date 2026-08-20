@@ -16,8 +16,25 @@
 # throughout a build. Firing per edit stopped the agent to route a failure back to itself.
 #
 # Triggers (both derive the phase from the written path, so no guessing):
-#   */specs/<n>.<k>-*/spec.md  with `status: done`  -> smoke-check that spec's phase suite
+#   */specs/<n>.<k>-*/spec.md  with `status: done`  -> smoke-check that spec's mapping + phase suite
 #   */handover.md                                   -> full phase suite + require a passing verdict.json
+#
+# `status: done` is not trusted on sight (issue #68): a spec's own implementer writes it, and used
+# to keep working afterward — test-mapping.md, test-evidence.md and the phase's mutation gate all
+# land later. On the `spec-done` trigger this hook checks the mapping is non-empty and the suite is
+# green BEFORE letting a NEWLY written stamp stand; either check failing reverts it to
+# `status: in-progress` (scripts/spec_done_guard.py) and then fails. A premature `done` is undone,
+# not just complained about.
+#
+# The revert acts only on evidence scoped to the SAME thing it rewrites: a spec whose every
+# requirement declares `binding: none` owes no mapping row at all (§4a), and a suite that could only
+# be run repository-wide is undecidable for one spec rather than proof against it. Both still fail
+# the hook and both leave the stamp exactly as written, as does GATE_BYPASS.
+#
+# The claim is exactly as wide as the mechanism and no wider: this is a PostToolUse hook matched on
+# Write|Edit|MultiEdit (hooks/hooks.json), so no TOOL CALL can leave a false `done` stamp on disk.
+# A stamp written through Bash — sed -i, a heredoc, python3 -c — never reaches this hook and is
+# outside this mechanism's reach.
 #
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
@@ -57,14 +74,14 @@ derive_feature() {
 SLUG="${PHASE:-$(derive_phase "$FILE" || true)}"
 FEATURE="$(derive_feature "$FILE" || true)"
 
-# Measurement, never a gate. A handover being written is the phase landing, so this is where its
-# close, its wall clock and the suite it landed with are stamped — and it is stamped BEFORE the
-# suite runs below, because a phase this hook stops still spent every minute and every test it
-# spent, and those numbers are unrecoverable once the run is over. `set` overwrites, so a handover
-# rewritten after a route-back converges on the last one rather than accumulating.
-if [ "$TRIGGER" = "handover" ]; then
-  python3 "$SD/pipeline_metrics.py" phase-close "$FILE" >/dev/null 2>&1 || true
-fi
+# NOT the close stamp (issue #46). A handover.md being WRITTEN is the Verifier's precondition, not
+# the phase landing — this hook still has to check the suite, the verdict, amendments and carried
+# items below, any of which can still route the phase back. Stamping here recorded `closed` and
+# `elapsed_minutes` for phases that were not, in fact, done: an open amendment, a further Verifier
+# finding, a blocked handover, nothing pushed. `commands/avenger-run.md` §5 stamps the close itself,
+# directly, right after the per-phase commit actually lands — the one moment this hook cannot see.
+# `record_phase_close` also refuses the write itself while the phase directory is still uncommitted,
+# so a caller that got the ordering wrong fails the write rather than recording a false close.
 
 # Layout: tests/<feature>/<n>-<slug>/... ; fall back to tests/<slug> for repos on the older layout.
 TESTPATH=""
@@ -72,6 +89,91 @@ if [ -n "$FEATURE" ] && [ -n "$SLUG" ] && [ -d "tests/$FEATURE/$SLUG" ]; then
   TESTPATH="tests/$FEATURE/$SLUG"
 elif [ -n "$SLUG" ] && [ -d "tests/$SLUG" ]; then
   TESTPATH="tests/$SLUG"
+fi
+
+fail() {   # $1 = bypass tag, rest = message
+  local tag="$1"; shift
+  printf '%s\n' "$*" >&2
+  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "$tag"
+  exit 2
+}
+
+# A stamp is not a completion signal (issue #68) unless something makes it one: the moment
+# `status: done` lands, revert it back to `in-progress` before this hook fails, so a premature
+# stamp never survives past the check that reads it — a wedge guard watching this field sees
+# nothing to trust until the checks below actually pass.
+#
+# Break-glass RESTORES what it overrides. `fail()` hands off to bypass_log.sh, which exits 0, so a
+# revert that ran first cleared the failure and left the spec at `in-progress` anyway — an override
+# an operator cannot act on, because re-stamping `done` re-fires this hook and reverts again, and
+# `spec-done` is not in `applicability.RULES` so the disclosed-exception ledger is no route either.
+# A bypass with no reachable end state is a trap, not an escape hatch. With GATE_BYPASS set the
+# stamp is LEFT AS WRITTEN: done, overridden, and audited in gate-overrides.log.
+#
+# What it may bind is the applicability boundary (CLAUDE.md §3a, scripts/applicability.py): ONLY
+# the TRANSITION into `done`. This trigger fires on any tool write to a spec.md that merely
+# CONTAINS `status: done`, so on its own it cannot tell a stamp that just landed from one that has
+# sat there since the phase closed — and rewriting the second destroys the single evidence
+# `applicability.spec_shipped` reads, which flips the requirement cap from counting a shipped spec
+# to blocking it with a split it cannot take. A spec already stamped `done` at committed HEAD is
+# CLOSED: counted and named on stderr, never reverted, never blocked here.
+STAMP_BINDS=0
+STAMP_NOTE=""
+
+revert_premature_stamp() {
+  [ "$STAMP_BINDS" = "1" ] || return 0
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    STAMP_NOTE="GATE_BYPASS is set, so the stamp is LEFT AS WRITTEN — this failure is the audited exception, and the spec stays 'done'."
+    printf '%s\n' "[spec-done] $STAMP_NOTE" >&2
+    return 0
+  fi
+  python3 "$SD/spec_done_guard.py" revert "$FILE" >&2 || true
+  STAMP_NOTE="Reverted status to 'in-progress'."
+}
+
+# Exit 1 is the boundary (already `done` at HEAD, or a scope git cannot state); anything else is an
+# ERROR that could not DECIDE it, and the two carry different tags and different messages — the
+# same split carried_items, breaker_gate and the attempt cap below already make, and the rule
+# CLAUDE.md § Gates states as "every stop names which". A check that never ran may not rewrite a
+# spec, so neither undecidable branch reverts anything.
+if [ "$TRIGGER" = "spec-done" ]; then
+  python3 "$SD/spec_done_guard.py" stamp-is-new "$FILE"; stamp_rc=$?
+  if [ "$stamp_rc" -eq 0 ]; then
+    STAMP_BINDS=1
+  elif [ "$stamp_rc" -ne 1 ]; then
+    fail "verifier:spec-done-undecidable" \
+      "verifier ($TRIGGER): whether this 'status: done' stamp is NEW could not be DECIDED (cause" \
+      "above) — this is not a premature stamp, and finishing the mapping will not repair it. The" \
+      "stamp is left exactly as written. Fix what it named."
+  fi
+fi
+
+if [ "$STAMP_BINDS" = "1" ]; then
+  python3 "$SD/spec_done_guard.py" mapping-complete "$FILE"; mapping_rc=$?
+  if [ "$mapping_rc" -eq 1 ]; then
+    revert_premature_stamp
+    fail "verifier:spec-done-mapping" \
+      "verifier ($TRIGGER): status was stamped 'done' but test-mapping.md next to it records no" \
+      "test yet — no rows past the separator, or only rows whose requirement-id cell is still the" \
+      "template's R<n>.<k>.<m> placeholder. (A spec whose every requirement declares" \
+      "\`binding: none\` owes no row and is never asked for one.)" \
+      "$STAMP_NOTE Finish recording the mapping, then stamp done again."
+  elif [ "$mapping_rc" -eq 3 ]; then
+    # A spec stating NO requirement states nothing about what it owes, and that is neither the
+    # `binding: none` exemption nor an empty mapping — both of which read off the same empty binding
+    # list. Its own stop, with its own remedy: the mapping was never judged, so recording a row
+    # answers nothing, and nothing here justifies rewriting the stamp.
+    fail "verifier:spec-done-no-requirements" \
+      "verifier ($TRIGGER): status was stamped 'done' on a spec that declares no requirement at all" \
+      "(named above) — so nothing in it says what it owes, and the mapping check could not judge it." \
+      "This is NOT the \`binding: none\` exemption. Declare the spec's requirements with their" \
+      "\`binding:\` tier, then stamp done again. The stamp is left exactly as written."
+  elif [ "$mapping_rc" -ne 0 ]; then
+    fail "verifier:spec-done-undecidable" \
+      "verifier ($TRIGGER): whether this spec's mapping is recorded could not be DECIDED (cause" \
+      "above) — this is not an empty mapping, and recording one will not repair it. The stamp is" \
+      "left exactly as written."
+  fi
 fi
 
 if [ -n "$TESTPATH" ]; then
@@ -82,16 +184,29 @@ else
   OUT=$(pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
 fi
 
-fail() {   # $1 = bypass tag, rest = message
-  local tag="$1"; shift
-  printf '%s\n' "$*" >&2
-  [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "$tag"
-  exit 2
-}
-
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
+#
+# The REVERT is spec-scoped, so the evidence it acts on must be scoped to the same thing. With no
+# phase test directory resolvable the run above is the whole repository minus e2e — the permanent
+# state of any project whose tests do not live under `tests/` (what SUBPROC_CHECK_PATHS exists for)
+# — and one unrelated red test there says nothing about whether THIS spec is done, while
+# `agents/avenger-backend-architect.md` tells the implementer outright that pre-existing failures
+# are expected and are to be surfaced rather than fixed. So an unscoped suite is UNDECIDABLE for the
+# revert: the hook still fails closed, and the stamp is left exactly as written. Same direction as
+# both undecidable branches above — a check that could not answer the question may not rewrite a spec.
 if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
+  if [ "$STAMP_BINDS" = "1" ] && [ -z "$TESTPATH" ]; then
+    fail "verifier:spec-done-undecidable" \
+      "verifier ($SCOPE): the suite is RED, but this phase's own test directory could not be" \
+      "RESOLVED, so this is repository-wide evidence about a spec-scoped question — a failure" \
+      "anywhere in the tree does not say this spec is unfinished. The 'status: done' stamp is left" \
+      "exactly as written. Put the phase's tests at tests/<feature>/<n>-<slug> (or set PHASE) so" \
+      "the check can be scoped, and fix the failures below." \
+      "$(printf '%s\n' "$OUT" | tail -20)"
+  fi
+  revert_premature_stamp
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
+       "$STAMP_NOTE" \
        "$(printf '%s\n' "$OUT" | tail -20)"
 fi
 
@@ -225,6 +340,31 @@ case "$V" in
         "(test_quality.reviewed=$REVIEWED, ${NFILES:-0} file(s) in scope)." \
         "A green suite the implementer wrote is not evidence. Run scripts/verifier_review.sh over the" \
         "bounded review set on a cross-family model, then record its scope and findings in verdict.json."
+    fi
+    # A phase that declares criticality: critical routes the Breaker (commands/avenger-run.md §4) —
+    # and on one measured feature it was owed twice and ran neither time, with zero trace anywhere in
+    # the feature's docs or tests (issue #45). A stage that emits nothing is indistinguishable from a
+    # stage that never ran, so this checks for its RECORD (breaker.json), the same way the handover
+    # check below checks for handover.md — mechanically, not by trusting the run to remember.
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it, and the two
+    # carry different tags and different messages — the same split gate_ci.sh already makes for this
+    # check, and the rule CLAUDE.md § Gates states as "every stop names which". Collapsed into one,
+    # an unreadable phase directory would be reported as a Breaker that never ran and prescribed a
+    # Breaker run and a waiver, neither of which repairs it.
+    python3 "$SD/breaker_gate.py" due "$PHASE_DIR"; breaker_rc=$?
+    if [ "$breaker_rc" -eq 1 ]; then
+      fail "verifier:breaker" \
+        "verifier: this phase's Breaker obligation is not met (named above)." \
+        "Run plan-build-verify:avenger-breaker over the critical/security paths; it persists" \
+        "breaker.json with a verdict and what it actually attacked. If the run is deliberately" \
+        "waived, record why: scripts/applicability.py record <phase-dir> --rule breaker" \
+        "--subject <phase> --reason-file <f> --recorded-by <who>."
+    elif [ "$breaker_rc" -ne 0 ]; then
+      fail "verifier:breaker-undecidable" \
+        "verifier: this phase's Breaker obligation could not be DECIDED (cause above) — this is not" \
+        "a Breaker that never ran, and neither running it nor waiving it will repair this. A check" \
+        "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
     carried_items_gate
     exit 0 ;;
