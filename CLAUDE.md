@@ -841,10 +841,10 @@ unreadable payload, a bad regex, or a checker that crashed lets the spawn throug
 the verdict is the exit code **and** the checker's own `STALE:` marker (a traceback exits 1 too, and
 "cut a release" is the wrong remedy for a crash). `GATE_BYPASS` proceeds, audited. opencode has no
 pre-spawn event and does not carry it. §1 still runs `plugin_release.py check` as an early report -
-it changes when the operator learns, never whether the run is stopped - and `STALE` (content hash of the shipped payload - 
-including `docs/templates/`, not the rest of `docs/` — differs from `AVENGER_SOURCE_REPO`'s
-**committed HEAD**, never its working tree, so an in-progress edit reads as a separate `dirty` flag,
-never as STALE); `UNKNOWN` (no source repository resolvable — `AVENGER_SOURCE_REPO` unset and the
+it changes when the operator learns, never whether the run is stopped. `STALE` is a content hash of
+the shipped payload - including `docs/templates/`, not the rest of `docs/` - differing from
+`AVENGER_SOURCE_REPO`'s **committed HEAD**, never its working tree, so an in-progress edit reads as a
+separate `dirty` flag, never as STALE; `UNKNOWN` (no source repository resolvable — `AVENGER_SOURCE_REPO` unset and the
 project's plugin manifest `name` does not match the executing copy's) is reported, never enforced.
 **The release step is one command, not done until a harness would load it** — `plugin_release.py cut
 --repo <path> --cache-root <path>` — that refuses to overwrite a version whose content already
