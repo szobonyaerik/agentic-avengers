@@ -84,8 +84,8 @@ Write the mapping into **that spec's** `test-mapping.md`
 **`test-mapping.md` is the table and nothing else** — requirement id, test names, `level`, one
 sentence of why. Mutation evidence, route-back history, build order, deviations from the spec and any
 disclosed unmapped tests go in **`test-evidence.md`** in the same directory, which is opened **on
-route-back only**. Nothing is deleted; the sidecar is committed. The mapping is re-bundled to the
-cross-family reviewer on every verifier attempt and the sidecar is not — the rule and the measured
+route-back only**. Nothing is deleted; the sidecar is committed. The mapping is read on every
+verifier attempt and the sidecar is not — the rule and the measured
 cost are in `skills/tdd` and `skills/pipeline-conventions` § *The document read path*.
 
 ## Implementation Workflow (per spec)

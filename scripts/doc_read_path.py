@@ -35,10 +35,10 @@ Adding a reader here is how that is fixed; bending the prose to match a silent t
 The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
 one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
 you change** - it is the applicability boundary (`scripts/applicability.py`, which owns the
-`changed_paths` mechanism this imports), and the same rule `scripts/verifier_bundle_scope.py` (the
-verifier bundle), `scripts/spec_gate_cache.py` (spec re-gates) and the mutation gate
+`changed_paths` mechanism this imports), and the same rule `scripts/verifier_evidence.py` (execution
+evidence), `scripts/spec_gate_cache.py` (spec re-gates) and the mutation gate
 (`cr-filter-git`) already run on.
-The fifth mechanism in one system does not get to invent a different one, and unlike a
+A further mechanism in one system does not get to invent a different one, and unlike a
 grandfathering list or a marker file it needs no maintenance and cannot rot as new artifact kinds
 appear. It is also what lets a repository upgrade: history it has not touched is visible without
 holding it hostage. `check --all` audits everything; `check --sources` is unaffected and stays full.
@@ -78,6 +78,11 @@ from applicability import READERS as APPLICABILITY_READERS  # noqa: E402
 # this table declares must be one list. Two copies is how a record passes the gate that closes the
 # phase and fails the gate that reads it a commit later.
 from breaker_gate import READERS as BREAKER_READERS  # noqa: E402
+
+# Same rule, same reason: `verifier_evidence.py` WRITES the `readers` key into every transcript it
+# records and refuses one that carries none, so the list it emits and the list this table declares
+# must be one list.
+from verifier_evidence import READERS as EVIDENCE_READERS  # noqa: E402
 
 # --- the table -----------------------------------------------------------------------------------
 # extent: whole | header | table | card | none. `none` means the document is written but no stage is
@@ -123,7 +128,7 @@ READ_PATH: dict[str, dict] = {
         "readers": [
             "spec gate @ on write (observe pass, then triage pass for context)",
             "implementer @ once, its own spec",
-            "verifier bundle @ per phase, changed specs only",
+            "avenger-verifier @ per phase",
         ],
         "extent": "whole",
         # Leaves the read path when its phase verifies: later phases read the contract card.
@@ -194,10 +199,21 @@ READ_PATH: dict[str, dict] = {
         # distinguishable from a stage that never ran, which is how two owed Breaker runs went
         # missing on one feature with nothing noticing (issue #45).
     },
+    "verification-evidence.json": {
+        "written_by": "avenger-verifier (scripts/verifier_evidence.py)",
+        "emitted_by": "scripts/verifier_evidence.py",
+        "readers": list(EVIDENCE_READERS),
+        "extent": "whole",
+        # The Verifier's proof that it EXECUTED: every command it ran, that command's exit code and
+        # measured wall clock, the sha256 of its output, and the digest of the specs and tests it ran
+        # against. Small by construction - one entry per command, with the output itself in a sibling
+        # log this table does not govern - and it is what replaced `test_quality.reviewed`, a boolean
+        # the verifying agent wrote about itself and every gate believed.
+    },
     "test-mapping.md": {
         "written_by": "implementer",
         "emitted_by": "docs/templates/test-mapping.template.md",
-        "readers": ["avenger-verifier @ per phase", "verifier bundle @ per phase, changed specs only"],
+        "readers": ["avenger-verifier @ per phase"],
         "extent": "table",
     },
     "test-evidence.md": {
@@ -214,7 +230,6 @@ READ_PATH: dict[str, dict] = {
             "skills/tdd/SKILL.md",
             "skills/verifier-triage/SKILL.md",
             "skills/pipeline-conventions/SKILL.md",
-            "prompts/verifier-review.md",   # tells the reviewer its ABSENCE is never a finding
             "skills/ponytail/SKILL.md",     # forbids minimising it away — the opposite of a read
         },
     },

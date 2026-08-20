@@ -277,13 +277,14 @@ class TestCli:
 
 
 def test_the_rule_set_is_the_one_the_ledger_validates_against():
-    """One closed set, read by every caller. A sixth rule is a deliberate edit in one place."""
+    """One closed set, read by every caller. A further rule is a deliberate edit in one place."""
     assert set(RULES) == {
         "spec-gate",
         "spec-review",
         "verdict",
         "requirement-cap",
         "breaker",
+        "execution-evidence",
     }
 
 

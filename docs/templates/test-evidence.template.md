@@ -8,9 +8,9 @@ readers: implementer @ on route-back only; avenger-verifier @ on route-back only
 ---
 
 <!-- The sidecar to test-mapping.md. `test-mapping.md` is the TABLE and nothing else; everything
-     below used to live inside it, where it was re-bundled to the cross-family reviewer on every
-     verifier attempt. One measured feature carried 285 KB — 59.3% of its test-mappings — as prose
-     outside any table, on every attempt.
+     below used to live inside it, where it was re-read on every verifier attempt. One measured
+     feature carried 285 KB — 59.3% of its test-mappings — as prose outside any table, on every
+     attempt.
 
      Nothing is deleted. This file is committed and durable; it is simply opened only when it is
      worth its tokens, which is on a route-back: the implementer fixing a finding, and the Verifier
