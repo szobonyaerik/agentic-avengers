@@ -289,8 +289,22 @@ cross_family_check () {
     itok="$(model_token "$impl")"
     ifam="$(model_family "$itok")" || { echo "  ✗ unknown implementer model family in $(basename "$impl"): '$itok'" >&2; return 1; }
     if [ "$gfam" = "$ifam" ]; then
+      if [ -n "${GATE_SAME_FAMILY_WAIVER:-}" ]; then
+        # Waived explicitly, through the same knob the gate CALLS honour (scripts/gate_runner.py),
+        # so this audit cannot become a second wedge for a configuration the operator has already
+        # disclosed. Reported every time and never silent: the point of the audit is to make the
+        # configuration legible, and a waived one is exactly the configuration a reader must not
+        # mistake for an independent gate.
+        echo "  ⚠ SAME-FAMILY WAIVER: GATE_MODEL '$gate' (family '$gfam') is the implementer's own" >&2
+        echo "    family. The spec gate is NOT independent of the implementers while this holds." >&2
+        echo "    reason: $(bypass_reason_oneline "$GATE_SAME_FAMILY_WAIVER")" >&2
+        return 0
+      fi
       echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2
       echo "    Same-family verification is theater — point it at another vendor." >&2
+      echo "    If there is genuinely no other family to reach, waive it explicitly with" >&2
+      echo "    GATE_SAME_FAMILY_WAIVER=\"\$(cat <reason-file>)\" — never by misreporting" >&2
+      echo "    AUTHOR_FAMILY, which drops the invariant silently instead of disclosing it." >&2
       return 1
     fi
   done

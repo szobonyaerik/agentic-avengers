@@ -340,7 +340,9 @@ agentic-avengers/
   (+ `tree-sitter-python`/`-java`/`-c` for codemap) in the target repo.
 - A cross-family provider: **`OPENROUTER_API_KEY`** exported (gates use OpenRouter), and/or opencode
   configured. Set **`AUTHOR_FAMILY`** (default `anthropic`) so the cross-family assertion knows the
-  build family.
+  build family. With no second family to reach, waive the assertion explicitly with
+  **`GATE_SAME_FAMILY_WAIVER="<why>"`** — the gate still judges, and every record of the call is
+  marked same-family — never by misreporting `AUTHOR_FAMILY`.
 - **`no-mistakes`**, in **three** separate states — the feature-close ship gate (`/avenger-run` §4a)
   needs all of them, in interactive *and* `--auto` runs, and preflight checks each one:
   1. **on PATH with a runnable pipeline agent** — `no-mistakes doctor`.

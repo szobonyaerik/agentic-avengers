@@ -246,7 +246,13 @@ def test_source_root_is_none_when_unconfigured(tmp_path, monkeypatch):  # noqa: 
 # --- check(): the guard, proven red before it is proven green (issue #69) --------------------------
 
 
-def test_check_is_unknown_with_no_source_configured(tmp_path):  # noqa: F811
+def test_check_is_unknown_with_no_source_configured(tmp_path, monkeypatch):  # noqa: F811
+    # `source=None` is the ARGUMENT for "the caller named none", not for "there is none": `check`
+    # falls back to $AVENGER_SOURCE_REPO, so on a machine that has one configured (any lane driving
+    # this repo through firstmate) this test read the real source repo and returned `stale`. The
+    # subject is a machine with nothing configured, so the environment is cleared the way every
+    # other test of this resolver already clears it.
+    _clean_env(monkeypatch)
     cache_copy = make_plugin(tmp_path / "cache", version="0.10.2")
 
     result = pr.check(executing=cache_copy, source=None)

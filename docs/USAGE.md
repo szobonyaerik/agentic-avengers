@@ -41,6 +41,15 @@ lavish-axi --version                              # plan-approval stop (§3) + r
 > **Cross-family invariant:** gates must run on a different vendor family than the author. Build agents
 > = anthropic; the spec gate's observe pass = Gemini and its triage pass = DeepSeek; verifier = Gemini. If a gate model shares
 > `AUTHOR_FAMILY`, it stops (fail closed).
+>
+> **When there is genuinely no second family to reach, waive it explicitly:**
+> `GATE_SAME_FAMILY_WAIVER="$(cat <reason-file>)"`. The gate still runs and still judges; what is
+> given up is decorrelation, and every record of the call says so - the runner announces it on
+> stderr, the spec gate folds a `SAME-FAMILY WAIVER` banner into the report it stamps with the
+> verdict, the call's metrics `note` carries it, and one line lands in `gate-overrides.log`. A waiver
+> that could not be logged does not hold. **Never waive it by editing `AUTHOR_FAMILY`**: an untrue or
+> emptied author family drops the invariant silently instead of disclosing it, which turns a loud
+> refusal into a quiet false assurance. An empty reason is not a waiver.
 
 ---
 
@@ -250,6 +259,12 @@ write the spec again; the gate skips an unchanged body by design, so an edit is 
   sync time.
 - **Code not under `src/`?** Update the path glob in `hook_verifier.sh`, `gate_ci.sh`,
   `.opencode/plugin/pipeline-gates.ts`, and `module-path` in `cosmic-ray.toml`.
+- **`cause=cross-family`** — the gate model shares `AUTHOR_FAMILY`, so there is no independence to
+  have. Point it at another vendor. If there genuinely is no other vendor to reach, disclose it
+  rather than faking it: `GATE_SAME_FAMILY_WAIVER="$(cat <reason-file>)"` (prose in a file, per the
+  break-glass rule above) lets the gate judge and marks the verdict as same-family everywhere it is
+  recorded. Editing `AUTHOR_FAMILY` to get past this is never the remedy — it is the one route that
+  leaves the verdict looking independent.
 - **A gate "stops" unexpectedly** — that's fail-closed. Check: `OPENROUTER_API_KEY` set? gate model a
   different family than `AUTHOR_FAMILY`? provider reachable? The stderr says which. One cause is
   worth knowing by name: `implausible-latency` means the verdict came back faster than the call can
