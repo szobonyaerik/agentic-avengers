@@ -313,10 +313,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    non-exhaustive examples, and absence from that list is not a waiver. `GATE_BYPASS` is no exception
    for being a shell assignment prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works, while
    `export` does not survive between an agent's Bash calls; a multi-line reason file is safe because
-   every writer of `gate-overrides.log` normalises the reason through `scripts/bypass_reason.sh`
-   through `scripts/bypass_reason.sh`, so the log keeps one parseable record per override. Nothing
-   appends to it by hand — the Verifier's per-finding waiver runs
-   `bypass_log.sh verifier <finding-id> <waived_by>` too. A value fully determined by a template,
+   every writer of `gate-overrides.log` normalises the reason through `scripts/bypass_reason.sh`,
+   so the log keeps one parseable record per override. Nothing appends to it by hand: `bypass_log.sh`
+   is the ONE writer, so exactly one `printf` appends to that log — the hook bypass, the Verifier's
+   per-finding waiver (`bypass_log.sh verifier <finding-id> <waived_by>`) and `gate_ci.sh`'s
+   multi-gate CI bypass (`bypass_log.sh --gates "<list>"`), which used to format its own identical
+   record with the grammar living in two places. A value fully determined by a template,
    with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
    `skills/pipeline-conventions/SKILL.md`.
 11. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —

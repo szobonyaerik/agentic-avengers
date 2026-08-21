@@ -902,11 +902,14 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   text could split is not an audit trail — so **every writer normalises the reason through
   `scripts/bypass_reason.sh`** before it appends. Collapse, never truncate: the reason is written to
   be read later, and `skills/phase-handover` mirrors it into `handover.md`.
-  - **Nothing appends to that log by hand.** A hook bypass, a CI bypass (`scripts/gate_ci.sh`, same
-    grammar with a `gates:<list>` scope) and the Verifier's per-finding waiver
-    (`bypass_log.sh verifier <finding-id> <waived_by>`) all normalise the same way. `bypass_log.sh`
-    is the writer for the hook and waiver paths; `gate_ci.sh` still formats its own record with the
-    same grammar, which is a known duplication — see the `pipeline-improvement` issue. The waiver is
+  - **Nothing appends to that log by hand.** A hook bypass, a CI bypass
+    (`bypass_log.sh --gates "<list>"`, from `scripts/gate_ci.sh`) and the Verifier's per-finding
+    waiver (`bypass_log.sh verifier <finding-id> <waived_by>`) all go through **one writer**, so
+    exactly one `printf` appends to this log. `gate_ci.sh` used to format its own identical record:
+    behaviour agreed, but the grammar lived in two places and a change to one silently desynced the
+    other with nothing failing. One writer is now true because there is one, not because this
+    sentence says so. An override the writer could not append **exits 2**, so CI stays red rather
+    than bypassing with no audit line behind it. The waiver is
     the case that proves why: `waiver_reason` is a JSON string whose content this pipeline explicitly
     does **not** judge, so nothing stops it being two lines. `handover.md` and the retrospective sweep
     *read* the log; only `bypass_log.sh` writes it.

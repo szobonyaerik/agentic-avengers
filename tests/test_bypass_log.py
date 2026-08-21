@@ -255,3 +255,73 @@ def test_a_logged_override_still_exits_zero_so_the_session_continues(project: Pa
 
     assert proc.returncode == 0
     assert (project / "gate-overrides.log").read_text(encoding="utf-8").strip()
+
+
+# ── the third writer path: gate_ci.sh's multi-gate CI bypass (issue #10) ─────────────────────
+
+
+def run_gates_bypass(project: Path, reason: str, gates: str = "tests spec-gate") -> str:
+    """Run the real writer the way `gate_ci.sh` now does, for a multi-gate CI bypass."""
+    subprocess.run(
+        ["bash", str(BYPASS_LOG), "--gates", gates],
+        cwd=project,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            "GATE_BYPASS": reason,
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return (project / "gate-overrides.log").read_text(encoding="utf-8")
+
+
+def test_the_ci_bypass_scope_is_written_by_the_one_writer(project: Path) -> None:
+    """The record grammar lived in two `printf`s. Behaviour agreed, but a change to one silently
+    desynced the other and nothing failed when it did."""
+    body = run_gates_bypass(project, "provider outage; shipping the docs fix")
+
+    (record,) = body.strip().splitlines()
+    when, who, scope, reason = record.split("\t")
+    assert when.endswith("Z")
+    assert who == "dev@example.com"
+    assert scope == "gates:tests spec-gate"
+    assert reason == "reason: provider outage; shipping the docs fix"
+
+
+@pytest.mark.parametrize("separator", SEPARATORS)
+def test_a_multi_gate_bypass_reason_cannot_split_the_record(
+    project: Path, separator: str
+) -> None:
+    """The property the whole log rests on, asserted for the third path too."""
+    body = run_gates_bypass(project, f"first line{separator}second line")
+
+    assert len(body.strip().splitlines()) == 1
+    assert "first line" in body and "second line" in body
+
+
+def test_all_three_writer_paths_share_one_log_and_one_grammar(project: Path) -> None:
+    """A gate bypass, a per-finding waiver and a CI multi-gate bypass, in one log."""
+    run_bypass(project, "hook bypass", gate="spec-gate")
+    run_bypass(project, "waived", gate="verifier", finding="F1", waived_by="captain")
+    body = run_gates_bypass(project, "ci bypass")
+
+    records = body.strip().splitlines()
+    assert len(records) == 3
+    scopes = [line.split("\t")[2] for line in records]
+    assert scopes[0] == "gate:spec-gate"
+    assert scopes[1] == "gate:verifier"
+    assert scopes[2] == "gates:tests spec-gate"
+    # Reason is always last, because it is the only free-text field.
+    assert all(line.split("\t")[-1].startswith("reason: ") for line in records)
+
+
+def test_gate_ci_no_longer_formats_its_own_record() -> None:
+    """The structural claim, checked rather than documented: exactly one `printf` appends to the
+    log, so 'one writer' is true because there is one, not because a comment says so."""
+    gate_ci = (ROOT / "scripts" / "gate_ci.sh").read_text(encoding="utf-8")
+
+    assert "OVERRIDE_LOG" not in gate_ci or ">> \"$OVERRIDE_LOG\"" not in gate_ci
+    assert "bypass_log.sh" in gate_ci

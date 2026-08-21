@@ -19,7 +19,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/bypass_reason.sh"   # one owner of the break-glass reason's on-disk shape
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
-OVERRIDE_LOG="$ROOT/gate-overrides.log"
 cd "$ROOT"
 
 FULL=0
@@ -442,14 +441,22 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
 fi
 
 # Break-glass: a visible, logged override of a failing gate. Never silent.
+#
+# Through `bypass_log.sh`, the ONE writer of this log, exactly as the hook bypass and the Verifier's
+# per-finding waiver do. This block used to format its own identical `printf`, so the record grammar
+# lived in two places: behaviour agreed, but a change to one silently desynced the other and nothing
+# failed when it did (issue #10). Routing every writer through one is what makes the guarantee
+# structural rather than a rule each caller has to remember.
+#
+# **An override that could not be logged is not an override.** `bypass_log.sh` exits 2 when the
+# append does not land, and that failure is this script's failure: the gates stay failed and CI stays
+# red, rather than the bypass proceeding with no audit line behind it.
 if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
-  who="$(git config user.email 2>/dev/null || whoami)"
-  when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  reason="$(bypass_reason_oneline "$GATE_BYPASS")"
-  printf '%s\t%s\tgates:%s\treason: %s\n' "$when" "$who" "${failed_gates# }" "$reason" >> "$OVERRIDE_LOG"
-  echo "⚠ BYPASSED failing gate(s):${failed_gates} — reason: $GATE_BYPASS" >&2
-  echo "  logged to $OVERRIDE_LOG. Record this in the phase handover.md." >&2
-  exit 0
+  if CLAUDE_PROJECT_DIR="$ROOT" bash "$SCRIPT_DIR/bypass_log.sh" --gates "${failed_gates# }"; then
+    exit 0
+  fi
+  echo "✗ pipeline gates failed:${failed_gates} — and the override was NOT recorded (above)." >&2
+  exit 1
 fi
 
 if [ "$fail" -ne 0 ]; then
