@@ -1028,7 +1028,12 @@ command carrying it. `--found-by` takes firstmate's fixed vocabulary (`spec-gate
 costs real time but must not inflate the product-defect count.
 
 **Off unless a firstmate home is configured.** `fm-pipeline-metrics.sh` must be on `PATH` or named by
-`AVENGER_METRICS_CMD`; without it a run records nothing and **says so once**, because a measurement
+`AVENGER_METRICS_CMD` — **read from the project's `.env` as well as from the environment**, because
+the hooks all get it through `load_env.sh` while `pipeline_metrics.py defect` is the one command a
+STAGE runs directly, from a subagent shell that inherited no export, and it therefore resolved
+nothing and lost the defect in silence. Resolution lives in `scripts/metrics_sink.py`, the one point
+every emission passes through, so a writer named once in `.env` is found by hooks and stages alike;
+the real environment still wins. Without any of that a run records nothing and **says so once**, because a measurement
 layer quietly doing nothing is the failure the record exists to remove. That announcement names the
 state that is actually true, and there are two: **nothing named at all** (not on `PATH`,
 `AVENGER_METRICS_CMD` unset), or **a named path that is not an executable file** — missing, or with

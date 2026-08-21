@@ -9,6 +9,7 @@ The second invariant asserted here is silence on stdout. Several callers are hoo
 a JSON protocol; one stray diagnostic line there corrupts a hook's contract.
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from metrics_support import read_calls, stub_sink  # noqa: F401 — fixture
+from metrics_support import DOUBLE, read_calls, stub_sink  # noqa: F401 — fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -191,3 +192,70 @@ def test_a_phase_opens_from_this_projects_predecessor(stub_sink):  # noqa: F811
 
     init = [call for call in read_calls(log) if call[0] == "init" and call[1] == "09"][-1]
     assert "--from" in init and init[init.index("--from") + 1] == "07"
+
+
+def _project_with_env_writer(tmp_path):
+    """A project whose `.env` names a double writer, and nothing else pointing at one.
+
+    This is the shape issue #66 is about: the operator configured the writer once, in the project's
+    `.env`, the way every other pipeline setting is configured — and the stage that emits the defect
+    runs in a shell that never inherited the export.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    store = tmp_path / "store"
+    store.mkdir()
+    log = tmp_path / "calls.log"
+    double = tmp_path / "fm-pipeline-metrics.sh"
+    double.write_text(DOUBLE, encoding="utf-8")
+    double.chmod(0o755)
+    (project / ".env").write_text(f"AVENGER_METRICS_CMD={double}\n", encoding="utf-8")
+    return project, store, log
+
+
+def test_the_writer_is_resolved_from_the_project_env_file(tmp_path, monkeypatch):
+    """A stage's `defect` call must find the writer the project configured, not only an export.
+
+    `AVENGER_METRICS_CMD` reaches every hook through `load_env.sh`, but `pipeline_metrics.py defect`
+    is the one command a STAGE runs directly, from a subagent shell that carries no export — so it
+    resolved nothing and the defect was lost silently. Resolution belongs to the sink, which is the
+    one point every caller passes through.
+    """
+    project, store, log = _project_with_env_writer(tmp_path)
+
+    env = dict(os.environ)
+    env.pop("AVENGER_METRICS_CMD", None)
+    env.pop("AVENGER_METRICS_OFF", None)
+    env.update(
+        CLAUDE_PROJECT_DIR=str(project),
+        # A real PATH so the double's own `env python3` shebang resolves, but one with no
+        # `fm-pipeline-metrics.sh` on it: the `.env` is the only thing naming a writer.
+        PATH=str(Path(sys.executable).parent),
+        DOUBLE_LOG=str(log),
+        DOUBLE_STORE=str(store),
+        AVENGER_METRICS_PROJECT="unit-test",
+        AVENGER_METRICS_LOG=str(tmp_path / "diagnostics.log"),
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "pipeline_metrics.py"), "defect",
+         "--phase-ref", "07", "--id", "D1", "--summary", "a leak", "--found-by", "verifier"],
+        capture_output=True, text=True, env=env, cwd=str(project), check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "was NOT written" not in result.stderr
+    recorded = read_calls(log)
+    assert [call for call in recorded if call[:3] == ["add", "07", "defects"]]
+
+
+def test_an_exported_writer_still_wins_over_the_env_file(tmp_path, monkeypatch):
+    """The real environment always wins — a committed default must never shadow what CI was given."""
+    project, _, _ = _project_with_env_writer(tmp_path)
+    exported = tmp_path / "exported-writer.sh"
+    exported.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    exported.chmod(0o755)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.setenv("AVENGER_METRICS_CMD", str(exported))
+
+    assert sink.cli() == str(exported)
