@@ -388,6 +388,26 @@ Both are enforced, not asked for: `hook_verifier.sh` and `gate_ci.sh --full` run
 An amendment with no requirement ids is refused — the naming **is** the re-verify scope — and a
 corrupt ledger is an error, never an empty one.
 
+**And an amendment is now OWED, not merely available** (issue #51). The mechanism existed; the rule
+that makes it necessary did not. A fix pass — the feature-close ship gate, which owns both findings
+and fixes while it runs — changed verified production code and touched no phase artifact, so
+`verdict.json` went on asserting a named source file was byte-identical, quoting a `git diff`, after
+the fix commit had changed it. The phase was no longer verified as recorded and nothing said so.
+**The obvious remedy is the forbidden one**: rewriting the verdict would restate a verification
+nobody performed, and two separate phase workers correctly refused to do it.
+`scripts/verdict_currency.py` is the trigger, run from `pipeline_state.py` before a feature may
+report `done` and from `gate_ci.sh --full`. It anchors on the **newest verdict in the feature** —
+every commit after that is post-verification by construction, since a phase's own implementation
+commits always precede its own verdict, and before it an implementer changing source while an
+earlier phase's verdict stands is ordinary work. Two path classes are excluded and each says why:
+`docs/` (the pipeline's own artifacts land after verification by design) and the feature's own
+`tests/e2e/<feature>/` (§4b writes it once after the last phase is green). The finding clears when a
+phase records an amendment, which is exactly the remedy it prescribes, and it **fails open on
+anything git cannot answer** — no repository, no committed verdict to anchor on — saying so on
+stderr rather than passing invisibly. What it does NOT claim: the pipeline does not know which
+production file belongs to which phase, so this asks whether the feature owes a correction, never
+which phase owes it.
+
 ### 4e. Skills are delivered, not requested — pointer plus evidenced load
 The pipeline delegates core behaviour to 13 skills and used to delegate by *asking*: "Load
 `skills/tdd` before you start" is an instruction with no mechanism. Nothing checked, nothing

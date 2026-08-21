@@ -147,6 +147,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    any pending amendment on a phase whose verdict already passes. Enforced by `hook_verifier.sh` and
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
+   **An amendment is OWED after a fix pass, not merely available** (issue #51):
+   `scripts/verdict_currency.py`, run from `pipeline_state.py` before a feature may report `done`
+   and from `gate_ci.sh --full`, refuses a feature whose tracked files changed after its **newest**
+   verdict landed with no phase recording an amendment. The ship gate owns both findings and fixes
+   while it runs, so it changed verified code and touched no artifact, and the verdict went on
+   asserting a file was byte-identical after the fix commit changed it. **Never a rewritten
+   verdict** - that restates a verification nobody performed. `docs/` and the feature's own
+   `tests/e2e/<feature>/` are excluded by design, and anything git cannot answer enforces nothing
+   and says so.
 3f. **Carried items - a handover's forward-looking claims are discharged, not merely written.**
    Phase 8's card recorded, verbatim, that caller-supplied identifiers would become a problem in
    phases 9-12; phase 9 was the first such caller and **shipped exactly that defect**, past every

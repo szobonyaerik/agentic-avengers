@@ -570,6 +570,21 @@ it owes, so an unnamed one narrows verification to nothing while claiming to hav
 corrupt ledger is an error, never an empty one: reading it as "no amendments" would silently drop a
 pending security re-verification.
 
+**An amendment is OWED after a fix pass, not merely available** (issue #51). The mechanism existed;
+the rule that makes it necessary did not. The feature-close ship gate owns both findings and fixes
+while it runs, so it changed verified production code and touched no phase artifact — and
+`verdict.json` went on asserting a named source file was byte-identical, quoting a `git diff`, after
+the fix commit had changed it. `scripts/verdict_currency.py` is the trigger, run from
+`pipeline_state.py` before a feature may report `done` (the last point at which the remedy still
+exists — `done` is terminal) and from `gate_ci.sh --full`. It anchors on the **newest verdict in the
+feature**: every commit after that is post-verification by construction, since a phase's own
+implementation commits always precede its own verdict, and before it an implementer changing source
+while an earlier phase's verdict stands is ordinary work. `docs/` and the feature's own
+`tests/e2e/<feature>/` are excluded, each for a stated reason. The finding clears when a phase
+records an amendment — the remedy it prescribes — and it fails open on anything git cannot answer.
+**Never rewrite `verdict.json` to clear it**: that restates a verification nobody performed, which
+is the one remedy two separate phase workers correctly refused.
+
 ## Carried items - a handover's forward-looking claims are discharged, not merely written
 
 Phase 8 of one measured feature recorded, verbatim, that caller-supplied identifiers would become a

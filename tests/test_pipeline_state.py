@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
 import spec_gate_cache  # noqa: E402
+import verdict_currency  # noqa: E402
 import verifier_precheck  # noqa: E402
 from pipeline_state import (  # noqa: E402
     FeatureNotFoundError,
@@ -706,3 +707,32 @@ def test_a_recorded_exception_clears_the_drift_for_the_resolver(tmp_path, monkey
     )
 
     assert next_stage(tmp_path, "demo").stage != "spec-gate"
+
+
+def test_a_feature_whose_code_changed_after_its_newest_verdict_owes_an_amendment(
+    tmp_path, monkeypatch
+):
+    """Issue #51: `done` is terminal, so this is the last point the remedy still exists."""
+    feature = write_feature(tmp_path, docs=ALL_DOCS + ("e2e-mapping.md",))
+    write_spec(feature, "1-first", "1.0-a", status="done", review_status="approved")
+    write_verdict(feature, "1-first", "pass")
+    (feature / "phases" / "1-first" / "handover.md").write_text("---\nfeature: demo\n---\n")
+
+    monkeypatch.setattr(
+        verdict_currency, "check", lambda root, fdir: "demo: 1 tracked file(s) changed"
+    )
+
+    state = next_stage(tmp_path, "demo")
+
+    assert state.stage == "verifier"
+    assert "changed" in state.reason
+
+
+def test_a_current_verdict_still_reaches_done(tmp_path, monkeypatch):
+    feature = write_feature(tmp_path, docs=ALL_DOCS + ("e2e-mapping.md",))
+    write_spec(feature, "1-first", "1.0-a", status="done", review_status="approved")
+    write_verdict(feature, "1-first", "pass")
+    (feature / "phases" / "1-first" / "handover.md").write_text("---\nfeature: demo\n---\n")
+    monkeypatch.setattr(verdict_currency, "check", lambda root, fdir: None)
+
+    assert next_stage(tmp_path, "demo").stage == "done"

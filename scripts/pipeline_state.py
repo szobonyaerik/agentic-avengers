@@ -48,6 +48,7 @@ import amendments  # noqa: E402
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
 import spec_gate_state  # noqa: E402
+import verdict_currency  # noqa: E402
 
 FEATURE_ORDER: tuple[tuple[str, str], ...] = (
     ("task-analysis.md", "task-analyst"),
@@ -445,6 +446,16 @@ def next_stage(root: Path, feature: str, from_phase: int | None = None) -> State
             stage="e2e-author",
             reason="every phase is verified; e2e is missing",
         )
+
+    # A passing verdict must not stand over a tree that has since changed (issue #51). The feature
+    # close ship gate owns both findings and fixes while it runs, so it changes verified production
+    # code and touches no phase artifact — and the verdict goes on asserting a file is byte-identical
+    # after the fix commit changed it. Asked HERE because this is the last point at which the remedy
+    # still exists: `done` is terminal, and a phase that has already closed cannot be re-opened for
+    # it. Never a rewritten verdict — that would restate a verification nobody performed.
+    stale = verdict_currency.check(Path(root), feature_dir)
+    if stale is not None:
+        return State(feature=feature, stage="verifier", reason=stale)
 
     return State(
         feature=feature,

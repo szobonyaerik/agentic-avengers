@@ -196,6 +196,29 @@ else
   python3 "$SCRIPT_DIR/verifier_precheck.py" --root "$ROOT" || record_fail "verifier-precheck"
 fi
 
+# 1bd) Verdict currency — a passing verdict must not stand over a tree that has since changed
+#      (issue #51). The feature-close ship gate owns both findings and fixes while it runs, so it
+#      changes verified production code and touches no phase artifact; verdict.json then goes on
+#      asserting a named source file is byte-identical after the fix commit changed it. The
+#      mechanism for the correction already existed (scripts/amendments.py); this is the trigger
+#      that makes it mandatory. NEVER a rewritten verdict — that would restate a verification nobody
+#      performed, which two separate phase workers correctly refused to do.
+#      --full only: it anchors on the newest verdict in a feature and asks git what came after, so
+#      on a partial run it would be answering about commits the diff is not responsible for.
+if [ "$FULL" -eq 1 ]; then
+  echo "• verdict currency: no passing verdict stands over a tree that changed after it"
+  for feature_dir in "$ROOT"/docs/features/*/; do
+    [ -d "$feature_dir" ] || continue
+    python3 "$SCRIPT_DIR/verdict_currency.py" check "$feature_dir"
+    currency_rc=$?
+    if [ "$currency_rc" -eq 1 ]; then
+      record_fail "verdict-currency"
+    elif [ "$currency_rc" -ne 0 ]; then
+      record_fail "verdict-currency:undecidable"
+    fi
+  done
+fi
+
 # 1bc) Required skills exist, and every skill a stage was owed was actually observed being loaded. A
 #      stage whose required skill file is missing does not get a lighter version of the rules; it
 #      gets none, and until now that failed silently. The audit is the other half of pointer
