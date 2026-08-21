@@ -297,6 +297,21 @@ falling back to the raw bytes. **Redaction by pattern is a reduction of risk, no
 that is stated at the module rather than implied; nothing is ever pruned, since every entry is in the
 chain and its log is what `check` hashes, so the growth rule is one capped log per recorded command.
 
+**Fixture realism is checked, not only instructed** (issue #33). One phase shipped a credential
+refusal that could never fire: **1,009 tests green** against Telegram supergroup ids an order of
+magnitude too small for a real deployment, an `int32` column, and a `DataError` before the control
+ran. It was carried in three skills and a stage brief and enforced by nothing, because no static rule
+decides "a shape a real deployment produces" **generically**. That is true of the SHAPE, not of the
+CHECK: the project declares the shape (`fixture-shapes.toml` at its root — names, `min`/`max` or
+`pattern`, and a mandatory `why` that the violation prints), and `scripts/fixture_shapes.py` is
+generic — the same split `SUBPROC_CHECK_PATHS` already uses. It runs at `spec-done` from
+`hook_verifier.sh`, the first moment fixtures exist and the implementer still owns them, and
+diff-scoped from `gate_ci.sh`. **What it does not decide is stated at the module**: it cannot tell
+that a declaration is MISSING (guessing a shape would be worse than not checking), a computed fixture
+is skipped, and it reads fixtures rather than columns — the overflow itself is not detected, the
+unrealistic value that let it hide is. A project with no declaration is CLEAN **and says so**, never
+a silent green.
+
 Three test modes by `work_kind`, all inside `skills/tdd`: **greenfield** (red → green per vertical
 slice) · **migration** (parity-first — the *existing suite is the contract*, run it rather than
 re-authoring it; characterize only genuine gaps at critical seams) · **refactor** (baseline-first

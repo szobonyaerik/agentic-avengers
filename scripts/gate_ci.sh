@@ -195,6 +195,23 @@ else
   python3 "$SCRIPT_DIR/verifier_precheck.py" --root "$ROOT" || record_fail "verifier-precheck"
 fi
 
+# 1bcf) Fixture realism against the shapes the PROJECT declared (issue #33). It shipped as
+#      instruction in three skills and a stage brief, and one phase then shipped a credential
+#      refusal that could never fire: 1,009 tests green against Telegram supergroup ids an order of
+#      magnitude too small, an int32 column, and a DataError before the control ran. No static rule
+#      decides "a shape a real deployment produces" generically — so the project declares it in
+#      fixture-shapes.toml and this check is generic. DIFF-SCOPED, like subprocess_check.py and for
+#      the same measured reason. A project with no declaration is CLEAN and says so on stderr:
+#      permanently green with no output is the invisible pass this exists to remove.
+echo "• fixture shapes: no fixture contradicts a shape this project declared"
+python3 "$SCRIPT_DIR/fixture_shapes.py"
+fixtures_rc=$?
+if [ "$fixtures_rc" -eq 1 ]; then
+  record_fail "fixture-shapes"
+elif [ "$fixtures_rc" -ne 0 ]; then
+  record_fail "fixture-shapes:undecidable"
+fi
+
 # 1bd) Verdict currency — a passing verdict must not stand over a tree that has since changed
 #      (issue #51). The feature-close ship gate owns both findings and fixes while it runs, so it
 #      changes verified production code and touches no phase artifact; verdict.json then goes on

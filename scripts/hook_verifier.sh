@@ -211,6 +211,37 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
        "$(printf '%s\n' "$OUT" | tail -20)"
 fi
 
+# Fixture realism, mechanically (issue #33). One measured phase shipped a credential refusal that
+# could never fire — 1,009 tests green against Telegram supergroup ids an order of magnitude too
+# small for a real deployment, so the int32 column overflowed before the control ran. It was carried
+# as INSTRUCTION in three skills and a stage brief, which is the promise-with-no-mechanism this
+# pipeline keeps paying for. No static rule decides "a shape a real deployment produces" generically,
+# so the PROJECT declares it (fixture-shapes.toml) and the check is generic.
+#
+# Asked HERE, on `spec-done`, because this is the first moment the fixtures exist AND the implementer
+# who wrote them still owns them. Diff-scoped, so it holds what this change touched and counts the
+# rest. A project that declares no shapes is CLEAN and says so — never a silent green.
+#
+# It does NOT revert the `done` stamp: that revert (issue #68) acts only on the two evidences it is
+# scoped to, and widening it here would rewrite a stamp on evidence about a different question. The
+# hook still fails, so nothing proceeds on it.
+if [ "$TRIGGER" = "spec-done" ]; then
+  python3 "$SD/fixture_shapes.py" ${TESTPATH:+"$TESTPATH"}; fixtures_rc=$?
+  if [ "$fixtures_rc" -eq 1 ]; then
+    fail "verifier:fixture-shapes" \
+      "verifier ($SCOPE): a fixture contradicts a shape this project declared for an external" \
+      "identifier (named above, with the reason the project gave). A value a real deployment never" \
+      "produces is what let an int32 overflow hide behind 1,009 green tests. Fix the fixture, or" \
+      "correct the declaration in fixture-shapes.toml if the shape itself is wrong." \
+      "$STAMP_NOTE"
+  elif [ "$fixtures_rc" -ne 0 ]; then
+    fail "verifier:fixture-shapes-undecidable" \
+      "verifier ($SCOPE): the fixture-shape check could not read its declaration or a test file" \
+      "(named above) — a file it cannot read is a file it cannot clear, so this fails closed." \
+      "$STAMP_NOTE"
+  fi
+fi
+
 [ "$TRIGGER" = "handover" ] || exit 0
 
 PHASE_DIR="$(dirname "$FILE")"
