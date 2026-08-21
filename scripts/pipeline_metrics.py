@@ -637,6 +637,50 @@ def _phase_landed(phase_dir: Path) -> bool | None:
     return not applicability.touched(phase_dir, scope)
 
 
+#: The mutation gate's stage name in `gate_calls[]`, and the cause a run that never happened carries.
+#: `MUTATION_POLICY=advisory` was set for two whole phases while the gate never once ran — no
+#: `cosmic-ray.toml` at the repo root and the tool not installed. The hook said so on stderr and
+#: exited 0, correctly, because advisory never blocks; but nothing DURABLE distinguished "the gate
+#: did not run" from "the gate ran and found nothing", so a hypothesis settled on the premise that
+#: `MUTATION_POLICY=advisory` was its changed variable when the gate under test had never executed.
+#:
+#: Advisory still does not block — that is a deliberate decision, not the defect. What changes is
+#: that the absence is recorded where a later reader looks, on an existing collection, because
+#: firstmate's schema is closed and a new key is their decision rather than this repo's.
+MUTATION_STAGE = "mutation"
+MUTATION_UNAVAILABLE_CAUSE = "did-not-run"
+MUTATION_UNAVAILABLE_MODEL = "none (cosmic-ray)"
+
+
+def record_mutation_unavailable(phase_dir: str, reason: str) -> bool:
+    """Record that the mutation gate could not run, and why. Never fails the phase.
+
+    Idempotent by content: the hook fires per handover write, and the producer contract firstmate's
+    record requires is that repetition converges rather than accumulating.
+    """
+    try:
+        phase = resolve_phase(phase_dir)
+        if phase is None:
+            return False
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{MUTATION_STAGE}-unavailable",
+            stage=MUTATION_STAGE,
+            spec=None,
+            attempt=1,
+            model=MUTATION_UNAVAILABLE_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=MUTATION_UNAVAILABLE_CAUSE,
+            note=_clean(f"mutation gate did not run: {reason}"),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"mutation unavailability not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 def record_phase_close(phase_dir: str) -> bool:
     """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
 
@@ -950,6 +994,12 @@ def _build_parser() -> argparse.ArgumentParser:
     survivors.add_argument("phase_dir")
     survivors.add_argument("score")
 
+    unavailable = sub.add_parser(
+        "mutation-unavailable", help="record that the mutation gate could not run, and why"
+    )
+    unavailable.add_argument("phase_dir")
+    unavailable.add_argument("reason")
+
     load = sub.add_parser("skill-load", help="record an observed skill load")
     load.add_argument("--stage", required=True)
     load.add_argument("--skill", required=True)
@@ -1019,6 +1069,8 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_verifier_findings(args.phase_dir, args.verdict)
     elif args.command == "mutation-survivors":
         record_mutation_survivors(args.phase_dir, args.score)
+    elif args.command == "mutation-unavailable":
+        record_mutation_unavailable(args.phase_dir, args.reason)
     elif args.command == "skill-load":
         phase = _phase_of_ref(args.phase_ref) or current_phase()
         if phase:

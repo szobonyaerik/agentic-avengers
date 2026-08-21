@@ -723,6 +723,18 @@ gate model to be named as missing cases, and the phase routes back to the implem
 `cosmic-ray baseline` first: a mutant counts as killed whenever the test command fails, so a broken
 suite would otherwise score a perfect 1.0.
 
+**A mutation gate that could not run leaves a record saying so.** `MUTATION_POLICY=advisory` was set
+for two whole phases while the gate never once ran — no `cosmic-ray.toml` at the repo root, the tool
+not installed — and the hook said so on stderr and exited 0, correctly, because advisory never
+blocks. Nothing DURABLE distinguished "the gate did not run" from "the gate ran and found nothing",
+so a settled hypothesis read `MUTATION_POLICY=advisory` as its changed variable while the gate under
+test had never executed; what actually caught defects was hand-built drills the implementer
+substituted after the gate produced nothing. `record_mutation_unavailable` writes the absence into
+the phase's `gate_calls[]` with `failure_cause: did-not-run` and no verdict — an existing collection,
+since firstmate's schema is closed — from the missing-config branch and from every `stop_or_report`
+funnel. **Advisory still does not block**: that is the deliberate decision, not the defect, and the
+change is only that stderr is no longer the sole trace.
+
 **Mutation is `advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: runs and reports the
 score + survivors, **never blocks**) · `enforce` (fails closed) · `off` (no mutation tool runs
 anywhere). It was off; it is on because it is deterministic, diff-scoped, needs no model below the

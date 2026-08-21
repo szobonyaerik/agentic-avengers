@@ -1283,3 +1283,82 @@ def test_the_real_writer_validates_a_defect_this_pipeline_stamped(real_sink):  #
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert stored(home, "08")["defects"][0]["recorded_by"] == "stage"
+
+
+# --- the mutation gate leaves a record when it could NOT run (agents#16, class of #69) ------------
+#
+# `MUTATION_POLICY=advisory` was set for two whole phases while the gate never once ran: no
+# cosmic-ray.toml at the repo root and the tool not installed. The hook said so on stderr and exited
+# 0 - correctly, because advisory never blocks - but nothing durable distinguished "the gate did not
+# run" from "the gate ran and found nothing". A settled hypothesis was then read as evidence that
+# `MUTATION_POLICY=advisory` is the lever, when the measured lever was hand-built drills the
+# implementer substituted after the gate produced nothing.
+#
+# Advisory must keep NOT blocking - that is a deliberate decision, not the defect. What changes is
+# that the absence is now recorded where a later reader looks.
+
+
+def test_a_mutation_gate_that_could_not_run_records_that_it_did_not(stub_sink):  # noqa: F811
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+    metrics.record_phase_open(phase_dir)
+
+    assert metrics.record_mutation_unavailable(
+        phase_dir, "cosmic-ray.toml missing at repo root"
+    ) is True
+
+    (row,) = [
+        c for c in stored(store, "08")["gate_calls"]
+        if c["stage"] == metrics.MUTATION_STAGE
+    ]
+    assert row["verdict"] == metrics.NO_VERDICT, "a gate that did not run reached no verdict"
+    assert row["failure_cause"] == metrics.MUTATION_UNAVAILABLE_CAUSE
+    assert "cosmic-ray.toml missing" in row["note"]
+
+
+def test_it_rides_an_existing_collection_and_adds_no_field(stub_sink):  # noqa: F811
+    """firstmate's schema is closed; a new key is their decision, not this repo's."""
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+    metrics.record_phase_open(phase_dir)
+
+    metrics.record_mutation_unavailable(phase_dir, "cosmic-ray not installed")
+
+    record = stored(store, "08")
+    assert "mutation" not in record and "mutation_unavailable" not in record
+
+
+def test_repeated_reports_converge_on_one_row(stub_sink):  # noqa: F811
+    """The producer contract: repetition converges. A hook fires per handover write."""
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+    metrics.record_phase_open(phase_dir)
+
+    metrics.record_mutation_unavailable(phase_dir, "cosmic-ray not installed")
+    metrics.record_mutation_unavailable(phase_dir, "cosmic-ray not installed")
+
+    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.MUTATION_STAGE]
+    assert len(rows) == 1
+
+
+def test_recording_the_absence_never_fails_the_phase(stub_sink, monkeypatch):  # noqa: F811
+    """Measurement may never fail what it measures - and least of all an advisory gate."""
+    project, _, _ = stub_sink
+    monkeypatch.setattr(metrics.sink, "add", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+
+    assert metrics.record_mutation_unavailable(
+        str(project / "docs/features/demo/phases/8-auth"), "anything"
+    ) is False
+
+
+def test_the_cli_reports_it_and_always_exits_zero(stub_sink):  # noqa: F811
+    """Called from `hook_mutation.sh`, where nothing may block on a metrics write."""
+    project, store, _ = stub_sink
+    phase_dir = str(project / "docs/features/demo/phases/8-auth")
+    metrics.record_phase_open(phase_dir)
+
+    result = run_cli("mutation-unavailable", phase_dir, "cosmic-ray exec errored")
+
+    assert result.returncode == 0
+    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.MUTATION_STAGE]
+    assert rows and "exec errored" in rows[0]["note"]
