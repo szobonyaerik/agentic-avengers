@@ -325,7 +325,15 @@ gate stamp is fresh for every spec, and every spec still has its `## Acceptance 
 That defect recurred **twice, six attempts apart, in one phase**, because nothing checked it
 continuously — so it runs on **every commit**, and, like every other check here, **diff-scoped**: the
 phases that commit touches from `gate_ci.sh`, the whole phase at handover from `hook_verifier.sh`,
-and everything under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer
+and everything under `gate_ci.sh --full`. **It also holds the ROW, not only the id** (issue #52): the precheck used to confirm a
+requirement id appeared in SOME row and never that the row's claim matched the test it names, so a
+row was free to assert anything and one measured row asserted the exact opposite of its own test
+with every check green. `trace_claims` now holds the minimum - the named test **exists** in the
+phase's own test tree and is **not skipped**. **What it does not do is stated rather than implied**:
+it does not read a row's prose against a test's assertions, so a row whose words contradict its
+existing, running test still passes; generating the claim from the test is the better fix and this
+is not it. Test definition and skip detection are Python-specific, so a tree yielding no readable
+definitions is **not held at all** - an unreadable scope, not a violated one. A full audit on every commit would hard-fail a consumer
 repo's CI over locked phases nobody touched, which is the hostage failure the scoping removes; when
 git cannot say what changed, nothing is enforced and the check says so out loud.
 

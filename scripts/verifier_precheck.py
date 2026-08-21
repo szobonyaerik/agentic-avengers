@@ -126,6 +126,115 @@ def traced_ids(phase_dir: Path) -> set[str]:
     return found
 
 
+#: A test name a row may point at. Deliberately the pytest convention and nothing wider: a cell
+#: holding prose would otherwise yield "names" nobody wrote.
+TEST_NAME = re.compile(r"\btest_[A-Za-z0-9_]+")
+
+#: A skip decorator directly above a test. Python-specific, and that limit is stated in
+#: `named_tests`' docstring rather than implied.
+SKIP_DECORATOR = re.compile(r"^[ \t]*@(?:pytest\.mark\.)?skip(?:if)?\b", re.MULTILINE)
+
+
+def _test_root(phase_dir: Path) -> Path | None:
+    """`tests/<feature>/<n>-<slug>`, or the older `tests/<n>-<slug>` — whichever exists.
+
+    The same resolution `verifier_evidence` and `hook_verifier.sh` use, so a row is held against
+    exactly the tree the gate then runs. A project laid out otherwise resolves to None and is not
+    held at all, which is the fail-open every check on this boundary uses.
+    """
+    phase = Path(phase_dir).resolve()
+    if len(phase.parents) < 2:
+        return None
+    root = phase.parents[3] if len(phase.parents) >= 4 else Path.cwd()
+    feature = phase.parents[1].name
+    for candidate in (root / "tests" / feature / phase.name, root / "tests" / phase.name):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def named_tests(phase_dir: Path) -> list[tuple[str, str]]:
+    """(test name, the mapping that names it) for every test a row points at.
+
+    Only `test_*` tokens count. A cell holding `n/a`, a dash or the template's own placeholder names
+    no test, and inventing one out of prose would report findings nobody could act on.
+    """
+    out: list[tuple[str, str]] = []
+    for mapping in sorted(phase_dir.glob("specs/*/test-mapping.md")):
+        try:
+            text = mapping.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for name in TEST_NAME.findall(text):
+            out.append((name, mapping.parent.name))
+    return out
+
+
+def _defined_tests(tests: Path) -> dict[str, bool]:
+    """Every test defined under `tests`, mapped to whether it is skipped.
+
+    Definition and skip detection are Python-specific, and that is the honest bound of this check:
+    a project whose tests are written in another language resolves no definitions here, so every
+    row would read as naming a missing test. `check_phase` therefore holds a row only when the tree
+    yielded at least one definition — the scope is unreadable otherwise, not violated.
+    """
+    found: dict[str, bool] = {}
+    for path in sorted(tests.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            match = re.match(r"[ \t]*(?:async +)?def +(test_[A-Za-z0-9_]+)", line)
+            if not match:
+                continue
+            above = "\n".join(lines[max(0, index - 6):index])
+            found[match.group(1)] = bool(SKIP_DECORATOR.search(above))
+    return found
+
+
+def trace_claims(phase_dir: Path) -> list[str]:
+    """Findings for rows whose named test does not exist, or exists and is skipped (issue #52).
+
+    The precheck used to confirm only that a requirement id appeared in SOME row, never that the
+    row's claim matched the test it names — so a row was free to assert anything and the trace was
+    decorative. One measured row asserted the exact opposite of its own test and every check passed.
+
+    **What this does NOT do, said rather than implied:** it does not read a row's prose against a
+    test's assertions. Generating the claim from the test is the better fix and this is not it; a
+    row whose words contradict its existing, running test still passes here.
+    """
+    rows = named_tests(phase_dir)
+    if not rows:
+        return []
+    tests = _test_root(phase_dir)
+    defined = _defined_tests(tests) if tests is not None else {}
+    if not defined:
+        print(
+            f"[verifier_precheck] {phase_dir.name}: no readable test definitions under its test "
+            f"tree — trace-row claims not checked",
+            file=sys.stderr,
+        )
+        return []
+    out: list[str] = []
+    for name, spec_name in sorted(set(rows)):
+        if name not in defined:
+            out.append(
+                f"{spec_name}/test-mapping.md names {name}, and there is no test by that name in "
+                f"this phase's tests ({tests}). A row that names nothing is a trace that proves "
+                f"nothing."
+            )
+        elif defined[name]:
+            out.append(
+                f"{spec_name}/test-mapping.md names {name}, which is SKIPPED. A skipped test is "
+                f"green output over a requirement nothing exercises."
+            )
+    return out
+
+
 def stamp_fresh(spec: Path) -> bool | None:
     """True when the spec's body is unchanged since the gate judged it; None when undecidable.
 
@@ -170,6 +279,7 @@ def check_phase(phase_dir: Path) -> list[str]:
     if not specs:
         return out
     traced = traced_ids(phase_dir)
+    out.extend(trace_claims(phase_dir))
 
     for spec in specs:
         owed, _exempt = bound_requirements(spec)
