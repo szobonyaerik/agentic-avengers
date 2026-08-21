@@ -54,12 +54,20 @@ def project(tmp_path):
     # The resolver plus the siblings it imports — DERIVED, not listed. It grew two of them (the one
     # place the spec gate's stamp is read, and the amendment ledger) and a fixture copying one file
     # made the resolver die at import, which reached the server as a feature with no `stage` at all.
+    # The walk is TRANSITIVE: a sibling that grows a sibling of its own is the same failure one hop
+    # out, and it arrives here looking identical — a feature with no `stage`, not an import error.
     resolver = REPO / "scripts" / "pipeline_state.py"
-    shutil.copy(resolver, root / "scripts" / "pipeline_state.py")
-    for module in re.findall(r"^import ([a-z_]+)", resolver.read_text(), re.M):
+    pending, copied = ["pipeline_state"], set()
+    while pending:
+        module = pending.pop()
+        if module in copied:
+            continue
         sibling = REPO / "scripts" / f"{module}.py"
-        if sibling.is_file():
-            shutil.copy(sibling, root / "scripts" / sibling.name)
+        if not sibling.is_file():
+            continue
+        copied.add(module)
+        shutil.copy(sibling, root / "scripts" / sibling.name)
+        pending.extend(re.findall(r"^import ([a-z_]+)", sibling.read_text(), re.M))
     (root / ".agent-activity.jsonl").write_text(
         json.dumps({"ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
                     "agent_type": "avenger-verifier", "agent_id": "a1"}) + "\n"

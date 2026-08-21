@@ -54,7 +54,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -78,6 +77,7 @@ from applicability import (  # noqa: E402
     touched,
 )
 from requirement_cap import declared_bindings  # noqa: E402
+import spec_gate_state  # noqa: E402 — the one place "is this spec gated" is decided
 
 ACCEPTANCE_HEADING = re.compile(
     r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE
@@ -127,29 +127,14 @@ def traced_ids(phase_dir: Path) -> set[str]:
 
 
 def stamp_fresh(spec: Path) -> bool | None:
-    """True when the spec's body is unchanged since the gate judged it; None when undecidable."""
-    for gate in ("gate", "review", "fidelity"):
-        try:
-            result = subprocess.run(  # noqa: S603 - fixed argv, no shell
-                [
-                    sys.executable,
-                    str(HERE / "spec_gate_cache.py"),
-                    "check",
-                    str(spec),
-                    gate,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        # 1 = unchanged since judged (fresh). 0 = needs gating (stale). 2 = could not decide.
-        if result.returncode == 1:
-            return True
-        if result.returncode == 2:
-            return None
-    return False
+    """True when the spec's body is unchanged since the gate judged it; None when undecidable.
+
+    Delegated to `spec_gate_state`, which owns what "gated" means (issue #42). This module held its
+    own implementation of the question while the stage resolver asked a weaker one, so one spec was
+    gated and ungated at the same time depending on which part of the pipeline asked. A second copy
+    of a rule is the copy that drifts - the same reason the declaration regex above is imported.
+    """
+    return spec_gate_state.stamp_fresh(spec)
 
 
 def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:

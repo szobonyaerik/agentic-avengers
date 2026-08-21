@@ -13,7 +13,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
+import spec_gate_cache  # noqa: E402
+import verifier_precheck  # noqa: E402
 from pipeline_state import (  # noqa: E402
     FeatureNotFoundError,
     next_stage,
@@ -630,3 +633,76 @@ def test_from_phase_that_skips_nothing_still_resolves_the_feature(tmp_path: Path
     """The narrowing is what forbids a feature-wide answer, not the flag being present."""
     finished_phase(tmp_path)
     assert next_stage(tmp_path, "demo", from_phase=1).stage == "e2e-author"
+
+
+ALL_DOCS = ("task-analysis.md", "overview.md", "plan.md")
+
+
+def _gated_spec(tmp_path, **kwargs):
+    """A feature whose one spec is implemented, approved, and stamped by the gate for real.
+
+    `write_spec` writes an `spec_gate: approved` line and nothing else; the real gate also records
+    the hash of the body it judged, which is what makes drift detectable at all.
+    """
+    feature = write_feature(tmp_path, docs=ALL_DOCS)
+    spec = write_spec(
+        feature, "1-first", "1.0-a", status="done", review_status="approved", **kwargs
+    )
+    spec.write_text(spec_gate_cache.stamp(spec.read_text(), "gate", "APPROVED"))
+    return feature, spec
+
+
+def test_a_drifted_spec_is_ungated_to_the_resolver_too(tmp_path):
+    """Issue #42: one spec must not be gated and ungated at once, depending on who asks.
+
+    `verifier_precheck` compares the body against the hash the gate recorded and calls a drifted
+    spec UNGATED. The resolver read only the stamp's VALUE, so it moved on and let work proceed on
+    a spec no gate has judged in its current form.
+    """
+    _feature, spec = _gated_spec(tmp_path)
+    spec.write_text(spec.read_text() + "\n## Requirements\n- R1.0.9 nobody gated this\n")
+
+    state = next_stage(tmp_path, "demo")
+
+    assert state.stage == "spec-gate"
+    assert "judged" in state.reason or "gated" in state.reason
+    # The two readers now agree about this exact spec.
+    assert verifier_precheck.stamp_fresh(spec) is False
+
+
+def test_an_undrifted_spec_still_moves_on(tmp_path):
+    """The stricter reading must not stop a spec whose body is exactly what the gate judged."""
+    _feature, _spec = _gated_spec(tmp_path)
+
+    assert next_stage(tmp_path, "demo").stage != "spec-gate"
+
+
+def test_a_spec_the_gate_never_hashed_is_not_re_opened_by_the_resolver(tmp_path):
+    """A hash that was never recorded is unknowable drift, not proven drift.
+
+    Every spec stamped before the gate cache existed carries an approval and no hash. Routing those
+    back to the spec gate would park the resolver on shipped work whose remedy is a re-gate nobody
+    asked for - the wedge `applicability.py` exists to prevent. The precheck may still report them,
+    because it is diff-scoped and only ever holds what the change touched.
+    """
+    feature = write_feature(tmp_path, docs=ALL_DOCS)
+    write_spec(feature, "1-first", "1.0-a", status="done", review_status="approved")
+
+    assert next_stage(tmp_path, "demo").stage != "spec-gate"
+
+
+def test_a_recorded_exception_clears_the_drift_for_the_resolver(tmp_path, monkeypatch):
+    """The same disclosed exception that clears the precheck clears the resolver (issue #67)."""
+    # bypass_log.sh writes gate-overrides.log under $CLAUDE_PROJECT_DIR — never this repository.
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    feature, spec = _gated_spec(tmp_path)
+    spec.write_text(spec.read_text() + "\n## Requirements\n- R1.0.9 drifted\n")
+    phase_dir = feature / "phases" / "1-first"
+    reason = tmp_path / "why.txt"
+    reason.write_text("the gate provider was down")
+    applicability.record_exception(
+        phase_dir, rule="spec-gate", subject="1.0-a",
+        reason=reason.read_text(), recorded_by="tester",
+    )
+
+    assert next_stage(tmp_path, "demo").stage != "spec-gate"

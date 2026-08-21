@@ -173,18 +173,43 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
     }
 
     gate = spec_gate_state.status(fields)
-    if gate != spec_gate_state.APPROVED and not _excepted(phase, "spec-gate", spec.name):
+    if not _excepted(phase, "spec-gate", spec.name):
         if gate == spec_gate_state.PENDING:
             return State(
                 stage="spec-gate",
                 reason=f"{spec.name} has not been through the spec gate",
                 **common,
             )
-        return State(
-            stage="spec-writer",
-            reason=f"{spec.name} was blocked by the spec gate",
-            **common,
-        )
+        if gate != spec_gate_state.APPROVED:
+            return State(
+                stage="spec-writer",
+                reason=f"{spec.name} was blocked by the spec gate",
+                **common,
+            )
+        # An approval is a claim about a BODY, and this module used to read only the stamp's value
+        # (issue #42). `verifier_precheck` compared the body against the hash the gate recorded and
+        # called a drifted spec UNGATED, so one spec was gated and ungated at once depending on who
+        # asked — and this is the reader that decides what work happens next, so it was the one
+        # letting work proceed on a spec no gate had judged in its current form. Both now ask
+        # `spec_gate_state`, which owns the question.
+        #
+        # STALE only, never UNRECORDED: a spec the gate never hashed is UNKNOWABLE drift rather than
+        # proven drift, and every spec stamped before the gate cache existed is in that state.
+        # Routing those back would park the resolver on shipped work whose remedy nobody asked for,
+        # which is the wedge §3a exists to prevent. The precheck still holds them, because it is
+        # diff-scoped and only ever enforces what the change is responsible for.
+        drift = spec_gate_state.freshness(spec_file)
+        if drift in (spec_gate_state.STALE, None):
+            return State(
+                stage="spec-gate",
+                reason=(
+                    f"{spec.name} has changed since the gate judged it — the approval describes a "
+                    f"body this spec no longer has"
+                    if drift == spec_gate_state.STALE
+                    else f"{spec.name}: gate-stamp freshness could not be decided (fail closed)"
+                ),
+                **common,
+            )
 
     # The human sign-off is a separate question from the machine gate, and it is the only thing
     # `review_status` still means. Under SPEC_REVIEW_MODE=auto the gate stamps it itself.
