@@ -107,6 +107,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    or a `binding:` changed, and when the Verifier routed the phase back with a **coverage gap** —
    there the question is what the spec failed to require, so unchanged text is where to look. A
    first gate is always full.
+   **To ask whether one spec's stamp still describes its body, run
+   `python3 scripts/spec_gate_state.py freshness <spec.md>`** — `fresh` | `stale` | `unrecorded`,
+   exit 0 / 1 / 2. It **derives** the gate name from the spec rather than taking one, which is the
+   point: a runbook naming a single gate (`fidelity`) read a collapsed spec, which carries `gate`,
+   as STALE while it was freshly approved, and sent operators to re-gate work that was fine. The
+   same call is what `pipeline_state.py` and `verifier_precheck.py` ask, so the runbook cannot
+   disagree with the pipeline about one spec.
 3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
    counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
    call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`

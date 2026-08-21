@@ -62,6 +62,8 @@ Usage:
                                            1 not approved, 2 unreadable
     spec_gate_state.py set <spec.md> <pending|approved|blocked>
                                            stamp it, inserting the key when it is absent
+    spec_gate_state.py freshness <spec.md> print fresh|stale|unrecorded; exit 0 fresh, 1 not fresh,
+                                           2 undecidable. The gate name is DERIVED from the spec
 """
 
 from __future__ import annotations
@@ -205,13 +207,28 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[spec_gate_state] cannot stamp {args[1]}: {exc}", file=sys.stderr)
             return ERROR
         return APPROVED_EXIT
-    if len(args) != 2 or args[0] != "status":
+    if len(args) != 2 or args[0] not in ("status", "freshness"):
         print(__doc__, file=sys.stderr)
         return ERROR
     path = Path(args[1])
     if not path.is_file():
         print(f"[spec_gate_state] no such spec: {path}", file=sys.stderr)
         return ERROR
+    if args[0] == "freshness":
+        # The runbook command used to name ONE gate (`fidelity`), which collapsed specs do not
+        # carry, so following it on a healthy APPROVED spec answered NEEDS_GATING and read as STALE
+        # (issue #56). Deriving the name here is what stops a document and the gate names from
+        # drifting apart again — there is no name for an operator to get wrong.
+        state = freshness(path)
+        if state is None:
+            print(
+                f"[spec_gate_state] cannot decide freshness for {path}: it has no YAML frontmatter "
+                f"to hold a gate hash",
+                file=sys.stderr,
+            )
+            return ERROR
+        print(state)
+        return APPROVED_EXIT if state == FRESH else NOT_APPROVED_EXIT
     state = status_of(path)
     print(state)
     return APPROVED_EXIT if state == APPROVED else NOT_APPROVED_EXIT

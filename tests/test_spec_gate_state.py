@@ -11,10 +11,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import spec_gate_cache  # noqa: E402
 from spec_gate_state import (  # noqa: E402
     APPROVED,
     BLOCKED,
+    FRESH,
     PENDING,
+    STALE,
+    UNRECORDED,
     frontmatter,
     main,
     status,
@@ -142,3 +146,49 @@ def test_set_refuses_a_spec_with_no_frontmatter(tmp_path: Path) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text("# Spec with no frontmatter\n")
     assert main(["set", str(spec), "approved"]) == 2
+
+
+# --- freshness: the runbook check that derives the gate name ------------------------------------
+#
+# Issue #56: the documented freshness command hard-coded ONE gate name (`fidelity`), which collapsed
+# specs do not carry — so following the runbook on a healthy, freshly APPROVED spec returned
+# NEEDS_GATING and read as STALE. The fix is not a corrected gate name in a document: it is a check
+# that derives the name from the spec, so the runbook and the gate names cannot drift again.
+
+
+def _stamped(tmp_path: Path, gate: str) -> Path:
+    spec = tmp_path / "spec.md"
+    spec.write_text("---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n- a requirement\n")
+    spec.write_text(spec_gate_cache.stamp(spec.read_text(), gate, "APPROVED"))
+    return spec
+
+
+def test_freshness_reads_a_collapsed_gate_stamp_as_fresh(tmp_path: Path, capsys) -> None:
+    spec = _stamped(tmp_path, "gate")
+    assert main(["freshness", str(spec)]) == 0
+    assert capsys.readouterr().out.strip() == FRESH
+
+
+def test_freshness_reads_a_legacy_fidelity_stamp_as_fresh(tmp_path: Path, capsys) -> None:
+    """A repository mid-upgrade still carries the two gates the one gate replaced."""
+    spec = _stamped(tmp_path, "fidelity")
+    assert main(["freshness", str(spec)]) == 0
+    assert capsys.readouterr().out.strip() == FRESH
+
+
+def test_freshness_reads_an_edited_body_as_stale(tmp_path: Path, capsys) -> None:
+    spec = _stamped(tmp_path, "gate")
+    spec.write_text(spec.read_text() + "\n- a requirement nobody gated\n")
+    assert main(["freshness", str(spec)]) == 1
+    assert capsys.readouterr().out.strip() == STALE
+
+
+def test_freshness_separates_a_never_hashed_spec_from_a_drifted_one(tmp_path: Path, capsys) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n")
+    assert main(["freshness", str(spec)]) == 1
+    assert capsys.readouterr().out.strip() == UNRECORDED
+
+
+def test_freshness_fails_closed_on_a_spec_it_cannot_read(tmp_path: Path) -> None:
+    assert main(["freshness", str(tmp_path / "nope.md")]) == 2
