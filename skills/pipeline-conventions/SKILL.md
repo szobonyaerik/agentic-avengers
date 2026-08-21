@@ -853,6 +853,26 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   - **The runner is not trusted by path.** `scripts/gate_runner_guard.sh` makes it identify itself
     and match its own digest before any gate uses it; `GATE_RUNNER_SHA256` pins it exactly. A
     scaffold that printed a bare `GO` having checked nothing once sat on a temp path and was believed.
+- **A same-family gate is refused, and the waiver is EXPLICIT — never a false author family.**
+  `cause=cross-family` is a correct refusal with one broken remedy: the only route through used to be
+  declaring a `--author-family` that is not the author's, and when the author genuinely is the gate's
+  own family there is no truthful value to write. A rule whose remedy is unavailable is a wedge, not
+  a gate (the same shape as the requirement cap on a shipped spec, §3a). So the assertion is waived
+  by naming the waiver: **`GATE_SAME_FAMILY_WAIVER="<why>"`** (or `--same-family-waiver`), which
+  `scripts/gate_runner.py` applies to `cross-family` **and to nothing else** — an unknown vendor is a
+  family nobody could resolve, not one somebody chose to share, so it stays refused. An empty reason
+  is not a waiver, and `AUTHOR_FAMILY` keeps its truthful value either way.
+  **A waived run is visibly waived, everywhere the call is recorded**, because a verdict that
+  silently dropped the assertion would be worse than the wedge: it converts a loud refusal into a
+  quiet false assurance. The runner announces `GATE SAME-FAMILY WAIVER IN FORCE` on stderr **before**
+  it calls anything; the call's metrics `note` carries the reason (an existing field of the closed
+  `gate_calls` schema, §6d — no new key); `hook_spec_gate.sh` folds a `SAME-FAMILY WAIVER` banner
+  into the report it stamps **with** the verdict, on approvals and blocks alike, since nothing that
+  reads a verdict later sees a hook's stderr; and the override is **audited or it does not hold** —
+  one line through `scripts/bypass_log.sh` into `gate-overrides.log`, and a waiver that could not be
+  logged stops the gate. `gate_ci.sh`'s static audit honours the same knob, and says so loudly, so
+  one disclosed decision does not wedge a second place. Unset, everything above is inert and the
+  assertion fires exactly as it always has.
 - **One vendor table.** `scripts/model_vendors.py` is the only place a model id becomes a family, and
   an unrecognised vendor is a **loud refusal**, not a guess. The old table knew seven vendors and
   returned the raw model id for the rest, so `glm-5.1` and `glm-5.2` — one vendor — read as two
