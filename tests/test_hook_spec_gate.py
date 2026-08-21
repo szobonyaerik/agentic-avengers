@@ -34,7 +34,7 @@ pytestmark = pytest.mark.subprocess(
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from gate_runner import RUNNER_ABI  # noqa: E402
+from gate_runner import RUNNER_ABI, SAME_FAMILY_MARKER  # noqa: E402
 
 SPEC = """---
 feature: demo
@@ -64,6 +64,10 @@ import json
 import os
 import sys
 
+#: The hook reads this out of the runner rather than spelling it again, so the stub carries it too —
+#: from the real module, so the test cannot pass against a marker the runner no longer emits.
+SAME_FAMILY_MARKER = "{marker}"
+
 if "--identify" in sys.argv:
     print("{abi} " + hashlib.sha256(open(sys.argv[0], "rb").read()).hexdigest())
     sys.exit(0)
@@ -75,6 +79,20 @@ model = sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv else ""
 open(sys.argv[0] + ".calls", "a").write(key + "\\n")
 open(sys.argv[0] + ".targets", "a").write(open(target).read() + "\\n=== END ===\\n")
 open(sys.argv[0] + ".models", "a").write(key + "=" + model + "\\n")
+open(sys.argv[0] + ".args", "a").write(json.dumps(sys.argv[1:]) + "\\n")
+
+# The real runner announces a waived same-family call before it calls anything. The stub has no
+# families to compare, so it announces whenever the waiver reached it — which is exactly the wiring
+# under test here.
+if "--same-family-waiver" in sys.argv:
+    # One line, reason normalised — the real runner's own shape (gate_runner.waiver_reason), because
+    # what the hook does with a multi-line marker is a property worth testing honestly.
+    reason = " ".join(sys.argv[sys.argv.index("--same-family-waiver") + 1].split())
+    sys.stderr.write(
+        SAME_FAMILY_MARKER + ": gate model '" + model + "' (family 'anthropic') is the author's "
+        "own family 'anthropic' - this verdict is NOT an independent cross-family judgement. "
+        "reason: " + reason + "\\n"
+    )
 
 if os.environ.get("STUB_FAIL_" + key.upper()):
     sys.stderr.write("cause=provider-unreachable the stub was told to fail\\n")
@@ -109,7 +127,9 @@ def project(tmp_path: Path) -> Path:
     (tmp_path / "docs").mkdir()
     shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
     shutil.copytree(ROOT / "prompts", tmp_path / "prompts")
-    (tmp_path / "scripts" / "gate_runner.py").write_text(STUB_RUNNER.format(abi=RUNNER_ABI))
+    (tmp_path / "scripts" / "gate_runner.py").write_text(
+        STUB_RUNNER.format(abi=RUNNER_ABI, marker=SAME_FAMILY_MARKER)
+    )
     return tmp_path
 
 
@@ -132,6 +152,17 @@ def run_hook(project: Path, spec: Path, **env) -> subprocess.CompletedProcess:
             **env,
         },
     )
+
+
+def runner_args(project: Path) -> list[list[str]]:
+    """Every argument list the stub runner was invoked with, ONE ELEMENT PER ARGUMENT.
+
+    Not a joined string: a reason is prose with spaces in it, and the whole way this can go wrong is
+    a shell expansion that splits it into several arguments — which a joined string renders
+    identically to the correct call.
+    """
+    log = project / "scripts" / "gate_runner.py.args"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 def calls(project: Path) -> list[str]:
@@ -768,3 +799,127 @@ def test_a_killed_pass_is_recorded_under_the_pass_that_was_killed(measured) -> N
     assert "HOOK KILLED" in err and "NOT a gate verdict" in err
     killed = [c for c in record_of()["gate_calls"] if c["verdict"] == "killed"]
     assert [c["stage"] for c in killed] == ["spec-gate-observe"]
+
+
+# ── an explicit same-family waiver: honoured, and impossible to read as independent ──────────
+#
+# The state this closes was a wedge. The hook hands the runner an author family that cannot be
+# cleared from outside the plugin, so a Claude gate model fails closed and the only route through
+# was to declare a FALSE author family. Both directions are pinned, per issue 69.
+
+
+WAIVER_REASON = "captain waived cross-family independence for phase 12: no second vendor reachable"
+
+
+def test_no_waiver_means_the_gate_is_handed_none(project: Path) -> None:
+    """The default path. Nobody who has not asked for a waiver gets a weaker gate, and no run that
+    did not ask for one acquires a waiver record."""
+    spec = write_spec(project)
+    result = run_hook(project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 0, result.stderr
+    assert all("--same-family-waiver" not in args for args in runner_args(project))
+    assert not (project / "gate-overrides.log").exists()
+    assert "SAME-FAMILY WAIVER" not in stamped_report(project, spec)
+
+
+def test_an_empty_waiver_is_not_a_waiver(project: Path) -> None:
+    """`GATE_SAME_FAMILY_WAIVER=` states nothing, so it must not reach the gate as one — the shell
+    default that started all of this substituted on unset AND empty."""
+    spec = write_spec(project)
+    run_hook(project, spec, GATE_SAME_FAMILY_WAIVER="",
+             STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert all("--same-family-waiver" not in args for args in runner_args(project))
+
+
+def test_a_waiver_reaches_the_gate_without_touching_who_the_author_is(project: Path) -> None:
+    """The property the phase worker refused to break: waiving the requirement must never be
+    implemented by misreporting the author."""
+    spec = write_spec(project)
+    result = run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=WAIVER_REASON,
+                      STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 0, result.stderr
+    for args in runner_args(project):
+        # One argument, not several: the reason is prose, and a split one reaches argparse as stray
+        # arguments that fail the call instead of waiving anything.
+        assert args[args.index("--same-family-waiver") + 1] == WAIVER_REASON
+        assert args[args.index("--author-family") + 1] == "anthropic", "truthfully, still"
+
+
+def test_a_waived_verdict_is_stamped_as_waived(project: Path) -> None:
+    """The load-bearing half. A verdict produced without decorrelation that reads afterwards like an
+    independent one would be strictly worse than the refusal it replaced: it converts a loud refusal
+    into a quiet false assurance. The banner rides the report the verdict is kept with, because none
+    of the later readers see this hook's stderr."""
+    spec = write_spec(project)
+    result = run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=WAIVER_REASON,
+                      STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 0, result.stderr
+    report = stamped_report(project, spec)
+    assert "SAME-FAMILY WAIVER" in report
+    assert "NOT an independent cross-family judgement" in report
+    assert WAIVER_REASON in report
+
+
+def test_a_waived_block_is_stamped_as_waived_too(project: Path) -> None:
+    """A block is read again on replay, so it carries the disclosure exactly like a pass. A waiver
+    that only surfaced on approvals would hide the same-family judgement that routed a spec back."""
+    spec = write_spec(project)
+    result = run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=WAIVER_REASON,
+                      STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=BLOCKING)
+    assert result.returncode == 2
+    assert "SAME-FAMILY WAIVER" in stamped_report(project, spec)
+
+
+def test_a_waiver_is_audited_once_per_run(project: Path) -> None:
+    """Audited or not recorded (CLAUDE.md 3a). The gate makes two calls; the override is one act."""
+    spec = write_spec(project)
+    run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=WAIVER_REASON,
+             STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    log = (project / "gate-overrides.log").read_text().splitlines()
+    assert len(log) == 1, log
+    assert "gate:spec-gate" in log[0] and "finding:cross-family" in log[0]
+    assert WAIVER_REASON in log[0]
+
+
+def test_a_waiver_that_cannot_be_audited_does_not_hold(project: Path) -> None:
+    """An override nobody logged is not an override, so the gate stops rather than judging on the
+    author's own family with no durable trace of the waiver anywhere."""
+    spec = write_spec(project)
+    (project / "gate-overrides.log").mkdir()   # the writer cannot append to a directory
+    result = run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=WAIVER_REASON,
+                      STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 2
+    assert "could not be audited" in result.stderr
+    assert "spec_gate: approved" not in spec.read_text()
+
+
+def test_a_waiver_with_no_marker_to_record_it_fails_closed(project: Path) -> None:
+    """The runner honours the waiver; this hook is what makes it visible. If it cannot read the
+    marker that says a call was waived, a waived verdict would be stamped as an ordinary one — so
+    the run stops instead."""
+    spec = write_spec(project)
+    runner = project / "scripts" / "gate_runner.py"
+    runner.write_text(runner.read_text().replace("SAME_FAMILY_MARKER = ", "MARKER_MOVED = "))
+    result = run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=WAIVER_REASON,
+                      STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 2
+    assert "could not read the gate runner's" in result.stderr
+    assert calls(project) == [], "and it stops BEFORE paying for a call it could not disclose"
+
+
+def test_a_multi_line_reason_survives_as_one_argument_and_one_log_record(project: Path) -> None:
+    """A reason is prose from a file (CLAUDE.md section 6), so it can carry newlines. It must reach
+    the gate as ONE argument, and `gate-overrides.log` is one tab-separated record per line — a raw
+    newline there would split one override into two, the second with no timestamp and no scope."""
+    spec = write_spec(project)
+    reason = "captain waived cross-family for phase 12\n\nno second vendor is reachable"
+    result = run_hook(project, spec, GATE_SAME_FAMILY_WAIVER=reason,
+                      STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY)
+    assert result.returncode == 0, result.stderr
+    for args in runner_args(project):
+        assert args[args.index("--same-family-waiver") + 1] == reason
+    log = (project / "gate-overrides.log").read_text().splitlines()
+    assert len(log) == 1, log
+    assert "no second vendor is reachable" in log[0]
+    # And the durable banner keeps the whole reason rather than its first line.
+    assert "no second vendor is reachable" in stamped_report(project, spec)

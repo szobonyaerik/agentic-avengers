@@ -276,9 +276,56 @@ bypass_and_exit () { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "spec-gate";
 # This gate makes two calls, so "which one was killed" is exactly the fact worth keeping.
 #
 #   run_pass <rubric> <model> <target> <json-key> <emit-json> <metrics-stage>
+#
+# --author-family keeps its `:-anthropic` fallback ON PURPOSE. Emptying it is not a way to waive the
+# cross-family assertion: an empty author family makes `assert_cross_family` return without
+# comparing anything, which drops the invariant SILENTLY and stamps a same-family verdict that reads
+# like an independent one. The waiver below is the explicit route, and it never touches who the
+# author is.
+
+# The marker is read OUT OF THE RUNNER, never spelled again here: two copies of the one string that
+# makes a waived verdict legible would drift, and the copy that drifted first would be the one
+# nobody was reading. An unreadable marker with a waiver asked for is fatal — the waiver would then
+# be honoured by the runner and recorded by nobody, which is the silent same-family verdict this
+# whole path exists to refuse. With no waiver asked for there is nothing to detect and nothing to
+# fail.
+SAME_FAMILY_MARKER="$(sed -n 's/^SAME_FAMILY_MARKER = "\(.*\)"$/\1/p' "$SD/gate_runner.py" 2>/dev/null)"
+if [ -z "$SAME_FAMILY_MARKER" ] && [ -n "${GATE_SAME_FAMILY_WAIVER:-}" ]; then
+  echo "spec-gate: GATE_SAME_FAMILY_WAIVER is set, but this hook could not read the gate runner's" >&2
+  echo "  same-family marker, so a waived verdict could not be recorded as waived. Fails closed:" >&2
+  echo "  an undisclosed same-family verdict is worse than no verdict." >&2
+  exit 2
+fi
+
+# Passed as an ARRAY, never as a `${VAR:+--flag "$VAR"}` expansion: that idiom word-splits, and this
+# value is a prose reason with spaces in it — the flag would take its first word and the rest would
+# reach argparse as stray arguments, failing the call rather than waiving anything.
+SAME_FAMILY_ARGS=()
+[ -n "${GATE_SAME_FAMILY_WAIVER:-}" ] &&
+  SAME_FAMILY_ARGS=(--same-family-waiver "$GATE_SAME_FAMILY_WAIVER")
+
+SAME_FAMILY_WAIVER_LINE=""
+note_same_family_waiver () {
+  local line
+  [ -n "$SAME_FAMILY_MARKER" ] || return 0
+  line="$(grep -m1 "^$SAME_FAMILY_MARKER:" "$GERR" 2>/dev/null)" || return 0
+  [ -n "$line" ] || return 0
+  [ -n "$SAME_FAMILY_WAIVER_LINE" ] && return 0   # one audit record per hook run, not per pass
+  SAME_FAMILY_WAIVER_LINE="$line"
+  # Audited or not recorded (CLAUDE.md 3a). bypass_log.sh exits 2 when it could not append, and an
+  # override nobody logged is not an override — so the gate stops rather than judging on the
+  # author's own family with no durable trace of the waiver anywhere.
+  if ! GATE_BYPASS="${GATE_SAME_FAMILY_WAIVER:-}" "$SD/bypass_log.sh" "spec-gate" "cross-family"; then
+    echo "spec-gate: the same-family waiver could not be audited, so it does not hold." >&2
+    echo "  Fix the log destination named above, then write the spec again." >&2
+    exit 2
+  fi
+}
+
 run_pass () {
   python3 "$SD/gate_runner.py" \
     --rubric "$1" --model "$2" --author-family "${AUTHOR_FAMILY:-anthropic}" \
+    ${SAME_FAMILY_ARGS[@]+"${SAME_FAMILY_ARGS[@]}"} \
     ${GATE_PROVIDER:+--provider "$GATE_PROVIDER"} \
     --json-key "$4" --emit-json "$5" --target "$3" >/dev/null 2>"$GERR" &
   local pid=$!
@@ -286,6 +333,10 @@ run_pass () {
   wait "$pid"; local rc=$?
   trap 'echo "spec-gate: HOOK KILLED by the harness (signal) — this is NOT a gate verdict." >&2; exit 2' TERM INT
   cat "$GERR" >&2
+  # Read from the runner's own marker rather than from the variable being set: the waiver only
+  # APPLIES when the gate model really does share the author's family, and a waiver left in the
+  # environment while the gate is cross-family must never stamp a verdict as same-family.
+  note_same_family_waiver
   return "$rc"
 }
 
@@ -347,28 +398,40 @@ python3 "$SD/spec_notes.py" write "$FILE" "$DECISION" >&2 || true
 # unexplained rejection this pass exists to remove.
 python3 "$SD/spec_gate_triage.py" report "$DECISION" > "$REPORT" 2>/dev/null
 
-# Fold the degraded-context warning INTO the persisted report, not just stderr. A verdict this gate
-# stamps is read again later — on a replayed block, in a triage, by a human — and none of those
-# reads see the hook's own stderr. This is what makes the state "unmistakable" rather than merely
-# printed once: it is not a gate failure, but it also does not get to look like a clean pass. The
-# banner carries the builder's own cause line, so the durable record names the shape that actually
-# fired rather than one of the three.
+# Fold the warnings that must outlive this hook's stderr INTO the persisted report. A verdict this
+# gate stamps is read again later — on a replayed block, in a triage, by a human — and none of those
+# reads see the hook's own stderr. This is what makes such a state "unmistakable" rather than merely
+# printed once: neither of these is a gate failure, and neither gets to look like a clean pass.
+#
+# Two banners, each carrying the words of whatever produced it rather than a re-authored summary:
+#   CONTEXT ... — the context builder's own cause line, so the durable record names the shape that
+#                 actually fired rather than one of the three.
+#   SAME-FAMILY WAIVER ... — the gate runner's own marker line, so a verdict produced without
+#                 decorrelation can never be read afterwards as an independent judgement. This is
+#                 the property that makes the waiver safe to have at all.
 #
 # The fold itself must not fail the way it is fixing. A full or read-only TMPDIR makes the write or
 # the move fail, and a silent one leaves the persisted report indistinguishable from a clean pass —
 # the exact state this block exists to remove. So it goes through a temp file the EXIT trap already
 # owns, and a failure says so on stderr rather than being swallowed by `&&`.
-if [ "$CONTEXT_DEGRADED" -eq 1 ]; then
+BANNER=""
+[ "$CONTEXT_DEGRADED" -eq 1 ] && BANNER="CONTEXT $CONTEXT_CAUSE"
+if [ -n "$SAME_FAMILY_WAIVER_LINE" ]; then
+  BANNER="${BANNER:+$BANNER
+}SAME-FAMILY WAIVER: ${SAME_FAMILY_WAIVER_LINE#"$SAME_FAMILY_MARKER": }"
+fi
+if [ -n "$BANNER" ]; then
   if {
-    printf 'CONTEXT %s\n' "$CONTEXT_CAUSE"
+    printf '%s\n' "$BANNER"
     echo
     cat "$REPORT"
   } > "$REPORT_CTX" && mv "$REPORT_CTX" "$REPORT"; then
     :
   else
-    echo "spec-gate: could not fold the CONTEXT DEGRADED warning into the persisted report" >&2
+    echo "spec-gate: could not fold this run's banner into the persisted report" >&2
     echo "  (writing $REPORT_CTX or moving it over $REPORT failed — check TMPDIR). The stamped" >&2
-    echo "  report will NOT carry it, so the degraded state above is the only record of it." >&2
+    echo "  report will NOT carry it, so the hook's stderr above is the only record of it:" >&2
+    printf '%s\n' "$BANNER" >&2
   fi
 fi
 

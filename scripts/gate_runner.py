@@ -121,6 +121,47 @@ def assert_cross_family(model, author_family, override=None):
     return gate_family
 
 
+#: The one line a caller greps to learn that a verdict was produced WITHOUT decorrelation. Callers
+#: persist it verbatim (scripts/hook_spec_gate.sh folds it into the stamped report), so it is always
+#: one line, whatever prose the reason arrived as.
+SAME_FAMILY_MARKER = "GATE SAME-FAMILY WAIVER IN FORCE"
+
+
+def waiver_reason(waiver):
+    """The waiver's reason as ONE line, or None when no waiver was given.
+
+    A waiver is an explicit act carrying a stated reason, so empty or whitespace-only is not one -
+    which is what keeps `GATE_SAME_FAMILY_WAIVER=` and `--same-family-waiver ''` from reading as a
+    waiver. The reason is prose and therefore arrives from a file (CLAUDE.md section 6), so it is
+    normalised to a single line here, once, rather than at each place that prints it.
+    """
+    return " ".join((waiver or "").split()) or None
+
+
+def resolve_gate_family(model, author_family, override=None, waiver=None):
+    """Resolve the gate model's family, honouring an EXPLICIT same-family waiver.
+
+    Returns `(family, waived_reason)`; `waived_reason` is None on every ordinary call.
+
+    `assert_cross_family` above is untouched and is still the only thing that decides: the waiver is
+    applied to its refusal and to nothing else. It waives exactly `cross-family`. An unknown vendor
+    is NOT waivable - a family that could not be resolved is not a family somebody chose to share -
+    and no other cause is either.
+
+    What this exists to avoid: the only route through a same-family gate used to be declaring a
+    false `--author-family`. The author family stays truthful, and a run that gives up decorrelation
+    says so in its own words instead - on stderr through `SAME_FAMILY_MARKER`, and in the record the
+    call leaves behind.
+    """
+    reason = waiver_reason(waiver)
+    try:
+        return assert_cross_family(model, author_family, override), None
+    except GateError as exc:
+        if exc.cause != "cross-family" or reason is None:
+            raise
+        return model_family(model, override), reason
+
+
 def stdin_target():
     """Pull .tool_input.file_path from the hook JSON on stdin (if any)."""
     if sys.stdin.isatty():
@@ -294,6 +335,12 @@ def main():
                     default=os.environ.get("AUTHOR_FAMILY"),
                     help="vendor family of the model that authored the work (e.g. 'anthropic'); "
                          "the gate fails closed if its own model shares this family")
+    ap.add_argument("--same-family-waiver", metavar="REASON",
+                    default=os.environ.get("GATE_SAME_FAMILY_WAIVER"),
+                    help="waive the cross-family assertion FOR THIS CALL, stating why. The gate "
+                         "still runs and still judges; what is given up is decorrelation, and every "
+                         "record of the call says so. An empty reason is not a waiver, and this "
+                         "never changes what --author-family reports.")
     ap.add_argument("--model-family",
                     default=os.environ.get("GATE_MODEL_FAMILY"),
                     help="declare the gate model's vendor family when scripts/model_vendors.py does "
@@ -326,9 +373,22 @@ def main():
     started = time.monotonic()
     target = args.target
     family = None
+    waived = None   # the waiver's reason, once the same-family assertion has actually been waived
 
     def elapsed_ms():
         return int((time.monotonic() - started) * 1000)
+
+    def record(**fields):
+        """Every record this call leaves carries the waiver, whenever one is in force.
+
+        `note` is an EXISTING field of firstmate's closed gate_calls schema (CLAUDE.md section 6d),
+        so a waived verdict is legible in the metrics record without adding a key to it. A verdict
+        produced without decorrelation that reads like an independent one is worse than the refusal
+        it replaced, so this rides every outcome rather than the passing one.
+        """
+        if waived and not fields.get("note"):
+            fields["note"] = f"same-family waiver: {waived}"
+        deliver_then_record(**fields)
 
     try:
         # No model, no gate. A hardcoded default here resolved to a provider the operator never
@@ -340,8 +400,17 @@ def main():
                             "no gate model: pass --model or set GATE_MODEL. This gate has no "
                             "default model — a gate must never run on one nobody chose.")
 
-        # Cross-family invariant: a gate must not run on the author's family.
-        family = assert_cross_family(args.model, args.author_family, args.model_family)
+        # Cross-family invariant: a gate must not run on the author's family. An operator can
+        # waive it explicitly (--same-family-waiver / GATE_SAME_FAMILY_WAIVER) when there is no
+        # other family to reach; the waiver never touches what --author-family reports, and it is
+        # announced here, before the call, so nothing downstream can read the verdict as
+        # independent.
+        family, waived = resolve_gate_family(args.model, args.author_family, args.model_family,
+                                             args.same_family_waiver)
+        if waived:
+            print(f"{SAME_FAMILY_MARKER}: gate model '{args.model}' (family '{family}') is the "
+                  f"author's own family '{args.author_family}' - this verdict is NOT an independent "
+                  f"cross-family judgement. reason: {waived}", file=sys.stderr)
         if args.selftest:
             rubric = ('Return ONLY JSON {"verdict":"GO|REVIEW|NO-GO",'
                       '"report":"...","route_back":"..."}. Reply GO if the text says OK.')
@@ -388,18 +457,18 @@ def main():
         # The cause PR 1 gave it: a timeout kill, a 402 and an unreachable provider are three
         # different numbers in the record, not one "it failed". Recorded after the stop is rendered.
         print(e.render(), file=sys.stderr)
-        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
-                            model_family=family, latency_ms=elapsed_ms(), cause=e.cause,
-                            detail=e.detail, provider=args.provider)
+        record(model=args.model, rubric=args.rubric, target=target,
+               model_family=family, latency_ms=elapsed_ms(), cause=e.cause,
+               detail=e.detail, provider=args.provider)
         sys.exit(2)
     except Exception as e:  # never fail open on an unexpected shape
         # `internal`, not `config`: this is the backstop for failures nothing above recognised, and
         # calling them configuration problems sends the operator to their .env for a bug in the gate.
         # Every path that CAN name itself raises GateError above; reaching here is itself a defect.
         print(GateError("internal", f"{type(e).__name__}: {e}").render(), file=sys.stderr)
-        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
-                            model_family=family, latency_ms=elapsed_ms(), cause="internal",
-                            detail=f"{type(e).__name__}: {e}", provider=args.provider)
+        record(model=args.model, rubric=args.rubric, target=target,
+               model_family=family, latency_ms=elapsed_ms(), cause="internal",
+               detail=f"{type(e).__name__}: {e}", provider=args.provider)
         sys.exit(2)
 
     v = str(verdict.get("verdict", "")).upper()
@@ -419,10 +488,10 @@ def main():
         if not args.emit_json:
             print(GateError("config", "--json-key without --emit-json discards the reply").render(),
                   file=sys.stderr)
-            deliver_then_record(model=args.model, rubric=args.rubric, target=target,
-                                model_family=family, latency_ms=elapsed_ms(), cause="config",
-                                detail="--json-key without --emit-json discards the reply",
-                                provider=args.provider)
+            record(model=args.model, rubric=args.rubric, target=target,
+                   model_family=family, latency_ms=elapsed_ms(), cause="config",
+                   detail="--json-key without --emit-json discards the reply",
+                   provider=args.provider)
             sys.exit(2)
         try:
             with open(args.emit_json, "w", encoding="utf-8") as fh:
@@ -430,16 +499,16 @@ def main():
         except OSError as e:
             print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
                   file=sys.stderr)
-            deliver_then_record(model=args.model, rubric=args.rubric, target=target,
-                                model_family=family, latency_ms=elapsed_ms(), cause="io",
-                                detail=f"could not write --emit-json {args.emit_json}: {e}",
-                                provider=args.provider)
+            record(model=args.model, rubric=args.rubric, target=target,
+                   model_family=family, latency_ms=elapsed_ms(), cause="io",
+                   detail=f"could not write --emit-json {args.emit_json}: {e}",
+                   provider=args.provider)
             sys.exit(2)
         # No verdict token to report: the reply answered, so this is not a failure. `verdict=None`
         # with no `cause` would be recorded as NO-GO, which is a judgement this pass never made.
-        deliver_then_record(model=args.model, rubric=args.rubric, target=target,
-                            model_family=family, latency_ms=elapsed_ms(), verdict=NO_VERDICT,
-                            provider=args.provider)
+        record(model=args.model, rubric=args.rubric, target=target,
+               model_family=family, latency_ms=elapsed_ms(), verdict=NO_VERDICT,
+               provider=args.provider)
         sys.exit(0)
     if args.emit_json:
         # Written before any exit branch: a NO-GO verdict is exactly when the caller most needs the
@@ -450,7 +519,7 @@ def main():
         except OSError as e:
             print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
                   file=sys.stderr)
-            deliver_then_record(**measured)
+            record(**measured)
             sys.exit(2)
     if args.print_verdict:
         # Hand the token to the caller (e.g. spec-review-auto branches GO/REVIEW vs NO-GO).
@@ -460,17 +529,17 @@ def main():
             print(verdict["report"], file=sys.stderr)
         if verdict.get("route_back"):
             print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
-        deliver_then_record(**measured)
+        record(**measured)
         sys.exit(0)
     if v in VERDICT_OK:
         print(f"OK ({v})")
-        deliver_then_record(**measured)
+        record(**measured)
         sys.exit(0)
     print(f"=== GATE: {v or 'FAIL'} ===", file=sys.stderr)
     print(verdict.get("report", "(no report)"), file=sys.stderr)
     if verdict.get("route_back"):
         print(f"Route back to: {verdict['route_back']}", file=sys.stderr)
-    deliver_then_record(**measured)
+    record(**measured)
     sys.exit(2)
 
 

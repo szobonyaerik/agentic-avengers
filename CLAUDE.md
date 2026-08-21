@@ -596,6 +596,20 @@ and the runner must identify itself (`scripts/gate_runner_guard.sh`, `GATE_RUNNE
 than being trusted by path. `scripts/model_vendors.py` is the one vendor table and an unknown vendor
 is a loud refusal — `glm-5.1` and `glm-5.2` used to read as different families.
 
+**A same-family gate is waivable, explicitly, and never by lying about the author.** `cross-family`
+was a correct refusal with an unavailable remedy: the only route through the hook was to declare an
+`--author-family` that is not the author's, and when the author genuinely is Anthropic there is no
+truthful value to write — a wedge, not a gate, the same shape as the requirement cap on a shipped
+spec. **`GATE_SAME_FAMILY_WAIVER="<why>"`** waives `cross-family` and nothing else (an unknown vendor
+is a family nobody could resolve, not one somebody chose to share); an empty reason is not a waiver,
+and `AUTHOR_FAMILY` stays truthful. **A waived run is visibly waived wherever the call is recorded** —
+the runner announces it on stderr before calling, the metrics `note` carries the reason (an existing
+field, no new key), `hook_spec_gate.sh` folds a `SAME-FAMILY WAIVER` banner into the report stamped
+**with** the verdict on approvals and blocks alike, and the override is **audited or it does not
+hold** (`bypass_log.sh` -> `gate-overrides.log`; a waiver that could not be logged stops the gate).
+A verdict that silently dropped the assertion would be strictly worse than the wedge — a loud refusal
+turned into a quiet false assurance. Unset, the assertion fires exactly as it did before.
+
 **A verdict must also be physically possible.** Phase 10 of one measured feature recorded a **4 ms
 GO** from a model gate — less time than the provider CLI takes to start — and it was consumed as a
 pass; a sweep of all 178 gate calls across phases 08-11 found it the only implausible latency

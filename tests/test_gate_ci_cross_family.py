@@ -43,17 +43,22 @@ def _cross_family_source() -> str:
     return "\n".join(lines[start : close_at + 1])
 
 
-def _run(gate_model: str | None) -> subprocess.CompletedProcess[str]:
+def _run(gate_model: str | None, waiver: str | None = None) -> subprocess.CompletedProcess[str]:
     script = (
         'set -uo pipefail\n'
         f'SCRIPT_DIR="{ROOT / "scripts"}"\n'
         f'ROOT="{ROOT}"\n'
+        # The assertion reports a waiver's reason through the one owner of that reason's on-disk
+        # shape, which `gate_ci.sh` sources before it defines any of this.
+        f'. "{ROOT / "scripts" / "bypass_reason.sh"}"\n'
         f"{_cross_family_source()}\n"
         "cross_family_check\n"
     )
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": str(Path.home())}
     if gate_model is not None:
         env["GATE_MODEL"] = gate_model
+    if waiver is not None:
+        env["GATE_SAME_FAMILY_WAIVER"] = waiver
     return subprocess.run(
         ["bash", "-c", script], capture_output=True, text=True, check=False, env=env
     )
@@ -105,3 +110,32 @@ def test_cross_family_gate_model_passes_and_reports_the_comparison() -> None:
     assert result.returncode == 0, result.stderr
     assert "the spec gate judges on" in result.stdout
     assert "google" in result.stdout
+
+
+def test_a_same_family_model_is_waivable_explicitly_and_says_so() -> None:
+    """State 2, waived. This audit must not become a SECOND wedge for a configuration the operator
+    has already disclosed at the gate calls — but a waived audit must never read like state 1."""
+    reason = "captain waived cross-family independence for phase 12"
+    result = _run(_implementer_model(), waiver=reason)
+    assert result.returncode == 0, result.stderr
+    assert "SAME-FAMILY WAIVER" in result.stderr
+    assert reason in result.stderr
+    assert "NOT independent" in result.stderr
+    assert "the spec gate judges on" not in result.stdout, "a waived audit is not a clean comparison"
+
+
+def test_the_refusal_names_the_waiver_rather_than_the_route_that_lies() -> None:
+    """The remedy a refusal prescribes is the whole difference between a gate and a wedge. The route
+    that was available before this — declaring a false AUTHOR_FAMILY — drops the invariant silently
+    instead of disclosing it, so the refusal names the explicit knob instead."""
+    result = _run(_implementer_model())
+    assert result.returncode != 0
+    assert "GATE_SAME_FAMILY_WAIVER" in result.stderr
+
+
+def test_an_unknown_vendor_is_not_waivable_here_either() -> None:
+    """The waiver waives a SHARED family, never an unresolvable one — the same boundary the gate
+    runner draws (tests/test_gate_same_family_waiver.py)."""
+    result = _run("acme/not-a-real-model", waiver="captain waived it")
+    assert result.returncode != 0
+    assert "unknown GATE_MODEL family" in result.stderr
