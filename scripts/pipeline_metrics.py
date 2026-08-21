@@ -128,6 +128,13 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
     "unknown-vendor": ("error", "other"),
     "runner-untrusted": ("error", "other"),
     "provider-not-found": ("error", "other"),
+    # `other`, not `provider-unreachable`: nothing remote failed — this is contention on the
+    # provider CLI's own local state lock (issue #50), and recording it as a reachability failure
+    # would reinstate the exact wrong diagnosis the cause was added to prevent. It is not given a
+    # `failure_cause` token of its own because firstmate owns that vocabulary and this repo owns no
+    # part of it; a token their schema refuses costs the whole entry. The distinction lives where
+    # the operator reads it — the gate's `cause=provider-locked` line and its verbatim output.
+    "provider-locked": ("error", "other"),
     "provider-error": ("error", "other"),
     "io": ("error", "other"),
     "internal": ("error", "other"),

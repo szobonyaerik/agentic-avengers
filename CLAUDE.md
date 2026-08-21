@@ -606,7 +606,16 @@ Phases are built in dependency/risk order, one at a time, fully through build-an
 Gates run on a fresh **cross-family** model (family ≠ author) and **fail closed** — a gate that can't
 reach a verdict (missing key, provider down, non-JSON, same-family) stops, **and it names which**:
 every stop carries a `cause=` from `scripts/gate_errors.py` and reproduces the provider's own words
-verbatim. Four properties keep that honest, each one a defect that used to fail toward "looks fine":
+verbatim. A **local** state lock is not a provider failure at all and
+is named as one: concurrent gate calls through opencode contend on a SQLite lock on the operator's
+own disk, and three parallel calls returned ZERO verdicts in 900s where the same three serially
+returned all three in 68s. It presented as `timeout` — the shape that most invites the wrong
+diagnosis — and it WAS diagnosed wrongly both times it appeared: once as a provider-wide outage (on
+which "gate serially" was adopted, the right rule for the wrong reason), once as provider drain.
+`cause=provider-locked` names it, `classify_provider_failure` checks it first, and the timeout branch
+asks the classifier before reporting a bare timeout, since a call killed while blocked on a lock is
+not a call that overran its budget. In firstmate's record it stays `failure_cause: other` rather than
+borrowing `provider-unreachable`, which would reinstate the wrong diagnosis one layer down. Four properties keep that honest, each one a defect that used to fail toward "looks fine":
 a hook's `hooks.json` budget must exceed `GATE_CALL_TIMEOUT` plus headroom
 (`scripts/gate_timeouts.py`, asserted at runtime and in the suite — a 120s hook around a 300s call
 was killed before it could answer and read for a day as a model size ceiling), and that headroom is

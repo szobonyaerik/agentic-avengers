@@ -280,6 +280,21 @@ def call_opencode(model, system, user):
     except FileNotFoundError as exc:
         raise GateError("provider-not-found", "opencode CLI not found on PATH", str(exc)) from exc
     if result.timed_out:
+        # A timeout is a symptom, and local state-lock contention wears it (issue #50): a call that
+        # BLOCKS on the CLI's own SQLite lock is killed by the budget, so the lock message only ever
+        # reaches stderr. Reported as a bare `timeout` it names the provider for a file lock on the
+        # operator's own disk — the shape that most invites the wrong diagnosis, and the one that
+        # WAS diagnosed wrongly both times it appeared. The classifier is asked first, and only a
+        # lock overrides the timeout: every other cause it could return would be a guess about a
+        # call that never finished.
+        blocked = classify_provider_failure(f"{result.stderr}\n{result.stdout}")
+        if blocked == "provider-locked":
+            raise GateError(
+                blocked,
+                f"opencode blocked on its local state lock and was killed after "
+                f"{result.elapsed:.1f}s of its {budget}s budget",
+                result.stderr,
+            )
         raise GateError(
             "timeout",
             f"opencode exceeded its {budget}s budget and its process group was killed after "
