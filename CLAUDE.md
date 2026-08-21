@@ -657,7 +657,11 @@ either. It is deliberately **not** applied to the refusals that never reached a 
 record their near-zero latency on purpose. `GATE_MIN_LATENCY_MS=0` disables it for a local or
 in-process model, and says so on stderr every call rather than quietly doing nothing. **Break-glass**
 (`GATE_BYPASS="reason"`) is logged to `gate-overrides.log`, shown visibly, and recorded in
-`handover.md` — never silent.
+`handover.md` — never silent. It is also **scopable**: `GATE_BYPASS` alone waives every gate the run
+reaches, which is how a bypass aimed at the spec gate's subprocess check also waived a cross-family
+NO-GO in the same run; `GATE_BYPASS_GATES="<gate> <gate>"` limits it to exactly those, refuses
+anything else with the blocking exit and no log line, and matches names exactly, since a prefix would
+reinstate the leak one level down (issue #59).
 
 **The feature-close ship gate (`no-mistakes`) is the one sanctioned same-family exception.** It runs
 once per feature — after the last phase is verified and the e2e suite is written — and covers what no

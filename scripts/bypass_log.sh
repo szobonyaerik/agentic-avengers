@@ -10,6 +10,16 @@
 #   usage: bypass_log.sh <gate-name> [finding-id] [waived-by]
 #          bypass_log.sh --gates "<gate> <gate> …"      (gate_ci.sh's multi-gate CI bypass)
 #
+# SCOPING (issue #59). `$GATE_BYPASS` is one switch, so a break-glass aimed at one gate also waived
+# every other gate reached in the same run — a spec-gate bypass meant for the subprocess check also
+# waived a cross-family NO-GO. Setting `$GATE_BYPASS_GATES` to a space- or comma-separated list of
+# gate names limits the override to exactly those; a gate outside it is REFUSED (exit 2, the same
+# blocking code an unlogged override uses, which every caller already fails closed on) and nothing
+# is written. Matching is EXACT: `spec-gate` does not cover `spec-gate-requirement-cap`, because
+# prefix matching would reinstate the same leak one level down. A `--gates` list needs EVERY name
+# allowed, so a scoped override cannot waive a gate it did not name. Unset, the semantics are
+# unchanged — scoping is opt-in, so no existing caller breaks.
+#
 # Requires $GATE_BYPASS (the reason) and $CLAUDE_PROJECT_DIR.
 #
 # Record grammar — one line per override, tab-separated, REASON ALWAYS LAST because it is the only
@@ -35,6 +45,24 @@ LOG="$ROOT/gate-overrides.log"
 who="${WAIVED_BY:-$(git -C "$ROOT" config user.email 2>/dev/null || whoami)}"
 when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 reason="$(bypass_reason_oneline "${GATE_BYPASS:-}")"
+# The scope check happens BEFORE the append: a refused override must leave no record at all, since a
+# line in this log is the assertion that a gate WAS overridden.
+if [ -n "${GATE_BYPASS_GATES:-}" ]; then
+  allowed=" $(printf '%s' "$GATE_BYPASS_GATES" | tr ',' ' ' | tr -s ' ') "
+  for name in $GATE; do
+    case "$allowed" in
+      *" $name "*) ;;
+      *)
+        echo "✗ NOT BYPASSED: gate '$name' is not in GATE_BYPASS_GATES." >&2
+        echo "  GATE_BYPASS_GATES=\"${GATE_BYPASS_GATES}\" scopes this override to those gates" >&2
+        echo "  and to no others, so '$name' still fails and nothing was logged. Add it to the" >&2
+        echo "  list (names match exactly, so a prefix does not cover it), or unset" >&2
+        echo "  GATE_BYPASS_GATES to override every gate this run reaches." >&2
+        exit 2
+        ;;
+    esac
+  done
+fi
 if [ "$MULTI" -eq 1 ]; then scope="gates:$GATE"; else scope="gate:$GATE"; fi
 [ -n "$FINDING" ] && scope="$scope$(printf '\t')finding:$FINDING"
 # The append is the whole guarantee, so its failure is this script's failure. An unwritable log (a

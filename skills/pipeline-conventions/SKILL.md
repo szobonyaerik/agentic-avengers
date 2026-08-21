@@ -913,6 +913,16 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
     the case that proves why: `waiver_reason` is a JSON string whose content this pipeline explicitly
     does **not** judge, so nothing stops it being two lines. `handover.md` and the retrospective sweep
     *read* the log; only `bypass_log.sh` writes it.
+  - **An override is scoped to the gates it names, when it says so.** `GATE_BYPASS` is one switch,
+    so unset it waives every gate the run reaches - a break-glass aimed at the spec gate's
+    subprocess check also waived a cross-family NO-GO in the same run, audited but far wider than
+    intended. `GATE_BYPASS_GATES="<gate> <gate>"` limits it to exactly those; a gate outside the
+    list is **refused** (exit 2, the blocking code every caller already fails closed on) and
+    **nothing is logged**, because a line in this log is the assertion that a gate WAS overridden.
+    Names match exactly - `spec-gate` does not cover `spec-gate-requirement-cap`, since prefix
+    matching would reinstate the same leak one level down - and a `--gates` CI bypass needs every
+    failing gate allowed, so a scoped override cannot waive one it did not name. Opt-in: unset, the
+    semantics are unchanged.
   - This is deliberately **structural, not a rule to remember**. A sentence claiming every writer
     behaves cannot enforce that they do — a single writer path can, and each new caller inherits the
     format instead of re-implementing it.
