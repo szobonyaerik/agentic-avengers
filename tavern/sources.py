@@ -612,6 +612,8 @@ def focus_window(window: str, terminal_app: str = "") -> dict:
     try:
         session, _, win_part = window.partition(":")
         if _tmux("has-session", "-t", "=" + session).returncode != 0:
+            # No `attach_cmd`: the base session is gone, so there is nothing to attach to and
+            # printing a command that cannot work would be worse than printing none.
             return {"ok": False,
                     "error": f"tmux session '{session}' no longer exists — the fleet restarted?"}
         # Field lesson: grouped sessions die with their group's last window, and with zero
@@ -633,11 +635,15 @@ def focus_window(window: str, terminal_app: str = "") -> dict:
                     "attach_cmd": attach_cmd}
         tty = _client_tty_for_session(viewer)
         if tty:
+            # Every return that can name a viewer carries `attach_cmd` (issue #60). The success
+            # paths were the only ones without it, and the case that needs it most is the degraded
+            # success below: the viewer exists, its terminal could not be raised, and the hint tells
+            # the operator to bring it forward themselves — with no command to do it with.
             if _raise_terminal_by_tty(terminal_app, tty):
                 return {"ok": True, "method": f"raised this character's own terminal ({tty})",
-                        "window": window}
+                        "window": window, "attach_cmd": attach_cmd}
             return {"ok": True, "method": "switched this character's viewer session",
-                    "window": window,
+                    "window": window, "attach_cmd": attach_cmd,
                     "hint": "its terminal window exists but could not be raised — set "
                             "terminal_app in tavern.toml, or bring it forward yourself"}
         if sys.platform == "darwin":
@@ -648,7 +654,7 @@ def focus_window(window: str, terminal_app: str = "") -> dict:
             )
             if osa.returncode == 0:
                 return {"ok": True, "method": "opened this character's own Terminal window",
-                        "window": window}
+                        "window": window, "attach_cmd": attach_cmd}
         return {"ok": False,
                 "error": "viewer session is ready but no terminal could be opened for it",
                 "attach_cmd": attach_cmd}

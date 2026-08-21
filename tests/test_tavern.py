@@ -429,6 +429,23 @@ def test_each_character_gets_its_own_viewer_session(monkeypatch):
         _assert_viewer_sessions_are_independent(sp, sources)
 
 
+def _focus_with_raise(sources, window: str, *, raised: bool) -> dict:
+    """`focus_window` with a client tty present and the terminal raise forced either way.
+
+    Headless, neither branch is reachable: no tty is attached to a viewer nobody opened. Both are
+    ordinary outcomes on a real Mac, and both used to answer without `attach_cmd`.
+    """
+    real_tty = sources._client_tty_for_session
+    real_raise = sources._raise_terminal_by_tty
+    sources._client_tty_for_session = lambda _s: "/dev/ttys009"
+    sources._raise_terminal_by_tty = lambda _app, _tty: raised
+    try:
+        return sources.focus_window(window)
+    finally:
+        sources._client_tty_for_session = real_tty
+        sources._raise_terminal_by_tty = real_raise
+
+
 def _assert_viewer_sessions_are_independent(sp, sources):
     """The body of the viewer test, under an already-isolated private tmux server."""
     def tmux(*a):
@@ -462,6 +479,16 @@ def _assert_viewer_sessions_are_independent(sp, sources):
         assert gone["ok"] is False and "no longer exists" in gone["error"]
         for r in (r1, r2):
             assert r["attach_cmd"].startswith("tmux attach -t gate-fleet-")
+        # EVERY return that can name a viewer carries `attach_cmd` (issue #60). The success path
+        # was the one that omitted it, and the case that needs it most is a degraded success: the
+        # viewer exists, its terminal could not be raised, and the hint tells the operator to bring
+        # it forward themselves - with no command to do it with.
+        raised = _focus_with_raise(sources, "fleet:mate", raised=True)
+        assert raised["ok"] is True
+        assert raised["attach_cmd"] == "tmux attach -t gate-fleet-mate"
+        degraded = _focus_with_raise(sources, "fleet:mate", raised=False)
+        assert degraded["ok"] is True and "hint" in degraded
+        assert degraded["attach_cmd"] == "tmux attach -t gate-fleet-mate"
     finally:
         # Never kill-server in a test by default: if isolation ever regresses, killing only the
         # named fixture sessions costs the operator two ghost sessions, not their entire fleet.
