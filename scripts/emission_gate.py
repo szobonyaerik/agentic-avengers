@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """A producer that stopped producing must not read as a clean result.
 
-A fact about a phase is emitted by the stage that observes it, and when that stage stops emitting,
-the record simply holds nothing - which is also what a phase with nothing to report holds. Neither
-absence below was detectable for exactly that reason.
+Two facts about a phase are emitted by a stage as it runs, and both went silently missing across two
+measured phases of one build. Neither absence was detectable, because in both cases the record simply
+held nothing, and nothing is what a phase with nothing to report also holds.
 
 * **Defects.** Phase 12 recorded 1 defect against at least 5 it produced; phase 13 recorded 0 against
   at least 2. Four of phase 12's and both of phase 13's were found by the Verifier BY EXECUTING CODE
   and described in full in the phase status log and the PR body. `found_by` is the one field in
   firstmate's record that cannot be reconstructed afterwards, so a record written by hand at retro
   time is a measurement of the operator's attention rather than of the pipeline.
+* **The close stamp.** Issue #46 correctly moved `closed` from implementation-finish to landing.
+  Nothing emitted it at landing, so a premature stamp was replaced by no stamp: phase 12 landed on
+  2026-08-21T11:15:08Z with `closed`, `elapsed_minutes`, `tests_before`, `tests_after` and
+  `verification_attempts` all still null, and all six were entered by hand hours later. The
+  hypothesis measuring this reads "zero close-correction overrides", which looked like success and
+  actually described a producer that had stopped.
+
 The emissions themselves live where the fact is decided (`pipeline_metrics.py`, driven from
-`hook_verifier.sh` on every verdict write). THIS
+`hook_verifier.sh` on every verdict write and from `hook_phase_close.sh` when a commit lands). THIS
 module is the other half: the check that makes their absence visible. It decides nothing about
 whether a phase is good — only whether the record says as much as the phase's own artifacts do.
 
@@ -32,6 +39,11 @@ whether a phase is good — only whether the record says as much as the phase's 
 * **A phase with no metrics record is NOT CHECKED**, and says so on stderr. That is the standing
   state of any repository with no firstmate writer configured, and blocking there would make a
   measurement layer into a delivery outage.
+
+`close` asks whether a LANDED phase carries a null `closed`. It reads only phases that already have
+a record of this project, for the same reason: a phase this pipeline never measured has no producer
+to have stopped. It cannot tell a phase closed under a cap from one closed cleanly, and it says
+nothing about whether the value stamped is correct — only that something stamped one.
 
 Exit codes follow this repository's rule that every stop names which: **0** clean or not checked,
 **1** the obligation (the record says less than the artifacts do), **2** undecidable — a verdict that
@@ -173,20 +185,73 @@ def sweep_defects(root: Path) -> tuple[int, list[str]]:
     return worst, lines
 
 
+def landed_phases(root: Path) -> list[Path]:
+    """Every phase directory under `root` that has landed — its artifacts all committed."""
+    found = []
+    for handover in sorted(root.glob("docs/features/*/phases/*/handover.md")):
+        phase_dir = handover.parent
+        if metrics.phase_landed(phase_dir) is True:
+            found.append(phase_dir)
+    return found
+
+
+def check_close(root: Path) -> tuple[int, list[str]]:
+    """A landed phase must not carry a null `closed`.
+
+    Read the trap this exists for before narrowing it: the metric that watched this reads "count of
+    overrides correcting a close stamp", and it reported zero — not because the stamp got correct,
+    but because no stamp was emitted at all. A check that only looks for a WRONG value can never see
+    a producer that stopped.
+    """
+    problems: list[str] = []
+    checked = 0
+    for phase_dir in landed_phases(root):
+        try:
+            record = _record(str(phase_dir))
+        except Undecidable as exc:
+            return UNDECIDABLE, [str(exc)]
+        if record is None:
+            continue
+        checked += 1
+        if record.get("closed") is None:
+            problems.append(
+                f"{phase_dir.relative_to(root)}: this phase has LANDED and its record still carries "
+                f"closed=null. Nothing emitted the close stamp, so `elapsed_minutes`, `tests_after` "
+                f"and the phase's headline cost are missing too."
+            )
+    if problems:
+        problems.append(
+            "  Stamp it where it lands: pipeline_metrics.py phase-close <phase-dir>, which "
+            "`scripts/hook_phase_close.sh` runs after the commit that lands the phase."
+        )
+        return GAP, problems
+    if checked == 0:
+        return CLEAN, [
+            "NOT CHECKED: no landed phase of this project has a metrics record — nothing measured "
+            "these phases, so nothing here can say the measurement is missing."
+        ]
+    return CLEAN, []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     defects = sub.add_parser("defects", help="the record carries every defect this phase concluded")
     defects.add_argument("phase_dir", nargs="?", help="one phase; omit with --root to sweep")
     defects.add_argument("--root", default=None, help="sweep the phases this change touches")
+    close = sub.add_parser("close", help="no landed phase carries a null `closed`")
+    close.add_argument("--root", default=".")
     args = parser.parse_args(argv)
 
-    if args.phase_dir:
-        code, lines = check_defects(args.phase_dir)
-    elif args.root:
-        code, lines = sweep_defects(Path(args.root).resolve())
+    if args.command == "defects":
+        if args.phase_dir:
+            code, lines = check_defects(args.phase_dir)
+        elif args.root:
+            code, lines = sweep_defects(Path(args.root).resolve())
+        else:
+            parser.error("defects needs a phase directory or --root")
     else:
-        parser.error("defects needs a phase directory or --root")
+        code, lines = check_close(Path(args.root).resolve())
     for line in lines:
         print(line, file=sys.stderr)
     return code

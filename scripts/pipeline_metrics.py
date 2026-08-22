@@ -687,6 +687,13 @@ def record_phase_close(phase_dir: str) -> bool:
     Refuses the write while `phase_dir` is not yet landed (issue #46) — a producer that cannot
     observe landing must not claim it, and this one now can. Called at the wrong moment, this is a
     no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on why.
+
+    CONVERGES on a phase already closed, writing nothing at all. Two producers now stamp the close —
+    `hook_phase_close.sh` on every commit that touches the phase, and the orchestrator's own
+    `phase-close` — and a phase directory is routinely committed again after it closed. A closed
+    record SEALS its measurements, so a second stamp is not a repeat, it is drift: firstmate refuses
+    it outright, and this would spend a refusal on every later commit to say what the record already
+    says. Producing the same answer twice must cost nothing and change nothing.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
@@ -697,6 +704,8 @@ def record_phase_close(phase_dir: str) -> bool:
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
     record = sink.show(phase) or {}
+    if record.get("closed") is not None:
+        return True
     closed = _now()
     fields: dict[str, object] = {"closed": closed}
     counted = count_tests()

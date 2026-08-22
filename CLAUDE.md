@@ -960,6 +960,21 @@ message is invisible to it — it would have caught **four** of phase 12's five,
 other stage's conclusions are compared to the record at all. It is a floor, never an equality: one
 finding may describe two defects and still pass.
 
+**Something emits the close stamp at landing.** Issue #46 correctly moved `closed` from
+implementation-finish to landing; nothing emitted it *there*, so a premature stamp was replaced by
+**no stamp**. Phase 12 landed at 2026-08-21T11:15:08Z with `closed`, `elapsed_minutes`,
+`tests_before`, `tests_after` and `verification_attempts` all still null, and firstmate entered all
+six by hand hours later. `commands/avenger-run.md` §5 asked the orchestrator to run `phase-close`
+after the commit — an instruction with no mechanism, issue #69's class exactly, and it said outright
+that *"no hook can see this commit land"*. One can: **`scripts/hook_phase_close.sh` is a `PostToolUse`
+hook on `Bash`** that stamps every phase directory the commit it just ran actually touched.
+`record_phase_close` still refuses the write while anything under the phase is uncommitted, and now
+**converges** rather than re-stamping a phase already closed. `emission_gate.py close` fails a
+**landed phase carrying a null `closed`**. Note the trap it exists for: the hypothesis watching this
+counted *overrides correcting a close stamp* and reported **zero**, which read as success and
+described a producer that had stopped — **a check that only looks for a wrong value can never see an
+absent one.**
+
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode
 adapter with `python3 scripts/sync_opencode.py`. Never hand-edit `.opencode/` — `agents/` and

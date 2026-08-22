@@ -43,6 +43,12 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_phase_close.sh\"", "timeout": 120 }
+        ]
+      },
+      {
         "matcher": "Read|Skill",
         "hooks": [
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_skill_load.sh\"", "timeout": 30 }

@@ -201,6 +201,27 @@ elif [ "$emission_rc" -ne 0 ]; then
   record_fail "defects-undecidable"
 fi
 
+# 1bh) The close stamp — a phase that has LANDED does not carry a null `closed`. Issue #46 moved the
+#      stamp from implementation-finish to landing and nothing emitted it there, so the premature
+#      stamp was replaced by NO stamp: one phase landed with `closed`, `elapsed_minutes`,
+#      `tests_before`, `tests_after` and `verification_attempts` all null, and all six were entered
+#      by hand hours later. Note what watched it and reported success — the hypothesis counted
+#      OVERRIDES CORRECTING a close stamp and found none, which is what a producer that stopped
+#      looks like. A check that only looks for a WRONG value can never see an absent one.
+#
+#      `scripts/hook_phase_close.sh` is the emitter; this is what makes a missed stamp visible. Only
+#      phases that already have a metrics record of this project are read — a phase this pipeline
+#      never measured has no producer to have stopped — so a repository with no writer configured is
+#      NOT CHECKED and says so.
+echo "• close stamp: no landed phase carries a null \`closed\`"
+python3 "$SCRIPT_DIR/emission_gate.py" close --root "$ROOT"
+close_rc=$?
+if [ "$close_rc" -eq 1 ]; then
+  record_fail "close-stamp-missing"
+elif [ "$close_rc" -ne 0 ]; then
+  record_fail "close-stamp-undecidable"
+fi
+
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
 #      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY

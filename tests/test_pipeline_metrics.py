@@ -1406,3 +1406,31 @@ def test_re_emitting_the_same_findings_converges(stub_sink):  # noqa: F811
     metrics.record_verifier_findings(str(phase_dir), str(verdict))
 
     assert len(stored(store, "12")["defects"]) == 1
+
+
+def test_closing_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
+    """A closed record SEALS its measurements, so a second stamp is drift, not a repeat.
+
+    The emission points fire more than once by design — `hook_phase_close.sh` on every commit that
+    touches the phase, and the orchestrator's own `phase-close` — and firstmate's producer contract
+    is that repetition CONVERGES. Re-stamping would ask a sealed record to change a value it already
+    holds, which the real writer refuses outright.
+    """
+    project, store, log = stub_sink
+    git_init(project)
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text("{}", encoding="utf-8")
+    metrics.record_phase_open(str(phase_dir))
+    (phase_dir / "handover.md").write_text("landed", encoding="utf-8")
+    git_land(project, "land")
+    assert metrics.record_phase_close(str(phase_dir)) is True
+    closed = stored(store, "08")["closed"]
+    before = len([call for call in read_calls(log) if call[:1] == ["set"]])
+
+    assert metrics.record_phase_close(str(phase_dir)) is True
+
+    assert stored(store, "08")["closed"] == closed
+    assert len([call for call in read_calls(log) if call[:1] == ["set"]]) == before, (
+        "a phase already closed issues no second write at all"
+    )
