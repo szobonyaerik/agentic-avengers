@@ -1036,6 +1036,23 @@ carries most of the analytical value through `found_by`, `real`, `stage_reached`
 one thing genuinely missing is the attempt index. Deferred as **`fm-metrics-attempt-detail`** — a
 schema change is firstmate's decision, not this pipeline's.
 
+**An override records which CLASS of correction it is.** One number used to hold three species — a
+**corrupted measurement** (a value the record held was wrong), an **account corrected because better
+evidence arrived** (nothing measured was wrong, the story was), and an **authorised waiver** (nothing
+is wrong at all, a rule was deliberately set aside). One measured phase carried two self-corrections
+plus a captain waiver, the next carried a single break-glass, and the metric counted "any override
+naming a correction", so the three were one number. `scripts/override_classes.py` owns the closed set
+and `count <phase>` counts each separately.
+
+The class rides as a **tag on the override's own `scope`** — `waiver: gates run on Claude for the
+rest of the phase` — because firstmate's schema is CLOSED at both levels and a new key is their
+decision, while `scope` is a free string their `validate` already accepts. **Nothing is inferred**: an
+override that states no class is `unclassified`, its own line, never folded into one of the three.
+Reading the prose is how the conflation happened, since a correction and a waiver both say
+"corrected" somewhere. `override_classes.py tag` refuses a class the set does not know; a fourth
+species is a deliberate edit to `CLASSES`. It is **the metric, not a gate** — nothing fails a phase
+over an unclassified override.
+
 **`found_by` is the field the record exists for.** Tracing one pipeline's defects to it showed the
 running suite caught 3 of 15 genuine defects while mutation, probes, review and direct execution
 caught the rest. The stages a script cannot observe record their own catches:

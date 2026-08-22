@@ -975,6 +975,22 @@ counted *overrides correcting a close stamp* and reported **zero**, which read a
 described a producer that had stopped — **a check that only looks for a wrong value can never see an
 absent one.**
 
+**An override records which CLASS of correction it is.** One number held three species: a
+**corrupted measurement**, an **account corrected because better evidence arrived**, and an
+**authorised waiver**. Phase 12 carried two firstmate self-corrections plus a captain waiver; phase
+13 carried a single deliberate break-glass, and the metric could not tell them apart — it has been
+named in five consecutive retros. `scripts/override_classes.py` names the three, and the class rides
+as a **tag on the override's own `scope`** (`waiver: …`), because **firstmate's schema is closed and
+this repo owns no part of it** (§6d): a new key is their decision, and `scope` is a field `validate`
+already accepts. `override_classes.py count` counts each class separately and reports an untagged
+override as **`unclassified`** rather than folding it into any of them — the same rule as everywhere
+else here, that an absence is named rather than resolved to the nearest answer. **Nothing is
+inferred from the prose**, which is exactly where the conflation came from: phase 12's account
+corrections open with the word "CORRECTED", and a text match is what put them in the same number as
+a captain's waiver. `tag` refuses a class the set does not know, naming what was invented; a fourth
+species is a deliberate edit to `CLASSES`. **It is the metric, not a gate** — nothing fails a phase
+over an unclassified override; what it will not do is report three species as one number again.
+
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode
 adapter with `python3 scripts/sync_opencode.py`. Never hand-edit `.opencode/` — `agents/` and
