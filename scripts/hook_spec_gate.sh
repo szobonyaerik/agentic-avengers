@@ -142,12 +142,14 @@ if [ "$cached" -eq 1 ]; then
   esac
 fi
 
-# The body reached this line, so it is not the one the cache already holds: a new round. Measured
-# here — its size and its requirement count — because a spec that grew 25k -> 51k across rounds it
-# was rewritten to satisfy a gate is the ratchet, and nothing recorded it while it was happening.
-# `record_spec_round` is idempotent by CONTENT, so several spec-write hooks cannot double-count it;
-# it also fixes the round number the gate calls below record as their attempt.
-python3 "$SD/pipeline_metrics.py" spec-round "$FILE" >/dev/null 2>&1 || true
+# The round is NOT measured here. It used to be — the body reached this line, so it was counted
+# before either paid call — and that made a gate that never answered indistinguishable from one that
+# did: a provider refusing for billing still counted as a round. A round is one COMPLETED gate
+# evaluation (scripts/pipeline_metrics.py, `record_spec_round`, which owns the definition and
+# refuses a call that names no verdict), so it is recorded in the two branches below that HAVE one.
+# The gate calls between here and there still report the round in flight: `_spec_round` compares the
+# body on disk against the one last counted, so a call belongs to `closed + 1` until its verdict
+# lands.
 
 # Diff-scoped re-gate: only for a spec that was approved AND has reached the implementer. A spec
 # still in draft has no settled text to protect, so it is always gated whole.
@@ -474,6 +476,11 @@ if [ "$decided" -eq 0 ]; then
   fi
   python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate APPROVED "$REPORT" "$GATE_ATTRIBUTION" \
     >/dev/null 2>&1
+  # A completed evaluation, so it is a round. Measured here — its size and its requirement count —
+  # because a spec that grew 25k -> 51k across rounds it was rewritten to satisfy a gate is the
+  # ratchet, and nothing recorded it while it was happening. Idempotent by CONTENT, so a re-gate
+  # over an unchanged body cannot double-count it.
+  python3 "$SD/pipeline_metrics.py" spec-round "$FILE" --verdict approved >/dev/null 2>&1 || true
   echo "spec-gate: APPROVED ($FILE)" >&2
   exit 0
 fi
@@ -483,6 +490,9 @@ fi
 python3 "$SD/spec_gate_state.py" set "$FILE" blocked
 python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate BLOCKED "$REPORT" "$GATE_ATTRIBUTION" \
   >/dev/null 2>&1
+# A block is a completed evaluation, so it is a round — and the ratchet this measures is built out
+# of blocks. Recorded before the break-glass hand-off below, which ends this hook with `exec`.
+python3 "$SD/pipeline_metrics.py" spec-round "$FILE" --verdict blocked >/dev/null 2>&1 || true
 [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
 echo "spec-gate: BLOCKED — route back to avenger-spec-writer" >&2
 echo "--- blocking findings (the closed set: missing requirement, contradiction, untestable criterion, unhandled critical edge case) ---" >&2

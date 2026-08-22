@@ -947,13 +947,36 @@ drop every defect and look like a run that found none. An unwritable record make
 *block* rather than fail, so one timeout abandons the writer for that process: fail-open has to hold
 in wall clock, not just exit codes.
 
+**A spec round has ONE definition, and it is recorded at the GATE.** It used to be measured at the
+writer — `hook_spec_gate.sh` counted the body the moment it got past the cache check, **before either
+paid call** — so a gate that never answered was indistinguishable from one that did. Phase 12 ended
+with three counting conventions in one phase, including a spec whose rounds were structurally
+invisible because it was authored through a shell heredoc and fired no gate at all; phase 13 added
+two more, a re-gate after an amendment and an attempt that could not run when a provider balance ran
+out. **A gate that never ran is not a round by any definition anyone had written down, and nothing
+said so** — which quietly weakens every phase-to-phase comparison the improvement method depends on.
+
+**A spec round is one COMPLETED gate evaluation of a spec body: a run of the spec gate that reached
+a verdict.** An approval and a block are both rounds — a block is a completed evaluation, and the
+ratchet this measures is built out of blocks. Three things are not: a gate that **never ran** (a
+spec written outside the gate's trigger has **zero** rounds, which is the correct answer rather than
+a third convention); a gate that ran and **reached no verdict** (a billing refusal, an unreachable
+provider, a killed hook — those stay in `gate_calls[]` with their `failure_cause`, which is where a
+failed call belongs); and a **replayed verdict** over an unchanged body, where nothing was evaluated.
+The definition lives in `record_spec_round`, which **refuses a call that names no verdict** — a
+future caller wired one line earlier cannot reintroduce the gap by being careless, and the CLI's
+`--verdict` is required rather than optional. Because the round is now recorded after the calls that
+produced it, `_spec_round` reports the round **in flight** — it compares the body on disk against the
+one last counted — so a gate call still records the attempt it belongs to.
+
 **Emission attaches to the fact, never to the caller.** `record_gate_call` lives in
 `gate_runner.py` — the one point every gate call passes — and reads its stage off the rubric, so a
 new gate is instrumented by existing. `record_spec_round` is idempotent by **content** (it reuses the
 rebuildable gate cache), so any caller may report any spec write. A seeded skill requirement never
 overwrites an observed load, in either hook order. Points: gate calls + causes (`gate_runner.py`) ·
 a harness-killed gate (the hook's own signal trap, since the runner it killed cannot speak) · spec
-rounds, byte size and requirement count (`hook_spec_gate.sh`) · the spec gate's own arithmetic —
+rounds, byte size and requirement count (`hook_spec_gate.sh`, in the two branches that HAVE a
+verdict) · the spec gate's own arithmetic —
 observations in, blocking out, notes out (`spec_gate_triage.py`, where the verdict is derived) ·
 the verification attempt **count** (**derived from `verdict.json` and its
 archives, never counted per invocation** — verification runs several commands inside one attempt, and one

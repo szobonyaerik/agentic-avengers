@@ -20,6 +20,13 @@ whatever order the two hooks run in.
 firstmate's own schema, which is a claim the double cannot make.
 """
 
+# Pytest fixtures are IMPORTED here and then named as test arguments, which ruff reads as a
+# redefinition on every single test. The per-site suppressions below only ever covered a
+# ONE-LINE signature; `ruff format` splits a long one and the trailing comment stops applying
+# to the argument it was about. One file-level suppression instead, so a reformat cannot
+# silently turn this file red again.
+# ruff: noqa: F811
+
 import json
 import os
 import re
@@ -79,9 +86,10 @@ def test_every_shipped_rubric_names_the_stage_that_judges_against_it():
     shipped = {p.name for p in (ROOT / "prompts").glob("*.md")} - {"project-setup.md"}
 
     assert set(metrics.RUBRIC_STAGE) == shipped
-    assert metrics.RUBRIC_STAGE["spec-gate-observe.md"] != metrics.RUBRIC_STAGE[
-        "spec-gate-triage.md"
-    ]
+    assert (
+        metrics.RUBRIC_STAGE["spec-gate-observe.md"]
+        != metrics.RUBRIC_STAGE["spec-gate-triage.md"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -101,7 +109,13 @@ def test_a_failure_records_which_failure_it_was(cause, expected):
 
 @pytest.mark.parametrize(
     ("verdict", "expected"),
-    [("GO", "GO"), ("PASS", "GO"), ("review", "REVIEW"), ("NO-GO", "NO-GO"), ("", "NO-GO")],
+    [
+        ("GO", "GO"),
+        ("PASS", "GO"),
+        ("review", "REVIEW"),
+        ("NO-GO", "NO-GO"),
+        ("", "NO-GO"),
+    ],
 )
 def test_a_reached_verdict_carries_no_failure_cause(verdict, expected):
     assert metrics._outcome(verdict, None) == (expected, None)
@@ -122,8 +136,12 @@ def test_a_path_with_no_phase_resolves_to_none():
 
 
 def test_the_stage_is_read_off_the_rubric_it_judges_against():
-    assert metrics.stage_from_rubric("prompts/spec-gate-observe.md") == "spec-gate-observe"
-    assert metrics.stage_from_rubric("prompts/spec-gate-triage.md") == "spec-gate-triage"
+    assert (
+        metrics.stage_from_rubric("prompts/spec-gate-observe.md") == "spec-gate-observe"
+    )
+    assert (
+        metrics.stage_from_rubric("prompts/spec-gate-triage.md") == "spec-gate-triage"
+    )
     assert metrics.stage_from_rubric(None) == "unknown"
 
 
@@ -139,7 +157,8 @@ def test_the_phase_in_flight_is_the_most_recently_touched_one(stub_sink):  # noq
 def test_the_observing_stage_is_the_one_live_subagent(stub_sink):  # noqa: F811
     project, _, _ = stub_sink
     (project / ".agent-activity.jsonl").write_text(
-        json.dumps({"event": "SubagentStart", "agent_type": "x:avenger-verifier"}) + "\n",
+        json.dumps({"event": "SubagentStart", "agent_type": "x:avenger-verifier"})
+        + "\n",
         encoding="utf-8",
     )
 
@@ -149,8 +168,10 @@ def test_the_observing_stage_is_the_one_live_subagent(stub_sink):  # noqa: F811
 def test_an_ambiguous_moment_is_the_main_thread(stub_sink):  # noqa: F811
     project, _, _ = stub_sink
     (project / ".agent-activity.jsonl").write_text(
-        json.dumps({"event": "SubagentStart", "agent_type": "avenger-verifier"}) + "\n"
-        + json.dumps({"event": "SubagentStart", "agent_type": "avenger-breaker"}) + "\n",
+        json.dumps({"event": "SubagentStart", "agent_type": "avenger-verifier"})
+        + "\n"
+        + json.dumps({"event": "SubagentStart", "agent_type": "avenger-breaker"})
+        + "\n",
         encoding="utf-8",
     )
 
@@ -164,12 +185,14 @@ def test_a_spec_round_records_its_size_and_its_requirements(stub_sink):  # noqa:
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n- R8.1.2 two\n- R8.1.1 again\n")
 
-    assert metrics.record_spec_round(str(spec)) == 1
+    assert metrics.record_spec_round(str(spec), verdict="approved") == 1
 
     entry = stored(store, "08")["specs"][0]
     assert entry["id"] == "8.1"
-    assert entry["requirements"] == 2          # ids, not mentions
-    assert entry["bytes_by_round"] == [len(spec.read_text().split("---\n", 2)[2].encode())]
+    assert entry["requirements"] == 2  # ids, not mentions
+    assert entry["bytes_by_round"] == [
+        len(spec.read_text().split("---\n", 2)[2].encode())
+    ]
 
 
 def test_the_same_body_reported_twice_is_one_round(stub_sink):  # noqa: F811
@@ -177,8 +200,8 @@ def test_the_same_body_reported_twice_is_one_round(stub_sink):  # noqa: F811
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
-    metrics.record_spec_round(str(spec))
-    metrics.record_spec_round(str(spec))
+    metrics.record_spec_round(str(spec), verdict="approved")
+    metrics.record_spec_round(str(spec), verdict="approved")
 
     assert len(stored(store, "08")["specs"][0]["bytes_by_round"]) == 1
 
@@ -186,10 +209,12 @@ def test_the_same_body_reported_twice_is_one_round(stub_sink):  # noqa: F811
 def test_a_rewritten_spec_is_a_new_round_and_the_growth_is_visible(stub_sink):  # noqa: F811
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
-    metrics.record_spec_round(str(spec))
+    metrics.record_spec_round(str(spec), verdict="approved")
 
-    spec.write_text("---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8")
-    assert metrics.record_spec_round(str(spec)) == 2
+    spec.write_text(
+        "---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8"
+    )
+    assert metrics.record_spec_round(str(spec), verdict="approved") == 2
 
     record = stored(store, "08")
     rounds = record["specs"][0]["bytes_by_round"]
@@ -202,7 +227,7 @@ def test_a_frontmatterless_file_records_nothing(stub_sink):  # noqa: F811
     spec = write_spec(project, 8, "8.1", "x")
     spec.write_text("no frontmatter here", encoding="utf-8")
 
-    assert metrics.record_spec_round(str(spec)) is None
+    assert metrics.record_spec_round(str(spec), verdict="approved") is None
 
 
 def test_a_round_the_record_refused_is_retried_not_swallowed(stub_sink, monkeypatch):  # noqa: F811
@@ -214,14 +239,16 @@ def test_a_round_the_record_refused_is_retried_not_swallowed(stub_sink, monkeypa
     """
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
-    metrics.record_spec_round(str(spec))
+    metrics.record_spec_round(str(spec), verdict="approved")
 
-    spec.write_text("---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8")
+    spec.write_text(
+        "---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8"
+    )
     monkeypatch.setenv("DOUBLE_REFUSE", "add")
-    assert metrics.record_spec_round(str(spec)) is None
+    assert metrics.record_spec_round(str(spec), verdict="approved") is None
 
     monkeypatch.delenv("DOUBLE_REFUSE")
-    assert metrics.record_spec_round(str(spec)) == 2
+    assert metrics.record_spec_round(str(spec), verdict="approved") == 2
 
     rounds = stored(store, "08")["specs"][0]["bytes_by_round"]
     assert len(rounds) == 2 and rounds[1] > rounds[0]
@@ -235,9 +262,13 @@ def test_a_gate_call_records_its_model_latency_and_verdict(stub_sink):  # noqa: 
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
     metrics.record_gate_call(
-        model="deepseek/deepseek-chat", model_family="deepseek",
-        rubric="prompts/spec-gate-observe.md", target=str(spec),
-        latency_ms=106_000, verdict="GO", provider="opencode",
+        model="deepseek/deepseek-chat",
+        model_family="deepseek",
+        rubric="prompts/spec-gate-observe.md",
+        target=str(spec),
+        latency_ms=106_000,
+        verdict="GO",
+        provider="opencode",
     )
 
     call = stored(store, "08")["gate_calls"][0]
@@ -252,8 +283,13 @@ def test_a_killed_gate_is_not_a_verdict(stub_sink):  # noqa: F811
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
     metrics.record_gate_call(
-        model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
-        latency_ms=143_000, cause="timeout", detail="killed after 143.0s", provider="opencode",
+        model="m",
+        rubric="prompts/spec-gate-observe.md",
+        target=str(spec),
+        latency_ms=143_000,
+        cause="timeout",
+        detail="killed after 143.0s",
+        provider="opencode",
     )
 
     call = stored(store, "08")["gate_calls"][0]
@@ -264,21 +300,36 @@ def test_a_killed_gate_is_not_a_verdict(stub_sink):  # noqa: F811
 def test_a_second_round_is_a_second_gate_call_not_an_overwrite(stub_sink):  # noqa: F811
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
-    metrics.record_spec_round(str(spec))
-    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
-                             latency_ms=1, verdict="NO-GO")
+    metrics.record_spec_round(str(spec), verdict="approved")
+    metrics.record_gate_call(
+        model="m",
+        rubric="prompts/spec-gate-observe.md",
+        target=str(spec),
+        latency_ms=1,
+        verdict="NO-GO",
+    )
 
     spec.write_text("---\nfeature: demo\n---\n- R8.1.1 rewritten\n", encoding="utf-8")
-    metrics.record_spec_round(str(spec))
-    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
-                             latency_ms=2, verdict="GO")
+    metrics.record_spec_round(str(spec), verdict="approved")
+    metrics.record_gate_call(
+        model="m",
+        rubric="prompts/spec-gate-observe.md",
+        target=str(spec),
+        latency_ms=2,
+        verdict="GO",
+    )
 
     calls = stored(store, "08")["gate_calls"]
-    assert [c["id"] for c in calls] == ["8.1-a1-spec-gate-observe", "8.1-a2-spec-gate-observe"]
+    assert [c["id"] for c in calls] == [
+        "8.1-a1-spec-gate-observe",
+        "8.1-a2-spec-gate-observe",
+    ]
 
 
 def test_a_call_outside_any_phase_records_nothing(stub_sink):  # noqa: F811
-    assert metrics.record_gate_call(model="m", rubric="r.md", target="/tmp/x.md") is False
+    assert (
+        metrics.record_gate_call(model="m", rubric="r.md", target="/tmp/x.md") is False
+    )
 
 
 def test_the_spec_path_wins_over_a_temp_bundle_target(stub_sink, monkeypatch):  # noqa: F811
@@ -287,8 +338,13 @@ def test_the_spec_path_wins_over_a_temp_bundle_target(stub_sink, monkeypatch):  
     spec = write_spec(project, 8, "8.3", "- R8.3.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(spec))
 
-    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-triage.md",
-                             target="/tmp/bundle.XXXX", latency_ms=5, verdict="GO")
+    metrics.record_gate_call(
+        model="m",
+        rubric="prompts/spec-gate-triage.md",
+        target="/tmp/bundle.XXXX",
+        latency_ms=5,
+        verdict="GO",
+    )
 
     call = stored(store, "08")["gate_calls"][0]
     assert call["spec"] == "8.3" and call["stage"] == "spec-gate-triage"
@@ -301,8 +357,14 @@ def test_a_stage_with_no_rubric_to_read_still_names_itself(stub_sink):  # noqa: 
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
-    metrics.record_gate_call(model="m", rubric=None, stage="spec-gate-triage", target=str(spec),
-                             cause=metrics.HOOK_KILLED, detail="killed mid-call")
+    metrics.record_gate_call(
+        model="m",
+        rubric=None,
+        stage="spec-gate-triage",
+        target=str(spec),
+        cause=metrics.HOOK_KILLED,
+        detail="killed mid-call",
+    )
 
     call = stored(store, "08")["gate_calls"][0]
     assert call["stage"] == "spec-gate-triage"
@@ -315,8 +377,13 @@ def test_a_pass_that_reaches_no_verdict_is_not_recorded_as_a_rejection(stub_sink
     project, store, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
-    metrics.record_gate_call(model="m", rubric="prompts/spec-gate-observe.md", target=str(spec),
-                             latency_ms=7, verdict=metrics.NO_VERDICT)
+    metrics.record_gate_call(
+        model="m",
+        rubric="prompts/spec-gate-observe.md",
+        target=str(spec),
+        latency_ms=7,
+        verdict=metrics.NO_VERDICT,
+    )
 
     assert stored(store, "08")["gate_calls"][0]["verdict"] != "NO-GO"
 
@@ -328,15 +395,18 @@ def test_the_filters_own_arithmetic_is_in_the_ledger(stub_sink, monkeypatch):  #
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(spec))
 
-    metrics.record_triage_decision(spec_path=str(spec), observations=9, blocking=2, notes=7,
-                                   approved=False)
+    metrics.record_triage_decision(
+        spec_path=str(spec), observations=9, blocking=2, notes=7, approved=False
+    )
 
     call = stored(store, "08")["gate_calls"][0]
     assert call["stage"] == metrics.TRIAGE_DECIDE_STAGE and call["verdict"] == "NO-GO"
     assert "observations=9 blocking=2 notes=7" in call["note"]
 
 
-def test_the_decide_step_records_from_where_the_verdict_is_derived(stub_sink, monkeypatch):  # noqa: F811
+def test_the_decide_step_records_from_where_the_verdict_is_derived(
+    stub_sink, monkeypatch
+):  # noqa: F811
     """Through the real CLI the hook runs, not through the function directly: the emission has to
     survive being reached by `spec_gate_triage.py decide`, which is where the counts exist."""
     project, store, _ = stub_sink
@@ -344,18 +414,44 @@ def test_the_decide_step_records_from_where_the_verdict_is_derived(stub_sink, mo
     monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(spec))
     observations = spec.parent / "obs.json"
     classifications = spec.parent / "cls.json"
-    observations.write_text(json.dumps({"observations": [
-        {"id": "o1", "statement": "one"}, {"id": "o2", "statement": "two"},
-    ]}), encoding="utf-8")
-    classifications.write_text(json.dumps({"classifications": [
-        {"id": "o1", "category": "note", "why": "fine"},
-        {"id": "o2", "category": "contradiction", "why": "cannot both hold"},
-    ]}), encoding="utf-8")
+    observations.write_text(
+        json.dumps(
+            {
+                "observations": [
+                    {"id": "o1", "statement": "one"},
+                    {"id": "o2", "statement": "two"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    classifications.write_text(
+        json.dumps(
+            {
+                "classifications": [
+                    {"id": "o1", "category": "note", "why": "fine"},
+                    {
+                        "id": "o2",
+                        "category": "contradiction",
+                        "why": "cannot both hold",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     done = subprocess.run(  # noqa: S603
-        [sys.executable, str(ROOT / "scripts" / "spec_gate_triage.py"),
-         "decide", str(observations), str(classifications)],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "spec_gate_triage.py"),
+            "decide",
+            str(observations),
+            str(classifications),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
     assert done.returncode == 1  # BLOCKED, and the decision still reached stdout first
@@ -459,7 +555,9 @@ def test_the_suite_is_counted_the_same_way_at_both_ends(stub_sink):  # noqa: F81
     assert record["elapsed_minutes"] == 0
 
 
-def test_the_collection_is_bounded_the_way_every_child_on_a_hook_path_is(monkeypatch, tmp_path):
+def test_the_collection_is_bounded_the_way_every_child_on_a_hook_path_is(
+    monkeypatch, tmp_path
+):
     """It runs inside `hook_spec_gate.sh`, so it goes through `proc_group.run_bounded`.
 
     `subprocess.run(cmd, capture_output=True, timeout=…)` stops the process it started and nothing
@@ -608,14 +706,22 @@ def test_phase_open_records_which_plugin_copy_executed(stub_sink, monkeypatch): 
     phase_dir = str(project / "docs/features/demo/phases/8-auth")
 
     stale = plugin_release.DriftResult(
-        status="stale", executing_version="0.10.2", source_version="0.10.3",
-        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+        status="stale",
+        executing_version="0.10.2",
+        source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"),
+        source_root=Path("/repo"),
+        detail="drifted",
     )
     monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
 
     metrics.record_phase_open(phase_dir)
 
-    calls = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    calls = [
+        c
+        for c in stored(store, "08")["gate_calls"]
+        if c["stage"] == metrics.PLUGIN_VERSION_STAGE
+    ]
     assert len(calls) == 1
     assert calls[0]["verdict"] == "NO-GO"
     assert "executing_version=0.10.2" in calls[0]["note"]
@@ -643,7 +749,11 @@ def test_plugin_version_recording_is_idempotent_across_repeated_opens(stub_sink)
     metrics.record_phase_open(phase_dir)
     metrics.record_phase_open(phase_dir)
 
-    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    rows = [
+        c
+        for c in stored(store, "08")["gate_calls"]
+        if c["stage"] == metrics.PLUGIN_VERSION_STAGE
+    ]
     assert len(rows) == 1
 
 
@@ -670,7 +780,9 @@ def declared_finding_kinds() -> set[str]:
     cross-family reader's prompt; that pass is gone, and the schema is where the vocabulary lived
     all along — the prompt restated it.
     """
-    schema = (ROOT / "skills" / "verifier-triage" / "SKILL.md").read_text(encoding="utf-8")
+    schema = (ROOT / "skills" / "verifier-triage" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     match = re.search(r'"kind"\s*:\s*"([a-z|-]+)"', schema)
     assert match, "skills/verifier-triage no longer declares a `kind` vocabulary"
     return set(match.group(1).split("|"))
@@ -693,23 +805,53 @@ def test_verifier_findings_become_defects_attributed_to_the_verifier(stub_sink):
     phase_dir.mkdir(parents=True)
     verdict = phase_dir / "verdict.json"
     # The shape `skills/verifier-triage` writes: the verdict's findings, kinds and all.
-    verdict.write_text(json.dumps({"verdict": "fail", "attempt": 1, "findings": [
-        {"id": "aaa", "kind": "code", "spec_id": "R8.1.1", "target": "src/token.py",
-         "severity": "blocker", "instruction": "off-by-one in the token window"},
-        {"id": "bbb", "kind": "gamed-test", "spec_id": "R8.1.2",
-         "target": "tests/demo/8-auth/8.1-sub/test_token.py", "severity": "major",
-         "instruction": "test_window asserts the mock; assert through the public seam"},
-        {"id": "ccc", "kind": "coverage-gap", "spec_id": "R8.1.3", "target": "R8.1.3",
-         "severity": "blocker", "instruction": "no test exercises an expired token"},
-    ]}), encoding="utf-8")
+    verdict.write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [
+                    {
+                        "id": "aaa",
+                        "kind": "code",
+                        "spec_id": "R8.1.1",
+                        "target": "src/token.py",
+                        "severity": "blocker",
+                        "instruction": "off-by-one in the token window",
+                    },
+                    {
+                        "id": "bbb",
+                        "kind": "gamed-test",
+                        "spec_id": "R8.1.2",
+                        "target": "tests/demo/8-auth/8.1-sub/test_token.py",
+                        "severity": "major",
+                        "instruction": "test_window asserts the mock; assert through the public seam",
+                    },
+                    {
+                        "id": "ccc",
+                        "kind": "coverage-gap",
+                        "spec_id": "R8.1.3",
+                        "target": "R8.1.3",
+                        "severity": "blocker",
+                        "instruction": "no test exercises an expired token",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert metrics.record_verifier_findings(str(phase_dir), str(verdict)) == 3
 
     defects = {d["id"]: d for d in stored(store, "08")["defects"]}
     assert defects["verifier-aaa"]["found_by"] == "verifier"
     assert defects["verifier-aaa"]["real"] is True
-    assert "off-by-one" in defects["verifier-aaa"]["summary"]   # the finding text, not its target
-    assert defects["verifier-bbb"]["real"] is False   # a defect in the tests, not in the product
+    assert (
+        "off-by-one" in defects["verifier-aaa"]["summary"]
+    )  # the finding text, not its target
+    assert (
+        defects["verifier-bbb"]["real"] is False
+    )  # a defect in the tests, not in the product
     assert defects["verifier-ccc"]["real"] is False
 
 
@@ -718,7 +860,9 @@ def test_mutation_records_what_it_found_without_inventing_identities(stub_sink):
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
     score = phase_dir / "score.json"
-    score.write_text(json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8")
+    score.write_text(
+        json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8"
+    )
 
     assert metrics.record_mutation_survivors(str(phase_dir), str(score)) is True
 
@@ -732,7 +876,9 @@ def test_a_clean_mutation_run_records_no_defect(stub_sink):  # noqa: F811
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
     score = phase_dir / "score.json"
-    score.write_text(json.dumps({"survivors": 0, "tested": 40, "score": 1.0}), encoding="utf-8")
+    score.write_text(
+        json.dumps({"survivors": 0, "tested": 40, "score": 1.0}), encoding="utf-8"
+    )
 
     assert metrics.record_mutation_survivors(str(phase_dir), str(score)) is False
 
@@ -744,12 +890,16 @@ def test_a_load_is_recorded_with_its_evidence_and_its_requirement(stub_sink):  #
     _, store, _ = stub_sink
 
     metrics.record_skill_load(
-        "08", stage="plan-build-verify:avenger-verifier", skill="verifier-triage",
+        "08",
+        stage="plan-build-verify:avenger-verifier",
+        skill="verifier-triage",
         evidence="PostToolUse Read: skills/verifier-triage/SKILL.md",
     )
 
     entry = stored(store, "08")["skill_loads"][0]
-    assert entry["id"] == "avenger-verifier:verifier-triage"   # the qualifier is not a second stage
+    assert (
+        entry["id"] == "avenger-verifier:verifier-triage"
+    )  # the qualifier is not a second stage
     assert entry["required"] is True and entry["loaded"] is True
     assert "verifier-triage" in entry["evidence"]
 
@@ -757,10 +907,13 @@ def test_a_load_is_recorded_with_its_evidence_and_its_requirement(stub_sink):  #
 def test_a_seed_never_unobserves_a_load(stub_sink):  # noqa: F811
     """Both writers are SubagentStart hooks and the harness may run them in either order."""
     _, store, _ = stub_sink
-    metrics.record_skill_load("08", stage="avenger-verifier", skill="tdd", evidence="read it")
+    metrics.record_skill_load(
+        "08", stage="avenger-verifier", skill="tdd", evidence="read it"
+    )
 
-    metrics.record_skill_load("08", stage="avenger-verifier", skill="tdd",
-                              evidence="", loaded=False)
+    metrics.record_skill_load(
+        "08", stage="avenger-verifier", skill="tdd", evidence="", loaded=False
+    )
 
     entry = stored(store, "08")["skill_loads"][0]
     assert entry["loaded"] is True and entry["evidence"] == "read it"
@@ -769,8 +922,13 @@ def test_a_seed_never_unobserves_a_load(stub_sink):  # noqa: F811
 def test_a_required_skill_with_no_load_is_a_row_not_a_silence(stub_sink):  # noqa: F811
     _, store, _ = stub_sink
 
-    metrics.record_skill_load("08", stage="avenger-verifier", skill="verifier-triage",
-                              evidence="", loaded=False)
+    metrics.record_skill_load(
+        "08",
+        stage="avenger-verifier",
+        skill="verifier-triage",
+        evidence="",
+        loaded=False,
+    )
 
     entry = stored(store, "08")["skill_loads"][0]
     assert entry["required"] is True and entry["loaded"] is False
@@ -786,7 +944,7 @@ def test_the_cli_exits_zero_when_the_record_cannot_be_written(stub_sink, monkeyp
     monkeypatch.setenv("DOUBLE_EXIT", "3")
 
     for args in (
-        ("spec-round", str(spec)),
+        ("spec-round", str(spec), "--verdict", "approved"),
         ("gate-killed", "--stage", "spec-gate-observe", "--spec-path", str(spec)),
         ("verifier-attempt", str(spec.parents[2])),
         ("phase-open", str(spec)),
@@ -800,7 +958,7 @@ def test_the_cli_exits_zero_with_no_writer_at_all(stub_sink, monkeypatch):  # no
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
 
-    assert run_cli("spec-round", str(spec)).returncode == 0
+    assert run_cli("spec-round", str(spec), "--verdict", "approved").returncode == 0
 
 
 def test_a_usage_error_is_still_a_usage_error():
@@ -812,8 +970,15 @@ def test_a_usage_error_is_still_a_usage_error():
 
 
 DEFECT_ARGS = (
-    "defect", "--phase-ref", "docs/features/demo/phases/08-slug",
-    "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+    "defect",
+    "--phase-ref",
+    "docs/features/demo/phases/08-slug",
+    "--id",
+    "D1",
+    "--summary",
+    "a real one",
+    "--found-by",
+    "execution",
 )
 
 
@@ -828,7 +993,9 @@ def test_a_bare_defect_cli_invocation_records_with_no_human_intervention(stub_si
     assert stored(store, "08")["defects"][0]["id"] == "D1"
 
 
-def test_a_defect_that_cannot_be_written_because_the_writer_refuses_fails_loudly(stub_sink, monkeypatch):  # noqa: F811,E501
+def test_a_defect_that_cannot_be_written_because_the_writer_refuses_fails_loudly(
+    stub_sink, monkeypatch
+):  # noqa: F811,E501
     """Break the recorder (the writer exits non-zero) and confirm the guard goes red, not green."""
     project, store, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
@@ -858,7 +1025,9 @@ def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch)
     project, _, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     monkeypatch.delenv("AVENGER_METRICS_CMD", raising=False)
-    monkeypatch.setenv("PATH", "")  # no fm-pipeline-metrics.sh reachable by any other name either
+    monkeypatch.setenv(
+        "PATH", ""
+    )  # no fm-pipeline-metrics.sh reachable by any other name either
 
     result = run_cli(*DEFECT_ARGS)
 
@@ -866,7 +1035,9 @@ def test_a_defect_with_no_writer_configured_fails_loudly(stub_sink, monkeypatch)
     assert "D1" in result.stderr
 
 
-def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, monkeypatch):  # noqa: F811,E501
+def test_no_writer_configured_is_reported_as_terminal_not_retryable(
+    stub_sink, monkeypatch
+):  # noqa: F811,E501
     """The remedy is the operator's, not the stage's: "fix the cause and re-run" here is a loop.
 
     A standalone install with no firstmate home is the documented normal state of this repo, so the
@@ -882,12 +1053,18 @@ def test_no_writer_configured_is_reported_as_terminal_not_retryable(stub_sink, m
     assert "NO METRICS WRITER CONFIGURED" in result.stderr
     assert "DO NOT re-run" in result.stderr
     assert "re-run this exact command" not in result.stderr
-    assert "AVENGER_METRICS_OFF=1" in result.stderr   # the other reachable resolution, named
+    assert (
+        "AVENGER_METRICS_OFF=1" in result.stderr
+    )  # the other reachable resolution, named
 
 
 def test_no_failure_marker_contains_another():
     """A stage discriminates on these, and substring matching is how it does it."""
-    markers = (metrics.DEFECT_WRITE_FAILED, metrics.DEFECT_NO_WRITER, metrics.DEFECT_BAD_PHASE_REF)
+    markers = (
+        metrics.DEFECT_WRITE_FAILED,
+        metrics.DEFECT_NO_WRITER,
+        metrics.DEFECT_BAD_PHASE_REF,
+    )
     assert len(set(markers)) == len(markers)
     for marker in markers:
         assert [other for other in markers if marker in other] == [marker]
@@ -903,8 +1080,15 @@ def test_an_unresolvable_phase_ref_is_the_arguments_fault_not_the_writers(stub_s
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
 
     result = run_cli(
-        "defect", "--phase-ref", "docs/features/demo/nowhere-in-particular",
-        "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+        "defect",
+        "--phase-ref",
+        "docs/features/demo/nowhere-in-particular",
+        "--id",
+        "D1",
+        "--summary",
+        "a real one",
+        "--found-by",
+        "execution",
     )
 
     assert result.returncode == metrics.USAGE_ERROR
@@ -912,27 +1096,40 @@ def test_an_unresolvable_phase_ref_is_the_arguments_fault_not_the_writers(stub_s
     assert metrics.DEFECT_WRITE_FAILED not in result.stderr
     assert metrics.DEFECT_NO_WRITER not in result.stderr
     assert "re-run this exact command" not in result.stderr
-    assert "DO NOT re-run it" not in result.stderr   # the OTHER shape's instruction, verbatim
+    assert (
+        "DO NOT re-run it" not in result.stderr
+    )  # the OTHER shape's instruction, verbatim
     assert "D1" in result.stderr and "nowhere-in-particular" in result.stderr
     assert not (store / "phase-08.json").exists()
 
 
-def test_an_unresolvable_phase_ref_stays_loud_when_metrics_are_off(stub_sink, monkeypatch):  # noqa: F811,E501
+def test_an_unresolvable_phase_ref_stays_loud_when_metrics_are_off(
+    stub_sink, monkeypatch
+):  # noqa: F811,E501
     """`AVENGER_METRICS_OFF=1` is a choice about RECORDING; it does not make a bad argument fine."""
     project, _, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
 
     result = run_cli(
-        "defect", "--phase-ref", "docs/features/demo/nowhere-in-particular",
-        "--id", "D1", "--summary", "a real one", "--found-by", "execution",
+        "defect",
+        "--phase-ref",
+        "docs/features/demo/nowhere-in-particular",
+        "--id",
+        "D1",
+        "--summary",
+        "a real one",
+        "--found-by",
+        "execution",
     )
 
     assert result.returncode == metrics.USAGE_ERROR
     assert metrics.DEFECT_BAD_PHASE_REF in result.stderr
 
 
-def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(stub_sink, monkeypatch, tmp_path):  # noqa: F811,E501
+def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(
+    stub_sink, monkeypatch, tmp_path
+):  # noqa: F811,E501
     """The one state where "configured" and "resolvable" disagree — and the loop it used to cause.
 
     `configured()` says yes, so the stage is told to fix the cause and re-run; the cause line it is
@@ -953,7 +1150,9 @@ def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(stub_sin
     assert "AVENGER_METRICS_CMD is unset" not in result.stderr
 
 
-def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monkeypatch):  # noqa: F811,E501
+def test_a_defect_stays_silent_when_metrics_are_deliberately_off(
+    stub_sink, monkeypatch
+):  # noqa: F811,E501
     """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
     project, _, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
@@ -972,11 +1171,13 @@ def test_a_defect_stays_silent_when_metrics_are_deliberately_off(stub_sink, monk
 PROVIDERS = {
     "good": '#!/bin/sh\necho \'{"verdict":"GO","report":"fine","route_back":""}\'\n',
     "payment": '#!/bin/sh\necho \'{"error":{"code":402,"message":"Insufficient credits"}}\' >&2\n'
-               'exit 1\n',
+    "exit 1\n",
 }
 
 
-def run_gate(project: Path, spec: Path, provider: str, stdout=None) -> subprocess.CompletedProcess:
+def run_gate(
+    project: Path, spec: Path, provider: str, stdout=None
+) -> subprocess.CompletedProcess:
     """The real runner, with `opencode` stubbed on PATH — no model is called.
 
     `stdout` sends the gate's own output to a file instead of a pipe, which is how the ordering
@@ -988,18 +1189,35 @@ def run_gate(project: Path, spec: Path, provider: str, stdout=None) -> subproces
     binary.chmod(0o755)
     rubric = project / "spec-gate-observe.md"
     rubric.write_text("Return JSON with a verdict.", encoding="utf-8")
-    streams = ({"capture_output": True} if stdout is None
-               else {"stdout": stdout, "stderr": subprocess.DEVNULL})
+    streams = (
+        {"capture_output": True}
+        if stdout is None
+        else {"stdout": stdout, "stderr": subprocess.DEVNULL}
+    )
     return subprocess.run(  # noqa: S603
-        [sys.executable, str(ROOT / "scripts" / "gate_runner.py"),
-         "--rubric", str(rubric), "--target", str(spec), "--author-family", "anthropic",
-         "--model", "deepseek/deepseek-chat"],
-        text=True, check=False,
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "gate_runner.py"),
+            "--rubric",
+            str(rubric),
+            "--target",
+            str(spec),
+            "--author-family",
+            "anthropic",
+            "--model",
+            "deepseek/deepseek-chat",
+        ],
+        text=True,
+        check=False,
         # The stub answers in milliseconds — what gate_plausibility.py refuses as a call that
         # cannot have happened. Switched off here so these tests pin the metrics emission rather
         # than the floor; tests/test_gate_plausibility.py drives the floor itself end to end.
-        env={**os.environ, "PATH": f"{binary.parent}:{os.environ['PATH']}", "HOME": str(project),
-             "GATE_MIN_LATENCY_MS": "0"},
+        env={
+            **os.environ,
+            "PATH": f"{binary.parent}:{os.environ['PATH']}",
+            "HOME": str(project),
+            "GATE_MIN_LATENCY_MS": "0",
+        },
         **streams,
     )
 
@@ -1012,7 +1230,9 @@ def test_the_runner_records_the_call_it_just_made(stub_sink):  # noqa: F811
 
     call = stored(store, "08")["gate_calls"][0]
     assert call["stage"] == "spec-gate-observe" and call["spec"] == "8.1"
-    assert call["model"] == "deepseek/deepseek-chat" and call["model_family"] == "deepseek"
+    assert (
+        call["model"] == "deepseek/deepseek-chat" and call["model_family"] == "deepseek"
+    )
     assert call["verdict"] == "GO" and call["failure_cause"] is None
     assert isinstance(call["latency_ms"], int) and call["latency_ms"] >= 0
 
@@ -1028,7 +1248,9 @@ def test_the_runner_records_a_failure_with_the_cause_it_named(stub_sink):  # noq
     assert call["verdict"] == "error" and call["failure_cause"] == "http-402"
 
 
-def test_a_gate_call_that_cannot_be_recorded_still_returns_its_verdict(stub_sink, monkeypatch):  # noqa: F811
+def test_a_gate_call_that_cannot_be_recorded_still_returns_its_verdict(
+    stub_sink, monkeypatch
+):  # noqa: F811
     """The property that outranks measuring anything: the gate's answer is unaffected."""
     project, _, _ = stub_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
@@ -1071,31 +1293,59 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n- R8.1.2 two\n")
     phase_dir = str(spec.parents[2])
     (project / "tests").mkdir()
-    (project / "tests" / "test_a.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    (project / "tests" / "test_a.py").write_text(
+        "def test_one():\n    pass\n", encoding="utf-8"
+    )
     git_land(project, "open")
 
     metrics.record_phase_open(phase_dir)
-    metrics.record_spec_round(str(spec))
-    metrics.record_gate_call(model="deepseek/deepseek-chat", model_family="deepseek",
-                             rubric="prompts/spec-gate-observe.md", target=str(spec),
-                             latency_ms=106_000, verdict="GO", provider="opencode")
-    metrics.record_gate_call(model="deepseek/deepseek-chat", model_family="deepseek",
-                             rubric="prompts/spec-gate-triage.md", target=str(spec),
-                             latency_ms=143_000, cause="timeout", detail="killed",
-                             provider="opencode")
+    metrics.record_spec_round(str(spec), verdict="approved")
+    metrics.record_gate_call(
+        model="deepseek/deepseek-chat",
+        model_family="deepseek",
+        rubric="prompts/spec-gate-observe.md",
+        target=str(spec),
+        latency_ms=106_000,
+        verdict="GO",
+        provider="opencode",
+    )
+    metrics.record_gate_call(
+        model="deepseek/deepseek-chat",
+        model_family="deepseek",
+        rubric="prompts/spec-gate-triage.md",
+        target=str(spec),
+        latency_ms=143_000,
+        cause="timeout",
+        detail="killed",
+        provider="opencode",
+    )
     metrics.open_verification_attempt(phase_dir)
-    metrics.record_skill_load("08", stage="avenger-verifier", skill="verifier-triage",
-                              evidence="PostToolUse Read")
-    metrics.record_skill_load("08", stage="avenger-verifier", skill="tdd",
-                              evidence="", loaded=False)
-    metrics.record_defect("08", identifier="D1", summary="a real one", found_by="execution",
-                          real=True, stage_reached="verification", severity="security")
+    metrics.record_skill_load(
+        "08",
+        stage="avenger-verifier",
+        skill="verifier-triage",
+        evidence="PostToolUse Read",
+    )
+    metrics.record_skill_load(
+        "08", stage="avenger-verifier", skill="tdd", evidence="", loaded=False
+    )
+    metrics.record_defect(
+        "08",
+        identifier="D1",
+        summary="a real one",
+        found_by="execution",
+        real=True,
+        stage_reached="verification",
+        severity="security",
+    )
     git_land(project, "close")
     metrics.record_phase_close(phase_dir)
 
     result = subprocess.run(  # noqa: S603
         [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -1103,12 +1353,16 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     assert record["specs"][0]["requirements"] == 2
     assert record["spec_rounds"] == 1 and record["verification_attempts"] == 1
     assert record["tests_before"] == 1 and record["tests_after"] == 1
-    gate_calls = [c for c in record["gate_calls"] if c["stage"] != metrics.PLUGIN_VERSION_STAGE]
+    gate_calls = [
+        c for c in record["gate_calls"] if c["stage"] != metrics.PLUGIN_VERSION_STAGE
+    ]
     assert {c["verdict"] for c in gate_calls} == {"GO", "killed"}
     assert record["defects"][0]["found_by"] == "execution"
 
 
-def test_the_plugin_version_row_survives_the_real_writers_closed_verdict_enum(real_sink, monkeypatch):  # noqa: F811,E501
+def test_the_plugin_version_row_survives_the_real_writers_closed_verdict_enum(
+    real_sink, monkeypatch
+):  # noqa: F811,E501
     """The claim the double cannot make, for the row issue #65 exists to write.
 
     `gate_calls[].verdict` is a closed enum firstmate owns, and its writer refuses a row `validate`
@@ -1119,22 +1373,34 @@ def test_the_plugin_version_row_survives_the_real_writers_closed_verdict_enum(re
     project, home = real_sink
     spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     stale = plugin_release.DriftResult(
-        status="stale", executing_version="0.10.2", source_version="0.10.3",
-        executing_root=Path("/cache/0.10.2"), source_root=Path("/repo"), detail="drifted",
+        status="stale",
+        executing_version="0.10.2",
+        source_version="0.10.3",
+        executing_root=Path("/cache/0.10.2"),
+        source_root=Path("/repo"),
+        detail="drifted",
     )
     monkeypatch.setattr(plugin_release, "check", lambda *a, **k: stale)
 
     metrics.record_phase_open(str(spec.parents[2]))
 
-    rows = [c for c in stored(home, "08")["gate_calls"]
-            if c["stage"] == metrics.PLUGIN_VERSION_STAGE]
+    rows = [
+        c
+        for c in stored(home, "08")["gate_calls"]
+        if c["stage"] == metrics.PLUGIN_VERSION_STAGE
+    ]
     assert len(rows) == 1
     assert rows[0]["verdict"] == "NO-GO"
-    assert "status=stale" in rows[0]["note"] and "executing_version=0.10.2" in rows[0]["note"]
+    assert (
+        "status=stale" in rows[0]["note"]
+        and "executing_version=0.10.2" in rows[0]["note"]
+    )
 
     result = subprocess.run(  # noqa: S603
         [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -1150,12 +1416,21 @@ def test_a_defect_found_by_other_carries_its_note(real_sink):  # noqa: F811
     """`found_by: other` without a note is refused by the validator, so it is never emitted bare."""
     _, home = real_sink
 
-    metrics.record_defect("08", identifier="D9", summary="odd one", found_by="other",
-                          real=True, stage_reached="review", severity="cosmetic")
+    metrics.record_defect(
+        "08",
+        identifier="D9",
+        summary="odd one",
+        found_by="other",
+        real=True,
+        stage_reached="review",
+        severity="cosmetic",
+    )
 
     result = subprocess.run(  # noqa: S603
         [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert stored(home, "08")["defects"][0]["found_by_note"]
@@ -1164,7 +1439,9 @@ def test_a_defect_found_by_other_carries_its_note(real_sink):  # noqa: F811
 # --- recorded_by: the pipeline says the PIPELINE wrote it down ------------------------------------
 
 
-def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(stub_sink):  # noqa: F811,E501
+def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(
+    stub_sink,
+):  # noqa: F811,E501
     """All three routes, because a route left unstamped reads as a record predating the field.
 
     `recorded_by` has three answers and absence is one of them: it means the record is older than
@@ -1176,15 +1453,37 @@ def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(s
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
     verdict = phase_dir / "verdict.json"
-    verdict.write_text(json.dumps({"verdict": "fail", "attempt": 1, "findings": [
-        {"id": "aaa", "kind": "code", "target": "src/token.py", "instruction": "off-by-one"},
-    ]}), encoding="utf-8")
+    verdict.write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [
+                    {
+                        "id": "aaa",
+                        "kind": "code",
+                        "target": "src/token.py",
+                        "instruction": "off-by-one",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     score = phase_dir / "score.json"
-    score.write_text(json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8")
+    score.write_text(
+        json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8"
+    )
 
-    metrics.record_defect("08", identifier="D1", summary="caught by hand-run seam",
-                          found_by="execution", real=True, stage_reached="verification",
-                          severity="security")
+    metrics.record_defect(
+        "08",
+        identifier="D1",
+        summary="caught by hand-run seam",
+        found_by="execution",
+        real=True,
+        stage_reached="verification",
+        severity="security",
+    )
     metrics.record_verifier_findings(str(phase_dir), str(verdict))
     metrics.record_mutation_survivors(str(phase_dir), str(score))
 
@@ -1200,11 +1499,14 @@ def test_no_defect_reaches_the_record_except_through_the_stamping_point():
     write, and this is what keeps it single — a new emission point either goes through it and is
     stamped, or turns this red.
     """
-    source = (Path(__file__).resolve().parents[1] / "scripts" / "pipeline_metrics.py").read_text(
-        encoding="utf-8"
-    )
+    source = (
+        Path(__file__).resolve().parents[1] / "scripts" / "pipeline_metrics.py"
+    ).read_text(encoding="utf-8")
     assert source.count('"defects"') == 1
-    assert 'sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)' in source
+    assert (
+        'sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)'
+        in source
+    )
 
 
 def test_recorded_by_is_never_derived_from_what_caught_the_defect(stub_sink):  # noqa: F811
@@ -1212,16 +1514,30 @@ def test_recorded_by_is_never_derived_from_what_caught_the_defect(stub_sink):  #
     _, store, _ = stub_sink
 
     for index, found_by in enumerate(("breaker", "mutation", "ci", "human-review")):
-        metrics.record_defect("08", identifier=f"D{index}", summary=found_by, found_by=found_by,
-                              real=True, stage_reached="implementation", severity="correctness")
+        metrics.record_defect(
+            "08",
+            identifier=f"D{index}",
+            summary=found_by,
+            found_by=found_by,
+            real=True,
+            stage_reached="implementation",
+            severity="correctness",
+        )
 
     defects = stored(store, "08")["defects"]
-    assert {d["found_by"] for d in defects} == {"breaker", "mutation", "ci", "human-review"}
+    assert {d["found_by"] for d in defects} == {
+        "breaker",
+        "mutation",
+        "ci",
+        "human-review",
+    }
     assert {d["recorded_by"] for d in defects} == {"stage"}
 
 
 def test_a_firstmate_too_old_for_the_field_loses_the_field_and_keeps_the_defect(
-    stub_sink, monkeypatch, capsys,  # noqa: F811
+    stub_sink,
+    monkeypatch,
+    capsys,  # noqa: F811
 ):
     """Version skew costs the measurement, never the entry.
 
@@ -1233,25 +1549,36 @@ def test_a_firstmate_too_old_for_the_field_loses_the_field_and_keeps_the_defect(
     _, store, log = stub_sink
     monkeypatch.setenv("DOUBLE_REFUSE_KEY", "recorded_by")
 
-    assert metrics.record_defect("08", identifier="D1", summary="a real one",
-                                 found_by="execution", real=True, stage_reached="verification",
-                                 severity="security") is True
+    assert (
+        metrics.record_defect(
+            "08",
+            identifier="D1",
+            summary="a real one",
+            found_by="execution",
+            real=True,
+            stage_reached="verification",
+            severity="security",
+        )
+        is True
+    )
 
     defect = stored(store, "08")["defects"][0]
-    assert "recorded_by" not in defect          # absent, not guessed at, and never `null`
+    assert "recorded_by" not in defect  # absent, not guessed at, and never `null`
     assert defect["found_by"] == "execution" and defect["summary"] == "a real one"
 
     writes = [call for call in read_calls(log) if call[:1] == ["add"]]
-    assert len(writes) == 2                     # the stamped write, then one retry without the key
+    assert len(writes) == 2  # the stamped write, then one retry without the key
     assert any(field.startswith("recorded_by=") for field in writes[0])
     assert not any(field.startswith("recorded_by=") for field in writes[1])
 
     captured = capsys.readouterr()
-    assert captured.out == ""                   # every caller's stdout is somebody's protocol
-    assert "recorded_by" in captured.err        # a lost measurement is never a silent one
+    assert captured.out == ""  # every caller's stdout is somebody's protocol
+    assert "recorded_by" in captured.err  # a lost measurement is never a silent one
 
 
-def test_a_refusal_that_is_not_about_the_new_field_still_fails(stub_sink, monkeypatch, capsys):  # noqa: F811,E501
+def test_a_refusal_that_is_not_about_the_new_field_still_fails(
+    stub_sink, monkeypatch, capsys
+):  # noqa: F811,E501
     """The downgrade is one retry of a named key, not a blanket "try again without the hard parts".
 
     A writer refusing every `add` refuses the retry too, so the emission fails exactly as it did
@@ -1260,9 +1587,18 @@ def test_a_refusal_that_is_not_about_the_new_field_still_fails(stub_sink, monkey
     _, _, log = stub_sink
     monkeypatch.setenv("DOUBLE_REFUSE", "add")
 
-    assert metrics.record_defect("08", identifier="D1", summary="a real one",
-                                 found_by="execution", real=True, stage_reached="verification",
-                                 severity="security") is False
+    assert (
+        metrics.record_defect(
+            "08",
+            identifier="D1",
+            summary="a real one",
+            found_by="execution",
+            real=True,
+            stage_reached="verification",
+            severity="security",
+        )
+        is False
+    )
 
     assert capsys.readouterr().out == ""
     assert len([call for call in read_calls(log) if call[:1] == ["add"]]) == 2
@@ -1272,13 +1608,24 @@ def test_the_real_writer_validates_a_defect_this_pipeline_stamped(real_sink):  #
     """The claim the double cannot make: `recorded_by: stage` is a value firstmate's enum accepts."""
     _, home = real_sink
 
-    assert metrics.record_defect("08", identifier="D1", summary="a real one",
-                                 found_by="execution", real=True, stage_reached="verification",
-                                 severity="security") is True
+    assert (
+        metrics.record_defect(
+            "08",
+            identifier="D1",
+            summary="a real one",
+            found_by="execution",
+            real=True,
+            stage_reached="verification",
+            severity="security",
+        )
+        is True
+    )
 
     result = subprocess.run(  # noqa: S603
         [os.environ["AVENGER_METRICS_CMD"], "validate", "08"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert stored(home, "08")["defects"][0]["recorded_by"] == "stage"
@@ -1302,15 +1649,21 @@ def test_a_mutation_gate_that_could_not_run_records_that_it_did_not(stub_sink): 
     phase_dir = str(project / "docs/features/demo/phases/8-auth")
     metrics.record_phase_open(phase_dir)
 
-    assert metrics.record_mutation_unavailable(
-        phase_dir, "cosmic-ray.toml missing at repo root"
-    ) is True
+    assert (
+        metrics.record_mutation_unavailable(
+            phase_dir, "cosmic-ray.toml missing at repo root"
+        )
+        is True
+    )
 
     (row,) = [
-        c for c in stored(store, "08")["gate_calls"]
+        c
+        for c in stored(store, "08")["gate_calls"]
         if c["stage"] == metrics.MUTATION_STAGE
     ]
-    assert row["verdict"] == metrics.NO_VERDICT, "a gate that did not run reached no verdict"
+    assert row["verdict"] == metrics.NO_VERDICT, (
+        "a gate that did not run reached no verdict"
+    )
     assert row["failure_cause"] == metrics.MUTATION_UNAVAILABLE_CAUSE
     assert "cosmic-ray.toml missing" in row["note"]
 
@@ -1336,18 +1689,27 @@ def test_repeated_reports_converge_on_one_row(stub_sink):  # noqa: F811
     metrics.record_mutation_unavailable(phase_dir, "cosmic-ray not installed")
     metrics.record_mutation_unavailable(phase_dir, "cosmic-ray not installed")
 
-    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.MUTATION_STAGE]
+    rows = [
+        c
+        for c in stored(store, "08")["gate_calls"]
+        if c["stage"] == metrics.MUTATION_STAGE
+    ]
     assert len(rows) == 1
 
 
 def test_recording_the_absence_never_fails_the_phase(stub_sink, monkeypatch):  # noqa: F811
     """Measurement may never fail what it measures - and least of all an advisory gate."""
     project, _, _ = stub_sink
-    monkeypatch.setattr(metrics.sink, "add", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(
+        metrics.sink, "add", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))
+    )
 
-    assert metrics.record_mutation_unavailable(
-        str(project / "docs/features/demo/phases/8-auth"), "anything"
-    ) is False
+    assert (
+        metrics.record_mutation_unavailable(
+            str(project / "docs/features/demo/phases/8-auth"), "anything"
+        )
+        is False
+    )
 
 
 def test_the_cli_reports_it_and_always_exits_zero(stub_sink):  # noqa: F811
@@ -1359,7 +1721,11 @@ def test_the_cli_reports_it_and_always_exits_zero(stub_sink):  # noqa: F811
     result = run_cli("mutation-unavailable", phase_dir, "cosmic-ray exec errored")
 
     assert result.returncode == 0
-    rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.MUTATION_STAGE]
+    rows = [
+        c
+        for c in stored(store, "08")["gate_calls"]
+        if c["stage"] == metrics.MUTATION_STAGE
+    ]
     assert rows and "exec errored" in rows[0]["note"]
 
 
@@ -1378,13 +1744,31 @@ def test_findings_from_a_superseded_attempt_are_recorded_too(stub_sink):  # noqa
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/12-poll"
     phase_dir.mkdir(parents=True)
-    (phase_dir / "verdict-attempt-1.json").write_text(json.dumps({"attempt": 1, "verdict": "fail",
-        "findings": [
-            {"id": "aaa", "kind": "code", "instruction": "poll before sleep opens a second session"},
-            {"id": "bbb", "kind": "code", "instruction": "InvalidToken raised outside the catch"},
-        ]}), encoding="utf-8")
+    (phase_dir / "verdict-attempt-1.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "verdict": "fail",
+                "findings": [
+                    {
+                        "id": "aaa",
+                        "kind": "code",
+                        "instruction": "poll before sleep opens a second session",
+                    },
+                    {
+                        "id": "bbb",
+                        "kind": "code",
+                        "instruction": "InvalidToken raised outside the catch",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     verdict = phase_dir / "verdict.json"
-    verdict.write_text(json.dumps({"attempt": 2, "verdict": "pass", "findings": []}), "utf-8")
+    verdict.write_text(
+        json.dumps({"attempt": 2, "verdict": "pass", "findings": []}), "utf-8"
+    )
 
     assert metrics.record_verifier_findings(str(phase_dir), str(verdict)) == 2
 
@@ -1399,8 +1783,16 @@ def test_re_emitting_the_same_findings_converges(stub_sink):  # noqa: F811
     phase_dir = project / "docs/features/demo/phases/12-poll"
     phase_dir.mkdir(parents=True)
     verdict = phase_dir / "verdict.json"
-    verdict.write_text(json.dumps({"attempt": 1, "verdict": "fail", "findings": [
-        {"id": "aaa", "kind": "code", "instruction": "one"}]}), encoding="utf-8")
+    verdict.write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "verdict": "fail",
+                "findings": [{"id": "aaa", "kind": "code", "instruction": "one"}],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     metrics.record_verifier_findings(str(phase_dir), str(verdict))
     metrics.record_verifier_findings(str(phase_dir), str(verdict))

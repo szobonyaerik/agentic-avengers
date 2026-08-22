@@ -38,12 +38,14 @@ bad argument, which it does not quiet, for the same reason it does not quiet a p
 
 Emission is attached to the *fact*, not to the caller. `record_gate_call` lives inside
 `gate_runner.py`, the one place every gate call passes through, so a new gate is instrumented by
-existing. `record_spec_round` is idempotent by CONTENT — it reuses the shipped rebuildable gate
+existing. `record_spec_round` records one COMPLETED gate evaluation — a run that REACHED a verdict,
+approved or blocked — and refuses anything else; it is idempotent by CONTENT, reusing the shipped
+rebuildable gate
 cache to remember which body it last counted — so any caller may call it on any spec write and the
 record converges instead of double-counting a round.
 
 CLI, for the shell emission points (all fail open, all exit 0, except `defect` — see above):
-    pipeline_metrics.py spec-round <spec.md>
+    pipeline_metrics.py spec-round <spec.md> --verdict approved|blocked
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
     pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
     pipeline_metrics.py verifier-findings <phase-dir> <verdict.json>
@@ -224,17 +226,42 @@ def _now() -> str:
 # --- gate calls ---------------------------------------------------------------------------------
 
 
-def _spec_round(record: dict | None, spec: str | None) -> int:
-    """How many rounds this spec has been through, which is the attempt a spec gate belongs to."""
+def _rounds_closed(record: dict | None, spec: str | None) -> int:
+    """How many rounds this spec has COMPLETED - one entry per body a gate reached a verdict on."""
     if not record or not spec:
-        return 1
+        return 0
     for entry in record.get("specs") or []:
         if entry.get("id") == spec:
-            return max(1, len(entry.get("bytes_by_round") or []))
-    return 1
+            return len(entry.get("bytes_by_round") or [])
+    return 0
 
 
-def _attempt(record: dict | None, stage: str, spec: str | None) -> int:
+def _spec_round(
+    record: dict | None, spec: str | None, spec_path: str | None = None
+) -> int:
+    """The round a gate call belongs to: the one IN FLIGHT, not the number already closed.
+
+    A round is recorded when the gate reaches a verdict, which is after the calls that produced it
+    (see `record_spec_round`). So a call made while judging a body nobody has counted yet belongs to
+    `closed + 1`. Without the spec's path there is nothing to compare the body against, and the
+    closed count is the best answer available.
+    """
+    closed = _rounds_closed(record, spec)
+    if not spec or not spec_path:
+        return max(1, closed)
+    try:
+        _frontmatter, body = split_spec(Path(spec_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return max(1, closed)
+    counted = previous(Path(spec_path), "metrics")
+    if closed and counted is not None and normalized(counted) == normalized(body):
+        return closed  # this exact body's round is already on the record
+    return closed + 1
+
+
+def _attempt(
+    record: dict | None, stage: str, spec: str | None, spec_path: str | None = None
+) -> int:
     """The attempt a gate call belongs to: the spec's round, or the phase's verification attempt."""
     declared = (os.environ.get("AVENGER_METRICS_ATTEMPT") or "").strip()
     if declared:
@@ -244,7 +271,7 @@ def _attempt(record: dict | None, stage: str, spec: str | None) -> int:
             pass
     if stage == "verifier":
         return max(1, int((record or {}).get("verification_attempts") or 1))
-    return _spec_round(record, spec)
+    return _spec_round(record, spec, spec_path)
 
 
 def record_gate_call(
@@ -285,11 +312,14 @@ def record_gate_call(
             return False
         # `AVENGER_METRICS_STAGE` still wins: it is the operator's override, and a caller-supplied
         # name is a default for the no-rubric case, not a way around it.
-        stage = (os.environ.get("AVENGER_METRICS_STAGE") or "").strip() or stage or \
-            stage_from_rubric(rubric)
+        stage = (
+            (os.environ.get("AVENGER_METRICS_STAGE") or "").strip()
+            or stage
+            or stage_from_rubric(rubric)
+        )
         spec = resolve_spec(spec_path, target)
         record = sink.show(phase)
-        attempt = _attempt(record, stage, spec)
+        attempt = _attempt(record, stage, spec, spec_path)
         token, failure_cause = _outcome(verdict, cause)
         return sink.add(
             phase,
@@ -322,7 +352,12 @@ TRIAGE_DECIDE_MODEL = "none (scripts/spec_gate_triage.py)"
 
 
 def record_triage_decision(
-    *, spec_path: str | None, observations: int, blocking: int, notes: int, approved: bool
+    *,
+    spec_path: str | None,
+    observations: int,
+    blocking: int,
+    notes: int,
+    approved: bool,
 ) -> bool:
     """Record the filter's own arithmetic: what it saw, what it blocked on, what it noted.
 
@@ -359,7 +394,9 @@ def _outcome(verdict: str | None, cause: str | None) -> tuple[str, str | None]:
             # `tests/test_pipeline_metrics.py` asserts CAUSE_MAP covers every `gate_errors` cause,
             # so reaching this means a cause was added without deciding what it is in the record.
             # Recorded as `error`/`other` rather than dropped, and said out loud rather than not.
-            sink.note(f"gate failure cause {cause!r} has no mapped outcome — recorded as other")
+            sink.note(
+                f"gate failure cause {cause!r} has no mapped outcome — recorded as other"
+            )
         return CAUSE_MAP.get(cause, ("error", "other"))
     token = (verdict or "").strip().upper()
     if token in ("GO", "PASS"):
@@ -372,22 +409,60 @@ def _outcome(verdict: str | None, cause: str | None) -> tuple[str, str | None]:
 # --- spec rounds --------------------------------------------------------------------------------
 
 
-def record_spec_round(spec_path: str) -> int | None:
-    """Measure one spec at this round: its body size, and the requirements it now carries.
+class SpecRoundUndecided(Exception):
+    """This call cannot be shown to be a round, so nothing is recorded. Always fails the caller."""
+
+
+#: The verdicts a COMPLETED gate evaluation ends in. Closed, and a token outside it is a hard
+#: failure naming what was invented — the same discipline `spec_gate_triage.BLOCKING` and
+#: `applicability.RULES` run on. Guessing would put the ambiguity straight back.
+SPEC_ROUND_VERDICTS = ("approved", "blocked")
+
+
+def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
+    """Record one COMPLETED gate evaluation of this spec: its body size and its requirement count.
+
+    ## What a round IS, stated once, here, because this is where it is decided
+
+    **A spec round is one completed gate evaluation of a spec body: a run of the spec gate that
+    reached a verdict.** An approval and a block are both rounds — a block is a completed
+    evaluation, and the ratchet this measures is built out of blocks. Three things are NOT:
+
+    * **A gate that never ran.** A spec written outside the gate's trigger — phase 12 authored one
+      through a shell heredoc — has zero rounds. That is the correct answer, not a third convention.
+    * **A gate that ran and reached no verdict.** A provider that refused for billing (phase 13's
+      actual case), an unreachable one, a killed hook. Those stay in `gate_calls[]` with their
+      `failure_cause`, which is where a failed call belongs.
+    * **A replayed verdict over an unchanged body.** Nothing was evaluated; a stored verdict was
+      reread.
+
+    This used to be measured at the WRITER — the hook counted the body the moment it got past the
+    cache check, before either paid call — so an attempt that then failed counted as a round. Phase
+    12 ended with three counting conventions in one phase and phase 13 added two more, which means
+    `spec_rounds` could not be compared between phases at all. The verdict is REQUIRED here rather
+    than asked for at the caller: a future caller wired one line earlier cannot reintroduce the gap.
 
     Growth across `bytes_by_round` is the ratchet made visible — one spec went 25k -> 51k while
     being rewritten to satisfy a gate, and nothing anywhere noticed.
 
     Idempotent by CONTENT, not by caller discipline. The body this last counted is kept in the
-    shipped rebuildable gate cache under its own key, so calling this on every spec write records
-    one round per genuinely changed body. Losing that cache costs one duplicated round, which is
-    why it is a cache and not an artifact.
+    shipped rebuildable gate cache under its own key, so one round is recorded per genuinely judged
+    body. Losing that cache costs one duplicated round, which is why it is a cache and not an
+    artifact.
 
     A body is remembered as counted only once the record actually took it. A refused write that
     still cached its body would make the next call believe the round was already there, and that
     round would be missing from `bytes_by_round` forever — a hole in the one growth series this
-    measures. Returns None when nothing was recorded, so the next write retries the round.
+    measures. Returns None when nothing was recorded, so the next verdict retries the round.
     """
+    token = (verdict or "").strip().lower()
+    if token not in SPEC_ROUND_VERDICTS:
+        raise SpecRoundUndecided(
+            f"a spec round is one COMPLETED gate evaluation, so it is recorded with the verdict it "
+            f"reached: one of {', '.join(SPEC_ROUND_VERDICTS)}. Got {verdict!r}. Nothing was "
+            f"recorded — a gate that reached no verdict is not a round, and it is already visible "
+            f"in gate_calls[] with its failure_cause."
+        )
     try:
         path = Path(spec_path)
         phase = resolve_phase(spec_path)
@@ -403,7 +478,7 @@ def record_spec_round(spec_path: str) -> int | None:
         rounds = list(_spec_entry(record, spec).get("bytes_by_round") or [])
         counted = previous(path, "metrics")
         if counted is not None and normalized(counted) == normalized(body) and rounds:
-            return len(rounds)   # this exact body is already one of the rounds above
+            return len(rounds)  # this exact body is already one of the rounds above
 
         rounds.append(len(body.encode("utf-8")))
         if not sink.add(
@@ -432,7 +507,10 @@ def _spec_entry(record: dict | None, spec: str) -> dict:
 def _spec_rounds(record: dict | None) -> int:
     """How many times the spec set was written: the most any one spec has been."""
     return max(
-        (len(entry.get("bytes_by_round") or []) for entry in (record or {}).get("specs") or []),
+        (
+            len(entry.get("bytes_by_round") or [])
+            for entry in (record or {}).get("specs") or []
+        ),
         default=1,
     )
 
@@ -580,7 +658,13 @@ def count_tests() -> int | None:
     if not root.is_dir():
         return None
     project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-    argv = [*pytest_argv(), "-q", "--collect-only", f"--ignore={root / 'e2e'}", str(root)]
+    argv = [
+        *pytest_argv(),
+        "-q",
+        "--collect-only",
+        f"--ignore={root / 'e2e'}",
+        str(root),
+    ]
     try:
         result = proc_group.run_bounded(
             argv, gate_timeouts.collect_timeout(), cwd=str(project_root)
@@ -700,7 +784,11 @@ def record_phase_close(phase_dir: str) -> bool:
         return False
     landed = phase_landed(Path(phase_dir))
     if landed is not True:
-        why = "still has uncommitted changes" if landed is False else "git could not say whether it has landed"
+        why = (
+            "still has uncommitted changes"
+            if landed is False
+            else "git could not say whether it has landed"
+        )
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
     record = sink.show(phase) or {}
@@ -845,7 +933,10 @@ def _record_findings_of(phase: str, payload: dict) -> int:
             phase,
             identifier=f"verifier-{identifier}",
             summary=str(
-                finding.get("instruction") or finding.get("target") or kind or identifier
+                finding.get("instruction")
+                or finding.get("target")
+                or kind
+                or identifier
             ),
             found_by="verifier",
             real=VERIFIER_KIND_REAL.get(kind, True),
@@ -1006,10 +1097,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    spec_round = sub.add_parser("spec-round", help="measure a spec at this round")
+    spec_round = sub.add_parser(
+        "spec-round", help="record one COMPLETED gate evaluation of a spec"
+    )
     spec_round.add_argument("spec")
+    spec_round.add_argument(
+        "--verdict",
+        required=True,
+        choices=list(SPEC_ROUND_VERDICTS),
+        help="the verdict the gate REACHED. A round is a completed evaluation; "
+        "a gate that could not answer is not one.",
+    )
 
-    killed = sub.add_parser("gate-killed", help="record a gate the harness killed mid-call")
+    killed = sub.add_parser(
+        "gate-killed", help="record a gate the harness killed mid-call"
+    )
     killed.add_argument("--stage", required=True)
     killed.add_argument("--spec-path")
     killed.add_argument("--phase-dir")
@@ -1021,16 +1123,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     attempt.add_argument("phase_dir")
 
-    findings = sub.add_parser("verifier-findings", help="record the review's findings as defects")
+    findings = sub.add_parser(
+        "verifier-findings", help="record the review's findings as defects"
+    )
     findings.add_argument("phase_dir")
     findings.add_argument("verdict")
 
-    survivors = sub.add_parser("mutation-survivors", help="record surviving mutants as defects")
+    survivors = sub.add_parser(
+        "mutation-survivors", help="record surviving mutants as defects"
+    )
     survivors.add_argument("phase_dir")
     survivors.add_argument("score")
 
     unavailable = sub.add_parser(
-        "mutation-unavailable", help="record that the mutation gate could not run, and why"
+        "mutation-unavailable",
+        help="record that the mutation gate could not run, and why",
     )
     unavailable.add_argument("phase_dir")
     unavailable.add_argument("reason")
@@ -1040,25 +1147,36 @@ def _build_parser() -> argparse.ArgumentParser:
     load.add_argument("--skill", required=True)
     load.add_argument("--evidence", required=True)
     load.add_argument("--phase-ref", default="")
-    load.add_argument("--not-loaded", action="store_true",
-                      help="record a required skill with no observed load")
+    load.add_argument(
+        "--not-loaded",
+        action="store_true",
+        help="record a required skill with no observed load",
+    )
 
-    required = sub.add_parser("skill-required", help="print the skills a stage's contract names")
+    required = sub.add_parser(
+        "skill-required", help="print the skills a stage's contract names"
+    )
     required.add_argument("--stage", required=True)
 
     defect = sub.add_parser("defect", help="record a defect and what caught it")
-    defect.add_argument("--phase-ref", required=True,
-                        help="a phase directory, a path inside one, or a bare phase number; one "
-                             "that resolves to no phase exits 2 rather than reporting a failed "
-                             "write, because the argument is what must change")
+    defect.add_argument(
+        "--phase-ref",
+        required=True,
+        help="a phase directory, a path inside one, or a bare phase number; one "
+        "that resolves to no phase exits 2 rather than reporting a failed "
+        "write, because the argument is what must change",
+    )
     defect.add_argument("--id", required=True, dest="identifier")
     defect.add_argument("--summary", required=True)
     defect.add_argument("--found-by", required=True)
     defect.add_argument("--stage-reached", default="implementation")
     defect.add_argument("--severity", default="correctness")
     defect.add_argument("--found-by-note")
-    defect.add_argument("--not-real", action="store_true",
-                        help="a defect in a test, fixture or artifact, not in the product")
+    defect.add_argument(
+        "--not-real",
+        action="store_true",
+        help="a defect in a test, fixture or artifact, not in the product",
+    )
 
     for name in ("phase-open", "phase-close"):
         boundary = sub.add_parser(name, help=f"stamp the phase {name.split('-')[1]}")
@@ -1087,7 +1205,7 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
     directly, off that path, specifically so it can be told whether its own catch landed.
     """
     if args.command == "spec-round":
-        value = record_spec_round(args.spec)
+        value = record_spec_round(args.spec, verdict=args.verdict)
         print(value if value is not None else 1)
     elif args.command == "gate-killed":
         record_gate_call(
@@ -1109,8 +1227,13 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
     elif args.command == "skill-load":
         phase = _phase_of_ref(args.phase_ref) or current_phase()
         if phase:
-            record_skill_load(phase, stage=args.stage, skill=args.skill,
-                              evidence=args.evidence, loaded=not args.not_loaded)
+            record_skill_load(
+                phase,
+                stage=args.stage,
+                skill=args.skill,
+                evidence=args.evidence,
+                loaded=not args.not_loaded,
+            )
     elif args.command == "skill-required":
         for name in sorted(skill_contract.required_skills(args.stage)):
             print(name)
@@ -1122,10 +1245,16 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
                 "resolve to a phase"
             )
             raise UnresolvablePhaseRef(args.phase_ref)
-        return record_defect(phase, identifier=args.identifier, summary=args.summary,
-                              found_by=args.found_by, real=not args.not_real,
-                              stage_reached=args.stage_reached, severity=args.severity,
-                              found_by_note=args.found_by_note)
+        return record_defect(
+            phase,
+            identifier=args.identifier,
+            summary=args.summary,
+            found_by=args.found_by,
+            real=not args.not_real,
+            stage_reached=args.stage_reached,
+            severity=args.severity,
+            found_by_note=args.found_by_note,
+        )
     elif args.command == "phase-open":
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
@@ -1162,7 +1291,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)
-    except SystemExit as exc:   # a usage error is the caller's bug, and is worth the nonzero exit
+    except (
+        SystemExit
+    ) as exc:  # a usage error is the caller's bug, and is worth the nonzero exit
         return int(exc.code or USAGE_ERROR)
     try:
         ok = _dispatch(args)
@@ -1172,7 +1303,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — measurement never fails the thing it measures
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
         ok = False if args.command == "defect" else None
-    if args.command == "defect" and ok is False and os.environ.get("AVENGER_METRICS_OFF") != "1":
+    if (
+        args.command == "defect"
+        and ok is False
+        and os.environ.get("AVENGER_METRICS_OFF") != "1"
+    ):
         print(_defect_failure_message(args), file=sys.stderr)
         return 1
     return 0
