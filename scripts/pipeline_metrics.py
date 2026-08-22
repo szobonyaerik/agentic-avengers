@@ -614,7 +614,7 @@ def record_phase_open(phase_dir: str) -> bool:
     return sink.set_fields(phase, **fields) if fields else True
 
 
-def _phase_landed(phase_dir: Path) -> bool | None:
+def phase_landed(phase_dir: Path) -> bool | None:
     """Whether `phase_dir` has LANDED — nothing under it left uncommitted.
 
     `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
@@ -691,7 +691,7 @@ def record_phase_close(phase_dir: str) -> bool:
     phase = resolve_phase(phase_dir)
     if phase is None:
         return False
-    landed = _phase_landed(Path(phase_dir))
+    landed = phase_landed(Path(phase_dir))
     if landed is not True:
         why = "still has uncommitted changes" if landed is False else "git could not say whether it has landed"
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
@@ -784,24 +784,50 @@ def record_defect(
     return sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)
 
 
-def record_verifier_findings(phase_dir: str, verdict_path: str) -> int:
-    """Turn the phase verdict's findings into defects attributed to the Verifier.
+def record_verifier_findings(phase_dir: str, verdict_path: str | None = None) -> int:
+    """Turn every finding the Verifier has CONCLUDED in this phase into a defect attributed to it.
 
-    It used to read `.verifier-review.json`, the cross-family reading pass's own output, emitted by
-    that script the moment it produced findings. That pass is gone; `verdict.json` carries the same
-    `findings[]` shape and is now the only place they exist, so `hook_verifier.sh` emits from it at
-    the handover — the one point every closing phase passes. Idempotent by finding id, as before.
+    `found_by` is the one field in the record that cannot be reconstructed after a run, and this is
+    the pipeline's highest-volume path into it.
+
+    **It reads the whole verdict history, not one file.** It used to read only the verdict handed to
+    it, at the handover — and `skills/verifier-triage` archives a superseded attempt to
+    `verdict-attempt-<n>.json`, leaving nothing but its number in `verdict.json`, while a passing
+    verdict carries no findings at all. So a phase that raised six findings on attempt 1 and passed
+    on attempt 2 closed reporting none: one measured phase recorded a single defect against at least
+    five it produced, four of them found by the Verifier by executing code. `verdict_path` is
+    accepted and ignored for the callers that still pass it; `verifier_attempts.verdict_records`
+    owns which files carry findings.
+
+    **It is called where the fact is DECIDED**, on every write of a verdict (`hook_verifier.sh`), not
+    only at the phase close — a finding raised on attempt 1 and fixed by attempt 2 is already gone
+    from the live verdict before any close-time reader opens it. Idempotent by finding id, so the
+    per-write emission and the close-time one converge on one entry.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
         return 0
-    try:
-        payload = json.loads(Path(verdict_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        sink.note(f"verifier findings not recorded: {exc}")
-        return 0
+    written = 0
+    for path in verifier_attempts.verdict_records(Path(phase_dir)):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            # One malformed archive does not cost the other attempts their defects — the same reason
+            # `verifier_attempts.attempts` walks past an archive it cannot read.
+            sink.note(f"verifier findings not recorded from {path.name}: {exc}")
+            continue
+        if not isinstance(payload, dict):
+            continue
+        written += _record_findings_of(phase, payload)
+    return written
+
+
+def _record_findings_of(phase: str, payload: dict) -> int:
+    """Record one verdict record's findings. Returns how many entries were written."""
     written = 0
     for finding in payload.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
         kind = str(finding.get("kind") or "").strip()
         identifier = str(finding.get("id") or "").strip()
         if not identifier:

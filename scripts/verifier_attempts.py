@@ -146,6 +146,29 @@ def _attempt(number: int, data: dict) -> Attempt:
     )
 
 
+def verdict_records(phase_dir: Path) -> list[Path]:
+    """Every file that carries this phase's Verifier findings, oldest attempt first.
+
+    The live `verdict.json` is only ever the LAST attempt: `skills/verifier-triage` archives a
+    superseded one to `verdict-attempt-<n>.json` and leaves nothing but its number behind, and a
+    passing verdict carries no findings at all. So a reader that opens `verdict.json` alone sees the
+    findings of one attempt, and on a phase that passed it sees none — which is how one measured
+    phase closed reporting a single defect against at least five, four of them raised and fixed on
+    attempt 1.
+
+    It lives HERE because this module already owns what an archive is called and how its number is
+    read; a second glob elsewhere is the copy that drifts. Missing files are simply absent — whether
+    that absence is a problem is the caller's question, not this one's.
+    """
+    numbered = []
+    for path in Path(phase_dir).glob("verdict-attempt-*.json"):
+        archived = ARCHIVE.match(path.name)
+        if archived:
+            numbered.append((int(archived.group(1)), path))
+    live = Path(phase_dir) / "verdict.json"
+    return [path for _, path in sorted(numbered)] + ([live] if live.is_file() else [])
+
+
 def attempts(phase_dir: Path) -> list[Attempt]:
     """Every attempt on record, in order.
 

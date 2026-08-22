@@ -876,3 +876,112 @@ def test_an_unreadable_transcript_is_not_reported_as_a_missing_one(project: Path
     assert refused.returncode == 2
     assert "could not be DECIDED" in refused.stderr
     assert "recording a run will not repair it" in refused.stderr
+
+
+# ── the Verifier's defects are emitted where they are CONCLUDED, not at the close ────────────────
+
+
+def run_hook_on(project: Path, path: Path, **env: str) -> subprocess.CompletedProcess:
+    """Drive the hook for an arbitrary written file, the way the harness does."""
+    return subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}' % path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            **env,
+        },
+    )
+
+
+def metrics_double(project: Path) -> dict[str, str]:
+    """Point the sink at the shared test double, in this project's own store."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    from metrics_support import DOUBLE
+
+    double = project / "fm-pipeline-metrics.sh"
+    double.write_text(DOUBLE, encoding="utf-8")
+    double.chmod(0o755)
+    (project / "store").mkdir(exist_ok=True)
+    return {
+        "AVENGER_METRICS_CMD": str(double),
+        "AVENGER_METRICS_PROJECT": "unit-test",
+        "AVENGER_METRICS_LOG": str(project / "metrics.log"),
+        "DOUBLE_LOG": str(project / "calls.log"),
+        "DOUBLE_STORE": str(project / "store"),
+    }
+
+
+def test_a_failing_verdict_emits_its_defects_when_it_is_written(project: Path) -> None:
+    """The fact is decided when the Verifier writes the verdict, so that is where it is emitted.
+
+    Emitted only at the handover, a finding raised on attempt 1 and fixed by attempt 2 is gone from
+    `verdict.json` before anything reads it — which is how phase 12 closed reporting one defect
+    against at least five, four of them the Verifier's own.
+    """
+    env = metrics_double(project)
+    verdict = phase_dir(project) / "verdict.json"
+    verdict.write_text(json.dumps({"attempt": 1, "verdict": "fail", "findings": [
+        {"id": "aaa", "kind": "code", "instruction": "poll before sleep opens a second session"},
+        {"id": "bbb", "kind": "code", "instruction": "InvalidToken raised outside the catch"},
+    ]}))
+
+    result = run_hook_on(project, verdict, **env)
+
+    assert result.returncode == 0, result.stderr
+    record = json.loads((project / "store" / "phase-01.json").read_text())
+    assert {d["id"] for d in record["defects"]} == {"verifier-aaa", "verifier-bbb"}
+    assert all(d["found_by"] == "verifier" for d in record["defects"])
+
+
+def test_emitting_a_verdict_never_gates_anything(project: Path) -> None:
+    """Measurement, not a gate: an unwritable record does not stop the Verifier writing a verdict."""
+    verdict = phase_dir(project) / "verdict.json"
+    verdict.write_text(json.dumps({"attempt": 1, "verdict": "fail", "findings": [{"id": "aaa"}]}))
+
+    assert run_hook_on(project, verdict, AVENGER_METRICS_OFF="1").returncode == 0
+
+
+def test_a_phase_does_not_close_reporting_fewer_defects_than_its_verdicts_describe(
+    project: Path,
+) -> None:
+    """The check that makes the absence visible. Silence used to read as a clean phase.
+
+    The emission is fail-open by design — measurement may never fail a phase — so on its own a
+    writer that refuses every entry looks exactly like a phase that found nothing. That is the
+    state reproduced here: the record exists, the Verifier concluded six findings across two
+    attempts, and every `add` is refused.
+    """
+    env = metrics_double(project)
+    write_spec(project)
+    attempts(project, [(1, 6, "fail"), (2, 0, "pass")])
+    subprocess.run(
+        [sys.executable, str(project / "scripts" / "pipeline_metrics.py"), "phase-open",
+         str(phase_dir(project))],
+        cwd=project, check=False, capture_output=True,
+        env={"PATH": os.environ["PATH"], "HOME": str(project),
+             "CLAUDE_PROJECT_DIR": str(project), **env},
+    )
+
+    result = run_hook(project, DOUBLE_REFUSE="add", **env)
+
+    assert result.returncode == 2
+    assert "fewer defects" in result.stderr
+    assert "a1-0" in result.stderr, "the check names what was concluded and never recorded"
+
+
+def test_a_phase_whose_defects_are_all_recorded_closes(project: Path) -> None:
+    """Mutation guard for the check above: it must pass when the producer actually produced."""
+    env = metrics_double(project)
+    write_spec(project)
+    attempts(project, [(1, 6, "fail"), (2, 0, "pass")])
+
+    result = run_hook(project, **env)
+
+    assert result.returncode == 0, result.stderr
+    record = json.loads((project / "store" / "phase-01.json").read_text())
+    assert len(record["defects"]) == 6, "the close-time emission fills the record it is checked on"

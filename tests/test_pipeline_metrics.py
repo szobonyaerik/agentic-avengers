@@ -691,10 +691,9 @@ def test_verifier_findings_become_defects_attributed_to_the_verifier(stub_sink):
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
-    verdict = phase_dir / ".verifier-review.json"
-    # The shape `verifier_review.sh` actually hands over: the verdict.json findings of
-    # skills/verifier-triage, kinds and all.
-    verdict.write_text(json.dumps({"verdict": "NO-GO", "route_back": "Implementer", "findings": [
+    verdict = phase_dir / "verdict.json"
+    # The shape `skills/verifier-triage` writes: the verdict's findings, kinds and all.
+    verdict.write_text(json.dumps({"verdict": "fail", "attempt": 1, "findings": [
         {"id": "aaa", "kind": "code", "spec_id": "R8.1.1", "target": "src/token.py",
          "severity": "blocker", "instruction": "off-by-one in the token window"},
         {"id": "bbb", "kind": "gamed-test", "spec_id": "R8.1.2",
@@ -1176,8 +1175,8 @@ def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(s
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
-    verdict = phase_dir / ".verifier-review.json"
-    verdict.write_text(json.dumps({"verdict": "NO-GO", "findings": [
+    verdict = phase_dir / "verdict.json"
+    verdict.write_text(json.dumps({"verdict": "fail", "attempt": 1, "findings": [
         {"id": "aaa", "kind": "code", "target": "src/token.py", "instruction": "off-by-one"},
     ]}), encoding="utf-8")
     score = phase_dir / "score.json"
@@ -1362,3 +1361,48 @@ def test_the_cli_reports_it_and_always_exits_zero(stub_sink):  # noqa: F811
     assert result.returncode == 0
     rows = [c for c in stored(store, "08")["gate_calls"] if c["stage"] == metrics.MUTATION_STAGE]
     assert rows and "exec errored" in rows[0]["note"]
+
+
+# ── a stage that CONCLUDES a defect emits it, at the moment it concludes ─────────────────────────
+
+
+def test_findings_from_a_superseded_attempt_are_recorded_too(stub_sink):  # noqa: F811
+    """Phase 12 recorded ONE defect against at least five it produced, four of them found by the
+    Verifier by executing code on attempt 1.
+
+    The reason is this shape exactly: `skills/verifier-triage` archives a superseded attempt to
+    `verdict-attempt-<n>.json` and leaves only its number in `verdict.json`, so the attempt that
+    actually concluded the defects is not the file the close-time emission read. A passing verdict
+    carries no findings at all, so the phase closed reporting none.
+    """
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/12-poll"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict-attempt-1.json").write_text(json.dumps({"attempt": 1, "verdict": "fail",
+        "findings": [
+            {"id": "aaa", "kind": "code", "instruction": "poll before sleep opens a second session"},
+            {"id": "bbb", "kind": "code", "instruction": "InvalidToken raised outside the catch"},
+        ]}), encoding="utf-8")
+    verdict = phase_dir / "verdict.json"
+    verdict.write_text(json.dumps({"attempt": 2, "verdict": "pass", "findings": []}), "utf-8")
+
+    assert metrics.record_verifier_findings(str(phase_dir), str(verdict)) == 2
+
+    defects = {d["id"]: d for d in stored(store, "12")["defects"]}
+    assert set(defects) == {"verifier-aaa", "verifier-bbb"}
+    assert all(d["found_by"] == "verifier" for d in defects.values())
+
+
+def test_re_emitting_the_same_findings_converges(stub_sink):  # noqa: F811
+    """The emission fires per verdict write AND once at the handover, so it repeats by design."""
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/12-poll"
+    phase_dir.mkdir(parents=True)
+    verdict = phase_dir / "verdict.json"
+    verdict.write_text(json.dumps({"attempt": 1, "verdict": "fail", "findings": [
+        {"id": "aaa", "kind": "code", "instruction": "one"}]}), encoding="utf-8")
+
+    metrics.record_verifier_findings(str(phase_dir), str(verdict))
+    metrics.record_verifier_findings(str(phase_dir), str(verdict))
+
+    assert len(stored(store, "12")["defects"]) == 1

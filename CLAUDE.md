@@ -904,9 +904,9 @@ the attribution was wrong) · tests before/after — **collected pytest test ite
 commit) · the phase's **close** and `elapsed_minutes`, stamped by the orchestrator right after that
 commit and by no hook, because **close means landed, not implemented**: `handover.md` being written
 is the Verifier's precondition, and `record_phase_close` refuses the write while anything under the
-phase directory is still uncommitted · **which stage found each defect** (`hook_verifier.sh`, over
-`verdict.json` at phase close; `hook_mutation.sh`; and `pipeline_metrics.py defect` for stages no
-script sees) · which skills each
+phase directory is still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
+verdict write** and again at phase close, over the phase's **whole verdict history**;
+`hook_mutation.sh`; and `pipeline_metrics.py defect` for stages no script sees) · which skills each
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
 defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
@@ -932,6 +932,33 @@ whatever its last writer left there. No declared hypothesis needs it either: H4 
 analytical value through `found_by`, `real`, `stage_reached` and `severity`. The one thing genuinely
 missing is the attempt index. Deferred as **`fm-metrics-attempt-detail`**, which is firstmate's
 decision to make, not this repo's.
+
+### 6e. A producer that stopped producing must not read as a clean result
+Facts about a phase are emitted by the stage that observes them, and three of them went silently
+missing across the last two phases of one measured build. Nothing detected any of them, because in
+every case the record simply held **nothing** — and nothing is also what a phase with nothing to
+report holds. The absence was only ever noticed by a person reading a PR body afterwards.
+
+**Defects are emitted where the stage CONCLUDES them, not at the close.** Phase 12 recorded **1**
+defect against at least 5 it produced; phase 13 recorded **0** against at least 2. Four of phase 12's
+and both of phase 13's were found by the Verifier **by executing code**, on attempt 1, and described
+in full in the phase status log. The emission read `verdict.json` at the handover — and
+`skills/verifier-triage` archives a superseded attempt to `verdict-attempt-<n>.json` while a
+**passing verdict carries no findings at all**, so the attempt that concluded the defects was never
+the file anything opened. So `hook_verifier.sh` now emits on **every verdict write**, the moment the
+fact is decided, and `record_verifier_findings` reads the phase's **whole verdict history**
+(`verifier_attempts.verdict_records`) rather than one file. The archive gains its one declared
+reader on the read path for this: **finding ids and kinds only, once per phase close**.
+
+**And the emission is checked, because it is fail-open.** Measurement may never fail a phase
+(§6d), so a writer that refuses every entry looks exactly like a phase that found nothing.
+`scripts/emission_gate.py defects` refuses a phase that closes carrying **fewer defects than its own
+verdicts describe**, from `hook_verifier.sh` at the handover and diff-scoped from `gate_ci.sh`.
+**What it does not cover is stated rather than implied**: the comparison reads the Verifier's own
+`findings[]` and nothing else, so a defect described only in a PR body, a status log or a commit
+message is invisible to it — it would have caught **four** of phase 12's five, not all — and no
+other stage's conclusions are compared to the record at all. It is a floor, never an equality: one
+finding may describe two defects and still pass.
 
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode

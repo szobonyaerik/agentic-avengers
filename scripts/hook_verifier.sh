@@ -47,6 +47,22 @@ FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
 case "$FILE" in
+  */verdict.json)
+    # MEASUREMENT ONLY — this branch never gates anything and always exits 0.
+    #
+    # A verdict write is the moment the Verifier CONCLUDES a defect, and it is the only moment the
+    # finding is guaranteed to exist: `skills/verifier-triage` archives a superseded attempt to
+    # verdict-attempt-<n>.json and a passing verdict carries no findings at all, so a close-time
+    # reader opening verdict.json alone sees the last attempt and, on a phase that passed, nothing.
+    # One measured phase closed reporting ONE defect against at least five it produced, four of them
+    # the Verifier's own, found by executing code on attempt 1. `found_by` is the one field in the
+    # record that cannot be reconstructed afterwards, so a phase that closes without it closes
+    # without it forever.
+    #
+    # Emitted HERE rather than at a caller: a stage cannot forget an emission it does not make.
+    # Idempotent by finding id, so this and the close-time emission converge on one entry.
+    python3 "$SD/pipeline_metrics.py" verifier-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    exit 0 ;;
   */handover.md)
     TRIGGER="handover" ;;
   */spec.md)
@@ -419,6 +435,25 @@ case "$V" in
     # this is the pipeline's highest-volume defect-attribution path, and swallowing the diagnostic
     # would leave a run that dropped every verifier defect looking like one that found none.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$VERDICT" >/dev/null || true
+    # ...and the check that makes its absence visible. The emission above is fail-open by design, so
+    # on its own a producer that stopped producing is indistinguishable from a phase that found
+    # nothing — which is exactly what two measured phases looked like while their Verifiers were
+    # returning real, executed findings. This is a GATE and it is the one thing here that is: a
+    # phase does not close carrying fewer defects than its own verdicts describe.
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it, and the two
+    # carry different tags and different messages — the same split every other check here makes.
+    # "Emit the defects" cannot repair a verdict that will not parse.
+    python3 "$SD/emission_gate.py" defects "$PHASE_DIR"; emit_rc=$?
+    if [ "$emit_rc" -eq 1 ]; then
+      fail "verifier:defects-unrecorded" \
+        "verifier: this phase's record carries fewer defects than its own verdicts describe (named" \
+        "above). \`found_by\` cannot be reconstructed after the run, so closing here loses them."
+    elif [ "$emit_rc" -ne 0 ]; then
+      fail "verifier:defects-undecidable" \
+        "verifier: whether this phase's defects were recorded could not be DECIDED (cause above) —" \
+        "this is not an unrecorded defect, and emitting one will not repair it. Fix what it named."
+    fi
     exit 0 ;;
   fail)
     # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts

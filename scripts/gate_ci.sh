@@ -181,6 +181,26 @@ elif [ "$breaker_rc" -ne 0 ]; then
   record_fail "breaker:undecidable"
 fi
 
+# 1bg) Defect emission — a phase does not close carrying fewer defects than its own verdicts
+#      describe. `found_by` is the one field in firstmate's record that cannot be reconstructed
+#      after a run, and two measured phases closed reporting 1 defect against at least 5 and 0
+#      against at least 2, while their Verifiers were returning real, EXECUTED findings. The
+#      emission itself is fail-open by design (measurement may never fail a phase), so without this
+#      a writer that refused every entry looks exactly like a phase that found nothing.
+#
+#      Enforced here as well as in scripts/hook_verifier.sh for the same reason the attempt cap is:
+#      a rule only an in-session hook applies stops existing the moment the phase is driven another
+#      way. DIFF-SCOPED (CLAUDE.md §3a) — a phase this change did not touch is not this change's
+#      responsibility, and a phase with no metrics record at all is NOT CHECKED and says so.
+echo "• defect emission: the record carries every defect these phases concluded"
+python3 "$SCRIPT_DIR/emission_gate.py" defects --root "$ROOT"
+emission_rc=$?
+if [ "$emission_rc" -eq 1 ]; then
+  record_fail "defects-unrecorded"
+elif [ "$emission_rc" -ne 0 ]; then
+  record_fail "defects-undecidable"
+fi
+
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
 #      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY
