@@ -281,6 +281,20 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    (`scripts/gate_runner_guard.sh`) rather than being trusted by path.
    Break-glass `GATE_BYPASS="reason"` is logged to `gate-overrides.log`, shown, and recorded in `handover.md`.
    The reason is prose, so under `--auto` it comes from a file — see rule 10.
+   Three more, added after phase 12/13 retros found checks reporting success while verifying nothing:
+   **a green suite has to be a suite that FINISHED** — a run killed by its watchdog, or one whose
+   output carries no test-runner summary, is refused by `scripts/suite_outcome.py`, which both
+   `verifier_evidence.py` and `hook_verifier.sh` ask rather than restating (an intermittent hang was
+   clean at 1298 tests on one run and wedged on the next, with the same defect in both;
+   `SUITE_SUMMARY_PATTERN` declares an unknown runner's summary, `SUITE_BUDGET_S` places the
+   watchdog, and there is no off switch). **The lint gate has TWO dimensions** —
+   `scripts/lint_gate.py` runs `ruff check` (whole tree) *and* `ruff format --check` (diff-scoped on
+   the applicability boundary, so a tree written before the rule is counted rather than held
+   hostage); a bare `ruff check` says nothing about formatting and two phases reported "ruff clean"
+   about a dimension nothing could have failed on. **A verdict names what produced it** —
+   `gate_runner.py` announces model, family and transport for every reached verdict, and the spec
+   gate stamps them onto the spec as `<gate>_gated_by` beside the hash and the verdict; no
+   attribution is recorded as `unrecorded`, a named state rather than an absent key.
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
    The verdict is **deterministic** (`scripts/mutation_score.py`, not a model): score `>=
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
@@ -321,7 +335,16 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    record with the grammar living in two places. A value fully determined by a template,
    with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
    `skills/pipeline-conventions/SKILL.md`.
-11. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —
+11. **A spec round is one COMPLETED gate evaluation** — a run of the spec gate that REACHED a
+   verdict, approved or blocked. A gate that never ran is zero rounds (a spec written outside the
+   gate's trigger, which one phase did through a shell heredoc); a gate that reached no verdict is
+   not a round and stays in `gate_calls[]` with its `failure_cause`; a replayed verdict over an
+   unchanged body is not one either. It is recorded at the GATE, in the branches that have a
+   verdict — `record_spec_round` refuses a call naming none, and its CLI's `--verdict` is required —
+   because measuring it at the writer gave one phase three counting conventions and made
+   `spec_rounds` incomparable between phases.
+
+11a. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —
    gate calls with their measured latency and failure `cause`, spec rounds and their byte growth,
    the verification attempt count (not what each attempt changed — see
    `skills/pipeline-conventions/SKILL.md`), tests before/after, which skills each stage loaded, and **which
@@ -378,6 +401,19 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    repository resolvable - the normal state of a standalone install) proceeds untouched, as does
    every failure to look; `GATE_BYPASS` proceeds and is audited. **opencode has no pre-spawn event**,
    so on this runtime the `/avenger-run` §1 preflight report is the only signal - run it.
+
+13. **A completion signal comes from the implementer FINISHING, never from a stamp.** A spec's own
+   implementer writes `status: done` and then keeps working, and a wedge guard armed on that stamp
+   fired 24 minutes early — one dispatch away from two implementers in one worktree against one
+   database, which cost a swallowed stash, foreign-key violations and a spurious lint failure the
+   last time it happened. `scripts/implementer_liveness.py` reads the implementer's own
+   `SubagentStop` out of `.agent-activity.jsonl`, so nothing here can be moved by writing a
+   document, and `scripts/hook_implementer_lock.sh` refuses to spawn a second implementer into a
+   working copy that already holds one. A crashed agent ages out after `IMPLEMENTER_MAX_AGE_S`
+   (default 4h); everything that cannot look lets the spawn through and says so; `GATE_BYPASS`
+   proceeds, audited, and `IMPLEMENTER_LOCK_OFF=1` disables it. **opencode has no pre-spawn event**,
+   so on this runtime the rule is yours to keep: never dispatch the next implementer until the
+   running one's agent notification has arrived. The stamp is not it.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -464,6 +500,11 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `GATE_MODEL_FAMILY` | unset | declare a gate model's vendor family when `scripts/model_vendors.py` has no entry for it; without it an unknown vendor is refused, never guessed |
 | `GATE_RUNNER_SHA256` | unset | pin the gate runner by content digest. Callers already refuse a runner that cannot identify itself; this refuses any but the exact one named |
 | `FIXTURE_SHAPES` | `fixture-shapes.toml` at the project root | the per-project declaration of what shape each external identifier really has (`names`, `min`/`max` or `pattern`, and a mandatory `why`). `scripts/fixture_shapes.py` checks test fixtures against it at `spec-done` and in CI, diff-scoped; no declaration is CLEAN and said on stderr, never a silent green |
+| `SUITE_SUMMARY_PATTERN` | pytest / unittest / jest / go / cargo summaries | one regex recognising this project's test-runner summary; it REPLACES the defaults. A suite run with no summary, or one killed by its watchdog, is refused rather than read as green (`scripts/suite_outcome.py`). Deliberately no off switch |
+| `SUITE_BUDGET_S` | `1800` | seconds a suite run gets before its process group is killed and the run is recorded as incomplete |
+| `IMPLEMENTER_AGENTS` | `avenger-backend-architect\|avenger-frontend-developer` | which stages may not overlap in one working copy (`scripts/implementer_liveness.py`). Asked of the spawning stage AND of every live entry by the same module, so no caller carries a second copy |
+| `IMPLEMENTER_MAX_AGE_S` | `14400` | seconds after which an implementer that started and never recorded a stop is presumed dead, so a crashed agent cannot hold the lock forever |
+| `IMPLEMENTER_LOCK_OFF` | unset | `1` disables the second-implementer refusal (Claude Code hook only; opencode has no pre-spawn event) |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
