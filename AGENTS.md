@@ -344,6 +344,29 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    phase** never reached the writer at all, so fix the ARGUMENT rather than repeating the command
    (exit 2, and `AVENGER_METRICS_OFF=1` does not quiet it). Full rule in
    `skills/pipeline-conventions/SKILL.md`.
+11a. **A producer that stopped producing must not read as a clean result.** Three facts went
+   silently missing across two measured phases, and nothing detected any of them, because the record
+   simply held **nothing** - which is also what a phase with nothing to report holds. (a) **Defects
+   are emitted where the stage CONCLUDES them**: `hook_verifier.sh` fires on **every `verdict.json`
+   write**, and `record_verifier_findings` reads the phase's whole verdict history, because
+   `verifier-triage` archives a superseded attempt to `verdict-attempt-<n>.json` and a **passing
+   verdict carries no findings at all** - so a close-time reader of `verdict.json` alone saw one
+   phase report 1 defect against at least 5, four of them the Verifier's own, found by executing
+   code. `scripts/emission_gate.py defects` then refuses a phase closing with fewer recorded defects
+   than its verdicts describe, since the emission is fail-open and a refused write otherwise looks
+   like a phase that found nothing. It compares the Verifier's `findings[]` and nothing else: a
+   defect described only in a PR body or a status log is invisible to it, and no other stage is
+   covered. (b) **The close stamp is emitted at LANDING by something that executes**:
+   `scripts/hook_phase_close.sh` is a `PostToolUse` hook on `Bash` that stamps every phase the
+   commit it just ran touched, and `emission_gate.py close` fails a landed phase carrying a null
+   `closed`. **opencode does not carry that hook** - its adapter routes only `write`/`edit` tool
+   events - so on opencode the orchestrator's own `phase-close` (`commands/avenger-run.md` §5) is
+   the only emitter, and running it is not optional here. `record_phase_close` converges on a phase
+   already closed, so both firing costs nothing. (c) **An override records which CLASS it is** -
+   `waiver`, `measurement-correction`, `account-correction` (`scripts/override_classes.py`), tagged
+   on the override's own `scope` because firstmate's schema is closed. Nothing is inferred from the
+   prose: an untagged override is `unclassified`, its own line, never folded. That one is the metric
+   and not a gate.
 12. **A run against a stale plugin copy is refused, by a hook, not by anyone remembering.** Phases
    execute the cached release under `$CLAUDE_PLUGIN_ROOT`, so a fix merged here is inert until
    someone cuts a release. `scripts/plugin_release.py check` has always been able to say so;
