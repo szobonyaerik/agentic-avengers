@@ -335,6 +335,18 @@ fi
 echo "• stage effort: every stage declares it, and no document claims one nothing applies"
 python3 "$SCRIPT_DIR/stage_effort.py" check --root "$ROOT" || record_fail "stage-effort"
 
+# 1b2) Lint, in BOTH its dimensions. `ruff check` judges rules and says nothing about formatting, so
+#      drift passed the gate untouched and two consecutive measured phases reported "ruff clean"
+#      about a dimension nothing could have failed on. scripts/lint_gate.py owns both; its format
+#      half is diff-scoped on the applicability boundary, so a tree written before the rule is
+#      counted rather than held hostage.
+#
+#      A missing ruff is NOT a silent pass: the gate says so and this records it as a failure the
+#      same way any other unrunnable check would, because "the linter was not installed" and "the
+#      code is clean" must never arrive looking alike.
+echo "• lint: ruff rules (whole tree) + ruff format (what this change touched)"
+python3 "$SCRIPT_DIR/lint_gate.py" || record_fail "lint"
+
 # 1c) Cross-family assertion — on the model that actually FORMS THE JUDGEMENT.
 #     Checking an agent's own `model:` would be meaningless here: every subagent in this runtime is
 #     Anthropic, so no agent can differ in family from the implementer. What must be decorrelated is

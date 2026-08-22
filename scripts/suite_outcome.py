@@ -70,11 +70,11 @@ PATTERN_ENV = "SUITE_SUMMARY_PATTERN"
 #: override, rather than a heuristic: an unrecognised runner gets ONE env var, not a silent pass.
 DEFAULT_PATTERNS = (
     r"\b\d+\s+(?:passed|failed|error|errors|skipped|xfailed|xpassed|deselected)\b",  # pytest, jest
-    r"\bno tests ran\b",                                                             # pytest, empty
-    r"\bRan\s+\d+\s+tests?\b",                                                       # unittest
-    r"\btest result:\s*\w+",                                                         # cargo
-    r"^(?:ok|FAIL|PASS)\s",                                                          # go test
-    r"^(?:OK|FAILED)\b",                                                             # unittest tail
+    r"\bno tests ran\b",  # pytest, empty
+    r"\bRan\s+\d+\s+tests?\b",  # unittest
+    r"\btest result:\s*\w+",  # cargo
+    r"^(?:ok|FAIL|PASS)\s",  # go test
+    r"^(?:OK|FAILED)\b",  # unittest tail
 )
 
 #: Seconds a suite run may take before its group is killed. Generous - these are whole test suites -
@@ -108,9 +108,13 @@ def budget_s() -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise SuiteOutcomeError(f"{BUDGET_ENV}={raw!r} is not an integer number of seconds") from exc
+        raise SuiteOutcomeError(
+            f"{BUDGET_ENV}={raw!r} is not an integer number of seconds"
+        ) from exc
     if value <= 0:
-        raise SuiteOutcomeError(f"{BUDGET_ENV}={raw!r} must be a positive number of seconds")
+        raise SuiteOutcomeError(
+            f"{BUDGET_ENV}={raw!r} must be a positive number of seconds"
+        )
     return value
 
 
@@ -161,12 +165,17 @@ def run(argv: list[str], budget: int | None = None) -> int:
     try:
         result = run_bounded(argv, limit)
     except FileNotFoundError as exc:
-        print(f"suite-outcome: the suite command could not be started: {exc}", file=sys.stderr)
+        print(
+            f"suite-outcome: the suite command could not be started: {exc}",
+            file=sys.stderr,
+        )
         return ERROR
     output = (result.stdout or "") + (result.stderr or "")
     sys.stdout.write(output)
     sys.stdout.flush()
-    found = problems(exit_code=result.returncode, timed_out=result.timed_out, output=output)
+    found = problems(
+        exit_code=result.returncode, timed_out=result.timed_out, output=output
+    )
     if found:
         _report(found, f"`{' '.join(argv)}` (after {result.elapsed:.1f}s)")
         return INCOMPLETE
@@ -174,12 +183,17 @@ def run(argv: list[str], budget: int | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="command", required=True)
 
-    runner = sub.add_parser("run", help="run a suite bounded and judge whether it completed")
-    runner.add_argument("--budget", type=int, default=None, help="seconds before the watchdog fires")
+    runner = sub.add_parser(
+        "run", help="run a suite bounded and judge whether it completed"
+    )
+    runner.add_argument(
+        "--budget", type=int, default=None, help="seconds before the watchdog fires"
+    )
     runner.add_argument("command_argv", nargs=argparse.REMAINDER)
 
     checker = sub.add_parser("check", help="judge a log already on disk")
@@ -201,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"suite-outcome: cannot read {args.log}: {exc}", file=sys.stderr)
             return ERROR
-        found = problems(exit_code=args.exit_code, timed_out=args.timed_out, output=text)
+        found = problems(
+            exit_code=args.exit_code, timed_out=args.timed_out, output=text
+        )
         if found:
             _report(found, args.log)
             return NOT_COMPLETE

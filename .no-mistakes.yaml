@@ -13,7 +13,13 @@ commands:
   # Deterministic local baseline. Kept targeted on purpose - remote CI owns broad regression.
   # `pre-commit run --all-files` is deliberately NOT used here: its only hook shells out to
   # scripts/gate_ci.sh, which re-runs the whole suite that `test` below already covers.
-  lint: "ruff check ."
+  #
+  # NOT a bare `ruff check .`: that judges rules and says nothing about formatting, so drift passed
+  # the gate untouched and two consecutive measured phases reported "ruff clean" about a dimension
+  # nothing could have failed on. scripts/lint_gate.py runs both, with the format half diff-scoped
+  # on the applicability boundary so a tree written before the rule is counted rather than held
+  # hostage (CLAUDE.md 3a).
+  lint: "python3 scripts/lint_gate.py"
   # `--full` is required, not cosmetic: without it gate_ci.sh skips cross_family_check entirely
   # and runs pytest with `--ignore=tests/e2e`, so this feature-close gate would never execute the
   # e2e suite that skills/pipeline-conventions says it runs after.

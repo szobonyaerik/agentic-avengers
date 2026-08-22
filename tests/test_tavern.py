@@ -44,19 +44,33 @@ pytestmark = pytest.mark.subprocess(
 def project(tmp_path):
     """A watched root with one feature, the real resolver vendored in, and an activity log."""
     root = tmp_path / "proj"
-    spec_dir = root / "docs" / "features" / "demo" / "phases" / "1-core" / "specs" / "1.1-thing"
+    spec_dir = (
+        root
+        / "docs"
+        / "features"
+        / "demo"
+        / "phases"
+        / "1-core"
+        / "specs"
+        / "1.1-thing"
+    )
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(SPEC)
-    (spec_dir.parents[1] / "verdict.json").write_text(json.dumps({
-        "verdict": "pass", "tests": {"total": 3, "passed": 3, "failed": 0}, "findings": [],
-    }))
+    (spec_dir.parents[1] / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "tests": {"total": 3, "passed": 3, "failed": 0},
+                "findings": [],
+            }
+        )
+    )
     (root / "scripts").mkdir()
     # The resolver plus the siblings it imports — DERIVED, not listed. It grew two of them (the one
     # place the spec gate's stamp is read, and the amendment ledger) and a fixture copying one file
     # made the resolver die at import, which reached the server as a feature with no `stage` at all.
     # The walk is TRANSITIVE: a sibling that grows a sibling of its own is the same failure one hop
     # out, and it arrives here looking identical — a feature with no `stage`, not an import error.
-    resolver = REPO / "scripts" / "pipeline_state.py"
     pending, copied = ["pipeline_state"], set()
     while pending:
         module = pending.pop()
@@ -69,12 +83,33 @@ def project(tmp_path):
         shutil.copy(sibling, root / "scripts" / sibling.name)
         pending.extend(re.findall(r"^import ([a-z_]+)", sibling.read_text(), re.M))
     (root / ".agent-activity.jsonl").write_text(
-        json.dumps({"ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
-                    "agent_type": "avenger-verifier", "agent_id": "a1"}) + "\n"
-        + json.dumps({"ts": "2026-08-05T10:01:00+0000", "event": "SubagentStart",
-                      "agent_type": "avenger-handover", "agent_id": "a2"}) + "\n"
-        + json.dumps({"ts": "2026-08-05T10:02:00+0000", "event": "SubagentStop",
-                      "agent_type": "avenger-handover", "agent_id": "a2"}) + "\n"
+        json.dumps(
+            {
+                "ts": "2026-08-05T10:00:00+0000",
+                "event": "SubagentStart",
+                "agent_type": "avenger-verifier",
+                "agent_id": "a1",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "ts": "2026-08-05T10:01:00+0000",
+                "event": "SubagentStart",
+                "agent_type": "avenger-handover",
+                "agent_id": "a2",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "ts": "2026-08-05T10:02:00+0000",
+                "event": "SubagentStop",
+                "agent_type": "avenger-handover",
+                "agent_id": "a2",
+            }
+        )
+        + "\n"
     )
     return root
 
@@ -119,7 +154,9 @@ def get(base, path):
 
 
 def post(base, path, payload):
-    req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST")
+    req = urllib.request.Request(
+        base + path, data=json.dumps(payload).encode(), method="POST"
+    )
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
@@ -137,7 +174,9 @@ def test_state_merges_all_sources(tavern):
     # pipeline: the real resolver ran against the fixture feature
     (feature,) = state["features"]
     assert feature["feature"] == "demo"
-    assert feature["stage"]  # whatever the resolver owes next — presence is the contract
+    assert feature[
+        "stage"
+    ]  # whatever the resolver owes next — presence is the contract
     assert feature["specs"][0]["spec_gate"] == "approved"
     assert feature["verdicts"][0]["verdict"] == "pass"
 
@@ -180,7 +219,9 @@ def test_state_degrades_when_sources_absent(tmp_path):
     cfg.scan = False
     state = StateBuilder(cfg).state()
     assert state["mode"] == "live"
-    assert state["crew"] == [] and state["features"] == [] and state["live_agents"] == []
+    assert (
+        state["crew"] == [] and state["features"] == [] and state["live_agents"] == []
+    )
     assert state["sources"]["fleet"] == "absent"
 
 
@@ -189,9 +230,21 @@ def test_demo_state_shape_matches_live(tmp_path):
     cfg.demo = True
     state = StateBuilder(cfg).state()
     assert state["mode"] == "demo"
-    assert {m["id"] for m in state["crew"]} == {"brave-anvil", "quiet-lantern", "gilded-fox"}
+    assert {m["id"] for m in state["crew"]} == {
+        "brave-anvil",
+        "quiet-lantern",
+        "gilded-fox",
+    }
     for member in state["crew"]:
-        assert {"id", "project", "worktree", "window", "kind", "last_status", "sentence"} <= set(member)
+        assert {
+            "id",
+            "project",
+            "worktree",
+            "window",
+            "kind",
+            "last_status",
+            "sentence",
+        } <= set(member)
 
 
 def test_handler_has_no_default_logging():
@@ -211,13 +264,22 @@ def test_live_agent_detail_links_its_crewmate(tmp_path):
     # the crewmate's worktree IS the watched root -> the live agent panel gets a focus target
     root = tmp_path / "wt"
     root.mkdir()
-    (root / ".agent-activity.jsonl").write_text(json.dumps({
-        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
-        "agent_type": "plan-build-verify:avenger-spec-writer", "agent_id": "a9",
-    }) + "\n")
+    (root / ".agent-activity.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": "2026-08-05T10:00:00+0000",
+                "event": "SubagentStart",
+                "agent_type": "plan-build-verify:avenger-spec-writer",
+                "agent_id": "a9",
+            }
+        )
+        + "\n"
+    )
     home = tmp_path / "fm"
     (home / "state").mkdir(parents=True)
-    (home / "state" / "r1.meta").write_text(f"window=firstmate:fm-r1\nworktree={root}\nkind=ship\n")
+    (home / "state" / "r1.meta").write_text(
+        f"window=firstmate:fm-r1\nworktree={root}\nkind=ship\n"
+    )
     cfg = Config()
     cfg.roots = [root]
     cfg.fm_home = home
@@ -231,7 +293,9 @@ def test_live_agent_detail_links_its_crewmate(tmp_path):
     assert detail["crew_window"] == "firstmate:fm-r1"
 
 
-def test_sessions_are_discovered_and_watched_without_configuration(tmp_path, monkeypatch):
+def test_sessions_are_discovered_and_watched_without_configuration(
+    tmp_path, monkeypatch
+):
     """The '+1' ask: agents appear without the operator naming their paths.
 
     A transcript under CLAUDE_CONFIG_DIR/projects names its session's cwd; that cwd becomes a
@@ -239,10 +303,17 @@ def test_sessions_are_discovered_and_watched_without_configuration(tmp_path, mon
     """
     workdir = tmp_path / "someproject"
     workdir.mkdir()
-    (workdir / ".agent-activity.jsonl").write_text(json.dumps({
-        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
-        "agent_type": "general-purpose", "agent_id": "g1",
-    }) + "\n")
+    (workdir / ".agent-activity.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": "2026-08-05T10:00:00+0000",
+                "event": "SubagentStart",
+                "agent_type": "general-purpose",
+                "agent_id": "g1",
+            }
+        )
+        + "\n"
+    )
     config_dir = tmp_path / "claude-home"
     proj = config_dir / "projects" / "-someproject"
     proj.mkdir(parents=True)
@@ -265,8 +336,11 @@ def test_sessions_are_discovered_and_watched_without_configuration(tmp_path, mon
 def test_stale_break_glass_is_history_not_a_moment(project, fm_home):
     # the vibrating-tavern bug: a day-old gate-overrides.log line replayed as a fresh moment
     import os
+
     log = project / "gate-overrides.log"
-    log.write_text("2026-08-04T07:18:03Z\tuser\tgate:fidelity\treason: credit exhausted\n")
+    log.write_text(
+        "2026-08-04T07:18:03Z\tuser\tgate:fidelity\treason: credit exhausted\n"
+    )
     old = 1_700_000_000
     os.utime(log, (old, old))
     cfg = Config()
@@ -280,7 +354,9 @@ def test_stale_break_glass_is_history_not_a_moment(project, fm_home):
 
 def test_fresh_break_glass_is_a_moment(project, fm_home):
     log = project / "gate-overrides.log"
-    log.write_text("2026-08-05T14:00:00Z\tuser\tgate:fidelity\treason: fresh override\n")
+    log.write_text(
+        "2026-08-05T14:00:00Z\tuser\tgate:fidelity\treason: fresh override\n"
+    )
     cfg = Config()
     cfg.roots = [project]
     cfg.fm_home = fm_home
@@ -294,6 +370,7 @@ def test_fresh_break_glass_is_a_moment(project, fm_home):
 def test_gone_quiet_subagent_leaves_the_tavern(tmp_path):
     # a start with no stop, whose own transcript stopped moving: the ghost-at-the-table bug
     import os
+
     root = tmp_path / "wt"
     root.mkdir()
     parent = tmp_path / "claude" / "sess.jsonl"
@@ -303,11 +380,20 @@ def test_gone_quiet_subagent_leaves_the_tavern(tmp_path):
     quiet = sub_dir / "agent-a1.jsonl"
     quiet.write_text("{}\n")
     os.utime(quiet, (1_700_000_000, 1_700_000_000))
-    (root / ".agent-activity.jsonl").write_text(json.dumps({
-        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart", "agent_type": "avenger-verifier",
-        "agent_id": "a1", "transcript_path": str(parent),
-    }) + "\n")
+    (root / ".agent-activity.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": "2026-08-05T10:00:00+0000",
+                "event": "SubagentStart",
+                "agent_type": "avenger-verifier",
+                "agent_id": "a1",
+                "transcript_path": str(parent),
+            }
+        )
+        + "\n"
+    )
     import sources
+
     assert sources.read_activity(root)["live"] == []
     # a transcript still being written keeps the agent seated
     os.utime(quiet, None)
@@ -320,10 +406,17 @@ def test_live_agent_detail_reaches_discovered_roots(tmp_path, monkeypatch):
     # lookup never searched
     workdir = tmp_path / "someproject"
     workdir.mkdir()
-    (workdir / ".agent-activity.jsonl").write_text(json.dumps({
-        "ts": "2026-08-05T10:00:00+0000", "event": "SubagentStart",
-        "agent_type": "general-purpose", "agent_id": "g1",
-    }) + "\n")
+    (workdir / ".agent-activity.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": "2026-08-05T10:00:00+0000",
+                "event": "SubagentStart",
+                "agent_type": "general-purpose",
+                "agent_id": "g1",
+            }
+        )
+        + "\n"
+    )
     config_dir = tmp_path / "claude-home"
     proj = config_dir / "projects" / "-someproject"
     proj.mkdir(parents=True)
@@ -339,8 +432,11 @@ def test_live_agent_detail_reaches_discovered_roots(tmp_path, monkeypatch):
 
 def test_summarize_turns_a_report_into_a_glance():
     from server import summarize
-    report = ("needs-decision: phase 4 halted at the spec-review gate. Specs 4.1-4.5 written and "
-              "pushed (c0c7be3), all fidelity REVIEW, none approved. The gate returned NO-GO...")
+
+    report = (
+        "needs-decision: phase 4 halted at the spec-review gate. Specs 4.1-4.5 written and "
+        "pushed (c0c7be3), all fidelity REVIEW, none approved. The gate returned NO-GO..."
+    )
     short = summarize(report.split(": ", 1)[-1])
     assert short == "phase 4 halted at the spec-review gate."
     assert len(summarize("x" * 500)) <= 110
@@ -350,6 +446,7 @@ def test_summarize_turns_a_report_into_a_glance():
 def test_closed_sessions_lose_their_seat(tmp_path, monkeypatch):
     # a fresh transcript whose harness process is gone: recency is not liveness
     import sources
+
     workdir = tmp_path / "closedproject"
     workdir.mkdir()
     config_dir = tmp_path / "claude-home"
@@ -367,6 +464,7 @@ def test_closed_sessions_lose_their_seat(tmp_path, monkeypatch):
 
 def test_session_debug_reports_verdict_per_session(tmp_path, monkeypatch):
     import sources
+
     workdir = tmp_path / "someproject"
     workdir.mkdir()
     config_dir = tmp_path / "claude-home"
@@ -389,15 +487,18 @@ def test_session_debug_reports_verdict_per_session(tmp_path, monkeypatch):
 def test_harness_helpers_are_not_liveness(tmp_path):
     # verbatim shapes from the field: daemon + pty-host + spare helpers outlive closed sessions
     import sources
-    ps = "\n".join([
-        '72037 /Users/x/.local/bin/claude daemon run --origin transient --spawned-by {"cwd":"/p"}',
-        "54331 claude bg-pty-host --bg-pty-host /tmp/cc-daemon/a.pty.sock 200 50 -- /x/2.1.221",
-        "54351 claude bg-spare --bg-spare /tmp/cc-daemon/a.claim.sock",
-        "9606 claude --dangerously-skip-permissions --effort high -cFIRSTMATE_OP: v1 launch-brief",
-        "38370 claude",
-        "1259 opencode run --format json -m opencode-go/deepseek-v4-pro You are a reviewer",
-        "1300 grep claude something",
-    ])
+
+    ps = "\n".join(
+        [
+            '72037 /Users/x/.local/bin/claude daemon run --origin transient --spawned-by {"cwd":"/p"}',
+            "54331 claude bg-pty-host --bg-pty-host /tmp/cc-daemon/a.pty.sock 200 50 -- /x/2.1.221",
+            "54351 claude bg-spare --bg-spare /tmp/cc-daemon/a.claim.sock",
+            "9606 claude --dangerously-skip-permissions --effort high -cFIRSTMATE_OP: v1 launch-brief",
+            "38370 claude",
+            "1259 opencode run --format json -m opencode-go/deepseek-v4-pro You are a reviewer",
+            "1300 grep claude something",
+        ]
+    )
     rows = sources._parse_harness_rows(ps)
     pids = [pid for pid, _ in rows]
     assert pids == ["9606", "38370", "1259"]
@@ -409,6 +510,7 @@ def test_each_character_gets_its_own_viewer_session(monkeypatch):
     import subprocess as sp
     import tempfile
     import sources
+
     if not shutil.which("tmux"):
         pytest.skip("no tmux on this machine")
     # ISOLATION IS LOAD-BEARING. This test once nuked an operator's real fleet four times:
@@ -425,7 +527,9 @@ def test_each_character_gets_its_own_viewer_session(monkeypatch):
     # pop GUI windows on every developer's screen to assert something it never looks at.
     monkeypatch.setattr(sources.sys, "platform", "test-headless")
     with tempfile.TemporaryDirectory(prefix="tmux-", dir="/tmp") as tmux_root:
-        monkeypatch.setenv("TMUX_TMPDIR", tmux_root)  # private tmux server for this test
+        monkeypatch.setenv(
+            "TMUX_TMPDIR", tmux_root
+        )  # private tmux server for this test
         _assert_viewer_sessions_are_independent(sp, sources)
 
 
@@ -448,14 +552,18 @@ def _focus_with_raise(sources, window: str, *, raised: bool) -> dict:
 
 def _assert_viewer_sessions_are_independent(sp, sources):
     """The body of the viewer test, under an already-isolated private tmux server."""
+
     def tmux(*a):
         return sp.run(["tmux", *a], capture_output=True, text=True, timeout=10)
+
     private = False
     try:
         assert tmux("new-session", "-d", "-s", "fleet", "-n", "mate").returncode == 0
         # isolation proof: a freshly created private server holds ONLY our fixture session.
         # Anything else here means we are on somebody's real server — stop before touching it.
-        assert tmux("list-sessions", "-F", "#{session_name}").stdout.split() == ["fleet"]
+        assert tmux("list-sessions", "-F", "#{session_name}").stdout.split() == [
+            "fleet"
+        ]
         private = True
         assert tmux("new-window", "-t", "fleet", "-n", "crew").returncode == 0
 
@@ -464,12 +572,21 @@ def _assert_viewer_sessions_are_independent(sp, sources):
         # no terminal can open headless, but the viewer sessions must exist and point apart
         sessions = tmux("list-sessions", "-F", "#{session_name}").stdout.split()
         assert "gate-fleet-mate" in sessions and "gate-fleet-crew" in sessions
-        w1 = tmux("display-message", "-p", "-t", "gate-fleet-mate", "#{window_name}").stdout.strip()
-        w2 = tmux("display-message", "-p", "-t", "gate-fleet-crew", "#{window_name}").stdout.strip()
+        w1 = tmux(
+            "display-message", "-p", "-t", "gate-fleet-mate", "#{window_name}"
+        ).stdout.strip()
+        w2 = tmux(
+            "display-message", "-p", "-t", "gate-fleet-crew", "#{window_name}"
+        ).stdout.strip()
         assert (w1, w2) == ("mate", "crew")
         # clicking again reuses the same viewer instead of minting a third
         sources.focus_window("fleet:mate")
-        assert tmux("list-sessions", "-F", "#{session_name}").stdout.split().count("gate-fleet-mate") == 1
+        assert (
+            tmux("list-sessions", "-F", "#{session_name}")
+            .stdout.split()
+            .count("gate-fleet-mate")
+            == 1
+        )
         # the two field lessons: the server survives an empty moment, viewers reap themselves
         assert tmux("show", "-s", "exit-empty").stdout.strip() == "exit-empty off"
         hooks = tmux("show-hooks", "-t", "gate-fleet-mate").stdout

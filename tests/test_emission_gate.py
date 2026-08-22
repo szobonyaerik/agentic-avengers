@@ -9,7 +9,6 @@ the clean case that must not fire, and a test for the state it deliberately decl
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -36,13 +35,17 @@ def phase(project: Path, number: int = 12, slug: str = "poll") -> Path:
     return path
 
 
-def verdict(path: Path, name: str, attempt: int, result: str, findings: list[str]) -> None:
+def verdict(
+    path: Path, name: str, attempt: int, result: str, findings: list[str]
+) -> None:
     (path / name).write_text(
         json.dumps(
             {
                 "attempt": attempt,
                 "verdict": result,
-                "findings": [{"id": f, "kind": "code", "instruction": f} for f in findings],
+                "findings": [
+                    {"id": f, "kind": "code", "instruction": f} for f in findings
+                ],
             }
         ),
         encoding="utf-8",
@@ -87,8 +90,15 @@ def test_a_defect_another_stage_found_does_not_pay_for_the_verifier(stub_sink): 
     phase_dir = phase(project)
     verdict(phase_dir, "verdict.json", 1, "fail", ["aaa"])
     metrics.record_phase_open(str(phase_dir))
-    metrics.record_defect("12", identifier="D1", summary="found by hand", found_by="execution",
-                          real=True, stage_reached="verification", severity="security")
+    metrics.record_defect(
+        "12",
+        identifier="D1",
+        summary="found by hand",
+        found_by="execution",
+        real=True,
+        stage_reached="verification",
+        severity="security",
+    )
 
     assert emission_gate.check_defects(str(phase_dir))[0] == emission_gate.GAP
 
@@ -206,7 +216,8 @@ def test_a_phase_that_has_not_landed_is_not_owed_a_stamp(stub_sink):  # noqa: F8
 
 
 def test_no_landed_phase_has_a_record_is_reported_rather_than_passed_silently(
-    stub_sink, monkeypatch  # noqa: F811
+    stub_sink,  # noqa: F811
+    monkeypatch,
 ):
     project, _, _ = stub_sink
     git_init(project)
@@ -224,7 +235,9 @@ def test_no_landed_phase_has_a_record_is_reported_rather_than_passed_silently(
 # ── the CLI, which is what the hook and CI actually run ──────────────────────────────────────────
 
 
-@pytest.mark.subprocess("the hook and gate_ci.sh run this as a command; its exit code IS the gate")
+@pytest.mark.subprocess(
+    "the hook and gate_ci.sh run this as a command; its exit code IS the gate"
+)
 def test_the_cli_exit_codes_are_the_ones_the_callers_branch_on(stub_sink):  # noqa: F811
     project, _, _ = stub_sink
     phase_dir = phase(project)

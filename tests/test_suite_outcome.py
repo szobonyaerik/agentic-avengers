@@ -93,23 +93,33 @@ def test_an_unusable_declared_pattern_fails_closed(monkeypatch):
 # --- the runner ----------------------------------------------------------------------------------
 
 
-@pytest.mark.subprocess("the runner's whole job is to bound a real child and read what it produced")
+@pytest.mark.subprocess(
+    "the runner's whole job is to bound a real child and read what it produced"
+)
 def test_run_passes_a_completed_green_run_straight_through(tmp_path: Path):
     script = tmp_path / "runner.py"
     script.write_text("print('1298 passed in 42.10s')\n", encoding="utf-8")
-    proc = subprocess.run(CLI + ["run", "--", sys.executable, str(script)],
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        CLI + ["run", "--", sys.executable, str(script)], capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr
     assert "1298 passed" in proc.stdout
 
 
-@pytest.mark.subprocess("a watchdog kill cannot be simulated without a real child to kill")
+@pytest.mark.subprocess(
+    "a watchdog kill cannot be simulated without a real child to kill"
+)
 def test_run_refuses_a_child_that_runs_past_its_budget(tmp_path: Path):
     script = tmp_path / "hang.py"
-    script.write_text("import time\nprint('collected 1298 items', flush=True)\n"
-                      "time.sleep(30)\n", encoding="utf-8")
-    proc = subprocess.run(CLI + ["run", "--budget", "1", "--", sys.executable, str(script)],
-                          capture_output=True, text=True)
+    script.write_text(
+        "import time\nprint('collected 1298 items', flush=True)\ntime.sleep(30)\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        CLI + ["run", "--budget", "1", "--", sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+    )
     assert proc.returncode == so.INCOMPLETE, (proc.returncode, proc.stderr)
     assert "watchdog" in proc.stderr.lower()
 
@@ -118,8 +128,9 @@ def test_run_refuses_a_child_that_runs_past_its_budget(tmp_path: Path):
 def test_run_refuses_a_child_that_exits_clean_with_no_summary(tmp_path: Path):
     script = tmp_path / "quiet.py"
     script.write_text("print('collected 1298 items')\n", encoding="utf-8")
-    proc = subprocess.run(CLI + ["run", "--", sys.executable, str(script)],
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        CLI + ["run", "--", sys.executable, str(script)], capture_output=True, text=True
+    )
     assert proc.returncode == so.INCOMPLETE, (proc.returncode, proc.stderr)
     assert "summary" in proc.stderr.lower()
 
@@ -127,16 +138,24 @@ def test_run_refuses_a_child_that_exits_clean_with_no_summary(tmp_path: Path):
 @pytest.mark.subprocess("a red suite is a real child exiting non-zero")
 def test_run_hands_back_the_childs_own_exit_code_when_it_completed(tmp_path: Path):
     script = tmp_path / "red.py"
-    script.write_text("import sys\nprint('3 failed, 5 passed in 1.20s')\nsys.exit(1)\n",
-                      encoding="utf-8")
-    proc = subprocess.run(CLI + ["run", "--", sys.executable, str(script)],
-                          capture_output=True, text=True)
+    script.write_text(
+        "import sys\nprint('3 failed, 5 passed in 1.20s')\nsys.exit(1)\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        CLI + ["run", "--", sys.executable, str(script)], capture_output=True, text=True
+    )
     assert proc.returncode == 1, proc.stderr
 
 
-@pytest.mark.subprocess("a command that cannot start is a different failure and is named as one")
+@pytest.mark.subprocess(
+    "a command that cannot start is a different failure and is named as one"
+)
 def test_run_names_a_command_that_cannot_start():
-    proc = subprocess.run(CLI + ["run", "--", "definitely-not-a-real-binary-xyz"],
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        CLI + ["run", "--", "definitely-not-a-real-binary-xyz"],
+        capture_output=True,
+        text=True,
+    )
     assert proc.returncode == so.ERROR
     assert "could not be started" in proc.stderr.lower()

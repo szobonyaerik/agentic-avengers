@@ -773,6 +773,19 @@ blocks, so the cost of that default being wrong is a line of output. It is still
 **not** a replacement for a dedicated reader — there is none, and that gap is stated in §4 rather than implied. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
 `cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
 
+**The lint gate has TWO dimensions, and it used to have one.** It ran `ruff check .`, which judges
+rules and says nothing about formatting, so drift passed it untouched — two consecutive measured
+phases reported "ruff clean" and **neither statement was evidence about formatting**, because
+nothing in the gate could have failed on it. `scripts/lint_gate.py` runs both and is what
+`.no-mistakes.yaml` and `gate_ci.sh` now call, so a future edit back to a bare `ruff check`
+reintroduces the gap at the one place a test pins. Rules stay unscoped — the tree is clean and stays
+clean. **Format is diff-scoped** on the applicability boundary (§3a): 93 files predate the rule and a
+gate that failed the build over them would be a wedge, so what the change touches is enforced and
+the rest is counted and named. `--all` audits the tree. When git cannot state what changed the format
+half enforces **nothing** and says so, rather than falling back to enforcing everything; a missing
+`ruff` is recorded as a failed check, because "the linter was not installed" and "the code is clean"
+must never arrive looking alike.
+
 ### 6a. Gates fire on "done", not on every edit — and the "done" stamp is not believed on sight
 The implementer runs a red → green loop, so red is an expected state throughout a build. Gates trigger
 on a spec reaching `status: done` (checks its mapping, then smoke-checks the phase suite; model called

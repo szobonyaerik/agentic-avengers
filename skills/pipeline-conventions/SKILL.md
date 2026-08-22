@@ -399,6 +399,14 @@ Three consequences worth stating outright:
     `SUITE_SUMMARY_PATTERN`, which replaces the defaults; there is deliberately no off switch, and
     `SUITE_BUDGET_S` is where the watchdog goes.
 
+- **The lint gate has TWO dimensions.** It ran `ruff check .`, which judges rules and says nothing
+  about formatting, so drift passed it untouched and two consecutive measured phases reported "ruff
+  clean" about a dimension nothing could have failed on. `scripts/lint_gate.py` runs both; it is
+  what `.no-mistakes.yaml` and `gate_ci.sh` call. Rules unscoped, **format diff-scoped** on the
+  applicability boundary so a tree written before the rule is counted rather than held hostage
+  (`--all` audits it). An unknowable scope enforces nothing and says so; a missing `ruff` is a
+  failed check, never a clean one.
+
 - **Mutation gate — `advisory` by DEFAULT.** `MUTATION_POLICY` = `advisory` (default: runs, reports
   the score and its survivors, **never blocks**) · `enforce` (fails closed) · `off` (runs no mutation
   tool anywhere). It was off by default; it is on because it is deterministic, diff-scoped, needs no
