@@ -829,6 +829,28 @@ written through Bash (`sed -i`, a heredoc, `python3 -c`) never reaches it. It bi
 specifically and does not generalize to the pipeline's other stamps; the only reliable completion
 signal in this harness remains the agent/task notification, never a written marker.
 
+**So that signal is now PRODUCED, and something acts on it.** Making the stamp self-correcting did
+not make it a completion signal, and issue #68's own fix direction rules out the remedy of telling
+people not to wait on one — that is a sentence claiming behaviour nothing enforces.
+`scripts/implementer_liveness.py` reads the implementer's own **`SubagentStop`** out of
+`.agent-activity.jsonl` (which `hook_activity.sh` has recorded since it was written, and which
+nothing read for this), so **nothing here can be moved by writing a document**: a start with no
+matching stop is an implementer still in the working copy, whatever any frontmatter says.
+`scripts/hook_implementer_lock.sh` acts on it at **`PreToolUse`** — the one event that can refuse,
+and the last moment the remedy exists — and refuses to spawn a second implementer into a working
+copy that already holds one. Two implementers in one worktree against one database is what the
+premature stamp nearly caused: a `git stash` from one swallowed the other's uncommitted work and the
+shared database produced foreign-key violations plus a spurious lint failure, with two suite totals
+one apart as the only tell. Which stages are bound is **one pattern in one place**
+(`IMPLEMENTER_AGENTS`), asked of the spawning stage and of every live entry by the same module, so
+the hook carries no copy of it; the Verifier, the Breaker and the bug-hunter run beside an
+implementer by design and are never bound. A crashed agent leaving a start with no stop ages out
+after `IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock forever, and everything
+that is not a verdict — no `jq`, no `python3`, an unreadable payload, no activity log, an unusable
+pattern — lets the spawn through **and says so**. `GATE_BYPASS` proceeds, audited;
+`IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry it: its adapter hooks
+`tool.execute.after`, which is after the fact.
+
 **No model runs in these hooks** except the spec gate: the
 Verifier is an *agent* that runs in chat and commits `verdict.json`, and the hook only checks that
 artifact exists and passes. Mechanical gates in hooks and CI; model gates in chat. The implementer's

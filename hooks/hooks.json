@@ -29,7 +29,8 @@
       {
         "matcher": "Task|Agent",
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_plugin_release.sh\"", "timeout": 30 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_plugin_release.sh\"", "timeout": 30 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_implementer_lock.sh\"", "timeout": 30 }
         ]
       }
     ],

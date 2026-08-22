@@ -1344,6 +1344,22 @@ call can leave a false `done` stamp on disk.** A stamp written through Bash — 
 would be one more sentence claiming behaviour nothing enforces, which is the class this issue is
 curing.
 
+**And the completion signal itself is now produced, from the implementer FINISHING.** Making the
+stamp self-correcting did not make it a signal, and this issue's own fix direction rules out the
+remedy of telling people not to wait on one. `scripts/implementer_liveness.py` reads the
+implementer's `SubagentStop` out of `.agent-activity.jsonl` — the notification, never a marker — so
+nothing here can be moved by writing a document: a start with no matching stop is an implementer
+still in the working copy, whatever any frontmatter says.
+`scripts/hook_implementer_lock.sh` acts on it at **`PreToolUse`**, the one event that can refuse and
+the last moment the remedy exists, and refuses to spawn a second implementer into a working copy
+that already holds one. Which stages are bound is one pattern in one place (`IMPLEMENTER_AGENTS`,
+asked of the spawning stage and of every live entry by the same module): the Verifier, the Breaker
+and the bug-hunter run beside an implementer by design and are never bound. A crashed agent ages out
+after `IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock forever; everything
+that is not a verdict lets the spawn through and says so; `GATE_BYPASS` proceeds, audited, and
+`IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry it — its adapter hooks
+`tool.execute.after`, which is after the fact.
+
 **And it binds only the TRANSITION into `done`** (the applicability boundary, §3a). The trigger
 fires on any write to a `spec.md` that merely *contains* `status: done`, so `spec_done_guard.py`
 compares against the file's **committed HEAD** version: a stamp that was already `done` there
