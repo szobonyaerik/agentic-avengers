@@ -297,6 +297,21 @@ falling back to the raw bytes. **Redaction by pattern is a reduction of risk, no
 that is stated at the module rather than implied; nothing is ever pruned, since every entry is in the
 chain and its log is what `check` hashes, so the growth rule is one capped log per recorded command.
 
+**And a green suite run has to be a suite run that FINISHED.** One measured phase shipped a defect
+that made the suite fail intermittently on one run and **hang to its 30-second watchdog** on the
+next; the first run after that code landed was clean at 1298 tests with the defect already present,
+and it was caught only because the implementer chose to run the suite twice. Nothing mechanically
+told a hung suite from a passing one — `verifier_evidence` had stored `timed_out` on every entry
+since it was written and **nothing read it**, which is a measurement that decides nothing.
+`scripts/suite_outcome.py` owns the distinction now, and both callers ask it rather than restating
+it: a `suite` run that **exited on its watchdog**, or whose output carries **no test-runner
+summary** — no line stating how many tests ran — does not back a pass, and `hook_verifier.sh` runs
+the phase's tests THROUGH it so a hang is a measured kill rather than a hook the harness had to
+kill. That failure does **not** revert a `status: done` stamp: a run with no result answered
+nothing, and a check that could not answer may not rewrite a spec. `SUITE_SUMMARY_PATTERN` declares
+a runner this does not know and **replaces** the defaults; `SUITE_BUDGET_S` is where the watchdog
+goes. There is deliberately no off switch — a guard with one is the state this repair leaves.
+
 **Fixture realism is checked, not only instructed** (issue #33). One phase shipped a credential
 refusal that could never fire: **1,009 tests green** against Telegram supergroup ids an order of
 magnitude too small for a real deployment, an `int32` column, and a `DataError` before the control

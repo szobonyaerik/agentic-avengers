@@ -385,6 +385,20 @@ Three consequences worth stating outright:
     waivable through the disclosed-exception ledger (`--rule execution-evidence`), because a phase
     that closed before this rule existed can never acquire a transcript for it.
 
+  - **A green suite run has to be a suite run that FINISHED.** clickup-agents phase 12 shipped a
+    defect that made the suite fail intermittently on one run and **hang to its 30-second watchdog**
+    on the next; the first run after that code landed was clean at 1298 tests with the defect
+    already present, and it was caught only because the implementer chose to run the suite twice.
+    Nothing mechanically told a hung suite from a passing one — `verifier_evidence` had recorded
+    `timed_out` on every entry since it was written and **nothing read it**.
+    `scripts/suite_outcome.py` is now the one place that decides, and both callers ask it rather than
+    restating it: a `suite` run that **exited on its watchdog**, or whose output carries **no
+    test-runner summary** — no line stating how many tests ran — does not back a pass, and
+    `hook_verifier.sh` runs the phase's own tests THROUGH it so a hang is a measured kill instead of
+    a wedged hook. A project whose runner reports differently declares its summary in
+    `SUITE_SUMMARY_PATTERN`, which replaces the defaults; there is deliberately no off switch, and
+    `SUITE_BUDGET_S` is where the watchdog goes.
+
 - **Mutation gate — `advisory` by DEFAULT.** `MUTATION_POLICY` = `advisory` (default: runs, reports
   the score and its survivors, **never blocks**) · `enforce` (fails closed) · `off` (runs no mutation
   tool anywhere). It was off by default; it is on because it is deterministic, diff-scoped, needs no

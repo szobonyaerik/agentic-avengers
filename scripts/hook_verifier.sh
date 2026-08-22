@@ -193,12 +193,33 @@ if [ "$STAMP_BINDS" = "1" ]; then
   fi
 fi
 
+# Through `suite_outcome.py run`, never bare `pytest`: a suite that HANGS used to wedge this hook
+# until the harness killed it, and a suite that died before printing anything came back with an exit
+# code and no result to read. `suite_outcome` bounds the run in its own process group and answers
+# the one question an exit code cannot — did this suite RUN, or did it merely stop. The decision
+# lives there because the recorded transcript (`verifier_evidence.py`) asks it of the same suite,
+# and a rule written twice is a rule that drifts. `SUITE_BUDGET_S` is where a project puts the
+# watchdog inside this hook's own harness budget.
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
-  OUT=$(pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
   SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  OUT=$(pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+fi
+
+# 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.
+# That is not the same as a red suite and it does not revert the `status: done` stamp — the same
+# rule every undecidable branch above follows: a check that could not answer the question may not
+# rewrite a spec. It still fails the hook, so nothing proceeds on a suite nobody watched finish.
+if [ "$pc" -eq 86 ]; then
+  fail "verifier:suite-incomplete" \
+    "verifier ($SCOPE): the suite DID NOT COMPLETE — it was killed by its watchdog, or it ended" \
+    "without stating how many tests it ran. A run with no result is not a green run, and this is" \
+    "the shape an intermittent hang takes: clean on one run, wedged on the next, same defect in" \
+    "both. The stamp (if any) is left exactly as written. Reasons and the tail of what it did" \
+    "produce are below." \
+    "$(printf '%s\n' "$OUT" | tail -25)"
 fi
 
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.

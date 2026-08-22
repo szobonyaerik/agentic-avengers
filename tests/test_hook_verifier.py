@@ -985,3 +985,54 @@ def test_a_phase_whose_defects_are_all_recorded_closes(project: Path) -> None:
     assert result.returncode == 0, result.stderr
     record = json.loads((project / "store" / "phase-01.json").read_text())
     assert len(record["defects"]) == 6, "the close-time emission fills the record it is checked on"
+
+
+# ── a suite run that never finished is not a green one ───────────────────────
+#
+# clickup-agents phase 12: a defect made the suite fail intermittently on one run and HANG to its
+# watchdog on the next, and the gate had no way to tell the hang from the 1298-test pass before it.
+# `suite_outcome.py` owns the distinction; this pins that the hook ACTS on it.
+
+
+def hanging_phase_tests(project: Path) -> None:
+    """The phase's own test directory, holding a test that never returns."""
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    (tests / "test_hang.py").write_text(
+        "import time\n\n\ndef test_hangs():\n    time.sleep(120)\n", encoding="utf-8"
+    )
+
+
+def test_a_suite_that_hangs_to_its_watchdog_fails_the_hook(project: Path) -> None:
+    """RED against the unfixed hook in the worst possible way: it does not fail, it does not
+    return - the bare `pytest` call blocks until something outside kills the hook."""
+    write_spec(project)
+    hanging_phase_tests(project)
+    attempts(project, [(1, 0, "pass")])
+    proc = subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}' % (phase_dir(project) / "handover.md"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            "SUITE_BUDGET_S": "2",
+        },
+    )
+    assert proc.returncode != 0, proc.stdout
+    assert "did not complete" in (proc.stdout + proc.stderr).lower(), proc.stdout + proc.stderr
+
+
+def test_a_green_phase_suite_still_passes_the_same_gate(project: Path) -> None:
+    """The counterweight: the check must fail a hang WITHOUT failing an ordinary green run."""
+    write_spec(project)
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    (tests / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    attempts(project, [(1, 0, "pass")])
+    proc = run_hook(project, SUITE_BUDGET_S="60")
+    assert "did not complete" not in (proc.stdout + proc.stderr).lower(), proc.stdout + proc.stderr
