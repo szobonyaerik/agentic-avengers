@@ -322,6 +322,32 @@ note_same_family_waiver () {
   fi
 }
 
+# What produced the verdict. Phase 13's first spec gate ran on `anthropic/claude-3-haiku` over the
+# OpenRouter transport, and that fact survived ONLY because the worker typed it into a status line —
+# so ruling afterwards on whether that gate stood meant trusting prose. The runner announces the
+# model, its family and the transport for every REACHED verdict; this collects one entry per pass
+# and `spec_gate_cache.py stamp` writes them onto the verdict itself, on approvals and blocks alike.
+#
+# The marker is read OUT OF THE RUNNER for the same reason the same-family one is: two copies of the
+# string drift, and the drifted copy is the one nobody is reading. A marker this cannot read, or a
+# pass that announced none, leaves the attribution EMPTY — which the stamp records as `unrecorded`,
+# a named state rather than an absent key. That is deliberately not fail-closed: no attribution is
+# the honest record of a runner that said nothing, whereas an undisclosed same-family verdict is a
+# false claim of independence.
+ATTRIBUTION_MARKER="$(sed -n 's/^ATTRIBUTION_MARKER = "\(.*\)"$/\1/p' "$SD/gate_runner.py" 2>/dev/null)"
+GATE_ATTRIBUTION=""
+note_attribution () {   # $1 = the pass's metrics stage, e.g. spec-gate-observe
+  local line model provider label
+  [ -n "$ATTRIBUTION_MARKER" ] || return 0
+  line="$(grep -m1 "^$ATTRIBUTION_MARKER:" "$GERR" 2>/dev/null)" || return 0
+  [ -n "$line" ] || return 0
+  model="$(printf '%s' "$line" | sed -n 's/.*[[:space:]]model=\([^[:space:]]*\).*/\1/p')"
+  provider="$(printf '%s' "$line" | sed -n 's/.*[[:space:]]provider=\([^[:space:]]*\).*/\1/p')"
+  [ -n "$model" ] || return 0
+  label="${1#spec-gate-}"
+  GATE_ATTRIBUTION="${GATE_ATTRIBUTION:+$GATE_ATTRIBUTION; }${label}=${model}@${provider:-unknown}"
+}
+
 run_pass () {
   python3 "$SD/gate_runner.py" \
     --rubric "$1" --model "$2" --author-family "${AUTHOR_FAMILY:-anthropic}" \
@@ -337,6 +363,7 @@ run_pass () {
   # APPLIES when the gate model really does share the author's family, and a waiver left in the
   # environment while the gate is cross-family must never stamp a verdict as same-family.
   note_same_family_waiver
+  note_attribution "$6"
   return "$rc"
 }
 
@@ -445,7 +472,8 @@ if [ "$decided" -eq 0 ]; then
   if [ "${SPEC_REVIEW_MODE:-}" = "auto" ] && grep -q '^review_status:[[:space:]]*pending' "$FILE"; then
     sed -i.bak 's/^review_status:[[:space:]]*pending/review_status: approved/' "$FILE" && rm -f "$FILE.bak"
   fi
-  python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate APPROVED "$REPORT" >/dev/null 2>&1
+  python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate APPROVED "$REPORT" "$GATE_ATTRIBUTION" \
+    >/dev/null 2>&1
   echo "spec-gate: APPROVED ($FILE)" >&2
   exit 0
 fi
@@ -453,7 +481,8 @@ fi
 # Blocked. The hash is recorded WITH the verdict on a block too: a stamp only on passes is a
 # rejection with no record of which text was rejected and no reasoning to answer.
 python3 "$SD/spec_gate_state.py" set "$FILE" blocked
-python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate BLOCKED "$REPORT" >/dev/null 2>&1
+python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate BLOCKED "$REPORT" "$GATE_ATTRIBUTION" \
+  >/dev/null 2>&1
 [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
 echo "spec-gate: BLOCKED — route back to avenger-spec-writer" >&2
 echo "--- blocking findings (the closed set: missing requirement, contradiction, untestable criterion, unhandled critical edge case) ---" >&2

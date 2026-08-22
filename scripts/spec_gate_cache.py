@@ -50,8 +50,9 @@ while telling them they were changes-since-approval.
 Usage:
     spec_gate_cache.py check <spec.md> <gate>      exit 0 = needs gating, 1 = unchanged (prints the
                                                    stored verdict on stdout)
-    spec_gate_cache.py stamp <spec.md> <gate> [verdict] [report-file]
-                                                   record the current body hash + verdict + body
+    spec_gate_cache.py stamp <spec.md> <gate> [verdict] [report-file] [attribution]
+                                                   record the current body hash + verdict +
+                                                   what produced it + body
     spec_gate_cache.py previous <spec.md> <gate>   print the body that gate last judged (1 = none kept)
     spec_gate_cache.py report <spec.md> <gate>     print the report that gate last emitted (1 = none)
     spec_gate_cache.py body <spec.md>              print the current body, for diffing against it
@@ -81,6 +82,13 @@ ACTIONS = ("check", "stamp", "previous", "body", "report")
 #: stamped at all, so a bare hash is a pass — stated once here rather than inferred at each caller.
 LEGACY_VERDICT = "GO"
 
+#: What a verdict records when nothing told it WHAT produced it. An explicit, visible state rather
+#: than an absent key: phase 13's first spec gate ran on `anthropic/claude-3-haiku` over OpenRouter
+#: and that survived only because a worker typed it into a status line, so ruling on whether the
+#: gate stood meant trusting prose. A stamp that predates this rule reads as this too - which is
+#: correct, and is not the same as a stamp claiming an attribution it never had.
+UNRECORDED = "unrecorded"
+
 #: Verdicts that make the judged body the new reference for "what this gate last approved".
 #: `APPROVED` is the one spec gate's token; `GO`/`REVIEW`/`PASS` are the two gates it replaced.
 PASSING = {"APPROVED", "GO", "REVIEW", "PASS"}
@@ -100,6 +108,11 @@ def hash_line(gate: str) -> re.Pattern[str]:
 def verdict_line(gate: str) -> re.Pattern[str]:
     """Matcher for the verdict recorded alongside that gate's hash."""
     return re.compile(rf"^{gate}_gated_verdict:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
+
+
+def attribution_line(gate: str) -> re.Pattern[str]:
+    """Matcher for WHAT produced that gate's verdict: the models and transports that judged it."""
+    return re.compile(rf"^{gate}_gated_by:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 
 
 def split_spec(text: str) -> tuple[str, str]:
@@ -134,6 +147,12 @@ def stored_verdict(frontmatter: str, gate: str) -> str:
     return match.group(1).strip().upper() if match else LEGACY_VERDICT
 
 
+def stored_attribution(frontmatter: str, gate: str) -> str:
+    """What produced that gate's recorded verdict, or `UNRECORDED` when nothing said."""
+    match = attribution_line(gate).search(frontmatter)
+    return (match.group(1).strip() if match else "") or UNRECORDED
+
+
 def _set_line(frontmatter: str, pattern: re.Pattern[str], line: str) -> str:
     """Replace one frontmatter line, or append it when the key is not there yet."""
     if pattern.search(frontmatter):
@@ -141,17 +160,30 @@ def _set_line(frontmatter: str, pattern: re.Pattern[str], line: str) -> str:
     return frontmatter.rstrip("\n") + f"\n{line}\n"
 
 
-def stamp(text: str, gate: str, verdict: str = LEGACY_VERDICT) -> str:
-    """Return the spec with this gate's hash AND the verdict it was reached with, recorded.
+def stamp(
+    text: str, gate: str, verdict: str = LEGACY_VERDICT, attribution: str | None = None
+) -> str:
+    """Return the spec with this gate's hash, the verdict it reached, and WHAT reached it.
 
-    Both keys move together: a hash without its verdict is what let a NO-GO leave no trace, and a
-    verdict without its hash could not be tied to the text it judged.
+    All three keys move together. A hash without its verdict is what let a NO-GO leave no trace; a
+    verdict without its hash could not be tied to the text it judged; and a verdict without its
+    attribution leaves a later reader asking a human which model and which transport produced it.
+    An attribution nobody supplied is written as `UNRECORDED` rather than omitted, so absence is a
+    state on the record instead of a gap somebody has to interpret.
     """
     frontmatter, body = split_spec(text)
     digest = body_hash(body)
     token = (verdict or LEGACY_VERDICT).strip().upper()
-    frontmatter = _set_line(frontmatter, hash_line(gate), f"{gate}_gated_hash: {digest}")
-    frontmatter = _set_line(frontmatter, verdict_line(gate), f"{gate}_gated_verdict: {token}")
+    by = " ".join((attribution or "").split()) or UNRECORDED
+    frontmatter = _set_line(
+        frontmatter, hash_line(gate), f"{gate}_gated_hash: {digest}"
+    )
+    frontmatter = _set_line(
+        frontmatter, verdict_line(gate), f"{gate}_gated_verdict: {token}"
+    )
+    frontmatter = _set_line(
+        frontmatter, attribution_line(gate), f"{gate}_gated_by: {by}"
+    )
     return f"---\n{frontmatter}---\n{body}"
 
 
@@ -211,7 +243,11 @@ def main(argv: list[str] | None = None) -> int:
     # `body` is gate-agnostic — it reads the spec, not a gate's record of it.
     # `stamp` takes an optional verdict and an optional file holding that verdict's report.
     wanted = 2 if args[0] == "body" else 3
-    ok_len = len(args) in ((wanted, wanted + 1, wanted + 2) if args[0] == "stamp" else (wanted,))
+    ok_len = len(args) in (
+        (wanted, wanted + 1, wanted + 2, wanted + 3)
+        if args[0] == "stamp"
+        else (wanted,)
+    )
     if not ok_len or (wanted == 3 and args[2] not in GATES):
         print(__doc__, file=sys.stderr)
         return ERROR
@@ -220,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     gate = args[2] if wanted == 3 else ""
     verdict = args[3] if action == "stamp" and len(args) > 3 else LEGACY_VERDICT
     report_file = args[4] if action == "stamp" and len(args) > 4 else ""
+    attribution = args[5] if action == "stamp" and len(args) > 5 else ""
 
     if action in ("previous", "report"):
         kept = previous(path, gate, "md" if action == "previous" else "report")
@@ -245,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             # is replayed rather than skipped past. Silence here would be a fail-open.
             print(stored_verdict(split_spec(text)[0], gate))
             return UNCHANGED
-        path.write_text(stamp(text, gate, verdict), encoding="utf-8")
+        path.write_text(stamp(text, gate, verdict, attribution), encoding="utf-8")
         # The kept BODY is the reference the next re-gate diffs against, under the heading
         # "PREVIOUSLY APPROVED". A rejection is not an approval, so it records its hash and its
         # verdict but leaves that reference alone: overwriting it would label the rejected text as
@@ -255,10 +292,14 @@ def main(argv: list[str] | None = None) -> int:
             keep(path, gate, split_spec(text)[1])
         if report_file:
             try:
-                keep(path, gate, Path(report_file).read_text(encoding="utf-8"), "report")
+                keep(
+                    path, gate, Path(report_file).read_text(encoding="utf-8"), "report"
+                )
             except OSError as exc:
-                print(f"[spec_gate_cache] could not read report {report_file}: {exc}",
-                      file=sys.stderr)
+                print(
+                    f"[spec_gate_cache] could not read report {report_file}: {exc}",
+                    file=sys.stderr,
+                )
         return NEEDS_GATING
     except ValueError as exc:
         # No frontmatter -> cannot reason about it -> gate it. `body` has nothing to hand back, so

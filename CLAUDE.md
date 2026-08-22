@@ -677,6 +677,18 @@ hold** (`bypass_log.sh` -> `gate-overrides.log`; a waiver that could not be logg
 A verdict that silently dropped the assertion would be strictly worse than the wedge — a loud refusal
 turned into a quiet false assurance. Unset, the assertion fires exactly as it did before.
 
+**A verdict names WHAT produced it, on the verdict.** Phase 13's first spec gate ran on
+`anthropic/claude-3-haiku` over the OpenRouter transport, and that fact survived **only because the
+worker typed it into a status line** — so ruling afterwards on whether that gate stood, which is a
+cross-family question, meant treating prose as the sole evidence of what had judged. `gate_runner.py`
+now announces `ATTRIBUTION_MARKER` — model, family, transport — for **every reached verdict, pass and
+fail alike**, and for none of the failures that never reached a provider (there is no judgement to
+attribute, and those already name the provider and the cause). `hook_spec_gate.sh` collects one entry
+per pass and `spec_gate_cache.stamp` writes them onto the spec's frontmatter as `<gate>_gated_by`,
+beside the hash and the verdict — all three keys move together, on approvals and blocks alike. An
+attribution nobody supplied is recorded as **`unrecorded`**, a named state rather than an absent key,
+which is also how a stamp that predates this rule reads; a later reader never has to interpret a gap.
+
 **A verdict must also be physically possible.** Phase 10 of one measured feature recorded a **4 ms
 GO** from a model gate — less time than the provider CLI takes to start — and it was consumed as a
 pass; a sweep of all 178 gate calls across phases 08-11 found it the only implausible latency

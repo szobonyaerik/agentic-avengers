@@ -23,6 +23,7 @@ google/gemini-3.1-pro-preview). Stdlib only, plus these siblings:
 `--identify` prints this runner's ABI and its own digest, so a caller can refuse a runner that is
 not the shipped one — see scripts/gate_runner_guard.sh.
 """
+
 import argparse
 import hashlib
 import json
@@ -76,6 +77,7 @@ def deliver_then_record(**fields) -> None:
             pass
     record_gate_call(**fields)
 
+
 # Pull OPENROUTER_API_KEY / GATE_MODEL / AUTHOR_FAMILY from the project's .env when the environment
 # does not already define them. Shell callers get the same values via load_env.sh; this covers being
 # invoked directly. The real environment always wins, so a CI secret is never shadowed.
@@ -83,7 +85,9 @@ try:
     from env_file import load_into
 
     load_into(os.environ, root=os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-except ImportError:  # vendored without env_file.py — proceed on the real environment alone
+except (
+    ImportError
+):  # vendored without env_file.py — proceed on the real environment alone
     pass
 
 VERDICT_OK = {"GO", "PASS"}
@@ -125,6 +129,15 @@ def assert_cross_family(model, author_family, override=None):
 #: persist it verbatim (scripts/hook_spec_gate.sh folds it into the stamped report), so it is always
 #: one line, whatever prose the reason arrived as.
 SAME_FAMILY_MARKER = "GATE SAME-FAMILY WAIVER IN FORCE"
+
+#: The one line a caller greps to learn WHAT produced a verdict. Phase 13's first spec gate ran on
+#: `anthropic/claude-3-haiku` over the OpenRouter transport, and that fact survived only because a
+#: worker typed it into a status line - so ruling on whether that gate stood meant trusting prose.
+#: Emitted for every REACHED verdict, pass and fail alike, and for none of the failures that never
+#: reached a provider: those have no judgement to attribute, and they already name the provider and
+#: the cause themselves. Callers persist it on the verdict (`scripts/hook_spec_gate.sh` stamps it
+#: into the spec's frontmatter), so it is always one line.
+ATTRIBUTION_MARKER = "GATE VERDICT ATTRIBUTION"
 
 
 def waiver_reason(waiver):
@@ -179,13 +192,20 @@ def call_openrouter(model, system, user):
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise GateError("config", "OPENROUTER_API_KEY is not set")
-    body = json.dumps({"model": model, "messages": [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]}).encode()
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+    ).encode()
     req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions", data=body,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=call_timeout()) as resp:
             body = resp.read()
@@ -193,12 +213,19 @@ def call_openrouter(model, system, user):
         # The body is the provider's own explanation — a 402 says which credit ran out. Reproduced
         # verbatim rather than summarised, because the classifier below is a heuristic.
         detail = exc.read().decode("utf-8", "replace") if exc.fp else ""
-        cause = ("provider-payment-required" if exc.code == 402
-                 else classify_provider_failure(f"{exc.code} {exc.reason}\n{detail}"))
-        raise GateError(cause, f"openrouter returned HTTP {exc.code} {exc.reason}", detail) from exc
+        cause = (
+            "provider-payment-required"
+            if exc.code == 402
+            else classify_provider_failure(f"{exc.code} {exc.reason}\n{detail}")
+        )
+        raise GateError(
+            cause, f"openrouter returned HTTP {exc.code} {exc.reason}", detail
+        ) from exc
     except urllib.error.URLError as exc:
         raise GateError(
-            "provider-unreachable", f"openrouter could not be reached: {exc.reason}", str(exc.reason)
+            "provider-unreachable",
+            f"openrouter could not be reached: {exc.reason}",
+            str(exc.reason),
         ) from exc
     except TimeoutError as exc:
         raise GateError(
@@ -221,7 +248,9 @@ def call_openrouter(model, system, user):
         return payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise GateError(
-            "no-verdict", "openrouter reply had no message content", json.dumps(payload)[:4000]
+            "no-verdict",
+            "openrouter reply had no message content",
+            json.dumps(payload)[:4000],
         ) from exc
 
 
@@ -258,8 +287,15 @@ def opencode_model(model):
     same models through its OpenRouter credential, so it needs an explicit `openrouter/` provider
     prefix. Ids that already carry a provider prefix are left untouched.
     """
-    known_providers = ("openrouter/", "anthropic/", "openai/", "google/vertex", "zai/",
-                       "opencode/", "opencode-go/")
+    known_providers = (
+        "openrouter/",
+        "anthropic/",
+        "openai/",
+        "google/vertex",
+        "zai/",
+        "opencode/",
+        "opencode-go/",
+    )
     if model.startswith(known_providers):
         return model
     return "openrouter/" + model
@@ -278,7 +314,9 @@ def call_opencode(model, system, user):
     try:
         result = run_bounded(cmd, budget)
     except FileNotFoundError as exc:
-        raise GateError("provider-not-found", "opencode CLI not found on PATH", str(exc)) from exc
+        raise GateError(
+            "provider-not-found", "opencode CLI not found on PATH", str(exc)
+        ) from exc
     if result.timed_out:
         # A timeout is a symptom, and local state-lock contention wears it (issue #50): a call that
         # BLOCKS on the CLI's own SQLite lock is killed by the budget, so the lock message only ever
@@ -320,14 +358,14 @@ def extract_verdict(raw, key="verdict"):
     so it identifies its reply by `observations` instead. Hunting for a `verdict` key in a reply that
     was told never to produce one would fail as `no-verdict` on a perfectly good answer.
     """
-    for text in (raw, raw.replace('\\"', '"').replace('\\n', '\n')):
+    for text in (raw, raw.replace('\\"', '"').replace("\\n", "\n")):
         for m in re.finditer(r"\{", text):
             depth = 0
             for i in range(m.start(), len(text)):
                 depth += 1 if text[i] == "{" else -1 if text[i] == "}" else 0
                 if depth == 0:
                     try:
-                        obj = json.loads(text[m.start():i + 1])
+                        obj = json.loads(text[m.start() : i + 1])
                     except json.JSONDecodeError:
                         break
                     if isinstance(obj, dict) and key in obj:
@@ -339,42 +377,66 @@ def extract_verdict(raw, key="verdict"):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rubric", help="path to the markdown rubric")
-    ap.add_argument("--model",
-                    default=os.environ.get("GATE_MODEL"),
-                    help="the gate model id. There is NO hardcoded fallback: an unset --model with "
-                         "no GATE_MODEL is refused (cause=config), never resolved to a model on a "
-                         "provider the operator never configured (issue #48).")
-    ap.add_argument("--provider", choices=["openrouter", "opencode"], default="opencode")
+    ap.add_argument(
+        "--model",
+        default=os.environ.get("GATE_MODEL"),
+        help="the gate model id. There is NO hardcoded fallback: an unset --model with "
+        "no GATE_MODEL is refused (cause=config), never resolved to a model on a "
+        "provider the operator never configured (issue #48).",
+    )
+    ap.add_argument(
+        "--provider", choices=["openrouter", "opencode"], default="opencode"
+    )
     ap.add_argument("--target", help="file to judge (else read from stdin hook JSON)")
-    ap.add_argument("--author-family",
-                    default=os.environ.get("AUTHOR_FAMILY"),
-                    help="vendor family of the model that authored the work (e.g. 'anthropic'); "
-                         "the gate fails closed if its own model shares this family")
-    ap.add_argument("--same-family-waiver", metavar="REASON",
-                    default=os.environ.get("GATE_SAME_FAMILY_WAIVER"),
-                    help="waive the cross-family assertion FOR THIS CALL, stating why. The gate "
-                         "still runs and still judges; what is given up is decorrelation, and every "
-                         "record of the call says so. An empty reason is not a waiver, and this "
-                         "never changes what --author-family reports.")
-    ap.add_argument("--model-family",
-                    default=os.environ.get("GATE_MODEL_FAMILY"),
-                    help="declare the gate model's vendor family when scripts/model_vendors.py does "
-                         "not know it. Without this an unknown vendor is refused, never guessed.")
-    ap.add_argument("--emit-json", metavar="PATH",
-                    help="write the full parsed verdict object to PATH (machine-readable). "
-                         "Used by the Verifier review, which needs the findings array, not just "
-                         "the verdict token.")
-    ap.add_argument("--json-key", default="verdict", metavar="KEY",
-                    help="the key identifying the model's reply object (default 'verdict'). Any "
-                         "other value means this pass reaches NO verdict: the reply is written to "
-                         "--emit-json and the runner exits 0, leaving the decision to the caller. "
-                         "The spec gate's observe pass uses 'observations' for exactly that reason.")
-    ap.add_argument("--print-verdict", action="store_true",
-                    help="print the raw verdict token (GO/REVIEW/NO-GO) to stdout and exit 0 for any "
-                         "reached verdict; the caller decides. Still fails closed (exit 2) on error.")
-    ap.add_argument("--identify", action="store_true",
-                    help="print '<abi> <sha256-of-this-file>' and exit; how a caller refuses a "
-                         "runner that is not the shipped one")
+    ap.add_argument(
+        "--author-family",
+        default=os.environ.get("AUTHOR_FAMILY"),
+        help="vendor family of the model that authored the work (e.g. 'anthropic'); "
+        "the gate fails closed if its own model shares this family",
+    )
+    ap.add_argument(
+        "--same-family-waiver",
+        metavar="REASON",
+        default=os.environ.get("GATE_SAME_FAMILY_WAIVER"),
+        help="waive the cross-family assertion FOR THIS CALL, stating why. The gate "
+        "still runs and still judges; what is given up is decorrelation, and every "
+        "record of the call says so. An empty reason is not a waiver, and this "
+        "never changes what --author-family reports.",
+    )
+    ap.add_argument(
+        "--model-family",
+        default=os.environ.get("GATE_MODEL_FAMILY"),
+        help="declare the gate model's vendor family when scripts/model_vendors.py does "
+        "not know it. Without this an unknown vendor is refused, never guessed.",
+    )
+    ap.add_argument(
+        "--emit-json",
+        metavar="PATH",
+        help="write the full parsed verdict object to PATH (machine-readable). "
+        "Used by the Verifier review, which needs the findings array, not just "
+        "the verdict token.",
+    )
+    ap.add_argument(
+        "--json-key",
+        default="verdict",
+        metavar="KEY",
+        help="the key identifying the model's reply object (default 'verdict'). Any "
+        "other value means this pass reaches NO verdict: the reply is written to "
+        "--emit-json and the runner exits 0, leaving the decision to the caller. "
+        "The spec gate's observe pass uses 'observations' for exactly that reason.",
+    )
+    ap.add_argument(
+        "--print-verdict",
+        action="store_true",
+        help="print the raw verdict token (GO/REVIEW/NO-GO) to stdout and exit 0 for any "
+        "reached verdict; the caller decides. Still fails closed (exit 2) on error.",
+    )
+    ap.add_argument(
+        "--identify",
+        action="store_true",
+        help="print '<abi> <sha256-of-this-file>' and exit; how a caller refuses a "
+        "runner that is not the shipped one",
+    )
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
@@ -388,7 +450,7 @@ def main():
     started = time.monotonic()
     target = args.target
     family = None
-    waived = None   # the waiver's reason, once the same-family assertion has actually been waived
+    waived = None  # the waiver's reason, once the same-family assertion has actually been waived
 
     def elapsed_ms():
         return int((time.monotonic() - started) * 1000)
@@ -411,24 +473,32 @@ def main():
         # reporting an ordinary fail-closed error from a third one (issue #48). Refusing by name is
         # the only outcome that points at the configuration instead of at the spec.
         if not args.model:
-            raise GateError("config",
-                            "no gate model: pass --model or set GATE_MODEL. This gate has no "
-                            "default model — a gate must never run on one nobody chose.")
+            raise GateError(
+                "config",
+                "no gate model: pass --model or set GATE_MODEL. This gate has no "
+                "default model — a gate must never run on one nobody chose.",
+            )
 
         # Cross-family invariant: a gate must not run on the author's family. An operator can
         # waive it explicitly (--same-family-waiver / GATE_SAME_FAMILY_WAIVER) when there is no
         # other family to reach; the waiver never touches what --author-family reports, and it is
         # announced here, before the call, so nothing downstream can read the verdict as
         # independent.
-        family, waived = resolve_gate_family(args.model, args.author_family, args.model_family,
-                                             args.same_family_waiver)
+        family, waived = resolve_gate_family(
+            args.model, args.author_family, args.model_family, args.same_family_waiver
+        )
         if waived:
-            print(f"{SAME_FAMILY_MARKER}: gate model '{args.model}' (family '{family}') is the "
-                  f"author's own family '{args.author_family}' - this verdict is NOT an independent "
-                  f"cross-family judgement. reason: {waived}", file=sys.stderr)
+            print(
+                f"{SAME_FAMILY_MARKER}: gate model '{args.model}' (family '{family}') is the "
+                f"author's own family '{args.author_family}' - this verdict is NOT an independent "
+                f"cross-family judgement. reason: {waived}",
+                file=sys.stderr,
+            )
         if args.selftest:
-            rubric = ('Return ONLY JSON {"verdict":"GO|REVIEW|NO-GO",'
-                      '"report":"...","route_back":"..."}. Reply GO if the text says OK.')
+            rubric = (
+                'Return ONLY JSON {"verdict":"GO|REVIEW|NO-GO",'
+                '"report":"...","route_back":"..."}. Reply GO if the text says OK.'
+            )
             artifact = "status: OK"
         else:
             if not args.rubric:
@@ -465,32 +535,65 @@ def main():
         # did not run either, and the two stops name different causes. Deliberately NOT applied to
         # the failure paths above, which never reached a provider and record the near-zero latency
         # that says so.
-        why = implausible(elapsed_ms(), floor=floor, model=args.model, provider=args.provider)
+        why = implausible(
+            elapsed_ms(), floor=floor, model=args.model, provider=args.provider
+        )
         if why is not None:
             raise GateError("implausible-latency", why, raw)
     except GateError as e:  # any failure is a hard stop, and it says which failure
         # The cause PR 1 gave it: a timeout kill, a 402 and an unreachable provider are three
         # different numbers in the record, not one "it failed". Recorded after the stop is rendered.
         print(e.render(), file=sys.stderr)
-        record(model=args.model, rubric=args.rubric, target=target,
-               model_family=family, latency_ms=elapsed_ms(), cause=e.cause,
-               detail=e.detail, provider=args.provider)
+        record(
+            model=args.model,
+            rubric=args.rubric,
+            target=target,
+            model_family=family,
+            latency_ms=elapsed_ms(),
+            cause=e.cause,
+            detail=e.detail,
+            provider=args.provider,
+        )
         sys.exit(2)
     except Exception as e:  # never fail open on an unexpected shape
         # `internal`, not `config`: this is the backstop for failures nothing above recognised, and
         # calling them configuration problems sends the operator to their .env for a bug in the gate.
         # Every path that CAN name itself raises GateError above; reaching here is itself a defect.
-        print(GateError("internal", f"{type(e).__name__}: {e}").render(), file=sys.stderr)
-        record(model=args.model, rubric=args.rubric, target=target,
-               model_family=family, latency_ms=elapsed_ms(), cause="internal",
-               detail=f"{type(e).__name__}: {e}", provider=args.provider)
+        print(
+            GateError("internal", f"{type(e).__name__}: {e}").render(), file=sys.stderr
+        )
+        record(
+            model=args.model,
+            rubric=args.rubric,
+            target=target,
+            model_family=family,
+            latency_ms=elapsed_ms(),
+            cause="internal",
+            detail=f"{type(e).__name__}: {e}",
+            provider=args.provider,
+        )
         sys.exit(2)
+
+    # Reached a verdict, so there is something to attribute. Printed HERE - after every failure
+    # branch and before every success branch - so no path can reach a verdict without saying what
+    # produced it, which is the whole point: a later reader must never have to trust a narrative.
+    print(
+        f"{ATTRIBUTION_MARKER}: model={args.model} family={family} provider={args.provider}",
+        file=sys.stderr,
+    )
 
     v = str(verdict.get("verdict", "")).upper()
     # The latency is read HERE, where the call actually ended — not where the record is finally
     # written below, which is after this gate has delivered its answer.
-    measured = dict(model=args.model, rubric=args.rubric, target=target, model_family=family,
-                    latency_ms=elapsed_ms(), verdict=v, provider=args.provider)
+    measured = dict(
+        model=args.model,
+        rubric=args.rubric,
+        target=target,
+        model_family=family,
+        latency_ms=elapsed_ms(),
+        verdict=v,
+        provider=args.provider,
+    )
     if args.json_key != "verdict":
         # A pass that reaches no verdict cannot pass or fail anything. Persist the reply and let the
         # caller decide — for the spec gate that is scripts/spec_gate_triage.py, which derives the
@@ -501,29 +604,55 @@ def main():
         # into its sibling's row would hide how many observations each half of the gate produced,
         # which is the exact number the ratchet fix is judged by.
         if not args.emit_json:
-            print(GateError("config", "--json-key without --emit-json discards the reply").render(),
-                  file=sys.stderr)
-            record(model=args.model, rubric=args.rubric, target=target,
-                   model_family=family, latency_ms=elapsed_ms(), cause="config",
-                   detail="--json-key without --emit-json discards the reply",
-                   provider=args.provider)
+            print(
+                GateError(
+                    "config", "--json-key without --emit-json discards the reply"
+                ).render(),
+                file=sys.stderr,
+            )
+            record(
+                model=args.model,
+                rubric=args.rubric,
+                target=target,
+                model_family=family,
+                latency_ms=elapsed_ms(),
+                cause="config",
+                detail="--json-key without --emit-json discards the reply",
+                provider=args.provider,
+            )
             sys.exit(2)
         try:
             with open(args.emit_json, "w", encoding="utf-8") as fh:
                 json.dump(verdict, fh, indent=2)
         except OSError as e:
-            print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
-                  file=sys.stderr)
-            record(model=args.model, rubric=args.rubric, target=target,
-                   model_family=family, latency_ms=elapsed_ms(), cause="io",
-                   detail=f"could not write --emit-json {args.emit_json}: {e}",
-                   provider=args.provider)
+            print(
+                GateError(
+                    "io", f"could not write --emit-json {args.emit_json}: {e}"
+                ).render(),
+                file=sys.stderr,
+            )
+            record(
+                model=args.model,
+                rubric=args.rubric,
+                target=target,
+                model_family=family,
+                latency_ms=elapsed_ms(),
+                cause="io",
+                detail=f"could not write --emit-json {args.emit_json}: {e}",
+                provider=args.provider,
+            )
             sys.exit(2)
         # No verdict token to report: the reply answered, so this is not a failure. `verdict=None`
         # with no `cause` would be recorded as NO-GO, which is a judgement this pass never made.
-        record(model=args.model, rubric=args.rubric, target=target,
-               model_family=family, latency_ms=elapsed_ms(), verdict=NO_VERDICT,
-               provider=args.provider)
+        record(
+            model=args.model,
+            rubric=args.rubric,
+            target=target,
+            model_family=family,
+            latency_ms=elapsed_ms(),
+            verdict=NO_VERDICT,
+            provider=args.provider,
+        )
         sys.exit(0)
     if args.emit_json:
         # Written before any exit branch: a NO-GO verdict is exactly when the caller most needs the
@@ -532,8 +661,12 @@ def main():
             with open(args.emit_json, "w", encoding="utf-8") as fh:
                 json.dump(verdict, fh, indent=2)
         except OSError as e:
-            print(GateError("io", f"could not write --emit-json {args.emit_json}: {e}").render(),
-                  file=sys.stderr)
+            print(
+                GateError(
+                    "io", f"could not write --emit-json {args.emit_json}: {e}"
+                ).render(),
+                file=sys.stderr,
+            )
             record(**measured)
             sys.exit(2)
     if args.print_verdict:

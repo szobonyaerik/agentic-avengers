@@ -399,6 +399,14 @@ Three consequences worth stating outright:
     `SUITE_SUMMARY_PATTERN`, which replaces the defaults; there is deliberately no off switch, and
     `SUITE_BUDGET_S` is where the watchdog goes.
 
+- **A verdict names what produced it.** Phase 13's first spec gate ran on
+  `anthropic/claude-3-haiku` over the OpenRouter transport and that survived only because a worker
+  typed it into a status line, so ruling on whether the gate stood meant trusting prose.
+  `gate_runner.py` announces model, family and transport for every REACHED verdict (and for no
+  failure that reached no provider); the spec gate stamps them onto the spec as `<gate>_gated_by`,
+  beside the hash and the verdict, on approvals and blocks alike. No attribution is recorded as
+  `unrecorded` — a named state, never an absent key.
+
 - **The lint gate has TWO dimensions.** It ran `ruff check .`, which judges rules and says nothing
   about formatting, so drift passed it untouched and two consecutive measured phases reported "ruff
   clean" about a dimension nothing could have failed on. `scripts/lint_gate.py` runs both; it is
