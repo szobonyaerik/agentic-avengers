@@ -243,8 +243,10 @@ reads, never inline on the command line (`pipeline-conventions` § *Gates*).
 **What this does not check.** Nothing can tell that a claim you never wrote down was worth writing,
 and nothing here catches the mirror defect - a card asserting a protection its own phase deleted. The
 counterweight to that one is the rule this card already carries: a binding contract names the file
-that *enforces* it, and a discharge names the artifact that answers it. Both are checkable by the
-next reader; a sentence is not.
+that *enforces* it, and a discharge names the artifact that answers it - and that name is now
+**resolved, not merely written**: a requirement id no spec or test-mapping row states, or a path
+that is not a file, is refused when the discharge is written and re-resolved on every later check,
+so deleting the test that pinned a carried claim turns the claim red again.
 
 ### Example (phase `1-webhook`)
 ```markdown

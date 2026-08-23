@@ -175,6 +175,10 @@ python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" discharge <phase-dir
     --as declined --reason-file <file>
 ```
 
+`--by` is **resolved, not merely recorded**: name a requirement id some spec or test-mapping row
+under this feature actually states, or a path to a file that exists (optionally `::the-test`). A name
+that resolves to nothing is refused, and it is re-resolved every time the obligation is checked.
+
 **`declined` is a real answer**, not an escape: an item that belongs to a later phase is declined
 here and re-carried on *this* phase's card, which is how a claim about phases 9-12 survives without
 being owed to all four at once. What is not an answer is silence. The reason goes in a **file** the

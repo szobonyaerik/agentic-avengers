@@ -509,6 +509,7 @@ def test_discharging_every_item_clears_the_phase(tmp_path: Path) -> None:
     root = feature(tmp_path)
     phase(root, "8-a", TABLE)
     nxt = phase(root, "9-b", "none")
+    spec_with(root, "9-b", "9.1-write", "R9.1.4 the caller-supplied id is encoded\n")
     reason = tmp_path / "why.txt"
     reason.write_text(
         "phases 10-12 still affected; re-carried on this card\n", encoding="utf-8"
@@ -546,6 +547,9 @@ def test_the_ledger_records_which_card_the_item_came_from(tmp_path: Path) -> Non
     root = feature(tmp_path)
     phase(root, "8-a", TABLE)
     nxt = phase(root, "9-b", "none")
+    pinned = tmp_path / "tests" / "demo" / "9-b" / "test_paths.py"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text("def test_paths_are_encoded():\n    pass\n", encoding="utf-8")
     carried_items.discharge(nxt, "FWD-1", "tested", by="tests/demo/9-b/test_paths.py")
     record = json.loads((nxt / "carried.json").read_text(encoding="utf-8"))
     assert record["discharges"][0]["from_phase"] == "8-a"
@@ -589,6 +593,9 @@ def test_a_second_discharge_of_one_item_replaces_the_first(tmp_path: Path) -> No
     root = feature(tmp_path)
     phase(root, "8-a", TABLE)
     nxt = phase(root, "9-b", "none")
+    spec_with(
+        root, "9-b", "9.1-write", "R9.1.1 the rate limiter refuses a negative window\n"
+    )
     carried_items.discharge(nxt, "OBS-1", "declined", reason="not this phase")
     carried_items.discharge(nxt, "OBS-1", "built", by="R9.1.1")
     ledger = json.loads((nxt / "carried.json").read_text(encoding="utf-8"))
@@ -702,3 +709,143 @@ def test_the_ledger_is_on_the_read_path_table() -> None:
         "a document the pipeline writes and reads declares its readers in the table - a class that "
         "is not there is one nobody decided the cost of"
     )
+
+
+# --- the discharge NAMES something, and the name is resolved (retro: a warning nothing enforced) ---
+#
+# Phase 12 of clickup-agents closed with a forward-looking warning that single-replica deployment was
+# load-bearing: the poller has no cross-process lock, so its at-most-once property holds only with a
+# single writer. Phase 13 honoured it - but only because a human copied the warning into the next
+# worker's instructions by hand. Nothing enforced it.
+#
+# The mechanism was already here and stopped one step short. `discharge --by` says, in its own help,
+# that it names "the spec, requirement id or test that now covers it", and the module's own docstring
+# says "naming it is what makes the discharge checkable later" - and NOTHING RESOLVED IT. `--by x`
+# was accepted. A prediction discharged into a name that resolves to nothing is the prose this whole
+# module exists to replace, one layer down.
+
+
+def spec_with(root: Path, phase_slug: str, sub: str, body: str) -> Path:
+    """A spec on disk under a phase, so a requirement id named in a discharge can resolve to it."""
+    directory = root / phase_slug / "specs" / sub
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "spec.md"
+    target.write_text(body, encoding="utf-8")
+    return target
+
+
+def test_a_discharge_naming_something_that_does_not_exist_is_refused(
+    tmp_path: Path,
+) -> None:
+    """`--by x` used to be accepted, so the one thing that makes a discharge checkable - the name -
+    could be anything at all."""
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    with pytest.raises(carried_items.CarriedError, match="resolve"):
+        carried_items.discharge(nxt, "FWD-1", "built", by="x")
+
+
+def test_a_requirement_id_no_spec_declares_is_refused(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    spec_with(root, "9-b", "9.1-write", "R9.1.1 the write is encoded\n")
+    with pytest.raises(carried_items.CarriedError, match="R9.1.4"):
+        carried_items.discharge(nxt, "FWD-1", "built", by="R9.1.4")
+
+
+def test_a_requirement_id_a_spec_declares_resolves(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    spec_with(root, "9-b", "9.1-write", "R9.1.4 the caller-supplied id is encoded\n")
+    carried_items.discharge(
+        nxt, "FWD-1", "built", by="R9.1.4 in specs/9.1-write/spec.md"
+    )
+
+
+def test_a_test_path_that_exists_resolves_and_one_that_does_not_is_refused(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    tests_dir = tmp_path / "tests" / "demo" / "9-b"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_single_writer.py").write_text(
+        "def test_only_one_poller_writes():\n    pass\n", encoding="utf-8"
+    )
+    carried_items.discharge(
+        nxt, "FWD-1", "tested", by="tests/demo/9-b/test_single_writer.py"
+    )
+    with pytest.raises(carried_items.CarriedError, match="resolve"):
+        carried_items.discharge(
+            nxt, "OBS-1", "tested", by="tests/demo/9-b/test_gone.py"
+        )
+
+
+def test_a_named_test_node_must_be_in_the_file_it_names(tmp_path: Path) -> None:
+    """The file existing is not the claim; the test existing is. A node id pointing into a file that
+    does not contain it is the same rot one level finer."""
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    tests_dir = tmp_path / "tests" / "demo" / "9-b"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_single_writer.py").write_text(
+        "def test_only_one_poller_writes():\n    pass\n", encoding="utf-8"
+    )
+    carried_items.discharge(
+        nxt,
+        "FWD-1",
+        "tested",
+        by="tests/demo/9-b/test_single_writer.py::test_only_one_poller_writes",
+    )
+    with pytest.raises(carried_items.CarriedError, match="resolve"):
+        carried_items.discharge(
+            nxt,
+            "OBS-1",
+            "tested",
+            by="tests/demo/9-b/test_single_writer.py::test_two_pollers",
+        )
+
+
+def test_a_discharge_whose_artifact_is_later_deleted_reopens_the_item(
+    tmp_path: Path,
+) -> None:
+    """THIS is what gives a forward-looking warning a form that can fail. A discharge is not a
+    one-time ceremony: the artifact it names is re-resolved every time the obligation is checked, so
+    deleting the test that pinned "single-replica is load-bearing" turns the claim red again instead
+    of leaving a ledger entry pointing at nothing."""
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    pinned = tmp_path / "tests" / "demo" / "9-b" / "test_single_writer.py"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text(
+        "def test_only_one_poller_writes():\n    pass\n", encoding="utf-8"
+    )
+    carried_items.discharge(
+        nxt, "FWD-1", "tested", by="tests/demo/9-b/test_single_writer.py"
+    )
+    carried_items.discharge(nxt, "OBS-1", "declined", reason="not this phase")
+    assert run("due", str(nxt)) == 0
+
+    pinned.unlink()
+    assert run("due", str(nxt)) == 1, (
+        "the discharge still names a test that no longer exists, and the item is owed again"
+    )
+    assert any(
+        "test_single_writer.py" in line for line in carried_items.phase_problems(nxt)
+    )
+
+
+def test_declining_needs_no_artifact(tmp_path: Path) -> None:
+    """`declined` answers with a stated reason, not with a pointer. Requiring one there would make
+    the answer the module calls real into the one nobody can give."""
+    root = feature(tmp_path)
+    phase(root, "8-a", TABLE)
+    nxt = phase(root, "9-b", "none")
+    carried_items.discharge(nxt, "FWD-1", "declined", reason="phases 10-12; re-carried")
+    assert carried_items.stale_discharges(nxt) == []

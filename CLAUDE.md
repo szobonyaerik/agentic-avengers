@@ -531,7 +531,13 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
 - **A phase states what it carries**: a row per item, or an explicit `none` row. **Silence is not
   `none`** - silence is the state phase 8's prediction was written in.
 - **The next phase answers every row and does not close until it has**: `built` into a spec
-  requirement, `tested`, or `declined` with a stated reason. **`declined` is a real answer**; an item
+  requirement, `tested`, or `declined` with a stated reason. **The name a `built`/`tested` discharge
+  gives is RESOLVED**, not merely recorded - a requirement id no spec or test-mapping row under the
+  feature states, or a path that is not a file, is refused when the discharge is written and
+  **re-resolved on every later check**, so deleting the test that pinned a carried claim owes the
+  claim again. That is the executable form a forward-looking warning had none of: clickup-agents
+  phase 12 warned phase 13 that single-replica deployment was load-bearing and phase 13 honoured it
+  only because a human copied the warning forward by hand. **`declined` is a real answer**; an item
   belonging further out is declined and **re-carried on that phase's own card**, which is how a claim
   about phases 9-12 survives without being owed to all four at once. The **spec writer** discharges,
   being the first stage that can turn a claim into a requirement.
@@ -559,7 +565,7 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
 **What it does not catch, said rather than implied:** nothing can tell that a claim never written
 down was worth writing, and nothing detects a card over-claiming. The counterweight to that is the
 rule the card already carries - a binding contract names the file that *enforces* it, and a discharge
-names the artifact that answers it. Both are checkable by the next reader; a sentence is not.
+names the artifact that answers it, resolved rather than merely written.
 
 ### 4a. Tiered binding decides what gets a test; tests are integration-level by default
 Every requirement declares a **`binding:`** — `e2e` (an end user can observe it → carried by a

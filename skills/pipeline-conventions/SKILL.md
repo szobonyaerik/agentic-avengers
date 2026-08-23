@@ -685,8 +685,10 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
 **What this does not catch**, stated rather than implied: nothing can tell that a claim never written
 down was worth writing, and nothing here detects the mirror defect of a card over-claiming. The
 counterweight to that one is the rule the card already carries - a binding contract names the file
-that *enforces* it, and a discharge names the artifact that answers it. Both are checkable by the
-next reader; a sentence is not.
+that *enforces* it, and a discharge names the artifact that answers it - and that name is now
+**resolved, not merely written**: a requirement id no spec or test-mapping row states, or a path
+that is not a file, is refused when the discharge is written and re-resolved on every later check,
+so deleting the test that pinned a carried claim turns the claim red again.
 
 ## Skills are delivered, not requested — and the load is observed
 
