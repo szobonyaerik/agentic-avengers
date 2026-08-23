@@ -250,6 +250,40 @@ is a builder failure, not a degraded overview. See the hook's stderr for its cau
   echo "spec-gate: the context block could not be built (exit $ctx_rc, cause named above) —" >&2
   echo "  treating it as absent. This never fails the gate on its own." >&2
 fi
+# --- the notice has to reach the READER, not only this hook's stderr -------------------------------
+#
+# Issue #57 closed the WRITER side: a degraded context is echoed loudly here and folded into the
+# persisted report. FIXING THE WRITER DOES NOT PROVE THE READER EVER SEES IT. The observe pass reads
+# $OBSERVE_IN and nothing else — not this stderr, not the stamped report — and a degraded build used
+# to hand it either a block that read as a COMPLETE set of contracts or, when there was nothing to
+# carry at all, no block whatsoever. Either way the run read clean to whoever received it.
+#
+# The marker is read OUT OF the module that emits it, never spelled again here: two copies of the one
+# string that makes a degraded run legible would drift, and the copy that drifted first would be the
+# one nobody was reading. That is the rule $SAME_FAMILY_MARKER already follows below.
+DEGRADED_MARKER="$(sed -n 's/^DEGRADED_NOTICE = "\(.*\)"$/\1/p' "$SD/spec_gate_context.py" 2>/dev/null)"
+if [ "$CONTEXT_DEGRADED" -eq 1 ] && [ -z "$DEGRADED_MARKER" ]; then
+  echo "spec-gate: the context is degraded, but this hook could not read the context builder's" >&2
+  echo "  degradation marker, so it cannot confirm the notice reaches the reviewer. Fails closed:" >&2
+  echo "  a degraded run that reads clean to its reader is worse than no verdict." >&2
+  exit 2
+fi
+
+# A builder that produced NO block (the UNAVAILABLE branch) leaves the reader with nothing at all —
+# the same hole one step further out. The hook cannot rebuild the context, but it can still say that
+# there is none, in its own words, since this cause is the hook's own fact rather than the builder's.
+if [ "$CONTEXT_DEGRADED" -eq 1 ] && [ ! -s "$CONTEXT" ]; then
+  {
+    echo "## CONTEXT (reference only)"
+    echo
+    printf '%s - no context block could be built for this spec, so a contradiction against this ' \
+      "$DEGRADED_MARKER"
+    echo "feature's own contracts is undetectable here. Do not read the absence as agreement."
+    echo
+    echo "- $CONTEXT_CAUSE"
+  } > "$CONTEXT"
+fi
+
 if [ -s "$CONTEXT" ]; then
   {
     cat "$CONTEXT"
@@ -264,6 +298,17 @@ if [ -s "$CONTEXT" ]; then
     fi
   } > "$OBSERVE_IN"
   TARGET="$OBSERVE_IN"
+fi
+
+# The check itself, asked where the notice is CONSUMED. It can only fire on an assembly defect here —
+# which is exactly why it is fail-closed rather than another line on stderr: this is not a property
+# of the project (an absent context is normal and never fails the gate), it is this hook handing a
+# reviewer a briefing that hides its own degradation.
+if [ "$CONTEXT_DEGRADED" -eq 1 ] && ! grep -qF "$DEGRADED_MARKER" "$TARGET"; then
+  echo "spec-gate: the context is DEGRADED and the notice did not survive into what the reviewer" >&2
+  echo "  actually reads ($TARGET). A degraded run that reads clean to its reader is the state this" >&2
+  echo "  check exists to refuse, so this fails closed rather than gating on a silent briefing." >&2
+  exit 2
 fi
 # `exec` replaces this shell, so the EXIT trap would never run — clean up first, by hand.
 bypass_and_exit () { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "spec-gate"; }

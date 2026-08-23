@@ -122,7 +122,24 @@ with the verdict taken out of the model's hands entirely:
    remove. `hook_spec_gate.sh` no longer
    discards that exit code with `|| :`: it echoes it loudly **and folds a `CONTEXT DEGRADED` banner
    into the persisted report**, the one stamped into `spec_gate_cache` on APPROVED and BLOCKED
-   alike, because nothing that reads a verdict later sees a hook's stderr. On exit 3 that banner
+   alike, because nothing that reads a verdict later sees a hook's stderr. **All of that is the WRITER
+   side, and fixing the writer does not prove the READER ever sees it.** The observe pass reads the
+   CONTEXT block and nothing else, and that block used to carry no notice at all: a feature with no
+   readable `overview.md` but a prior card to carry produced a non-empty block headed *"These are the
+   binding contracts the spec under review must not contradict"*, holding the card alone, reading as
+   a COMPLETE set; with nothing to carry it produced an empty string, which the hook skips, so the
+   reader was told nothing whatsoever. The notice (`DEGRADED_NOTICE`) is now **inside the block**,
+   immediately after the marker - **ahead of every part, because a transport bound truncates the
+   TAIL** and a notice appended after a long briefing is one the reader never receives - carrying the
+   builder's own cause verbatim; a degraded build with nothing to carry emits the notice alone; and
+   an over-cap card carries `TRUNCATION_MARKER` **where its text stops**, since the reader has no
+   other way to tell a card that ended from one that was cut. **The check is asked where the notice
+   is CONSUMED**: the hook reads that marker out of the module that emits it (never a second copy
+   that could drift, the rule `SAME_FAMILY_MARKER` already follows) and refuses to gate - exit 2 -
+   when a degraded run's notice is not in the file the reviewer actually reads. It can only fire on
+   an assembly defect, which is why it fails closed rather than printing one more line: an absent
+   context is normal and never fails the gate, but a briefing that hides its own degradation is not
+   a property of the project. On exit 3 that banner
    **carries the builder's own cause line verbatim** rather than re-authoring one: three shapes exit
    3 and each has its own remedy, so a durable record naming the wrong one prescribes a fix already
    applied. **Any other non-zero exit is recorded no more quietly**: a builder that could

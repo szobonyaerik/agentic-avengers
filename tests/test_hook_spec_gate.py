@@ -657,7 +657,12 @@ def test_the_context_carries_only_the_extents_the_read_path_declares(in_layout) 
 
 def test_absent_context_is_normal_and_never_fails_the_gate(in_layout) -> None:
     """Phase 1 has no prior card and a feature may have no contracts section yet. Omitted and named
-    on stderr, so a gate running with no context is visible rather than silent."""
+    on stderr, so a gate running with no context is visible rather than silent.
+
+    This layout also has no `overview.md`, which is a DEGRADED shape rather than an absent one - so
+    what the observe pass receives is the degradation notice and nothing else. It used to receive an
+    empty block, i.e. nothing at all: the notice was checked at the writer (stderr, the stamped
+    report) and never at the reader."""
     project, spec, _ = in_layout
 
     result = run_hook(
@@ -665,8 +670,12 @@ def test_absent_context_is_normal_and_never_fails_the_gate(in_layout) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "## CONTEXT (reference only)" not in observe_target(project)
     assert "spec-gate context: absent" in result.stderr
+    target = observe_target(project)
+    assert "CONTEXT DEGRADED" in target
+    assert "These are the binding contracts" not in target, (
+        "nothing was carried, so the block must not claim to be carrying contracts"
+    )
 
 
 def test_the_context_composes_with_the_re_gate_bundle_rather_than_replacing_it(
@@ -740,7 +749,87 @@ def test_an_overview_with_no_contracts_heading_is_loudly_degraded(in_layout) -> 
     )
     assert "CONTEXT DEGRADED" in result.stderr
     assert "## Contracts and Decisions" in result.stderr
-    assert "## CONTEXT (reference only)" not in observe_target(project)
+    # And the READER is told too. Fixing the writer does not prove the reader ever sees it: this
+    # block is what the observe pass consumes, and it used to be empty on exactly this shape.
+    assert "CONTEXT DEGRADED" in observe_target(project)
+
+
+def test_a_degraded_run_whose_notice_never_reached_the_reader_fails_closed(
+    in_layout,
+) -> None:
+    """The check asked where the notice is CONSUMED.
+
+    Issue #57 closed the writer side; this is the reader side, and it was untouched. It can only
+    fire on an assembly defect in this hook - which is why it is fail-closed rather than one more
+    line on a stderr nobody reads. An absent context is normal and never fails the gate; a briefing
+    that HIDES its own degradation is not a property of the project, it is this hook handing a
+    reviewer a clean-looking run over a degraded one.
+
+    Simulated by removing the marker from the builder that emits it, which is the only way the
+    notice can go missing without the hook noticing: the two must agree on one string.
+    """
+    project, spec, _ = in_layout
+    no_contracts_heading(spec)
+    builder = project / "scripts" / "spec_gate_context.py"
+    builder.write_text(
+        builder.read_text(encoding="utf-8").replace(
+            'DEGRADED_NOTICE = "**CONTEXT DEGRADED**"',
+            'DEGRADED_NOTICE = "**CONTEXT DEGRADED**"\nDEGRADED_NOTICE = ""  # dropped',
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+
+    assert result.returncode == 2, result.stderr
+    assert "did not survive into what the reviewer" in result.stderr
+
+
+def test_an_unreadable_degradation_marker_fails_closed(in_layout) -> None:
+    """Two copies of the one string that makes a degraded run legible would drift, so the hook reads
+    it out of the module - and a hook that cannot read it cannot confirm the notice arrived."""
+    project, spec, _ = in_layout
+    no_contracts_heading(spec)
+    builder = project / "scripts" / "spec_gate_context.py"
+    builder.write_text(
+        builder.read_text(encoding="utf-8").replace(
+            'DEGRADED_NOTICE = "**CONTEXT DEGRADED**"', "DEGRADED_NOTICE = MARKER"
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+
+    assert result.returncode == 2, result.stderr
+    assert "could not read the context builder's" in result.stderr
+
+
+def test_a_builder_that_produced_no_block_still_tells_the_reader(in_layout) -> None:
+    """The UNAVAILABLE branch: the builder could not run at all, so there is no block to carry a
+    notice. The hook cannot rebuild the context, and it can still refuse to let the reviewer read a
+    degraded run as a clean one - which is the whole of this finding."""
+    project, spec, write_context = in_layout
+    write_context()
+    builder = project / "scripts" / "spec_gate_context.py"
+    # The marker line stays readable - the hook reads it out of this file, and a builder that cannot
+    # even be read is the OTHER failure, pinned by the test above.
+    builder.write_text(
+        'DEGRADED_NOTICE = "**CONTEXT DEGRADED**"\nimport sys\nsys.exit(9)\n',
+        encoding="utf-8",
+    )
+
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+
+    assert result.returncode == 0, result.stderr
+    target = observe_target(project)
+    assert "CONTEXT DEGRADED" in target
+    assert "UNAVAILABLE" in target, "the reader is told which of the two shapes it is"
 
 
 def test_the_degraded_state_rides_the_report_an_approval_stamps(in_layout) -> None:

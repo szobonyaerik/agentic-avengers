@@ -106,6 +106,27 @@ PHASE_DIR = re.compile(r"^(\d+)-")
 
 MARKER = "## CONTEXT (reference only)"
 
+#: The degradation notice, INSIDE the block the observe pass consumes.
+#:
+#: Issue #57 closed the WRITER side of this: a degraded context reports itself loudly on stderr and
+#: the hook folds a banner into the persisted report. **Fixing the writer does not prove the reader
+#: ever sees it.** Every one of those records is read by somebody LATER; the observe pass reads this
+#: block, and until this constant existed the block said nothing at all about what was missing from
+#: it. A feature with no readable `overview.md` but a prior card to carry produced a non-empty block
+#: headed "These are the binding contracts the spec under review must not contradict", holding the
+#: card alone - a degraded run reading CLEAN to whoever received it.
+#:
+#: It is placed immediately after `MARKER`, ahead of every part, because a transport bound truncates
+#: the TAIL: a notice appended after a long briefing is a notice the reader never receives.
+DEGRADED_NOTICE = "**CONTEXT DEGRADED**"
+
+#: What a bound cut, said where the text stops - the only place it means anything. `prior_card`
+#: bounds an over-cap card by `HANDOVER_MAX_BYTES` and reported that on stderr alone, so the reader
+#: received a contract that simply ended mid-sentence and had no way to know a bound had acted.
+TRUNCATION_MARKER = (
+    "[… TRUNCATED: this card is over the contract-card cap and stops here …]"
+)
+
 #: What "unreadable" means at every read site here, stated once. `read_text(encoding="utf-8")`
 #: raises `UnicodeDecodeError` - a `ValueError`, not an `OSError` - on a file whose bytes are not
 #: UTF-8, and a document this reader cannot decode carries exactly as much context as one that is
@@ -320,8 +341,11 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
 
     card = prior_card(feature_dir, phase)
     if card:
+        # The marker rides INSIDE the carried text, not beside it. The reader is the observe pass,
+        # and it has no other way to tell a card that ended from a card that was cut.
+        carried = f"{card.body}\n\n{TRUNCATION_MARKER}" if card.truncated else card.body
         parts.append(
-            f"### Contract card carried forward from phase {card.phase}\n\n{card.body}"
+            f"### Contract card carried forward from phase {card.phase}\n\n{carried}"
         )
         bound = (
             f" — TRUNCATED to the first {HANDOVER_MAX_BYTES} bytes; that handover is over the "
@@ -335,14 +359,40 @@ def build(spec: Path) -> tuple[str, list[str], bool]:
     else:
         notes.append(f"absent: no prior phase card before phase {phase}")
 
-    if not parts:
+    # A degraded build with NOTHING to carry used to return an empty string, and the hook skips an
+    # empty block - so the worst case (no overview AND no prior card) was the one case where the
+    # reader was told nothing whatsoever. The notice alone is still a block worth handing over.
+    if not parts and not degraded:
         return "", notes, degraded
     preamble = (
         "These are the binding contracts the spec under review must not contradict. They are "
         "BACKGROUND: do not make observations about them, and do not judge them. Use them only to "
         "notice where the spec under review contradicts one."
     )
-    return "\n\n".join([MARKER, preamble, *parts]), notes, degraded
+    sections = [MARKER]
+    if degraded:
+        sections.append(degraded_notice(notes))
+    if parts:
+        sections.extend([preamble, *parts])
+    return "\n\n".join(sections), notes, degraded
+
+
+def degraded_notice(notes: list[str]) -> str:
+    """The notice the reader gets, carrying the builder's own cause line verbatim.
+
+    Re-authoring the cause here would name one of three shapes when another fired, which is the
+    defect `hook_spec_gate.sh` already refuses on the persisted banner: a durable record naming the
+    wrong remedy prescribes a fix already applied.
+    """
+    causes = [note for note in notes if note.startswith("DEGRADED:")]
+    detail = "\n".join(f"- {cause}" for cause in causes) or (
+        "- DEGRADED: the context builder reported a degraded state without naming which shape."
+    )
+    return (
+        f"{DEGRADED_NOTICE} - what follows is LESS than this block claims to carry, so a "
+        f"contradiction against this feature's own contracts may be undetectable here. Judge only "
+        f"what is present; do not read the absence as agreement.\n{detail}"
+    )
 
 
 # --- check: every overview.md on disk, independent of any one spec being gated -------------------
