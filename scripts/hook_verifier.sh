@@ -279,6 +279,35 @@ if [ "$TRIGGER" = "spec-done" ]; then
   fi
 fi
 
+# Interface drift (retro: a spec's Interfaces block drifts from the code it describes). One phase's
+# block said the poll loop polls then sleeps and the shipped code did the reverse; the next phase's
+# spec over-claimed what its code did. Nothing mechanically compared a block to the code, so both
+# were caught by an implementer choosing to look.
+#
+# Asked HERE for the same reason fixture realism is: `spec-done` is the first moment the code exists
+# AND the implementer who wrote both the block and the code still owns them. It decides only the
+# half a static rule can — a call signature the block NAMES must exist in the source tree — and the
+# half it cannot (the order of two operations, which is that very instance) is pinned as a test
+# rather than claimed. Like the fixture check it does NOT revert the `done` stamp: that revert acts
+# only on the two evidences it is scoped to. The hook still fails, so nothing proceeds on it.
+if [ "$TRIGGER" = "spec-done" ]; then
+  python3 "$SD/interface_drift.py" "$FILE"; drift_rc=$?
+  if [ "$drift_rc" -eq 1 ]; then
+    fail "verifier:interface-drift" \
+      "verifier ($SCOPE): this spec's Interfaces block names a call signature (above) that no" \
+      "source file has. A block is read as a description of SHIPPED behaviour, so either it" \
+      "describes code nobody wrote or the code was renamed and the block was not. Correct the" \
+      "block, or record the divergence deliberately — never leave the two disagreeing." \
+      "$STAMP_NOTE"
+  elif [ "$drift_rc" -ne 0 ]; then
+    fail "verifier:interface-drift-undecidable" \
+      "verifier ($SCOPE): the interface-drift check could not read the spec or found no source" \
+      "tree to compare it against (named above). A scan of nothing is not a clean result, so this" \
+      "fails closed. Point it at the project's code with INTERFACE_SOURCE_PATHS." \
+      "$STAMP_NOTE"
+  fi
+fi
+
 [ "$TRIGGER" = "handover" ] || exit 0
 
 PHASE_DIR="$(dirname "$FILE")"

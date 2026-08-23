@@ -253,6 +253,23 @@ elif [ "$fixtures_rc" -ne 0 ]; then
   record_fail "fixture-shapes:undecidable"
 fi
 
+# 1bcg) Interface drift — a spec's Interfaces block is a claim about code, and nothing compared the
+#      two. One phase's block said the poll loop polls then sleeps while the shipped code did the
+#      reverse (it had to: polling first opened a second concurrent DB session and hung the suite to
+#      its watchdog); the next phase's spec over-claimed what its code did. Both were caught by an
+#      implementer choosing to look. This decides the half a static rule can: a call signature the
+#      block NAMES must exist in the source tree. What it cannot decide — the order of two
+#      operations, i.e. that very instance — is pinned as a test in tests/test_interface_drift.py
+#      rather than claimed here. DIFF-SCOPED, like fixture_shapes.py above.
+echo "• interface drift: every signature a spec's Interfaces block names exists in the code"
+python3 "$SCRIPT_DIR/interface_drift.py" --root "$ROOT"
+drift_rc=$?
+if [ "$drift_rc" -eq 1 ]; then
+  record_fail "interface-drift"
+elif [ "$drift_rc" -ne 0 ]; then
+  record_fail "interface-drift:undecidable"
+fi
+
 # 1bd) Verdict currency — a passing verdict must not stand over a tree that has since changed
 #      (issue #51). The feature-close ship gate owns both findings and fixes while it runs, so it
 #      changes verified production code and touches no phase artifact; verdict.json then goes on

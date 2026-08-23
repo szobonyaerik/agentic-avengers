@@ -327,6 +327,24 @@ is skipped, and it reads fixtures rather than columns — the overflow itself is
 unrealistic value that let it hide is. A project with no declaration is CLEAN **and says so**, never
 a silent green.
 
+**A spec's Interfaces block is compared to the code it describes.** One phase's `## Interfaces /
+contracts` said the poll loop polls then sleeps; the shipped code did the reverse, because polling
+first opened a second concurrent database session inside whichever test had booted the agent -
+intermittently failing locked phase-8 tests and once hanging the suite to its watchdog. The prose was
+then simply wrong about shipped behaviour. It was handled well by hand (recorded as a named
+divergence rather than by editing an already-gated spec, and pinned with a test) and the next phase
+produced a second instance, a spec body over-claiming what the code did. **Both were caught by an
+implementer choosing to look** - nothing compared the two. `scripts/interface_drift.py` decides the
+half a static rule can: **a call signature the block NAMES must exist in the source tree**, the same
+question `carried_items.py` asks of a discharge's `--by`, asked of the section whose whole job is
+naming things. It runs at `spec-done` from `hook_verifier.sh` - the first moment the code exists and
+the implementer who wrote both still owns them, the seam the fixture check is asked at - and
+diff-scoped from `gate_ci.sh`. `INTERFACE_SOURCE_PATHS` points it at a project whose code is not at
+the root; **a scan that found no source file is exit 2, never a clean result**. **What it cannot
+decide is a TEST, not a docstring claim** (`tests/test_interface_drift.py`): the ORDER of two
+operations - phase 12's own instance - is invisible to it, both names exist; so are behaviour,
+schemas and error modes, a dotted call into a dependency, and a block written as pure prose.
+
 Three test modes by `work_kind`, all inside `skills/tdd`: **greenfield** (red → green per vertical
 slice) · **migration** (parity-first — the *existing suite is the contract*, run it rather than
 re-authoring it; characterize only genuine gaps at critical seams) · **refactor** (baseline-first

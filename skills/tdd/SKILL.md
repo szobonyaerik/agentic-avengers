@@ -181,6 +181,12 @@ See [tests.md](tests.md) for good/bad examples and [mocking.md](mocking.md) for 
   hook and CI on any fixture literal that contradicts it (issue #33). A project that declares
   nothing is not checked and says so — so if you are adding the first fixture for an external
   system, declaring its shape is what makes the next one enforceable rather than advised.
+- **A spec's Interfaces block that no longer describes your code.** When the shipped shape has to
+  differ from the block - and sometimes it must, because the block was written before the code
+  existed - correct the block or record the divergence deliberately; never leave the two
+  disagreeing. `scripts/interface_drift.py` fails the spec-done hook on the half it can decide, a
+  call signature the block names that no source file has. The half it cannot decide is the one that
+  bit hardest: two operations in the wrong ORDER both exist, so that one is still on you.
 - **Horizontal slicing** — writing all tests first, then all implementation. Bulk tests verify
   *imagined* behavior; they go insensitive to real changes and lock you into test structure before you
   understand the implementation. Work in **vertical slices** — one test → one implementation → repeat.

@@ -1391,6 +1391,29 @@ completed spec back to `stage: implementer` — with no exception recordable for
 `spec-done` is not in `applicability.RULES`. When git cannot say what is committed, the scope is
 unknowable, so nothing is enforced and the check says so out loud.
 
+### Interface drift - a spec's Interfaces block is a claim about code
+
+One phase's `## Interfaces / contracts` said the poll loop polls and then sleeps. The shipped code
+did the reverse, because polling first opened a second concurrent database session inside whichever
+test had booted the agent - intermittently failing locked earlier-phase tests and once hanging the
+suite to its watchdog. The prose was then simply wrong about shipped behaviour. It was handled well
+by hand (recorded as a named divergence rather than by editing an already-gated spec, and pinned with
+a test), and the next phase produced a second instance, a spec body over-claiming what its code did.
+**Both were caught by an implementer choosing to look**; nothing compared a block to the code.
+
+`scripts/interface_drift.py` decides the half a static rule can: **a call signature the block NAMES
+must exist in the source tree.** It is the same question `carried_items.py` asks of a discharge's
+`--by` - does this name resolve to anything - asked of the section whose whole job is naming things.
+Asked at **`spec-done`**, the first moment the code exists and the implementer who wrote both the
+block and the code still owns them (the seam the fixture-realism check is asked at, for the same
+reason), and diff-scoped from `gate_ci.sh`. `INTERFACE_SOURCE_PATHS` points it at a project whose
+code is not at the root; a scan that found **no** source file is exit 2, never a clean result.
+
+**What it cannot decide is a TEST rather than a docstring claim** (`tests/test_interface_drift.py`):
+the ORDER of two operations - that very instance - is invisible to it, since both names exist. So
+are behaviour, schemas and error modes; a dotted call into a dependency is skipped; and a block
+written as pure prose claims nothing this can check. It never asks for one to be written.
+
 **This binds `status: done` specifically and does not generalize.** Other stamps this pipeline
 writes (`spec_gate:`, `review_status:`, `verdict.json`'s `verdict`) already have their own single
 writer and single reader (`spec_gate_state.py`, `/spec-review`, `hook_verifier.sh`'s handover
