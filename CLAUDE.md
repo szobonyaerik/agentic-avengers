@@ -168,13 +168,30 @@ with the verdict taken out of the model's hands entirely:
 3. **Decide** (`scripts/spec_gate_triage.py`) — derives the verdict deterministically. **No model
    decides whether a spec is blocked.**
 
-**The blocking set is CLOSED — exactly four things block:** a **missing requirement**, an internal
-**contradiction**, an **untestable criterion**, an **unhandled critical edge case**. Everything else
+**The blocking set is CLOSED — exactly five things block:** a **missing requirement**, an internal
+**contradiction**, an **untestable criterion**, an **unhandled critical edge case**, and a
+**false acknowledgement**. Everything else
 is a **note**; **notes never block** and land in the spec's known-open list (`spec-notes.md`, read
 once by the implementer). It is closed *mechanically*: a category the table does not know is a hard
 failure naming what was invented, never a judgement call — guessing "blocking" reinstates the ratchet
-and guessing "note" deletes a finding. A fifth category is a deliberate edit to
-`spec_gate_triage.BLOCKING`.
+and guessing "note" deletes a finding. A sixth category is a deliberate edit to
+`spec_gate_triage.BLOCKING`; **`false-acknowledgement` is the fifth, added by exactly that route.**
+
+**`false-acknowledgement` — a reply must not assert a change that was not made.** Three write paths
+in one measured phase answered a **suppressed** write with a success reply, and **one requirement
+explicitly sanctioned it** — so the class was a spec-level invariant nobody had written down, and
+each instance was repaired on its own path while the rule stayed unstated. The same phase produced
+the shape at process level: one poisoned credential row aborted an entire poll cycle **forever**
+while the loop stayed alive announcing nothing — a system reporting healthy while doing none of its
+work. **Per-path repairs are what had already been done twice; the rule is what was missing.** It is
+about **what the caller is told, not about the suppression**: suppressing a write can be exactly
+right (deduplication, an idempotent replay, a rate limit, a closed window), and a spec that
+suppresses *and says so* — a distinct status, a rejection, an error, a recorded reason — is clean.
+It blocks a spec that **states or sanctions** the false success. Stating it in `BLOCKING` is the
+whole delivery: `spec_rubric.py` renders the writer's brief out of that table, so the writer is
+primed from the same source the verdict is derived from, and the observe pass has an
+`acknowledgement` area to look at. **No model decides the verdict** — `spec_gate_triage.py` still
+derives it.
 
 **Requirements are capped at 12 per spec, counted before the gate runs, as a SPLIT TRIGGER.**
 `scripts/requirement_cap.py` runs ahead of any paid call, so an over-cap spec costs nothing; over the

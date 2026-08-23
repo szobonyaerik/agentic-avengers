@@ -271,14 +271,36 @@ Three consequences worth stating outright:
   3. **Decide** (`scripts/spec_gate_triage.py`) — turns classifications into the verdict,
      deterministically. **No model decides whether a spec is blocked.**
 
-  **The blocking set is CLOSED, and it is exactly four things:** a **missing requirement**, an
-  internal **contradiction**, an **untestable criterion**, an **unhandled critical edge case**.
+  **The blocking set is CLOSED, and it is exactly five things:** a **missing requirement**, an
+  internal **contradiction**, an **untestable criterion**, an **unhandled critical edge case**, and
+  a **false acknowledgement**.
   Everything else is a **note**; **notes never block** and land in the spec's known-open list
   (`spec-notes.md`, read once by the implementer). The closed set is what stops the filter drifting
   back into the ratchet it replaces, and it is closed *mechanically*: a category the table does not
   know is a **hard failure naming what was invented**, never a judgement call — guessing "blocking"
-  reinstates the ratchet and guessing "note" silently deletes a finding. Adding a fifth category is a
+  reinstates the ratchet and guessing "note" silently deletes a finding. Adding a sixth category is a
   deliberate edit to `spec_gate_triage.BLOCKING`, reviewed as such.
+
+  **`false-acknowledgement` — a reply must not assert a change that was not made.** It is the fifth,
+  added by exactly that route. Three write paths in one measured phase answered a **suppressed**
+  write with a success reply, and **one requirement explicitly sanctioned it**, so the class was a
+  spec-level invariant nobody had written down: each instance was repaired on its own path and the
+  rule stayed unstated. The same phase produced the shape at process level - one poisoned credential
+  row aborted an entire poll cycle **forever** while the loop stayed alive announcing nothing, a
+  system reporting healthy while doing none of its work. Per-path repairs had already been done
+  twice; the rule was what was missing.
+
+  It is about **what the caller is told, not about the suppression**. Suppressing a write can be
+  exactly right - deduplication, an idempotent replay, a rate limit, a closed window - and a spec
+  that suppresses *and says so* (a distinct status, a rejection, an error, a recorded reason) is
+  clean. What blocks is a spec that **states or sanctions** the false success. A spec that simply
+  says nothing about what the caller receives is a `missing-requirement` when its own scope commits
+  to it, and otherwise a note.
+
+  Stating it in `BLOCKING` is the whole delivery: `spec_rubric.py` renders the writer's brief out of
+  that table, so the spec writer is primed from the same source the verdict is derived from, and the
+  observe pass has an `acknowledgement` area to look at. Nothing else needed editing, which is the
+  point - the rule lives where it is decided.
 
   **Size is decided before the gate runs, and the remedy is a split.** `scripts/requirement_cap.py`
   counts declared requirement ids and caps them at **12** (`SPEC_REQUIREMENT_MAX`). Over the cap the

@@ -78,6 +78,14 @@ observation** - do not manufacture one per area, and do not restate the spec bac
   the size of the suite, without the spec marking and justifying it in a sentence.
 - **Claims** - a line described as additive that would reject a value an existing caller already
   passes. That is a breaking change wearing the wrong label.
+- **Acknowledgements** - a requirement or criterion under which a write that is suppressed, skipped,
+  rejected or failed is still answered with success, so the caller cannot tell the two apart; or a
+  loop, worker or poller that goes on reporting healthy while its work is dead. Suppressing a write
+  can be exactly right - deduplication, an idempotent replay, a rate limit, a closed window - so
+  what is worth reporting is what the caller is TOLD. Three write paths in one measured phase
+  answered a suppressed write with success and one requirement explicitly sanctioned it; in the
+  same phase one poisoned row aborted an entire poll cycle forever while the loop stayed alive
+  announcing nothing.
 - **Mode obligations** - for `work_kind: migration`, whether the existing tests being ported are
   named by real path and parity is stated; for `work_kind: refactor`, whether the parity baseline
   suite is named, the blast radius is named, and any intentional behavior change is called out as
@@ -89,7 +97,7 @@ Reply with NOTHING but a single JSON object - no markdown, no code fences, no co
 
 ```
 {"observations":[
-  {"id":"o1","area":"<one of: requirements|binding|acceptance|contradiction|edge-case|fixtures|cost|claims|mode|other>",
+  {"id":"o1","area":"<one of: requirements|binding|acceptance|contradiction|edge-case|fixtures|cost|claims|acknowledgement|mode|other>",
    "spec_ref":"<requirement id, heading, or quoted phrase this is about>",
    "statement":"<what you observed, in one or two sentences, factual>"}
 ]}
