@@ -76,7 +76,12 @@ deleted; the read directives changed.**
   until the Verifier has passed the phase, and the window between the two spans the whole
   verification stage, 3 attempts plus route-backs, which a resumable run legitimately stops inside.
   That reading is imported, never restated: `verifier_attempts` owns what the verdict record is and
-  `verdict_findings` owns what is still open. It is **diff-scoped** on the same boundary as every
+  `verdict_findings` owns what is still open - and it is the **stricter** of the two readings that
+  module owns, `status: open` counted literally with the break-glass waiver included, because that
+  is what `hook_verifier.sh` counts before it allows the write. The attempt cap's reading treats a
+  waiver as resolved, correctly, since it asks whether the LOOP ended; answering with that one here
+  made the sweep demand a handover the hook then refuses to let anyone write, which is a phase with
+  no reachable end state, reached through the cap's own documented remedy. It is **diff-scoped** on the same boundary as every
   other check here (§3a) - a phase this change did not touch is counted and named, never blocked,
   which is what stops a consumer repo full of pre-rule phases failing every Stop it ever runs;
   `check --all` is the deliberate audit. The sweep's other half was
@@ -93,12 +98,22 @@ deleted; the read directives changed.**
   produce it - the table's `emitted_by` exists and really instructs `readers:`, AND every artifact
   class a canonical source names is one the table governs. It reads two inventories, artifact PATH
   literals under `docs/features/` and the canonical layout block in `skills/pipeline-conventions`,
-  and it is **not diff-scoped**, for the same reason `--sources` is not. **What it does not see is
+  and it reads them in **canonical stage instruction only** - `agents/`, `skills/`, `commands/`,
+  `prompts/`, `docs/templates/`, `AGENTS.md` - never `scripts/`, `README.md` or `CLAUDE.md`, since
+  `gate_ci.sh` roots at the repository it runs in and those are the CONSUMER's own files there. That
+  boundary is the check's correctness rather than its size, and it is also what keeps it honestly
+  **not diff-scoped**, for the same reason `--sources` is not. The `emitted_by` half is asked only
+  where the canonical source directory is **present**: a vendored install ships no `agents/`, so an
+  entry emitted from one is reported as nothing-checked on stderr rather than as a broken
+  declaration, which is the same boundary `stage_effort.py check` takes on the same tree - a check
+  that cannot run where it ships is the defect, not the finding. **What it does not see is
   stated rather than implied**: a class named only as a bare filename in prose is invisible to it -
   `fidelity-report.md` was named exactly that way and this check would not have caught it - because
   generalising to bare filenames means guessing which backticked `*.md` in a sentence is a pipeline
   artifact, which needs a denylist of everything else in the repository, and a list that rots is
-  worse than a stated limit. **Change the directive at the table, never one caller at
+  worse than a stated limit; a class named only outside canonical stage instruction is invisible for
+  the boundary reason above; and a glob literal names no class at all, since `*.md` out of
+  `docs/features/**/*.md` is a match rule with no honest outcome to choose between. **Change the directive at the table, never one caller at
   a time.** Every entry also
   names the template or stage instruction that makes its writer emit the line: declaring a reader is
   not the same as instructing anyone to write it down, and three artifact classes shipped with the

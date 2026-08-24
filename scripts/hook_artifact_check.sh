@@ -11,7 +11,10 @@
 # Its two halves are keyed at different moments: each spec owes `test-mapping.md` at its own
 # `status: done` stamp, and the phase owes `handover.md` only once a PASSING verdict.json exists,
 # because `hook_verifier.sh` refuses the handover write before that and the verification stage is a
-# window a resumable run legitimately stops inside. Diff-scoped like the check below it (no --all):
+# window a resumable run legitimately stops inside. "Passing" is read the strict way that hook reads
+# it — `status: open` counted literally, break-glass waiver included — so the gate that asks for the
+# handover and the gate that allows it cannot disagree about one verdict.
+# Diff-scoped like the check below it (no --all):
 # phases you have not touched are counted on stderr rather than blocking the session.
 set -uo pipefail
 cd "$CLAUDE_PROJECT_DIR" || exit 0

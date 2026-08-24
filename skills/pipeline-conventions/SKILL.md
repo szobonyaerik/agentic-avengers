@@ -134,12 +134,24 @@ Five rules follow from it, and each one is enforced rather than requested:
   `implementation-report.md`, keying the Stop-hook artifact sweep while nothing was instructed to
   write it. It is **not diff-scoped**, for the same reason `--sources` is not: the table and the
   canonical stage instructions are always open, never shipped artifacts a later rule holds hostage.
+  That holds only while its inventory stays **canonical stage instruction**, which is what it reads:
+  `agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/` and `AGENTS.md`. It does **not**
+  read `scripts/`, `README.md` or `CLAUDE.md`, because `gate_ci.sh` sets its root to the repository
+  it runs in, so in a vendored install those are the CONSUMER's code, readme and instructions. A
+  check that judges files the pipeline does not own is not a wider version of this check, it is a
+  different and wrong one. For the same reason the `emitted_by` half is asked only where the
+  canonical source directory is **present**: a vendored install receives no `agents/`, and an entry
+  emitted from one is reported as nothing-checked on stderr there rather than as a broken
+  declaration - never a silent clean pass, and never a check that cannot run where it ships.
   **What it does not see**: it reads two inventories — artifact PATH literals under `docs/features/`
   and the layout block above — so a class named only as a bare filename in prose is invisible to it.
   `fidelity-report.md` was named exactly that way, in two artifact lists and nowhere else; it was
   caught by reading, not by this. Generalising to bare filenames means guessing which backticked
   `*.md` in a sentence is a pipeline artifact, which needs a denylist of everything else in the
-  repository — a list that rots, which is worse than a stated limit.
+  repository — a list that rots, which is worse than a stated limit. A class named only outside
+  canonical stage instruction is invisible for the boundary reason above, and a glob literal names
+  no class at all: `*.md` out of `docs/features/**/*.md` is a match rule with no honest outcome to
+  choose between.
 
 **The Stop-hook artifact sweep is keyed to the pipeline's own completion stamp**
 (`scripts/phase_artifacts.py`): a phase has finished implementing when **every spec it holds is
@@ -156,7 +168,13 @@ never at the stamp: `hook_verifier.sh` refuses the handover write until the Veri
 phase, so keyed on the stamp this check demanded a document the pipeline's own rules forbid writing
 yet, across a window spanning the whole verification stage - 3 attempts plus route-backs - that a
 resumable run legitimately stops inside. What "passes" means is imported rather than restated
-(`verifier_attempts` for the verdict record, `verdict_findings` for what is still open).
+(`verifier_attempts` for the verdict record, `verdict_findings` for what is still open), and it is
+the **stricter** of the two readings that module owns: `status: open` counted literally, break-glass
+waiver included, which is what `hook_verifier.sh` counts before it allows the write. The attempt
+cap's reading treats a waiver as resolved, correctly, because it asks whether the LOOP has ended;
+answering with that one here made the sweep demand a handover the hook then refuses to let anyone
+write, which is a phase with no reachable end state. Between a sweep that asks too early and one
+that asks a little late, only the first can wedge a phase.
 
 A spec whose every requirement is `binding: none` owes no row by construction
 and is exempt; a spec that declares no requirement at all, or whose requirements cannot be read, is

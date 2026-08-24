@@ -357,10 +357,9 @@ READERS_RE = re.compile(r"^readers:[ \t]*(.*)$", re.MULTILINE)
 def _read(path: Path) -> str:
     """Read a file, or fail closed. A file we cannot read is not a file we can clear.
 
-    `ValueError` is caught beside `OSError` because `UnicodeDecodeError` is a `ValueError`, and
-    `check --contract` scans every `.md/.json/.py/.sh` under `scripts/` and `docs/templates/` -
-    arbitrary project code in a consumer repo, where one latin-1 file would otherwise turn the CI
-    gate into a stack trace instead of a named finding. Same failure shape either way: unreadable is
+    `ValueError` is caught beside `OSError` because `UnicodeDecodeError` is a `ValueError`, and a
+    single non-UTF-8 file anywhere under the scanned directories would otherwise turn the CI gate
+    into a stack trace instead of a named finding. Same failure shape either way: unreadable is
     unreadable.
     """
     try:
@@ -563,7 +562,10 @@ def check_sources(root: Path) -> list[str]:
 # making a claim nothing enforces. Three claims, all mechanical:
 #
 #   C1  every entry's `emitted_by` names a file that EXISTS. A declared writer instruction that is
-#       not on disk is fiction, and nothing else would ever notice.
+#       not on disk is fiction, and nothing else would ever notice. Asked only where the canonical
+#       source DIRECTORY is present: a vendored install has no `agents/`, and reporting every entry
+#       emitted from one as a broken declaration there would fail every commit in that repository
+#       from installation onwards. Absent is reported on stderr, never a silent clean pass.
 #   C2  that file actually INSTRUCTS the `readers:` line. Declaring a reader in this table is not
 #       the same as telling anyone to write it down: three document classes shipped with the first
 #       and not the second, which is what put `emitted_by` in the table in the first place. A
@@ -578,24 +580,40 @@ def check_sources(root: Path) -> list[str]:
 #
 # NOT diff-scoped, deliberately, and for the same reason `--sources` and `stage_effort.py check` are
 # not: these are canonical stage instructions and the table itself, always open to change, never
-# shipped artifacts a later rule would hold hostage.
+# shipped artifacts a later rule would hold hostage. That is only true while the inventory stays
+# canonical, which is why `CONTRACT_SOURCE_DIRS` is what it is.
 #
-# What C3 does NOT see, said rather than implied: it reads two inventories - artifact PATH literals
-# under `docs/features/`, and the canonical layout block in `skills/pipeline-conventions`. A class
-# named only as a bare filename in prose is invisible to it. `fidelity-report.md` was named exactly
-# that way, in two artifact lists and nowhere else, so this check would not have caught it; it was
-# caught by reading. Generalising to bare filenames means guessing which backticked `*.md` in a
-# sentence is a pipeline artifact, which needs a denylist of everything else in the repository - a
-# list that rots, which is worse than a stated limit.
+# What C3 does NOT see, said rather than implied. It reads two inventories - artifact PATH literals
+# under `docs/features/`, and the canonical layout block in `skills/pipeline-conventions` - and it
+# reads them in CANONICAL SOURCES ONLY. So a class named only as a bare filename in prose is
+# invisible to it: `fidelity-report.md` was named exactly that way, in two artifact lists and
+# nowhere else, so this check would not have caught it; it was caught by reading. Generalising to
+# bare filenames means guessing which backticked `*.md` in a sentence is a pipeline artifact, which
+# needs a denylist of everything else in the repository - a list that rots, which is worse than a
+# stated limit. And a class named only OUTSIDE canonical stage instruction - in a consumer's
+# `README.md`, in project code under `scripts/`, in a project's own `CLAUDE.md` - is invisible for
+# the same reason stated once at `CONTRACT_SOURCE_DIRS`: those files are not the pipeline's to
+# judge. Both are the same trade, a stated limit over a guess.
 
-#: Where a stage instruction, a template or a script may name an artifact path.
-CONTRACT_SOURCE_DIRS = SOURCE_DIRS + ("scripts", "docs/templates")
-CONTRACT_SOURCE_FILES = ("AGENTS.md", "CLAUDE.md", "README.md")
+#: Where a stage instruction or a template may name an artifact path. CANONICAL STAGE INSTRUCTION
+#: ONLY, and that boundary is the check's correctness rather than its size: `gate_ci.sh` sets `ROOT`
+#: to the repository it runs in, so in a vendored install `scripts/` and `README.md` are the
+#: CONSUMER's own files and `CLAUDE.md` is the consumer's own instructions. A check that judges
+#: files the pipeline does not own is not a narrower or a wider version of this check, it is a
+#: different and wrong one, and diff-scoping it would be scoping machinery added to excuse reading
+#: the wrong files. Reading only what the pipeline ships is also what keeps this check honestly
+#: non-diff-scoped: canonical stage instruction is always open to change, never a shipped artifact a
+#: later rule would hold hostage. `AGENTS.md` is here because `scripts/install.sh` vendors it.
+CONTRACT_SOURCE_DIRS = SOURCE_DIRS + ("docs/templates",)
+CONTRACT_SOURCE_FILES = ("AGENTS.md",)
 CONTRACT_SOURCE_SUFFIXES = (".md", ".json", ".py", ".sh")
 
 #: A path literal pointing into the artifact tree. `<feature>`, `<n>-<slug>` and `*` are template
 #: placeholders the sources write literally, so they are part of the character class.
 ARTIFACT_PATH_RE = re.compile(r"docs/features/[A-Za-z0-9_<>*./-]+")
+
+#: A `<...>` placeholder segment, stripped before deciding whether a filename names anything real.
+PLACEHOLDER_RE = re.compile(r"<[^>]*>|\*")
 
 #: The other inventory: the fenced tree under `- **Layout:**` in the canonical rulebook.
 LAYOUT_SOURCE = "skills/pipeline-conventions/SKILL.md"
@@ -626,9 +644,27 @@ def _contract_sources(root: Path) -> list[Path]:
     return found
 
 
+def _emitter_dir_absent(root: Path, emitter: str) -> bool:
+    """Whether the canonical source directory an `emitted_by` lives under is not in this tree.
+
+    A vendored install receives `skills/`, `prompts/`, `docs/templates/` and part of `scripts/`, and
+    no `agents/` at all (`scripts/install.sh` SRC_SETS). Asked there, C1 would report every entry
+    emitted by an agent definition as a broken declaration and fail every commit and every CI run in
+    that repository from installation onwards, with no diff-scope and no exception route - a check
+    that cannot run where it ships. This is the same boundary `stage_effort.py check` already takes
+    for the same tree: nothing to read is reported, never resolved to a verdict either way.
+
+    An emitter whose directory IS present and whose file is missing stays a violation: that is a
+    real broken declaration rather than an absent inventory.
+    """
+    top = emitter.split("/", 1)[0]
+    return not (root / top).is_dir()
+
+
 def _emitter_problems(root: Path) -> list[str]:
     """C1 and C2: the table's declared writer instruction exists, and it instructs the line."""
     problems: list[str] = []
+    unread: dict[str, list[str]] = {}
     for name, spec in READ_PATH.items():
         emitter = spec.get("emitted_by")
         if not emitter:
@@ -637,6 +673,9 @@ def _emitter_problems(root: Path) -> list[str]:
                 f"declared reader nobody is instructed to write down is a promise with no "
                 f"mechanism, which is the gap `emitted_by` exists to close."
             )
+            continue
+        if _emitter_dir_absent(root, emitter):
+            unread.setdefault(emitter.split("/", 1)[0], []).append(name)
             continue
         path = root / emitter
         if not path.is_file():
@@ -660,6 +699,14 @@ def _emitter_problems(root: Path) -> list[str]:
                 f"never says so. Either instruct it there, or stop declaring readers for "
                 f"`{name}` in READ_PATH."
             )
+    for top, names in sorted(unread.items()):
+        print(
+            f"[doc_read_path] contract: no {top}/ under {root} - nothing checked for "
+            f"{len(names)} entry(ies) emitted from it ({', '.join(sorted(names))}). Those writer "
+            f"instructions live in the canonical repository, which is where this direction of the "
+            f"contract is asked.",
+            file=sys.stderr,
+        )
     return problems
 
 
@@ -696,6 +743,19 @@ def layout_inventory(root: Path) -> set[str]:
     return names
 
 
+def names_a_class(base: str) -> bool:
+    """Whether a filename names an artifact CLASS at all, rather than matching a set of them.
+
+    `ARTIFACT_PATH_RE` admits `*` and `<...>` because the sources write those placeholders
+    literally, and a class like `scoped/review-<slice>.md` is only nameable with one. But a base
+    whose whole stem is placeholder - `*.md` out of `docs/features/**/*.md` - is a glob, and a glob
+    is not a class: reported as one it prescribes three remedies for a document that does not exist.
+    A placeholder is tolerated only where a real stem resolves it.
+    """
+    stem = base.rsplit(".", 1)[0]
+    return bool(PLACEHOLDER_RE.sub("", stem).strip(" -_."))
+
+
 def _named_artifacts(root: Path) -> dict[str, list[str]]:
     """Every artifact filename a canonical source names, mapped to where it named it."""
     named: dict[str, list[str]] = {}
@@ -704,11 +764,12 @@ def _named_artifacts(root: Path) -> dict[str, list[str]]:
         for lineno, line in enumerate(_read(path).splitlines(), 1):
             for match in ARTIFACT_PATH_RE.finditer(line):
                 base = match.group(0).rstrip("./").split("/")[-1]
-                if not base.endswith((".md", ".json")):
+                if not base.endswith((".md", ".json")) or not names_a_class(base):
                     continue
                 named.setdefault(base, []).append(f"{rel}:{lineno}")
     for base in sorted(layout_inventory(root)):
-        named.setdefault(base, []).append(LAYOUT_SOURCE)
+        if names_a_class(base):
+            named.setdefault(base, []).append(LAYOUT_SOURCE)
     return named
 
 

@@ -38,9 +38,11 @@ different moments.**
 
 "Passing verdict" is not re-derived here. `verifier_attempts.attempts` owns what the verdict record
 is (the live `verdict.json` plus its `verdict-attempt-<n>.json` archives) and `verdict_findings`
-owns what "still open" means, so this asks them: the latest attempt says `pass` and has nothing
-unresolved. A second reading here would be a second answer to a question the pipeline has already
-settled twice.
+owns what "still open" means, so this asks them: the latest attempt says `pass` and carries no
+finding still marked open, break-glass waiver included. That is the STRICTER of the two readings
+that module owns, and it is the one `hook_verifier.sh` applies before it will let a handover be
+written - see `verified`, where the difference is stated. A second reading here would be a second
+answer to a question the pipeline has already settled twice.
 
 A spec that owes no mapping row at all is exempt by construction, read from
 `spec_done_guard.mapping_owed`: every requirement `binding: none` gets no test and no row (§4a), and
@@ -117,16 +119,23 @@ def finished_implementing(phase_dir: Path) -> bool:
 
 
 def verified(phase_dir: Path) -> bool:
-    """Whether the phase's latest verdict PASSES with nothing still open.
+    """Whether the phase's latest verdict PASSES carrying no finding still marked open.
 
-    The same reading `hook_verifier.sh` makes before it will let a handover be written, taken from
-    the modules that own each half rather than restated: `verifier_attempts.attempts` for what the
-    verdict record is, and `verdict_findings.open_findings` (which `Attempt.unresolved` counts) for
-    what is still open, so a finding waived through break-glass reads as resolved here exactly as it
-    does at the attempt cap.
+    Taken from the modules that own each half rather than restated: `verifier_attempts.attempts` for
+    what the verdict record is, and `verdict_findings` for what open means. Which of that module's
+    two readings applies is the whole question here, and this asks for LESS than the attempt cap
+    does. `Attempt.unresolved` counts `open_findings`, which treats a break-glass waiver as
+    resolved, because the cap asks whether the loop has ended and a waiver ends it.
+    `Attempt.flagged` counts `status: open` literally, and that is the reading `hook_verifier.sh`
+    takes before it will let a `handover.md` be written: a `pass` carrying a waived-but-open finding
+    fails closed there. Answering with `unresolved` made this sweep demand a handover the hook then
+    refused to let anyone write - a phase with no reachable end state, reached through the documented
+    remedy at the attempt cap.
 
-    An unreadable or absent record is NOT a pass - under-report, so the sweep asks for nothing it
-    cannot show is owed.
+    So the two gates are aligned at the strict end, deliberately: between a sweep that asks for a
+    document too early and one that asks a little late, only the first can wedge a phase. An
+    unreadable or absent record is NOT a pass for the same reason - under-report, so the sweep asks
+    for nothing it cannot show is owed.
     """
     try:
         records = attempts(phase_dir)
@@ -135,7 +144,7 @@ def verified(phase_dir: Path) -> bool:
     if not records:
         return False
     latest = records[-1]
-    return latest.verdict == PASS and latest.unresolved == 0
+    return latest.verdict == PASS and latest.flagged == 0
 
 
 def phase_dirs(root: Path) -> list[Path]:

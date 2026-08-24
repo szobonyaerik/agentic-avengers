@@ -188,7 +188,7 @@ def test_a_failing_verdict_does_not_ask_for_a_handover(tmp_path: Path) -> None:
 
 
 def test_a_pass_still_carrying_an_open_finding_is_not_a_pass(tmp_path: Path) -> None:
-    """`verdict_findings.open_findings` owns this, and `hook_verifier.sh` fails closed on it too."""
+    """`verdict_findings` owns this, and `hook_verifier.sh` fails closed on it too."""
     phase_dir = phase(tmp_path, status="done")
     (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
     verdict(phase_dir, result="pass", findings=[{"id": "F1", "status": "open"}])
@@ -196,14 +196,38 @@ def test_a_pass_still_carrying_an_open_finding_is_not_a_pass(tmp_path: Path) -> 
     assert owed(tmp_path) == []
 
 
-def test_a_waived_finding_reads_as_resolved(tmp_path: Path) -> None:
-    """Break-glass is one of the three remedies the attempt cap prescribes; it clears the loop."""
+def test_a_waived_but_open_finding_does_not_make_a_handover_owed(
+    tmp_path: Path,
+) -> None:
+    """The regression: this sweep and `hook_verifier.sh` must not disagree about one verdict.
+
+    Break-glass is one of the three remedies the attempt cap prescribes, so a `pass` carrying a
+    waived-but-still-open finding is reachable through the documented route. `hook_verifier.sh`
+    counts `status: open` literally and fails closed on exactly that shape, so demanding a
+    `handover.md` here would demand a document the hook refuses to let anyone write - a phase with
+    no reachable end state. The sweep asks for less.
+    """
     phase_dir = phase(tmp_path, status="done")
     (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
     verdict(
         phase_dir,
         result="pass",
         findings=[{"id": "F1", "status": "open", "break_glass": "waived by captain"}],
+    )
+    assert not verified(phase_dir)
+    assert owed(tmp_path) == []
+
+
+def test_a_waived_finding_that_is_no_longer_open_is_a_clean_pass(
+    tmp_path: Path,
+) -> None:
+    """The other side of it: once the finding is closed, the handover is owed as usual."""
+    phase_dir = phase(tmp_path, status="done")
+    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
+    verdict(
+        phase_dir,
+        result="pass",
+        findings=[{"id": "F1", "status": "fixed", "break_glass": "waived by captain"}],
     )
     assert verified(phase_dir)
     assert any("handover.md" in problem for problem in owed(tmp_path))
@@ -278,6 +302,9 @@ def test_a_done_spec_declaring_no_requirement_is_reported_not_exempted(
 # --- the applicability boundary -----------------------------------------------------------------
 
 
+@pytest.mark.subprocess(
+    "the subject IS the applicability boundary, which reads a real git index"
+)
 def git(root: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
@@ -386,6 +413,9 @@ def test_list_prints_only_the_finished_phases(tmp_path: Path, capsys) -> None:
 # --- the hook, executed -------------------------------------------------------------------------
 
 
+@pytest.mark.subprocess(
+    "the subject IS the hook: what it keys on is only observable by running it"
+)
 def run_hook(root: Path) -> subprocess.CompletedProcess:
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root))
     return subprocess.run(

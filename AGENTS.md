@@ -39,7 +39,14 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `docs/lessons/` is untouched. `check --contract` is the other direction — every documented claim
    about an artifact's frontmatter has a writer instructed to produce it, and every artifact class a
    canonical source names is one the table governs. That is the general form of the defect behind
-   #29: documentation making a claim nothing enforces.
+   #29: documentation making a claim nothing enforces. It reads **canonical stage instruction only**
+   (`agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/`, `AGENTS.md`), never `scripts/`,
+   `README.md` or `CLAUDE.md`, which belong to the consumer in a vendored install, and it asks the
+   `emitted_by` half only where the canonical source directory is present - a tree with no `agents/`
+   reports nothing-checked on stderr rather than a broken declaration. The sweep's `handover.md`
+   half is owed at a **passing `verdict.json`**, read the strict way `hook_verifier.sh` reads it:
+   `status: open` counted literally, waiver included, so the two gates cannot disagree about one
+   verdict.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **The quality wall (per spec): ONE machine gate, then one human.** The spec gate fires on spec

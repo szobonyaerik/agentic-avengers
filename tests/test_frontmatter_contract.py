@@ -229,21 +229,115 @@ def test_the_cli_returns_one_on_a_contract_violation_and_zero_when_clean(
 def test_a_source_that_is_not_utf8_is_a_named_finding_not_a_traceback(
     tmp_path: Path,
 ) -> None:
-    """`check --contract` scans arbitrary project code, so one latin-1 file must not crash CI.
+    """One non-UTF-8 file under a scanned directory must not crash CI.
 
-    The source scan widened from `*.md` under four canonical directories to every `.md/.json/.py/.sh`
-    under `scripts/` and `docs/templates/`, which in a consumer repo is that project's own code.
-    `UnicodeDecodeError` is a `ValueError`, not an `OSError`, so it escaped the fail-closed guard and
-    reached `gate_ci.sh` as a stack trace instead of the named refusal every other unreadable file
-    gets. The same bug class this change fixed in `phase_artifacts._status`.
+    `UnicodeDecodeError` is a `ValueError`, not an `OSError`, so it escaped the fail-closed guard in
+    `_read` and reached `gate_ci.sh` as a stack trace instead of the named refusal every other
+    unreadable file gets. The same bug class this change fixed in `phase_artifacts._status`.
     """
     scaffold(tmp_path)
-    rogue = tmp_path / "scripts" / "rogue.py"
+    rogue = tmp_path / "agents" / "rogue.md"
     rogue.parent.mkdir(parents=True, exist_ok=True)
     rogue.write_bytes(b"# caf\xe9 in latin-1\n")
 
     with pytest.raises(SystemExit) as raised:
         check_contract(tmp_path)
     assert "cannot read" in str(raised.value)
-    assert "rogue.py" in str(raised.value)
+    assert "rogue.md" in str(raised.value)
     assert "fail closed" in str(raised.value)
+
+
+# --- the vendored install: what this check may read, and where it may run -------------------------
+
+
+def test_a_tree_without_agents_reports_nothing_checked_rather_than_a_broken_declaration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A vendored install has no `agents/`, and this check has to be able to run there.
+
+    `scripts/install.sh` SRC_SETS ships `skills/`, `prompts/`, `docs/templates/` and part of
+    `scripts/`, never `agents/`. `.pre-commit-config.yaml` and the CI workflow are both vendored and
+    both call `gate_ci.sh`, which runs this check non-diff-scoped, so reporting an agent-emitted
+    entry as a missing writer instruction would fail every commit and every CI run in every consumer
+    repository from installation onwards, with no `--all` escape and no exception route. That is a
+    check that cannot run where it ships.
+    """
+    scaffold(tmp_path)
+    for path in sorted((tmp_path / "agents").rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    (tmp_path / "agents").rmdir()
+
+    assert check_contract(tmp_path) == []
+    said = capsys.readouterr().err
+    assert "no agents/" in said and "nothing checked" in said, said
+    assert "breaker.json" in said, said
+
+
+def test_an_emitter_missing_from_a_directory_that_IS_present_is_still_a_violation(
+    tmp_path: Path,
+) -> None:
+    """The boundary is the absent inventory, never a licence to stop checking a present one."""
+    scaffold(tmp_path)
+    (tmp_path / READ_PATH["breaker.json"]["emitted_by"]).unlink()
+    problems = check_contract(tmp_path)
+    assert any("breaker.json" in p and "does not exist" in p for p in problems), (
+        problems
+    )
+
+
+def test_a_consumer_owned_file_naming_an_artifact_path_is_not_judged(
+    tmp_path: Path,
+) -> None:
+    """`gate_ci.sh` sets ROOT to the repository it runs in, so these files are not the pipeline's.
+
+    In a vendored install `scripts/` is the consumer's project code, `README.md` is the consumer's
+    readme and `CLAUDE.md` is the consumer's own instructions. Judging them is not a wider version
+    of this check, it is a different one, and there is no waiver short of bypassing the whole gate.
+    """
+    scaffold(tmp_path)
+    literal = "docs/features/checkout/design-notes.md"
+    (tmp_path / "README.md").write_text(f"See {literal} for details.\n")
+    (tmp_path / "CLAUDE.md").write_text(f"Our own note lives at {literal}.\n")
+    (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "scripts" / "project_tool.py").write_text(f'PATH = "{literal}"\n')
+
+    assert check_contract(tmp_path) == []
+
+
+def test_the_same_literal_in_a_canonical_stage_instruction_is_judged(
+    tmp_path: Path,
+) -> None:
+    """The other half of the boundary: narrowing the inventory must not blunt the check."""
+    scaffold(tmp_path)
+    literal = "docs/features/checkout/design-notes.md"
+    (tmp_path / "agents" / "avenger-handover.md").write_text(f"write {literal}\n")
+    assert any("design-notes.md" in p for p in check_contract(tmp_path))
+
+    (tmp_path / "agents" / "avenger-handover.md").unlink()
+    (tmp_path / "skills" / "phase-handover").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "skills" / "phase-handover" / "SKILL.md").write_text(
+        f"write {literal}\n"
+    )
+    assert any("design-notes.md" in p for p in check_contract(tmp_path))
+
+
+def test_a_glob_path_literal_names_no_class(tmp_path: Path) -> None:
+    """`*.md` out of a glob is a match rule, not a document, and has no honest outcome to choose.
+
+    Reported as a class it prescribes three remedies for a file that does not exist, and neither
+    giving `*.md` a READ_PATH entry nor deleting it is a thing anyone can do.
+    """
+    scaffold(tmp_path)
+    (tmp_path / "agents" / "avenger-handover.md").write_text(
+        "Ignore docs/features/**/*.md when linting.\n"
+    )
+    assert check_contract(tmp_path) == []
+
+
+def test_a_placeholder_inside_a_real_stem_is_still_a_class(tmp_path: Path) -> None:
+    """`review-<slice>.md` is only nameable with a placeholder, so one may not disqualify a name."""
+    scaffold(tmp_path)
+    (tmp_path / "agents" / "avenger-handover.md").write_text(
+        "docs/features/<feature>/phases/<n>-<slug>/scoped/summary-<slice>.md\n"
+    )
+    assert any("summary-<slice>.md" in p for p in check_contract(tmp_path))

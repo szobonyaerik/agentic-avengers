@@ -56,7 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # `bypassed: true` and the waived findings still in the array, and CI stayed red with no action left
 # that could clear it. (It used to live in `verifier_bundle_scope`, which scoped the cross-family
 # review bundle; that pass is gone and the rule moved house rather than being copied.)
-from verdict_findings import open_findings  # noqa: E402
+from verdict_findings import flagged_findings, open_findings  # noqa: E402
 
 WITHIN = 0
 CAPPED = 1
@@ -128,12 +128,18 @@ class Attempt(NamedTuple):
     `findings` is every finding it raised — that is the trickle series, and a finding that was later
     fixed or waived still happened. `unresolved` is the subset still open and unwaived, which is the
     only count a verdict can be judged clean against.
+
+    `flagged` is the STRICTER count `hook_verifier.sh` takes before it will let a handover be
+    written: `status: open` read literally, break-glass waiver included. It is carried here so that
+    a caller asking "will the handover write be allowed?" reads the same number that hook does,
+    rather than answering with `unresolved` and demanding a document the hook then refuses.
     """
 
     number: int
     findings: int
     verdict: str
     unresolved: int
+    flagged: int
 
 
 def _attempt(number: int, data: dict) -> Attempt:
@@ -143,6 +149,7 @@ def _attempt(number: int, data: dict) -> Attempt:
         findings=len(data.get("findings") or []),
         verdict=str(data.get("verdict") or "?"),
         unresolved=len(open_findings(findings)),
+        flagged=len(flagged_findings(findings)),
     )
 
 
@@ -199,7 +206,9 @@ def attempts(phase_dir: Path) -> list[Attempt]:
     live_path = Path(phase_dir) / "verdict.json"
     live = _read(live_path)
     if live is None and live_path.exists():
-        raise UnreadableVerdict(live_path, "the file is not readable JSON describing an object")
+        raise UnreadableVerdict(
+            live_path, "the file is not readable JSON describing an object"
+        )
     if live is not None:
         number = _numbered(live, live_path, max(seen) + 1 if seen else 1)
         seen[number] = _attempt(number, live)
@@ -249,7 +258,10 @@ def _check(argv: list[str] | None) -> int:
     args = parser.parse_args(argv)
 
     if not args.phase_dir.is_dir():
-        print(f"[verifier_attempts] no such phase directory: {args.phase_dir}", file=sys.stderr)
+        print(
+            f"[verifier_attempts] no such phase directory: {args.phase_dir}",
+            file=sys.stderr,
+        )
         return ERROR
 
     records = attempts(args.phase_dir)
@@ -260,7 +272,7 @@ def _check(argv: list[str] | None) -> int:
             )
         return WITHIN
 
-    latest = records[-1] if records else Attempt(0, 0, "?", 0)
+    latest = records[-1] if records else Attempt(0, 0, "?", 0, 0)
     if latest.number < args.max:
         return WITHIN
     if latest.verdict == "pass" and latest.unresolved == 0:
