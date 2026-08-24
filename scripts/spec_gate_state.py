@@ -37,11 +37,33 @@ for the approved case and an inline Python heredoc for the missing-key case — 
 could insert a key that was not there, so a blocked spec whose frontmatter lacked `spec_gate:` was
 left reading `pending`. One writer, one spelling.
 
+**A stamp that no longer matches its body is not a verdict** (issue #42), and that reading lives
+here too. `pipeline_state.py` read only the stamp's VALUE while `verifier_precheck.py` compared the
+body against the hash the gate recorded, so one spec was gated and ungated at the same time
+depending on which part of the pipeline asked - and the part that moved on is the one that decides
+what work happens next. `freshness()` is now the one place that decision is made and both call it.
+
+It answers in THREE states rather than two, because "the gate recorded a hash and the body no longer
+matches it" and "no gate ever recorded a hash" are different facts with different remedies:
+
+    FRESH       a hash is recorded and the body still matches it
+    STALE       a hash is recorded and the body has since changed - PROVEN drift
+    UNRECORDED  no gate ever recorded a hash for this spec - drift is UNKNOWABLE, not proven
+
+Callers share the fact and each applies its own applicability boundary (CLAUDE.md §3a), exactly as
+every other check here does. `verifier_precheck` holds STALE and UNRECORDED alike, because it is
+diff-scoped and only ever enforces what the change is responsible for. The resolver holds STALE
+only: every spec stamped before the gate cache existed is UNRECORDED, and routing those back to the
+spec gate would park `/avenger-run` on shipped work whose remedy nobody asked for - a wedge, not a
+gate.
+
 Usage:
     spec_gate_state.py status <spec.md>    print pending|approved|blocked; exit 0 approved,
                                            1 not approved, 2 unreadable
     spec_gate_state.py set <spec.md> <pending|approved|blocked>
                                            stamp it, inserting the key when it is absent
+    spec_gate_state.py freshness <spec.md> print fresh|stale|unrecorded; exit 0 fresh, 1 not fresh,
+                                           2 undecidable. The gate name is DERIVED from the spec
 """
 
 from __future__ import annotations
@@ -49,6 +71,10 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import spec_gate_cache  # noqa: E402 — the module that owns the hash a gate records
 
 APPROVED_EXIT = 0
 NOT_APPROVED_EXIT = 1
@@ -59,6 +85,11 @@ APPROVED = "approved"
 BLOCKED = "blocked"
 
 STATES = (PENDING, APPROVED, BLOCKED)
+
+#: The three answers `freshness()` gives about a spec's gate stamp. See the module docstring.
+FRESH = "fresh"
+STALE = "stale"
+UNRECORDED = "unrecorded"
 
 #: The single stamp the one gate writes.
 GATE_FIELD = "spec_gate"
@@ -106,6 +137,46 @@ def status_of(path: Path) -> str:
         return PENDING
 
 
+def freshness(path: Path) -> str | None:
+    """Whether the gate's stamp still describes THIS body: FRESH, STALE, UNRECORDED, or None.
+
+    None means undecidable - the spec could not be read, or it carries no frontmatter to hold a
+    hash - and every caller fails closed on it, because "we could not tell" is not "it is fine".
+
+    A spec is FRESH as soon as ANY gate's recorded hash matches: `gate` is the one gate, and
+    `fidelity`/`review` are the two it replaced, whose stamps a repository mid-upgrade still
+    carries. Reading only `gate` would call every pre-collapse spec drifted.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        block, body = spec_gate_cache.split_spec(text)
+    except ValueError:
+        return None
+    current = spec_gate_cache.body_hash(body)
+    recorded = [spec_gate_cache.stored_hash(block, gate) for gate in spec_gate_cache.GATES]
+    if any(h == current for h in recorded):
+        return FRESH
+    if any(h is not None for h in recorded):
+        return STALE
+    return UNRECORDED
+
+
+def stamp_fresh(path: Path) -> bool | None:
+    """True when the body is unchanged since a gate judged it; None when undecidable.
+
+    The two-state view `verifier_precheck` holds specs to: an UNRECORDED hash is not a body this
+    gate has judged either, and that check is diff-scoped, so holding it costs nothing it is not
+    already responsible for.
+    """
+    state = freshness(path)
+    if state is None:
+        return None
+    return state == FRESH
+
+
 GATE_LINE = re.compile(rf"^{GATE_FIELD}:.*$", re.MULTILINE)
 
 
@@ -136,13 +207,28 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[spec_gate_state] cannot stamp {args[1]}: {exc}", file=sys.stderr)
             return ERROR
         return APPROVED_EXIT
-    if len(args) != 2 or args[0] != "status":
+    if len(args) != 2 or args[0] not in ("status", "freshness"):
         print(__doc__, file=sys.stderr)
         return ERROR
     path = Path(args[1])
     if not path.is_file():
         print(f"[spec_gate_state] no such spec: {path}", file=sys.stderr)
         return ERROR
+    if args[0] == "freshness":
+        # The runbook command used to name ONE gate (`fidelity`), which collapsed specs do not
+        # carry, so following it on a healthy APPROVED spec answered NEEDS_GATING and read as STALE
+        # (issue #56). Deriving the name here is what stops a document and the gate names from
+        # drifting apart again — there is no name for an operator to get wrong.
+        state = freshness(path)
+        if state is None:
+            print(
+                f"[spec_gate_state] cannot decide freshness for {path}: it has no YAML frontmatter "
+                f"to hold a gate hash",
+                file=sys.stderr,
+            )
+            return ERROR
+        print(state)
+        return APPROVED_EXIT if state == FRESH else NOT_APPROVED_EXIT
     state = status_of(path)
     print(state)
     return APPROVED_EXIT if state == APPROVED else NOT_APPROVED_EXIT

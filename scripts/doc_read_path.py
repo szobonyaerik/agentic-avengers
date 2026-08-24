@@ -244,8 +244,14 @@ READ_PATH: dict[str, dict] = {
         "written_by": "avenger-verifier",
         # An archived copy of the verdict body, so it carries the verdict's own declaration.
         "emitted_by": "docs/templates/verdict.template.json",
-        "readers": [],
-        "extent": "none",
+        # It gained exactly ONE reader, and only because nothing else can answer the question. A
+        # superseded attempt is where a finding that was RAISED AND FIXED lives, and `found_by` is
+        # the one field firstmate's record cannot reconstruct afterwards — a phase that raised six
+        # findings on attempt 1 and passed on attempt 2 closed reporting none. The read is `id` and
+        # `kind` per finding, once per phase close, by a script; no stage reads the prose, and
+        # nothing here relocates any.
+        "readers": ["pipeline_metrics.py + emission_gate.py @ per phase close (finding ids only)"],
+        "extent": "finding ids",
         "archive_of": "verdict.json",
         "needle": "verdict-attempt-",
         "named_only_by": {

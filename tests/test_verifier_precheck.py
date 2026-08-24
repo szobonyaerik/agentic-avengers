@@ -438,3 +438,92 @@ def test_named_phases_still_check_the_whole_phase(phase: Path) -> None:
     stamp(spec)
     write_mapping(phase, "")
     assert main([str(phase)]) == 1
+
+
+# --- the row's claim, not merely the id's presence (issue #52) -----------------------------------
+#
+# The precheck confirmed each requirement id appeared in SOME row and never that the row's claim
+# matched the test it names. A row is free to assert anything, which makes the trace decorative, and
+# the failure is self-concealing: green output is exactly what a stale row produces.
+#
+# WHAT THIS CATCHES, AND WHAT IT DOES NOT. It holds the minimum the issue asks for - the named test
+# EXISTS in the phase's own tests, and is not skipped. It does NOT read a row's prose against a
+# test's assertions; generating the claim from the test is the "at best", and nothing here pretends
+# to it. A row whose words contradict its (existing, running) test still passes, and that is said
+# out loud rather than implied.
+
+
+def write_phase_tests(phase: Path, body: str, *, name: str = "test_thing.py") -> Path:
+    """The phase's own test tree, at the path `hook_verifier.sh` resolves: tests/<feature>/<slug>."""
+    root = phase.parents[3] / "tests" / "demo" / "1-core"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / name
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_a_row_naming_a_test_that_does_not_exist_is_a_finding(phase: Path) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_deleted_long_ago | integration |\n")
+    write_phase_tests(phase, "def test_something_else():\n    assert True\n")
+
+    (finding,) = [f for f in check_phase(phase) if "test_deleted_long_ago" in f]
+    assert "names" in finding and "no test" in finding
+
+
+def test_a_row_naming_a_test_that_exists_is_clean(phase: Path) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_the_seam | integration |\n")
+    write_phase_tests(phase, "def test_the_seam():\n    assert True\n")
+
+    assert check_phase(phase) == []
+
+
+def test_a_row_naming_a_skipped_test_is_a_finding(phase: Path) -> None:
+    """A skipped test is green output over a requirement nothing exercises."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_the_seam | integration |\n")
+    write_phase_tests(
+        phase,
+        "import pytest\n\n\n@pytest.mark.skip('later')\ndef test_the_seam():\n    assert True\n",
+    )
+
+    (finding,) = [f for f in check_phase(phase) if "test_the_seam" in f]
+    assert "skipped" in finding
+
+
+def test_a_journey_row_listing_several_tests_holds_each_one(phase: Path) -> None:
+    spec = write_spec(
+        phase,
+        "- R1.1.1 — `binding: e2e` — a\n- R1.1.2 — `binding: e2e` — b\n",
+    )
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1, R1.1.2 | test_journey_a, test_gone | e2e |\n")
+    write_phase_tests(phase, "def test_journey_a():\n    assert True\n")
+
+    findings = [f for f in check_phase(phase) if "test_gone" in f]
+    assert findings and "test_journey_a" not in findings[0]
+
+
+def test_a_phase_with_no_test_tree_is_not_held(phase: Path, capsys) -> None:
+    """Fail open on a scope that cannot be read: a project whose tests are not laid out this way
+    must not have every row reported as naming a missing test."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_somewhere_else | integration |\n")
+
+    assert check_phase(phase) == []
+    assert "not checked" in capsys.readouterr().err
+
+
+def test_a_row_whose_test_cell_names_nothing_is_not_invented_into_a_finding(phase: Path) -> None:
+    """`n/a`, a dash, or the template's own placeholder are not test names."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | n/a | none |\n| R1.1.1 | — | none |\n")
+    write_phase_tests(phase, "def test_unrelated():\n    assert True\n")
+
+    assert check_phase(phase) == []

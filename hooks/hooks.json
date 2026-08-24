@@ -29,7 +29,8 @@
       {
         "matcher": "Task|Agent",
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_plugin_release.sh\"", "timeout": 30 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_plugin_release.sh\"", "timeout": 30 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_implementer_lock.sh\"", "timeout": 30 }
         ]
       }
     ],
@@ -40,6 +41,12 @@
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_spec_gate.sh\"", "timeout": 720 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_verifier.sh\"", "timeout": 180 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_mutation.sh\"", "timeout": 600 }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_phase_close.sh\"", "timeout": 120 }
         ]
       },
       {

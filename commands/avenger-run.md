@@ -512,8 +512,13 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pipeline_metrics.py" phase-close \
     "docs/features/<feature-id>/phases/<n>-<slug>"
   ```
-  Run directly by you as the orchestrating stage, the same way `defect` is (§6d) — no hook can see
-  this commit land, so no hook can stamp it.
+  Run directly by you as the orchestrating stage, the same way `defect` is (§6d). It is **belt and
+  braces, not the only mechanism**: `scripts/hook_phase_close.sh` is a `PostToolUse` hook on `Bash`
+  that fires after the commit ran and stamps every phase that commit touched, so a run that forgets
+  this step still records the close. (This paragraph used to say no hook could see the commit land.
+  That was the defect — one can, and while it said otherwise nothing stamped the close at all for
+  two measured phases running.) `record_phase_close` converges on a phase already closed, so running
+  both costs nothing; opencode has no such hook and this command is its only emitter.
 - **Every `-m` below is a fixed template with only an id and a verdict substituted**, so it stays
   inline: the *prose belongs in a file* rule (`skills/pipeline-conventions`) turns on whether an
   author could have phrased the value differently. Do not improvise a commit subject that quotes what

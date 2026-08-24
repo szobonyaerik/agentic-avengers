@@ -142,12 +142,14 @@ if [ "$cached" -eq 1 ]; then
   esac
 fi
 
-# The body reached this line, so it is not the one the cache already holds: a new round. Measured
-# here — its size and its requirement count — because a spec that grew 25k -> 51k across rounds it
-# was rewritten to satisfy a gate is the ratchet, and nothing recorded it while it was happening.
-# `record_spec_round` is idempotent by CONTENT, so several spec-write hooks cannot double-count it;
-# it also fixes the round number the gate calls below record as their attempt.
-python3 "$SD/pipeline_metrics.py" spec-round "$FILE" >/dev/null 2>&1 || true
+# The round is NOT measured here. It used to be — the body reached this line, so it was counted
+# before either paid call — and that made a gate that never answered indistinguishable from one that
+# did: a provider refusing for billing still counted as a round. A round is one COMPLETED gate
+# evaluation (scripts/pipeline_metrics.py, `record_spec_round`, which owns the definition and
+# refuses a call that names no verdict), so it is recorded in the two branches below that HAVE one.
+# The gate calls between here and there still report the round in flight: `_spec_round` compares the
+# body on disk against the one last counted, so a call belongs to `closed + 1` until its verdict
+# lands.
 
 # Diff-scoped re-gate: only for a spec that was approved AND has reached the implementer. A spec
 # still in draft has no settled text to protect, so it is always gated whole.
@@ -248,6 +250,40 @@ is a builder failure, not a degraded overview. See the hook's stderr for its cau
   echo "spec-gate: the context block could not be built (exit $ctx_rc, cause named above) —" >&2
   echo "  treating it as absent. This never fails the gate on its own." >&2
 fi
+# --- the notice has to reach the READER, not only this hook's stderr -------------------------------
+#
+# Issue #57 closed the WRITER side: a degraded context is echoed loudly here and folded into the
+# persisted report. FIXING THE WRITER DOES NOT PROVE THE READER EVER SEES IT. The observe pass reads
+# $OBSERVE_IN and nothing else — not this stderr, not the stamped report — and a degraded build used
+# to hand it either a block that read as a COMPLETE set of contracts or, when there was nothing to
+# carry at all, no block whatsoever. Either way the run read clean to whoever received it.
+#
+# The marker is read OUT OF the module that emits it, never spelled again here: two copies of the one
+# string that makes a degraded run legible would drift, and the copy that drifted first would be the
+# one nobody was reading. That is the rule $SAME_FAMILY_MARKER already follows below.
+DEGRADED_MARKER="$(sed -n 's/^DEGRADED_NOTICE = "\(.*\)"$/\1/p' "$SD/spec_gate_context.py" 2>/dev/null)"
+if [ "$CONTEXT_DEGRADED" -eq 1 ] && [ -z "$DEGRADED_MARKER" ]; then
+  echo "spec-gate: the context is degraded, but this hook could not read the context builder's" >&2
+  echo "  degradation marker, so it cannot confirm the notice reaches the reviewer. Fails closed:" >&2
+  echo "  a degraded run that reads clean to its reader is worse than no verdict." >&2
+  exit 2
+fi
+
+# A builder that produced NO block (the UNAVAILABLE branch) leaves the reader with nothing at all —
+# the same hole one step further out. The hook cannot rebuild the context, but it can still say that
+# there is none, in its own words, since this cause is the hook's own fact rather than the builder's.
+if [ "$CONTEXT_DEGRADED" -eq 1 ] && [ ! -s "$CONTEXT" ]; then
+  {
+    echo "## CONTEXT (reference only)"
+    echo
+    printf '%s - no context block could be built for this spec, so a contradiction against this ' \
+      "$DEGRADED_MARKER"
+    echo "feature's own contracts is undetectable here. Do not read the absence as agreement."
+    echo
+    echo "- $CONTEXT_CAUSE"
+  } > "$CONTEXT"
+fi
+
 if [ -s "$CONTEXT" ]; then
   {
     cat "$CONTEXT"
@@ -262,6 +298,17 @@ if [ -s "$CONTEXT" ]; then
     fi
   } > "$OBSERVE_IN"
   TARGET="$OBSERVE_IN"
+fi
+
+# The check itself, asked where the notice is CONSUMED. It can only fire on an assembly defect here —
+# which is exactly why it is fail-closed rather than another line on stderr: this is not a property
+# of the project (an absent context is normal and never fails the gate), it is this hook handing a
+# reviewer a briefing that hides its own degradation.
+if [ "$CONTEXT_DEGRADED" -eq 1 ] && ! grep -qF "$DEGRADED_MARKER" "$TARGET"; then
+  echo "spec-gate: the context is DEGRADED and the notice did not survive into what the reviewer" >&2
+  echo "  actually reads ($TARGET). A degraded run that reads clean to its reader is the state this" >&2
+  echo "  check exists to refuse, so this fails closed rather than gating on a silent briefing." >&2
+  exit 2
 fi
 # `exec` replaces this shell, so the EXIT trap would never run — clean up first, by hand.
 bypass_and_exit () { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "spec-gate"; }
@@ -322,6 +369,32 @@ note_same_family_waiver () {
   fi
 }
 
+# What produced the verdict. Phase 13's first spec gate ran on `anthropic/claude-3-haiku` over the
+# OpenRouter transport, and that fact survived ONLY because the worker typed it into a status line —
+# so ruling afterwards on whether that gate stood meant trusting prose. The runner announces the
+# model, its family and the transport for every REACHED verdict; this collects one entry per pass
+# and `spec_gate_cache.py stamp` writes them onto the verdict itself, on approvals and blocks alike.
+#
+# The marker is read OUT OF THE RUNNER for the same reason the same-family one is: two copies of the
+# string drift, and the drifted copy is the one nobody is reading. A marker this cannot read, or a
+# pass that announced none, leaves the attribution EMPTY — which the stamp records as `unrecorded`,
+# a named state rather than an absent key. That is deliberately not fail-closed: no attribution is
+# the honest record of a runner that said nothing, whereas an undisclosed same-family verdict is a
+# false claim of independence.
+ATTRIBUTION_MARKER="$(sed -n 's/^ATTRIBUTION_MARKER = "\(.*\)"$/\1/p' "$SD/gate_runner.py" 2>/dev/null)"
+GATE_ATTRIBUTION=""
+note_attribution () {   # $1 = the pass's metrics stage, e.g. spec-gate-observe
+  local line model provider label
+  [ -n "$ATTRIBUTION_MARKER" ] || return 0
+  line="$(grep -m1 "^$ATTRIBUTION_MARKER:" "$GERR" 2>/dev/null)" || return 0
+  [ -n "$line" ] || return 0
+  model="$(printf '%s' "$line" | sed -n 's/.*[[:space:]]model=\([^[:space:]]*\).*/\1/p')"
+  provider="$(printf '%s' "$line" | sed -n 's/.*[[:space:]]provider=\([^[:space:]]*\).*/\1/p')"
+  [ -n "$model" ] || return 0
+  label="${1#spec-gate-}"
+  GATE_ATTRIBUTION="${GATE_ATTRIBUTION:+$GATE_ATTRIBUTION; }${label}=${model}@${provider:-unknown}"
+}
+
 run_pass () {
   python3 "$SD/gate_runner.py" \
     --rubric "$1" --model "$2" --author-family "${AUTHOR_FAMILY:-anthropic}" \
@@ -337,6 +410,7 @@ run_pass () {
   # APPLIES when the gate model really does share the author's family, and a waiver left in the
   # environment while the gate is cross-family must never stamp a verdict as same-family.
   note_same_family_waiver
+  note_attribution "$6"
   return "$rc"
 }
 
@@ -445,7 +519,13 @@ if [ "$decided" -eq 0 ]; then
   if [ "${SPEC_REVIEW_MODE:-}" = "auto" ] && grep -q '^review_status:[[:space:]]*pending' "$FILE"; then
     sed -i.bak 's/^review_status:[[:space:]]*pending/review_status: approved/' "$FILE" && rm -f "$FILE.bak"
   fi
-  python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate APPROVED "$REPORT" >/dev/null 2>&1
+  python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate APPROVED "$REPORT" "$GATE_ATTRIBUTION" \
+    >/dev/null 2>&1
+  # A completed evaluation, so it is a round. Measured here — its size and its requirement count —
+  # because a spec that grew 25k -> 51k across rounds it was rewritten to satisfy a gate is the
+  # ratchet, and nothing recorded it while it was happening. Idempotent by CONTENT, so a re-gate
+  # over an unchanged body cannot double-count it.
+  python3 "$SD/pipeline_metrics.py" spec-round "$FILE" --verdict approved >/dev/null 2>&1 || true
   echo "spec-gate: APPROVED ($FILE)" >&2
   exit 0
 fi
@@ -453,7 +533,11 @@ fi
 # Blocked. The hash is recorded WITH the verdict on a block too: a stamp only on passes is a
 # rejection with no record of which text was rejected and no reasoning to answer.
 python3 "$SD/spec_gate_state.py" set "$FILE" blocked
-python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate BLOCKED "$REPORT" >/dev/null 2>&1
+python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate BLOCKED "$REPORT" "$GATE_ATTRIBUTION" \
+  >/dev/null 2>&1
+# A block is a completed evaluation, so it is a round — and the ratchet this measures is built out
+# of blocks. Recorded before the break-glass hand-off below, which ends this hook with `exec`.
+python3 "$SD/pipeline_metrics.py" spec-round "$FILE" --verdict blocked >/dev/null 2>&1 || true
 [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
 echo "spec-gate: BLOCKED — route back to avenger-spec-writer" >&2
 echo "--- blocking findings (the closed set: missing requirement, contradiction, untestable criterion, unhandled critical edge case) ---" >&2

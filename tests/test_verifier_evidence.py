@@ -514,7 +514,9 @@ def test_the_digest_covers_exactly_the_capped_redacted_bytes_that_were_stored(
     """Proof of execution is the point of this record; a digest over the RAW output would mean
     `check` could never verify the log on disk again."""
     monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV, "2048")
-    entry = echo_run(phase, "AKIAIOSFODNN7EXAMPLE " + "y" * 20000)
+    # The trailing summary is what makes this a COMPLETED suite run (suite_outcome.py); it also
+    # lands in the kept TAIL, so this doubles as proof the cap drops the middle and not the result.
+    entry = echo_run(phase, "AKIAIOSFODNN7EXAMPLE " + "y" * 20000 + " 1 passed")
     on_disk = (phase / entry["log"]).read_bytes()
     assert entry["output_sha256"] == hashlib.sha256(on_disk).hexdigest()
     assert entry["output_bytes"] == len(on_disk)
@@ -607,7 +609,7 @@ def test_a_credential_on_the_command_line_never_reaches_the_committed_record(pha
 def test_the_stored_argv_is_what_the_chain_hashes_so_redacting_it_costs_nothing(phase: Path) -> None:
     """`entry_digest` hashes the STORED argv and `check` recomputes from what is on disk, so the
     redaction cannot desynchronise a verdict from its transcript."""
-    ve.record(phase, "suite", ["/bin/echo", "TOKEN=abcd-secret-1234"])
+    ve.record(phase, "suite", ["/bin/echo", "TOKEN=abcd-secret-1234 -- 1 passed"])
     verdict_for(phase)
     assert ve.problems(phase, verdict_path=phase / "verdict.json") == []
 
@@ -661,3 +663,55 @@ def test_a_ceiling_too_small_to_hold_its_own_truncation_marker_is_refused_by_nam
     stored = (phase / entry["log"]).read_bytes()
     assert len(stored) <= evidence_redaction.MIN_MAX_BYTES, "the ceiling now means what it says"
     assert "[TRUNCATED:" in stored.decode("utf-8")
+
+
+# ── outcome 1b: a suite run that never finished is not a passing one ─────────
+#
+# clickup-agents phase 12: a suite hung to its 30-second watchdog on one run and was clean at 1298
+# tests on the next, with the same defect present in both. `timed_out` had been recorded on every
+# entry since this module was written and NOTHING READ IT, and a run that dies before it reports
+# anything leaves a log with no summary in it. Both now decide, in `suite_outcome.py`.
+
+
+def test_a_suite_run_that_printed_no_summary_did_not_finish(phase: Path) -> None:
+    """Exit 0 with no runner summary is the shape a suite killed mid-run leaves behind."""
+    record(phase, kind="suite", argv=["/bin/echo", "collected 1298 items"])
+    found = ve.problems(phase)
+    assert found, "a suite run with no summary must not back a pass"
+    assert "summary" in " ".join(found).lower()
+
+    record(phase, kind="suite")
+    assert ve.problems(phase) == []
+
+
+def test_a_suite_run_killed_by_its_watchdog_does_not_back_a_pass(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The canonical instance: the group is killed, the drained output still carries a summary from
+    whatever ran before the hang, and the corpse's exit code is not a verdict."""
+    monkeypatch.setenv(ve.BUDGET_ENV, "1")
+    record(phase, kind="suite",
+           argv=["/bin/sh", "-c", "echo '1298 passed in 42.10s'; sleep 30"])
+    entry = ve.load(phase)["runs"][-1]
+    assert entry["timed_out"] is True, "the fixture must really have been killed"
+
+    found = ve.problems(phase)
+    assert found, "a suite run that exited on its watchdog must not back a pass"
+    assert "watchdog" in " ".join(found).lower()
+
+    monkeypatch.delenv(ve.BUDGET_ENV)
+    record(phase, kind="suite")
+    assert ve.problems(phase) == []
+
+
+def test_a_watchdog_kill_is_read_from_the_record_not_only_from_the_exit_code(
+    phase: Path,
+) -> None:
+    """A hand-edited `timed_out` is enough on its own: the flag is the measurement, and a suite run
+    carrying it is refused whatever exit code sits beside it."""
+    record(phase, kind="suite")
+    data = ve.load(phase)
+    data["runs"][-1]["timed_out"] = True
+    ve.save(phase, data)
+    found = ve.problems(phase)
+    assert found and "watchdog" in " ".join(found).lower()

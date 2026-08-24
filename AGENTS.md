@@ -107,6 +107,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    or a `binding:` changed, and when the Verifier routed the phase back with a **coverage gap** —
    there the question is what the spec failed to require, so unchanged text is where to look. A
    first gate is always full.
+   **To ask whether one spec's stamp still describes its body, run
+   `python3 scripts/spec_gate_state.py freshness <spec.md>`** — `fresh` | `stale` | `unrecorded`,
+   exit 0 / 1 / 2. It **derives** the gate name from the spec rather than taking one, which is the
+   point: a runbook naming a single gate (`fidelity`) read a collapsed spec, which carries `gate`,
+   as STALE while it was freshly approved, and sent operators to re-gate work that was fine. The
+   same call is what `pipeline_state.py` and `verifier_precheck.py` ask, so the runbook cannot
+   disagree with the pipeline about one spec.
 3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
    counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
    call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`
@@ -140,6 +147,15 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    any pending amendment on a phase whose verdict already passes. Enforced by `hook_verifier.sh` and
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
+   **An amendment is OWED after a fix pass, not merely available** (issue #51):
+   `scripts/verdict_currency.py`, run from `pipeline_state.py` before a feature may report `done`
+   and from `gate_ci.sh --full`, refuses a feature whose tracked files changed after its **newest**
+   verdict landed with no phase recording an amendment. The ship gate owns both findings and fixes
+   while it runs, so it changed verified code and touched no artifact, and the verdict went on
+   asserting a file was byte-identical after the fix commit changed it. **Never a rewritten
+   verdict** - that restates a verification nobody performed. `docs/` and the feature's own
+   `tests/e2e/<feature>/` are excluded by design, and anything git cannot answer enforces nothing
+   and says so.
 3f. **Carried items - a handover's forward-looking claims are discharged, not merely written.**
    Phase 8's card recorded, verbatim, that caller-supplied identifiers would become a problem in
    phases 9-12; phase 9 was the first such caller and **shipped exactly that defect**, past every
@@ -265,6 +281,20 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    (`scripts/gate_runner_guard.sh`) rather than being trusted by path.
    Break-glass `GATE_BYPASS="reason"` is logged to `gate-overrides.log`, shown, and recorded in `handover.md`.
    The reason is prose, so under `--auto` it comes from a file — see rule 10.
+   Three more, added after phase 12/13 retros found checks reporting success while verifying nothing:
+   **a green suite has to be a suite that FINISHED** — a run killed by its watchdog, or one whose
+   output carries no test-runner summary, is refused by `scripts/suite_outcome.py`, which both
+   `verifier_evidence.py` and `hook_verifier.sh` ask rather than restating (an intermittent hang was
+   clean at 1298 tests on one run and wedged on the next, with the same defect in both;
+   `SUITE_SUMMARY_PATTERN` declares an unknown runner's summary, `SUITE_BUDGET_S` places the
+   watchdog, and there is no off switch). **The lint gate has TWO dimensions** —
+   `scripts/lint_gate.py` runs `ruff check` (whole tree) *and* `ruff format --check` (diff-scoped on
+   the applicability boundary, so a tree written before the rule is counted rather than held
+   hostage); a bare `ruff check` says nothing about formatting and two phases reported "ruff clean"
+   about a dimension nothing could have failed on. **A verdict names what produced it** —
+   `gate_runner.py` announces model, family and transport for every reached verdict, and the spec
+   gate stamps them onto the spec as `<gate>_gated_by` beside the hash and the verdict; no
+   attribution is recorded as `unrecorded`, a named state rather than an absent key.
 8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
    The verdict is **deterministic** (`scripts/mutation_score.py`, not a model): score `>=
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
@@ -297,13 +327,24 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    non-exhaustive examples, and absence from that list is not a waiver. `GATE_BYPASS` is no exception
    for being a shell assignment prefix — `GATE_BYPASS="$(cat <file>)" git commit …` works, while
    `export` does not survive between an agent's Bash calls; a multi-line reason file is safe because
-   every writer of `gate-overrides.log` normalises the reason through `scripts/bypass_reason.sh`
-   through `scripts/bypass_reason.sh`, so the log keeps one parseable record per override. Nothing
-   appends to it by hand — the Verifier's per-finding waiver runs
-   `bypass_log.sh verifier <finding-id> <waived_by>` too. A value fully determined by a template,
+   every writer of `gate-overrides.log` normalises the reason through `scripts/bypass_reason.sh`,
+   so the log keeps one parseable record per override. Nothing appends to it by hand: `bypass_log.sh`
+   is the ONE writer, so exactly one `printf` appends to that log — the hook bypass, the Verifier's
+   per-finding waiver (`bypass_log.sh verifier <finding-id> <waived_by>`) and `gate_ci.sh`'s
+   multi-gate CI bypass (`bypass_log.sh --gates "<list>"`), which used to format its own identical
+   record with the grammar living in two places. A value fully determined by a template,
    with only ids, paths and keywords substituted, is not prose and stays inline. Full rule in
    `skills/pipeline-conventions/SKILL.md`.
-11. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —
+11. **A spec round is one COMPLETED gate evaluation** — a run of the spec gate that REACHED a
+   verdict, approved or blocked. A gate that never ran is zero rounds (a spec written outside the
+   gate's trigger, which one phase did through a shell heredoc); a gate that reached no verdict is
+   not a round and stays in `gate_calls[]` with its `failure_cause`; a replayed verdict over an
+   unchanged body is not one either. It is recorded at the GATE, in the branches that have a
+   verdict — `record_spec_round` refuses a call naming none, and its CLI's `--verdict` is required —
+   because measuring it at the writer gave one phase three counting conventions and made
+   `spec_rounds` incomparable between phases.
+
+11a. **The pipeline measures itself as it runs, into a record firstmate owns.** Per-phase metrics —
    gate calls with their measured latency and failure `cause`, spec rounds and their byte growth,
    the verification attempt count (not what each attempt changed — see
    `skills/pipeline-conventions/SKILL.md`), tests before/after, which skills each stage loaded, and **which
@@ -326,6 +367,29 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    phase** never reached the writer at all, so fix the ARGUMENT rather than repeating the command
    (exit 2, and `AVENGER_METRICS_OFF=1` does not quiet it). Full rule in
    `skills/pipeline-conventions/SKILL.md`.
+11a. **A producer that stopped producing must not read as a clean result.** Three facts went
+   silently missing across two measured phases, and nothing detected any of them, because the record
+   simply held **nothing** - which is also what a phase with nothing to report holds. (a) **Defects
+   are emitted where the stage CONCLUDES them**: `hook_verifier.sh` fires on **every `verdict.json`
+   write**, and `record_verifier_findings` reads the phase's whole verdict history, because
+   `verifier-triage` archives a superseded attempt to `verdict-attempt-<n>.json` and a **passing
+   verdict carries no findings at all** - so a close-time reader of `verdict.json` alone saw one
+   phase report 1 defect against at least 5, four of them the Verifier's own, found by executing
+   code. `scripts/emission_gate.py defects` then refuses a phase closing with fewer recorded defects
+   than its verdicts describe, since the emission is fail-open and a refused write otherwise looks
+   like a phase that found nothing. It compares the Verifier's `findings[]` and nothing else: a
+   defect described only in a PR body or a status log is invisible to it, and no other stage is
+   covered. (b) **The close stamp is emitted at LANDING by something that executes**:
+   `scripts/hook_phase_close.sh` is a `PostToolUse` hook on `Bash` that stamps every phase the
+   commit it just ran touched, and `emission_gate.py close` fails a landed phase carrying a null
+   `closed`. **opencode does not carry that hook** - its adapter routes only `write`/`edit` tool
+   events - so on opencode the orchestrator's own `phase-close` (`commands/avenger-run.md` §5) is
+   the only emitter, and running it is not optional here. `record_phase_close` converges on a phase
+   already closed, so both firing costs nothing. (c) **An override records which CLASS it is** -
+   `waiver`, `measurement-correction`, `account-correction` (`scripts/override_classes.py`), tagged
+   on the override's own `scope` because firstmate's schema is closed. Nothing is inferred from the
+   prose: an untagged override is `unclassified`, its own line, never folded. That one is the metric
+   and not a gate.
 12. **A run against a stale plugin copy is refused, by a hook, not by anyone remembering.** Phases
    execute the cached release under `$CLAUDE_PLUGIN_ROOT`, so a fix merged here is inert until
    someone cuts a release. `scripts/plugin_release.py check` has always been able to say so;
@@ -337,6 +401,19 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    repository resolvable - the normal state of a standalone install) proceeds untouched, as does
    every failure to look; `GATE_BYPASS` proceeds and is audited. **opencode has no pre-spawn event**,
    so on this runtime the `/avenger-run` §1 preflight report is the only signal - run it.
+
+13. **A completion signal comes from the implementer FINISHING, never from a stamp.** A spec's own
+   implementer writes `status: done` and then keeps working, and a wedge guard armed on that stamp
+   fired 24 minutes early — one dispatch away from two implementers in one worktree against one
+   database, which cost a swallowed stash, foreign-key violations and a spurious lint failure the
+   last time it happened. `scripts/implementer_liveness.py` reads the implementer's own
+   `SubagentStop` out of `.agent-activity.jsonl`, so nothing here can be moved by writing a
+   document, and `scripts/hook_implementer_lock.sh` refuses to spawn a second implementer into a
+   working copy that already holds one. A crashed agent ages out after `IMPLEMENTER_MAX_AGE_S`
+   (default 4h); everything that cannot look lets the spawn through and says so; `GATE_BYPASS`
+   proceeds, audited, and `IMPLEMENTER_LOCK_OFF=1` disables it. **opencode has no pre-spawn event**,
+   so on this runtime the rule is yours to keep: never dispatch the next implementer until the
+   running one's agent notification has arrived. The stamp is not it.
 
 ## Running it
 Plan once per feature, then loop per phase. Invoke agents with `@name`:
@@ -418,13 +495,20 @@ the TS side kept a zero-survivor mutation gate and an unscoped verifier after th
 | `VERIFIER_EVIDENCE_TIMEOUT` | `1800` | seconds one command recorded through `scripts/verifier_evidence.py` may run before its process group is killed |
 | `EVIDENCE_LOG_MAX_BYTES` | `262144` | bytes of a recorded command's output stored in its evidence log. The log is committed, so it is redacted (`scripts/evidence_redaction.py`) then capped, with a visible marker naming what was dropped; the digest covers the stored bytes |
 | `EVIDENCE_REDACT_EXTRA` | unset | one extra regex redacted out of an evidence log. An invalid one writes no log and records no run — never a silent skip, never a raw-bytes fallback |
+| `GATE_BYPASS_GATES` | unset | space- or comma-separated gate names `GATE_BYPASS` is allowed to override. Unset, one `GATE_BYPASS` waives every gate the run reaches - a break-glass aimed at the spec gate's subprocess check also waived a cross-family NO-GO in the same run. Set, a gate outside the list is REFUSED (exit 2, blocking, nothing logged). Names match **exactly**, since a prefix would reinstate the same leak one level down, and a multi-gate CI bypass needs every failing gate allowed |
 | `GATE_SAME_FAMILY_WAIVER` | unset | waive the cross-family assertion EXPLICITLY, stating why, when there is no second vendor family to reach. The gate still runs and still judges; what is given up is decorrelation, and every record says so — the runner announces `GATE SAME-FAMILY WAIVER IN FORCE`, the metrics `note` carries the reason, the spec gate stamps a `SAME-FAMILY WAIVER` banner into the report kept with the verdict, and one audited line lands in `gate-overrides.log` (a waiver that could not be logged does not hold). Empty is not a waiver. **Never** waive it by editing `AUTHOR_FAMILY` — an untrue or emptied author family drops the invariant silently |
 | `GATE_MODEL_FAMILY` | unset | declare a gate model's vendor family when `scripts/model_vendors.py` has no entry for it; without it an unknown vendor is refused, never guessed |
 | `GATE_RUNNER_SHA256` | unset | pin the gate runner by content digest. Callers already refuse a runner that cannot identify itself; this refuses any but the exact one named |
+| `FIXTURE_SHAPES` | `fixture-shapes.toml` at the project root | the per-project declaration of what shape each external identifier really has (`names`, `min`/`max` or `pattern`, and a mandatory `why`). `scripts/fixture_shapes.py` checks test fixtures against it at `spec-done` and in CI, diff-scoped; no declaration is CLEAN and said on stderr, never a silent green |
+| `SUITE_SUMMARY_PATTERN` | pytest / unittest / jest / go / cargo summaries | one regex recognising this project's test-runner summary; it REPLACES the defaults. A suite run with no summary, or one killed by its watchdog, is refused rather than read as green (`scripts/suite_outcome.py`). Deliberately no off switch |
+| `SUITE_BUDGET_S` | `1800` | seconds a suite run gets before its process group is killed and the run is recorded as incomplete |
+| `IMPLEMENTER_AGENTS` | `avenger-backend-architect\|avenger-frontend-developer` | which stages may not overlap in one working copy (`scripts/implementer_liveness.py`). Asked of the spawning stage AND of every live entry by the same module, so no caller carries a second copy |
+| `IMPLEMENTER_MAX_AGE_S` | `14400` | seconds after which an implementer that started and never recorded a stop is presumed dead, so a crashed agent cannot hold the lock forever |
+| `IMPLEMENTER_LOCK_OFF` | unset | `1` disables the second-implementer refusal (Claude Code hook only; opencode has no pre-spawn event) |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |
-| `AVENGER_METRICS_CMD` | looked up on `PATH` | path to firstmate's `fm-pipeline-metrics.sh`; without it a run records no metrics and says so once |
+| `AVENGER_METRICS_CMD` | looked up on `PATH` | path to firstmate's `fm-pipeline-metrics.sh`; without it a run records no metrics and says so once. Read from the project's `.env` too, so the one command a stage runs directly (`pipeline_metrics.py defect`) resolves the same writer the hooks do, from a subagent shell that inherited no export |
 | `AVENGER_METRICS_OFF` | unset | `1` disables metrics emission silently, and is the only thing that keeps `pipeline_metrics.py defect` quiet when it cannot record instead of exiting 1 |
 | `AVENGER_METRICS_PROJECT` | the git repository's name | the record's `project`, which scopes every firstmate lookup |
 | `AVENGER_METRICS_TIMEOUT` | `10` | seconds one metrics call may take; one timeout abandons the writer for that process. It spends the same hook headroom as the gate call, so `scripts/gate_timeouts.py` refuses to run when `metrics processes on the hook's path x this + suite collections x COLLECT_TIMEOUT_S` exceeds it — raise it and raise `hooks/hooks.json` with it |

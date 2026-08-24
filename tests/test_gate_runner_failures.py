@@ -36,6 +36,13 @@ STUBS = {
     "chatty": "#!/bin/sh\necho 'I had a think about it and it seems fine to me.'\n",
     # A provider that wedges, leaving a grandchild holding the pipe.
     "wedged": '#!/bin/sh\nsleep 120 &\necho "$!" > "$PIDFILE"\nsleep 120\n',
+    # Local SQLite lock contention, in its fast shape: it fails in about 0.6s naming the lock.
+    "locked": "#!/bin/sh\necho 'Error: SQLITE_BUSY: database is locked' >&2\nexit 1\n",
+    # The same contention in its SLOW shape: it holds the lock and wedges, so the call is killed by
+    # the budget and the lock message only ever reaches stderr. Reported as `timeout`, this is the
+    # shape that most invites the wrong diagnosis, and it was diagnosed wrongly twice.
+    "locked_wedged": '#!/bin/sh\necho "database is locked" >&2\nsleep 120 &\n'
+                     'echo "$!" > "$PIDFILE"\nsleep 120\n',
     # A provider that answers properly, so the success path is covered by the same harness.
     "good": '#!/bin/sh\necho \'{"verdict":"GO","report":"fine","route_back":""}\'\n',
 }
@@ -204,3 +211,26 @@ def test_the_runner_refuses_a_bare_cli_invocation_with_no_model_before_any_provi
     assert "provider-not-found" not in result.stderr, "it must refuse BEFORE reaching a provider"
     for invented in ("deepseek", "gemini", "openrouter"):
         assert invented not in result.stderr.lower(), "no model or provider may come from thin air"
+
+
+# ── local lock contention (issue #50) ────────────────────────────────────────
+
+
+def test_local_lock_contention_names_the_lock_not_the_provider(gate) -> None:
+    """Three parallel gate calls produced ZERO verdicts in 900s; the same three serially produced
+    all three in 68s. The mechanism was a lock on the operator's own disk, and reporting it as a
+    generic provider error sends them to the provider's status page."""
+    result = gate("locked")
+    assert result.returncode == 2
+    assert "cause=provider-locked" in result.stderr
+    assert "database is locked" in result.stderr
+
+
+def test_a_lock_that_wedges_is_not_reported_as_a_bare_timeout(gate) -> None:
+    """The dangerous shape. Phase 8 attributed this to a provider-wide outage and adopted
+    'gate serially' on that basis - the right rule for the wrong reason - and a phase-9 worker
+    withdrew a provider-drain diagnosis on the same evidence."""
+    result = gate("locked_wedged", GATE_CALL_TIMEOUT="2")
+    assert result.returncode == 2
+    assert "cause=provider-locked" in result.stderr
+    assert "database is locked" in result.stderr

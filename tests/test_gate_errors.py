@@ -138,3 +138,35 @@ def test_a_cause_outside_the_taxonomy_is_refused_loudly() -> None:
 
 def test_every_cause_carries_an_operator_facing_meaning() -> None:
     assert all(meaning.strip() for meaning in CAUSES.values())
+
+
+# ── local lock contention, which arrives wearing a timeout's clothes (issue #50) ─────────────
+
+
+def test_a_local_sqlite_lock_is_its_own_cause_not_a_provider_error() -> None:
+    """Three parallel gate calls through opencode contended on a LOCAL SQLite lock and produced
+    ZERO verdicts in 900s; the same three run serially produced all three in 68s. Reported as a
+    generic provider error, that sends the reader to the provider's status page for a file lock on
+    their own machine — and it was diagnosed wrongly first, twice."""
+    text = "Error: SQLITE_BUSY: database is locked"
+
+    assert classify_provider_failure(text) == "provider-locked"
+
+
+def test_the_lock_is_named_before_the_reachability_markers() -> None:
+    """A lock message that also mentions a URL or a gateway must not read as an outage: phase 8
+    adopted 'gate serially' believing it had seen a provider-wide outage, and it had not."""
+    text = "opencode: service unavailable while writing state\ndatabase is locked"
+
+    assert classify_provider_failure(text) == "provider-locked"
+
+
+def test_an_unrelated_error_is_still_not_guessed_into_the_lock() -> None:
+    assert classify_provider_failure("some other failure entirely") == "provider-error"
+
+
+def test_the_cause_carries_a_meaning_naming_the_remedy() -> None:
+    assert "provider-locked" in CAUSES
+    meaning = CAUSES["provider-locked"].lower()
+    assert "local" in meaning
+    assert "serial" in meaning or "concurrent" in meaning

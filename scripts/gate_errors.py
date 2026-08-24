@@ -26,6 +26,7 @@ CAUSES = {
     "provider-not-found": "the provider CLI is not on PATH",
     "provider-unreachable": "the provider could not be reached (network, DNS, outage)",
     "provider-payment-required": "the provider refused for billing reasons (402, credit, quota)",
+    "provider-locked": "concurrent gate calls contended on the provider CLI's LOCAL state lock — nothing remote failed; run gate calls serially, or give each concurrent call its own state directory",
     "provider-error": "the provider returned an error this classifier could not categorise",
     "no-verdict": "the provider replied, but the reply contained no JSON verdict",
     "implausible-latency": "a verdict came back faster than the call itself can be made, so it is presumed not to have run (scripts/gate_plausibility.py)",
@@ -61,6 +62,22 @@ _PAYMENT_MARKERS = _status_markers(402) + (
     "billing",
     "quota exceeded",
     "exceeded your current quota",
+)
+
+#: LOCAL state-lock contention, checked FIRST (issue #50). Three parallel gate calls through
+#: opencode produced ZERO verdicts in 900s while the same three serially produced all three in 68s,
+#: and the mechanism was a SQLite lock on the operator's own disk. Reported as a provider failure it
+#: sends the reader to a status page for a file lock, and it was diagnosed wrongly the first time on
+#: both occasions it appeared: once as a provider-wide outage (on which "gate serially" was adopted,
+#: the right rule for the wrong reason), once as provider drain. It is first because a lock message
+#: legitimately arrives alongside the CLI's own "service unavailable" noise, and the lock is the
+#: actionable half. Deliberately tight: an unrecognised error stays `provider-error`, which is the
+#: honest default, rather than being guessed into a remedy that would not help.
+_LOCK_MARKERS = (
+    "database is locked",
+    "database table is locked",
+    "sqlite_busy",
+    "sqlite3_busy",
 )
 
 #: Reachability failures. Checked AFTER payment, because a 402 body can mention a URL that also
@@ -120,11 +137,14 @@ class GateError(RuntimeError):
 def classify_provider_failure(text: str) -> str:
     """Which `provider-*` cause the provider's own error text points at.
 
-    Order matters: a billing refusal is an operator action and must not be reported as a transient
+    Order matters: a LOCAL state lock is not a provider failure at all and is named before anything
+    else, and a billing refusal is an operator action that must not be reported as a transient
     outage. Anything unrecognised is `provider-error` — deliberately not guessed into a category
     that would tell the operator to do the wrong thing.
     """
     lowered = (text or "").lower()
+    if any(marker in lowered for marker in _LOCK_MARKERS):
+        return "provider-locked"
     if any(marker in lowered for marker in _PAYMENT_MARKERS):
         return "provider-payment-required"
     if any(marker in lowered for marker in _UNREACHABLE_MARKERS):

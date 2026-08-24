@@ -30,27 +30,63 @@ OBSERVE_PROMPT = ROOT / "prompts" / "spec-gate-observe.md"
 
 
 def obs(*ids: str) -> list[dict]:
-    return [{"id": i, "area": "requirements", "spec_ref": "R1.1.1", "statement": f"about {i}"}
-            for i in ids]
+    return [
+        {
+            "id": i,
+            "area": "requirements",
+            "spec_ref": "R1.1.1",
+            "statement": f"about {i}",
+        }
+        for i in ids
+    ]
 
 
 def cls(**kinds: str) -> list[dict]:
     return [{"id": i, "category": c, "why": "because"} for i, c in kinds.items()]
 
 
-# ── the set is closed, and it is exactly four things ─────────────────────────
+# ── the set is closed, and it is exactly five things ─────────────────────────
 
 
-def test_exactly_four_things_block() -> None:
-    """A fifth category is a deliberate change to the table, reviewed as such — never something a
-    rubric edit or a well-argued observation can do at run time."""
+def test_exactly_five_things_block() -> None:
+    """A sixth category is a deliberate change to the table, reviewed as such — never something a
+    rubric edit or a well-argued observation can do at run time.
+
+    `false-acknowledgement` is the fifth, added deliberately here (retro: a reply may assert a
+    change that was not made). Three write paths in one measured phase answered a SUPPRESSED write
+    with a success reply, and one requirement explicitly sanctioned it. Each instance was repaired
+    separately and the rule was never stated, so the class had nowhere to be caught: the same phase
+    at process level had one poisoned credential row abort an entire poll cycle forever while the
+    loop stayed alive announcing nothing - a system reporting healthy while doing none of its work.
+    Per-path repairs are what has already been done twice; the rule is what was missing."""
     assert set(BLOCKING) == {
         "missing-requirement",
         "contradiction",
         "untestable-criterion",
         "unhandled-critical-edge-case",
+        "false-acknowledgement",
     }
     assert CATEGORIES == (*BLOCKING, NOTE)
+
+
+def test_a_success_reply_on_a_suppressed_write_blocks() -> None:
+    """The check that can fail. The verdict is still derived deterministically by the script - no
+    model decides whether a spec is blocked - and this is the category that makes the class
+    reachable at all."""
+    decision = decide(obs("o1"), cls(o1="false-acknowledgement"))
+    assert decision.approved is False
+    assert decision.blocking[0]["category"] == "false-acknowledgement"
+    assert decision.notes == ()
+
+
+def test_the_writer_is_primed_with_the_new_category_from_the_one_source() -> None:
+    """`spec_rubric.py` renders the brief out of this table, so stating the rule here is what
+    reaches the spec writer. A second copy would be worse than none - the writer would be held to a
+    standard nobody applies."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import spec_rubric
+
+    assert "false-acknowledgement" in spec_rubric.blocking_block()
 
 
 def test_the_prompt_and_the_table_name_the_same_categories() -> None:
@@ -64,12 +100,18 @@ def test_the_prompt_and_the_table_name_the_same_categories() -> None:
     invented = [
         word.strip("`")
         for word in prompt.split()
-        if word.startswith("`") and word.endswith("`") and word.strip("`").count("-") >= 1
+        if word.startswith("`")
+        and word.endswith("`")
+        and word.strip("`").count("-") >= 1
         and word.strip("`").replace("-", "").isalpha()
         and word.strip("`").islower()
-        and word.strip("`").endswith(("requirement", "contradiction", "criterion", "case"))
+        and word.strip("`").endswith(
+            ("requirement", "contradiction", "criterion", "case")
+        )
     ]
-    assert set(invented) <= set(CATEGORIES), f"the prompt names a category the table lacks: {invented}"
+    assert set(invented) <= set(CATEGORIES), (
+        f"the prompt names a category the table lacks: {invented}"
+    )
 
 
 # ── notes never block ────────────────────────────────────────────────────────
@@ -128,7 +170,10 @@ def test_a_classification_for_an_observation_nobody_made_is_refused() -> None:
 
 def test_a_double_classification_is_refused() -> None:
     with pytest.raises(TriageError) as raised:
-        decide(obs("o1"), [{"id": "o1", "category": NOTE}, {"id": "o1", "category": "contradiction"}])
+        decide(
+            obs("o1"),
+            [{"id": "o1", "category": NOTE}, {"id": "o1", "category": "contradiction"}],
+        )
     assert raised.value.cause == "duplicate-classification"
 
 
@@ -140,7 +185,9 @@ def test_category_matching_ignores_case_and_padding() -> None:
 # ── the CLI contract the hook branches on ────────────────────────────────────
 
 
-def _files(tmp_path: Path, observations: list[dict], classifications: list[dict]) -> tuple[str, str]:
+def _files(
+    tmp_path: Path, observations: list[dict], classifications: list[dict]
+) -> tuple[str, str]:
     o = tmp_path / "obs.json"
     c = tmp_path / "cls.json"
     o.write_text(json.dumps({"observations": observations}))
@@ -151,7 +198,12 @@ def _files(tmp_path: Path, observations: list[dict], classifications: list[dict]
 def test_cli_exit_codes_are_approved_blocked_error(tmp_path: Path) -> None:
     assert main(["decide", *_files(tmp_path, obs("o1"), cls(o1=NOTE))]) == 0
     assert main(["decide", *_files(tmp_path, obs("o1"), cls(o1="contradiction"))]) == 1
-    assert main(["decide", *_files(tmp_path, obs("o1"), [{"id": "o1", "category": "nope"}])]) == 2
+    assert (
+        main(
+            ["decide", *_files(tmp_path, obs("o1"), [{"id": "o1", "category": "nope"}])]
+        )
+        == 2
+    )
 
 
 def test_a_reply_in_the_wrong_shape_is_an_error_not_an_approval(tmp_path: Path) -> None:
@@ -170,9 +222,9 @@ def test_the_observe_prompt_is_never_asked_for_a_verdict() -> None:
     text = OBSERVE_PROMPT.read_text(encoding="utf-8")
     assert "You are not a gate" in text
     assert '"observations"' in text
-    assert "NO-GO" not in text.split("## What you must NOT do")[1].split("## Input format")[0].replace(
-        "No GO, no NO-GO", ""
-    )
+    assert "NO-GO" not in text.split("## What you must NOT do")[1].split(
+        "## Input format"
+    )[0].replace("No GO, no NO-GO", "")
 
 
 def test_neither_prompt_asks_for_a_bigger_spec() -> None:
@@ -204,4 +256,7 @@ def test_the_report_of_an_approval_is_only_its_notes() -> None:
     from spec_gate_triage import report
 
     text = report(json.loads(decide(obs("o1"), cls(o1=NOTE)).as_json()))
-    assert text == "(1 non-blocking note(s) recorded in spec-notes.md — they do not block.)"
+    assert (
+        text
+        == "(1 non-blocking note(s) recorded in spec-notes.md — they do not block.)"
+    )

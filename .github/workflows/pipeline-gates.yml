@@ -21,7 +21,7 @@ jobs:
 
       - name: Install tools and project deps
         run: |
-          pip install pytest cosmic-ray
+          pip install pytest cosmic-ray ruff
           [ -f requirements.txt ] && pip install -r requirements.txt || true
           [ -f pyproject.toml ] && pip install -e . || true
 

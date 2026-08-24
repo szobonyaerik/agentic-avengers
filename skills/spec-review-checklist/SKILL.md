@@ -54,6 +54,14 @@ reads for **correctness**, and none of the three below is incorrect.
 - [ ] The spec does not contradict a contract on the **immediately prior phase's contract card**
       (`handover.md`, the *Binding contracts* table).
 - [ ] The spec honors "Notes for the Spec Writer" in `plan.md`.
+- [ ] **No reply asserts a change that was not made.** Wherever the spec has a write suppressed,
+      skipped, rejected or failing, it says what the caller receives, and that answer is
+      distinguishable from a write that happened. Suppressing is often right - deduplication, an
+      idempotent replay, a rate limit, a closed window - and answering it with success is not: three
+      write paths in one measured phase did exactly that, and one requirement explicitly sanctioned
+      it. The same shape at process level: a loop or worker that keeps reporting healthy while its
+      work is dead. The machine gate blocks this as `false-acknowledgement`; you are the reader who
+      can tell whether the answer it gives is one a caller can actually act on.
 
 ## Human summaries
 - [ ] `Phase summary` and `Spec summary` both exist and are each 1–3 sentences a non-technical

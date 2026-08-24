@@ -78,6 +78,19 @@ def reap(pid: int) -> None:
         pass
 
 
+def reap_pidfile(pidfile: Path) -> None:
+    """Kill the grandchild this stub recorded, if it got as far as recording one.
+
+    Teardown, not the subject. Under a loaded machine the 2s budget can expire before the child's
+    shell has written its pid, and a `finally` that raised FileNotFoundError there replaced the
+    real result with a cleanup error — a flake that reads as a proc_group defect and is not one.
+    """
+    try:
+        reap(int(pidfile.read_text().strip()))
+    except (OSError, ValueError):
+        pass
+
+
 # ── the leak ─────────────────────────────────────────────────────────────────
 
 
@@ -119,7 +132,7 @@ def test_the_reported_duration_is_measured_not_configured(
         assert result.elapsed == pytest.approx(wall, abs=0.5), "reported duration is not wall clock"
         assert 2 <= result.elapsed < 12, f"{result.elapsed}s is not a 2s budget plus teardown"
     finally:
-        reap(int(pidfile.read_text().strip()))
+        reap_pidfile(pidfile)
 
 
 def test_a_timeout_returns_a_result_rather_than_raising(
@@ -134,7 +147,7 @@ def test_a_timeout_returns_a_result_rather_than_raising(
         assert isinstance(result, ChildResult)
         assert result.timed_out is True
     finally:
-        reap(int(pidfile.read_text().strip()))
+        reap_pidfile(pidfile)
 
 
 # ── the other way a call ends early ──────────────────────────────────────────

@@ -8,7 +8,7 @@ spec correctly, or is it a note?**
 
 ## The blocking set is CLOSED
 
-Exactly four categories block. There is no fifth, and you may not invent one - a category this list
+Exactly five categories block. There is no sixth, and you may not invent one - a category this list
 does not contain is rejected by the script and fails the gate closed, naming what you invented.
 
 | category | it means |
@@ -17,6 +17,7 @@ does not contain is rejected by the script and fails the gate closed, naming wha
 | `contradiction` | two statements in this spec that cannot both hold, or one that contradicts a binding contract the overview or the prior phase's card declares |
 | `untestable-criterion` | an acceptance criterion with no observable pass/fail condition at a seam - nobody can write the test it asks for |
 | `unhandled-critical-edge-case` | a boundary, failure, duplicate or unauthorized path **on a critical surface** that the spec neither handles nor consciously excludes |
+| `false-acknowledgement` | a requirement or criterion under which a write that was suppressed, skipped, rejected or failed is still answered with **success** - or a process that keeps reporting healthy while doing none of its work. The caller is told a change was made that was not |
 
 **Everything else is `note`.** Notes are recorded in the spec's known-open list and read once by the
 implementer. **Notes never block.** They are not a lesser rejection, they are not a warning to be
@@ -42,6 +43,14 @@ round.
   correct, and even when the spec would be better with the change.
 - **`unhandled-critical-edge-case` requires the surface to be critical**: security, data loss,
   money, or a documented critical path. A missing edge case on an ordinary surface is a note.
+- **`false-acknowledgement` is about what the CALLER is told, not about the suppression itself.**
+  Suppressing a write can be exactly right - deduplication, an idempotent replay, a rate limit, a
+  closed window. What this category names is the spec answering that suppressed write with success,
+  so the caller cannot tell the two apart. A spec that suppresses and says so - a distinct status, a
+  rejection, an error, a recorded reason - is clean. A spec that says nothing about what the caller
+  receives is a `missing-requirement` if its own scope commits to it, and otherwise a note; this
+  category is for a spec that states or sanctions the false success. The same shape at process
+  level counts: a loop or worker whose spec lets it keep reporting healthy while its work is dead.
 - **Size, detail level, structure, wording, missing prose and suggested additions are always
   `note`.** The gate must never block a spec for being large or thin: spec size is decided
   mechanically before this gate runs (`scripts/requirement_cap.py`, a split trigger), and a
@@ -62,7 +71,7 @@ Reply with NOTHING but a single JSON object - no markdown, no code fences, no co
 ```
 {"classifications":[
   {"id":"<the observation's id>",
-   "category":"missing-requirement|contradiction|untestable-criterion|unhandled-critical-edge-case|note",
+   "category":"missing-requirement|contradiction|untestable-criterion|unhandled-critical-edge-case|false-acknowledgement|note",
    "why":"<one sentence: why this category, and for a blocker, what the implementer cannot do without it>"}
 ]}
 ```

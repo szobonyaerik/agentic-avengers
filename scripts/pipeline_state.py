@@ -48,6 +48,7 @@ import amendments  # noqa: E402
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
 import spec_gate_state  # noqa: E402
+import verdict_currency  # noqa: E402
 
 FEATURE_ORDER: tuple[tuple[str, str], ...] = (
     ("task-analysis.md", "task-analyst"),
@@ -173,18 +174,43 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
     }
 
     gate = spec_gate_state.status(fields)
-    if gate != spec_gate_state.APPROVED and not _excepted(phase, "spec-gate", spec.name):
+    if not _excepted(phase, "spec-gate", spec.name):
         if gate == spec_gate_state.PENDING:
             return State(
                 stage="spec-gate",
                 reason=f"{spec.name} has not been through the spec gate",
                 **common,
             )
-        return State(
-            stage="spec-writer",
-            reason=f"{spec.name} was blocked by the spec gate",
-            **common,
-        )
+        if gate != spec_gate_state.APPROVED:
+            return State(
+                stage="spec-writer",
+                reason=f"{spec.name} was blocked by the spec gate",
+                **common,
+            )
+        # An approval is a claim about a BODY, and this module used to read only the stamp's value
+        # (issue #42). `verifier_precheck` compared the body against the hash the gate recorded and
+        # called a drifted spec UNGATED, so one spec was gated and ungated at once depending on who
+        # asked — and this is the reader that decides what work happens next, so it was the one
+        # letting work proceed on a spec no gate had judged in its current form. Both now ask
+        # `spec_gate_state`, which owns the question.
+        #
+        # STALE only, never UNRECORDED: a spec the gate never hashed is UNKNOWABLE drift rather than
+        # proven drift, and every spec stamped before the gate cache existed is in that state.
+        # Routing those back would park the resolver on shipped work whose remedy nobody asked for,
+        # which is the wedge §3a exists to prevent. The precheck still holds them, because it is
+        # diff-scoped and only ever enforces what the change is responsible for.
+        drift = spec_gate_state.freshness(spec_file)
+        if drift in (spec_gate_state.STALE, None):
+            return State(
+                stage="spec-gate",
+                reason=(
+                    f"{spec.name} has changed since the gate judged it — the approval describes a "
+                    f"body this spec no longer has"
+                    if drift == spec_gate_state.STALE
+                    else f"{spec.name}: gate-stamp freshness could not be decided (fail closed)"
+                ),
+                **common,
+            )
 
     # The human sign-off is a separate question from the machine gate, and it is the only thing
     # `review_status` still means. Under SPEC_REVIEW_MODE=auto the gate stamps it itself.
@@ -420,6 +446,16 @@ def next_stage(root: Path, feature: str, from_phase: int | None = None) -> State
             stage="e2e-author",
             reason="every phase is verified; e2e is missing",
         )
+
+    # A passing verdict must not stand over a tree that has since changed (issue #51). The feature
+    # close ship gate owns both findings and fixes while it runs, so it changes verified production
+    # code and touches no phase artifact — and the verdict goes on asserting a file is byte-identical
+    # after the fix commit changed it. Asked HERE because this is the last point at which the remedy
+    # still exists: `done` is terminal, and a phase that has already closed cannot be re-opened for
+    # it. Never a rewritten verdict — that would restate a verification nobody performed.
+    stale = verdict_currency.check(Path(root), feature_dir)
+    if stale is not None:
+        return State(feature=feature, stage="verifier", reason=stale)
 
     return State(
         feature=feature,

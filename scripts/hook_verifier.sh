@@ -47,6 +47,22 @@ FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
 case "$FILE" in
+  */verdict.json)
+    # MEASUREMENT ONLY — this branch never gates anything and always exits 0.
+    #
+    # A verdict write is the moment the Verifier CONCLUDES a defect, and it is the only moment the
+    # finding is guaranteed to exist: `skills/verifier-triage` archives a superseded attempt to
+    # verdict-attempt-<n>.json and a passing verdict carries no findings at all, so a close-time
+    # reader opening verdict.json alone sees the last attempt and, on a phase that passed, nothing.
+    # One measured phase closed reporting ONE defect against at least five it produced, four of them
+    # the Verifier's own, found by executing code on attempt 1. `found_by` is the one field in the
+    # record that cannot be reconstructed afterwards, so a phase that closes without it closes
+    # without it forever.
+    #
+    # Emitted HERE rather than at a caller: a stage cannot forget an emission it does not make.
+    # Idempotent by finding id, so this and the close-time emission converge on one entry.
+    python3 "$SD/pipeline_metrics.py" verifier-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    exit 0 ;;
   */handover.md)
     TRIGGER="handover" ;;
   */spec.md)
@@ -177,12 +193,33 @@ if [ "$STAMP_BINDS" = "1" ]; then
   fi
 fi
 
+# Through `suite_outcome.py run`, never bare `pytest`: a suite that HANGS used to wedge this hook
+# until the harness killed it, and a suite that died before printing anything came back with an exit
+# code and no result to read. `suite_outcome` bounds the run in its own process group and answers
+# the one question an exit code cannot — did this suite RUN, or did it merely stop. The decision
+# lives there because the recorded transcript (`verifier_evidence.py`) asks it of the same suite,
+# and a rule written twice is a rule that drifts. `SUITE_BUDGET_S` is where a project puts the
+# watchdog inside this hook's own harness budget.
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
-  OUT=$(pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
   SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  OUT=$(pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+fi
+
+# 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.
+# That is not the same as a red suite and it does not revert the `status: done` stamp — the same
+# rule every undecidable branch above follows: a check that could not answer the question may not
+# rewrite a spec. It still fails the hook, so nothing proceeds on a suite nobody watched finish.
+if [ "$pc" -eq 86 ]; then
+  fail "verifier:suite-incomplete" \
+    "verifier ($SCOPE): the suite DID NOT COMPLETE — it was killed by its watchdog, or it ended" \
+    "without stating how many tests it ran. A run with no result is not a green run, and this is" \
+    "the shape an intermittent hang takes: clean on one run, wedged on the next, same defect in" \
+    "both. The stamp (if any) is left exactly as written. Reasons and the tail of what it did" \
+    "produce are below." \
+    "$(printf '%s\n' "$OUT" | tail -25)"
 fi
 
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
@@ -209,6 +246,66 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
        "$STAMP_NOTE" \
        "$(printf '%s\n' "$OUT" | tail -20)"
+fi
+
+# Fixture realism, mechanically (issue #33). One measured phase shipped a credential refusal that
+# could never fire — 1,009 tests green against Telegram supergroup ids an order of magnitude too
+# small for a real deployment, so the int32 column overflowed before the control ran. It was carried
+# as INSTRUCTION in three skills and a stage brief, which is the promise-with-no-mechanism this
+# pipeline keeps paying for. No static rule decides "a shape a real deployment produces" generically,
+# so the PROJECT declares it (fixture-shapes.toml) and the check is generic.
+#
+# Asked HERE, on `spec-done`, because this is the first moment the fixtures exist AND the implementer
+# who wrote them still owns them. Diff-scoped, so it holds what this change touched and counts the
+# rest. A project that declares no shapes is CLEAN and says so — never a silent green.
+#
+# It does NOT revert the `done` stamp: that revert (issue #68) acts only on the two evidences it is
+# scoped to, and widening it here would rewrite a stamp on evidence about a different question. The
+# hook still fails, so nothing proceeds on it.
+if [ "$TRIGGER" = "spec-done" ]; then
+  python3 "$SD/fixture_shapes.py" ${TESTPATH:+"$TESTPATH"}; fixtures_rc=$?
+  if [ "$fixtures_rc" -eq 1 ]; then
+    fail "verifier:fixture-shapes" \
+      "verifier ($SCOPE): a fixture contradicts a shape this project declared for an external" \
+      "identifier (named above, with the reason the project gave). A value a real deployment never" \
+      "produces is what let an int32 overflow hide behind 1,009 green tests. Fix the fixture, or" \
+      "correct the declaration in fixture-shapes.toml if the shape itself is wrong." \
+      "$STAMP_NOTE"
+  elif [ "$fixtures_rc" -ne 0 ]; then
+    fail "verifier:fixture-shapes-undecidable" \
+      "verifier ($SCOPE): the fixture-shape check could not read its declaration or a test file" \
+      "(named above) — a file it cannot read is a file it cannot clear, so this fails closed." \
+      "$STAMP_NOTE"
+  fi
+fi
+
+# Interface drift (retro: a spec's Interfaces block drifts from the code it describes). One phase's
+# block said the poll loop polls then sleeps and the shipped code did the reverse; the next phase's
+# spec over-claimed what its code did. Nothing mechanically compared a block to the code, so both
+# were caught by an implementer choosing to look.
+#
+# Asked HERE for the same reason fixture realism is: `spec-done` is the first moment the code exists
+# AND the implementer who wrote both the block and the code still owns them. It decides only the
+# half a static rule can — a call signature the block NAMES must exist in the source tree — and the
+# half it cannot (the order of two operations, which is that very instance) is pinned as a test
+# rather than claimed. Like the fixture check it does NOT revert the `done` stamp: that revert acts
+# only on the two evidences it is scoped to. The hook still fails, so nothing proceeds on it.
+if [ "$TRIGGER" = "spec-done" ]; then
+  python3 "$SD/interface_drift.py" "$FILE"; drift_rc=$?
+  if [ "$drift_rc" -eq 1 ]; then
+    fail "verifier:interface-drift" \
+      "verifier ($SCOPE): this spec's Interfaces block names a call signature (above) that no" \
+      "source file has. A block is read as a description of SHIPPED behaviour, so either it" \
+      "describes code nobody wrote or the code was renamed and the block was not. Correct the" \
+      "block, or record the divergence deliberately — never leave the two disagreeing." \
+      "$STAMP_NOTE"
+  elif [ "$drift_rc" -ne 0 ]; then
+    fail "verifier:interface-drift-undecidable" \
+      "verifier ($SCOPE): the interface-drift check could not read the spec or found no source" \
+      "tree to compare it against (named above). A scan of nothing is not a clean result, so this" \
+      "fails closed. Point it at the project's code with INTERFACE_SOURCE_PATHS." \
+      "$STAMP_NOTE"
+  fi
 fi
 
 [ "$TRIGGER" = "handover" ] || exit 0
@@ -388,6 +485,25 @@ case "$V" in
     # this is the pipeline's highest-volume defect-attribution path, and swallowing the diagnostic
     # would leave a run that dropped every verifier defect looking like one that found none.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$VERDICT" >/dev/null || true
+    # ...and the check that makes its absence visible. The emission above is fail-open by design, so
+    # on its own a producer that stopped producing is indistinguishable from a phase that found
+    # nothing — which is exactly what two measured phases looked like while their Verifiers were
+    # returning real, executed findings. This is a GATE and it is the one thing here that is: a
+    # phase does not close carrying fewer defects than its own verdicts describe.
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it, and the two
+    # carry different tags and different messages — the same split every other check here makes.
+    # "Emit the defects" cannot repair a verdict that will not parse.
+    python3 "$SD/emission_gate.py" defects "$PHASE_DIR"; emit_rc=$?
+    if [ "$emit_rc" -eq 1 ]; then
+      fail "verifier:defects-unrecorded" \
+        "verifier: this phase's record carries fewer defects than its own verdicts describe (named" \
+        "above). \`found_by\` cannot be reconstructed after the run, so closing here loses them."
+    elif [ "$emit_rc" -ne 0 ]; then
+      fail "verifier:defects-undecidable" \
+        "verifier: whether this phase's defects were recorded could not be DECIDED (cause above) —" \
+        "this is not an unrecorded defect, and emitting one will not repair it. Fix what it named."
+    fi
     exit 0 ;;
   fail)
     # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts

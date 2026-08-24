@@ -21,6 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import spec_gate_context  # noqa: E402
 from doc_read_path import HANDOVER_MAX_BYTES  # noqa: E402
 from spec_gate_context import (  # noqa: E402
     MARKER,
@@ -213,7 +214,9 @@ def test_no_overview_at_all_is_degraded_not_a_silent_pass(tmp_path: Path) -> Non
     (root / "phases").mkdir(parents=True)
     block, notes, degraded = build(spec_at(root, "1-first"))
 
-    assert block == ""
+    # The block is no longer empty here: an empty one is skipped by the hook, so this - the worst
+    # case, nothing to carry AND degraded - was the one shape where the READER was told nothing.
+    assert spec_gate_context.DEGRADED_NOTICE in block
     assert degraded is True
     assert any(
         note.startswith("DEGRADED:") and "no readable overview.md" in note
@@ -244,7 +247,7 @@ def test_an_unreadable_overview_is_degraded_not_omitted(feature: Path) -> None:
 
     block, notes, degraded = build(spec_at(feature, "1-first"))
 
-    assert block == ""
+    assert spec_gate_context.DEGRADED_NOTICE in block
     assert degraded is True
     assert any(
         note.startswith("DEGRADED:") and "no readable overview.md" in note
@@ -533,3 +536,92 @@ def test_check_scopes_a_missing_overview_by_its_feature_directory(
 
     assert len(problems) == 1
     assert "no readable overview.md" in problems[0]
+
+
+# ── the notice reaches the READER, not only the writer's stderr ──────────────
+#
+# Issue #57 closed the WRITER side: a degraded context no longer reports itself only in a line on
+# stderr that nobody was watching, and the hook folds a banner into the persisted report. Fixing the
+# writer does not prove the READER ever sees it. The block below is the thing the observe pass
+# actually consumes, and until now every degradation notice lived outside it: a run whose feature has
+# no readable `overview.md` handed the model a block headed "These are the binding contracts the spec
+# under review must not contradict", carrying the prior card alone, reading as a COMPLETE set. A
+# degraded run read clean to whoever received it.
+#
+# The truncation half is the same defect one bound over: `HANDOVER_MAX_BYTES` cuts an oversized card
+# and the note saying so went to stderr, so the model saw a card that simply stopped mid-sentence.
+
+
+def test_a_degraded_block_carries_its_notice_where_the_reader_will_see_it(
+    tmp_path: Path,
+) -> None:
+    """No readable overview, but a prior card to carry - so the block is non-empty and, before this,
+    said nothing at all about what was missing from it."""
+    root = tmp_path / "docs" / "features" / "demo"
+    (root / "phases").mkdir(parents=True)
+    card_at(root, "1-first")
+
+    block, _notes, degraded = build(spec_at(root, "2-storage"))
+
+    assert degraded is True
+    assert spec_gate_context.DEGRADED_NOTICE in block
+    assert "no readable overview.md" in block, (
+        "the notice carries the builder's own cause, so the reader is told which shape fired"
+    )
+
+
+def test_the_notice_is_the_first_thing_in_the_block(tmp_path: Path) -> None:
+    """A transport bound truncates the tail. A notice appended after a long briefing is a notice the
+    reader never receives - which is this finding, stated as a position rather than as a hope."""
+    root = tmp_path / "docs" / "features" / "demo"
+    (root / "phases").mkdir(parents=True)
+    card_at(root, "1-first", "# handover\n\n" + "contract text\n" * 200)
+
+    block, _notes, _degraded = build(spec_at(root, "2-storage"))
+
+    head = block.index(spec_gate_context.DEGRADED_NOTICE)
+    assert head < len(block) // 4, (
+        "the notice sits in the head of the block, ahead of everything a bound would cut"
+    )
+    assert block.index(spec_gate_context.MARKER) < head
+
+
+def test_a_degraded_build_with_nothing_to_carry_still_tells_the_reader(
+    tmp_path: Path,
+) -> None:
+    """The worst case, and the one that used to return an empty string: no overview and no prior
+    card. The hook then skips the block entirely and the reader is told nothing whatsoever."""
+    root = tmp_path / "docs" / "features" / "demo"
+    (root / "phases").mkdir(parents=True)
+
+    block, _notes, degraded = build(spec_at(root, "1-first"))
+
+    assert degraded is True
+    assert spec_gate_context.DEGRADED_NOTICE in block
+    assert spec_gate_context.MARKER in block
+
+
+def test_a_healthy_block_carries_no_notice(feature: Path) -> None:
+    """A notice on every run is noise, and noise is what trains a reader to skip the line."""
+    card_at(feature, "1-first")
+
+    block, _notes, degraded = build(spec_at(feature, "2-storage"))
+
+    assert degraded is False
+    assert spec_gate_context.DEGRADED_NOTICE not in block
+    assert spec_gate_context.TRUNCATION_MARKER not in block
+
+
+def test_a_truncated_card_says_so_inside_the_block_the_reader_gets(
+    feature: Path,
+) -> None:
+    """`HANDOVER_MAX_BYTES` is the transport bound here. The card stops mid-sentence and the note
+    saying why went to stderr, so the reader saw an intact-looking contract that simply ended."""
+    card_at(feature, "1-first", "# handover\n\n" + "x" * (HANDOVER_MAX_BYTES * 3))
+
+    block, _notes, _degraded = build(spec_at(feature, "2-storage"))
+
+    assert spec_gate_context.TRUNCATION_MARKER in block
+    assert block.rstrip().endswith(spec_gate_context.TRUNCATION_MARKER), (
+        "the marker sits where the text stops, which is the only place it means anything"
+    )

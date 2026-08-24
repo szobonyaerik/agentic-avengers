@@ -80,14 +80,32 @@ def record_evidence(project: Path, kind: str = "suite") -> str:
     Recorded AFTER the specs are written, because the record binds to their content.
     """
     subprocess.run(
-        [sys.executable, str(project / "scripts" / "verifier_evidence.py"),
-         "record", str(phase_dir(project)), "--kind", kind, "--", "/bin/echo", "1 passed"],
-        cwd=project, check=True, capture_output=True,
+        [
+            sys.executable,
+            str(project / "scripts" / "verifier_evidence.py"),
+            "record",
+            str(phase_dir(project)),
+            "--kind",
+            kind,
+            "--",
+            "/bin/echo",
+            "1 passed",
+        ],
+        cwd=project,
+        check=True,
+        capture_output=True,
     )
     chain = subprocess.run(
-        [sys.executable, str(project / "scripts" / "verifier_evidence.py"),
-         "chain", str(phase_dir(project))],
-        cwd=project, check=True, capture_output=True, text=True,
+        [
+            sys.executable,
+            str(project / "scripts" / "verifier_evidence.py"),
+            "chain",
+            str(phase_dir(project)),
+        ],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     return chain.stdout.strip()
 
@@ -277,6 +295,13 @@ def test_a_passing_phase_does_not_close_over_an_undischarged_carried_item(
 def test_discharging_the_item_lets_the_phase_close(project: Path) -> None:
     attempts(project, [(1, 0, "pass")])
     prior_card(project, CARRIED)
+    # `--by` is resolved, not merely recorded, so the artifact the discharge names has to be on
+    # disk. `tests/test_carried_items.py` owns that rule; here it only has to name something real.
+    overview = project / "docs" / "features" / "demo" / "overview.md"
+    overview.write_text(
+        "## Contracts and Decisions\n\n- a single writer owns the poll cycle\n",
+        encoding="utf-8",
+    )
     subprocess.run(
         [
             sys.executable,
@@ -287,7 +312,7 @@ def test_discharging_the_item_lets_the_phase_close(project: Path) -> None:
             "--as",
             "built",
             "--by",
-            "R1.1.3",
+            "docs/features/demo/overview.md",
         ],
         check=True,
         capture_output=True,
@@ -829,50 +854,287 @@ def test_an_undecidable_stamp_check_does_not_rewrite_the_spec(project: Path) -> 
 # issue #69's rule that a guard proven only by passing is not proven.
 
 
-def test_a_passing_verdict_with_no_transcript_does_not_close_the_phase(project: Path) -> None:
+def test_a_passing_verdict_with_no_transcript_does_not_close_the_phase(
+    project: Path,
+) -> None:
     """The exact state every pre-existing pass was in: a verdict saying `pass`, and nothing else."""
     write_spec(project)
-    (phase_dir(project) / "verdict.json").write_text(json.dumps({
-        "verdict": "pass", "attempt": 1, "findings": [],
-    }))
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [],
+            }
+        )
+    )
     refused = run_hook(project)
     assert refused.returncode == 2
-    assert "no execution evidence" in refused.stderr.lower() or "proves the verification ran" in refused.stderr
-    assert "verification-evidence.json" in refused.stderr, "the refusal names the artifact"
+    assert (
+        "no execution evidence" in refused.stderr.lower()
+        or "proves the verification ran" in refused.stderr
+    )
+    assert "verification-evidence.json" in refused.stderr, (
+        "the refusal names the artifact"
+    )
 
     # Repair it the way the message prescribes, and nothing else changes.
     chain = record_evidence(project)
-    (phase_dir(project) / "verdict.json").write_text(json.dumps({
-        "verdict": "pass", "attempt": 1, "findings": [],
-        "execution": {"evidence": "verification-evidence.json", "chain": chain},
-    }))
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [],
+                "execution": {"evidence": "verification-evidence.json", "chain": chain},
+            }
+        )
+    )
     assert run_hook(project).returncode == 0
 
 
-def test_a_verdict_that_names_a_different_transcript_does_not_close_the_phase(project: Path) -> None:
+def test_a_verdict_that_names_a_different_transcript_does_not_close_the_phase(
+    project: Path,
+) -> None:
     """A verdict written against one set of runs cannot be paired with another."""
     write_spec(project)
     record_evidence(project)
-    (phase_dir(project) / "verdict.json").write_text(json.dumps({
-        "verdict": "pass", "attempt": 1, "findings": [],
-        "execution": {"evidence": "verification-evidence.json", "chain": "0" * 64},
-    }))
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [],
+                "execution": {
+                    "evidence": "verification-evidence.json",
+                    "chain": "0" * 64,
+                },
+            }
+        )
+    )
     refused = run_hook(project)
     assert refused.returncode == 2
     assert "different set of runs" in refused.stderr
 
 
-def test_an_unreadable_transcript_is_not_reported_as_a_missing_one(project: Path) -> None:
+def test_an_unreadable_transcript_is_not_reported_as_a_missing_one(
+    project: Path,
+) -> None:
     """Two different stops with two different remedies. Collapsed into one, a corrupt record is
     reported as evidence that was never recorded, and 'run the commands again' cannot repair JSON."""
     write_spec(project)
     chain = record_evidence(project)
     (phase_dir(project) / "verification-evidence.json").write_text("{ not json")
-    (phase_dir(project) / "verdict.json").write_text(json.dumps({
-        "verdict": "pass", "attempt": 1, "findings": [],
-        "execution": {"evidence": "verification-evidence.json", "chain": chain},
-    }))
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [],
+                "execution": {"evidence": "verification-evidence.json", "chain": chain},
+            }
+        )
+    )
     refused = run_hook(project)
     assert refused.returncode == 2
     assert "could not be DECIDED" in refused.stderr
     assert "recording a run will not repair it" in refused.stderr
+
+
+# ── the Verifier's defects are emitted where they are CONCLUDED, not at the close ────────────────
+
+
+def run_hook_on(project: Path, path: Path, **env: str) -> subprocess.CompletedProcess:
+    """Drive the hook for an arbitrary written file, the way the harness does."""
+    return subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}' % path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            **env,
+        },
+    )
+
+
+def metrics_double(project: Path) -> dict[str, str]:
+    """Point the sink at the shared test double, in this project's own store."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    from metrics_support import DOUBLE
+
+    double = project / "fm-pipeline-metrics.sh"
+    double.write_text(DOUBLE, encoding="utf-8")
+    double.chmod(0o755)
+    (project / "store").mkdir(exist_ok=True)
+    return {
+        "AVENGER_METRICS_CMD": str(double),
+        "AVENGER_METRICS_PROJECT": "unit-test",
+        "AVENGER_METRICS_LOG": str(project / "metrics.log"),
+        "DOUBLE_LOG": str(project / "calls.log"),
+        "DOUBLE_STORE": str(project / "store"),
+    }
+
+
+def test_a_failing_verdict_emits_its_defects_when_it_is_written(project: Path) -> None:
+    """The fact is decided when the Verifier writes the verdict, so that is where it is emitted.
+
+    Emitted only at the handover, a finding raised on attempt 1 and fixed by attempt 2 is gone from
+    `verdict.json` before anything reads it — which is how phase 12 closed reporting one defect
+    against at least five, four of them the Verifier's own.
+    """
+    env = metrics_double(project)
+    verdict = phase_dir(project) / "verdict.json"
+    verdict.write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "verdict": "fail",
+                "findings": [
+                    {
+                        "id": "aaa",
+                        "kind": "code",
+                        "instruction": "poll before sleep opens a second session",
+                    },
+                    {
+                        "id": "bbb",
+                        "kind": "code",
+                        "instruction": "InvalidToken raised outside the catch",
+                    },
+                ],
+            }
+        )
+    )
+
+    result = run_hook_on(project, verdict, **env)
+
+    assert result.returncode == 0, result.stderr
+    record = json.loads((project / "store" / "phase-01.json").read_text())
+    assert {d["id"] for d in record["defects"]} == {"verifier-aaa", "verifier-bbb"}
+    assert all(d["found_by"] == "verifier" for d in record["defects"])
+
+
+def test_emitting_a_verdict_never_gates_anything(project: Path) -> None:
+    """Measurement, not a gate: an unwritable record does not stop the Verifier writing a verdict."""
+    verdict = phase_dir(project) / "verdict.json"
+    verdict.write_text(
+        json.dumps({"attempt": 1, "verdict": "fail", "findings": [{"id": "aaa"}]})
+    )
+
+    assert run_hook_on(project, verdict, AVENGER_METRICS_OFF="1").returncode == 0
+
+
+def test_a_phase_does_not_close_reporting_fewer_defects_than_its_verdicts_describe(
+    project: Path,
+) -> None:
+    """The check that makes the absence visible. Silence used to read as a clean phase.
+
+    The emission is fail-open by design — measurement may never fail a phase — so on its own a
+    writer that refuses every entry looks exactly like a phase that found nothing. That is the
+    state reproduced here: the record exists, the Verifier concluded six findings across two
+    attempts, and every `add` is refused.
+    """
+    env = metrics_double(project)
+    write_spec(project)
+    attempts(project, [(1, 6, "fail"), (2, 0, "pass")])
+    subprocess.run(
+        [
+            sys.executable,
+            str(project / "scripts" / "pipeline_metrics.py"),
+            "phase-open",
+            str(phase_dir(project)),
+        ],
+        cwd=project,
+        check=False,
+        capture_output=True,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            **env,
+        },
+    )
+
+    result = run_hook(project, DOUBLE_REFUSE="add", **env)
+
+    assert result.returncode == 2
+    assert "fewer defects" in result.stderr
+    assert "a1-0" in result.stderr, (
+        "the check names what was concluded and never recorded"
+    )
+
+
+def test_a_phase_whose_defects_are_all_recorded_closes(project: Path) -> None:
+    """Mutation guard for the check above: it must pass when the producer actually produced."""
+    env = metrics_double(project)
+    write_spec(project)
+    attempts(project, [(1, 6, "fail"), (2, 0, "pass")])
+
+    result = run_hook(project, **env)
+
+    assert result.returncode == 0, result.stderr
+    record = json.loads((project / "store" / "phase-01.json").read_text())
+    assert len(record["defects"]) == 6, (
+        "the close-time emission fills the record it is checked on"
+    )
+
+
+# ── a suite run that never finished is not a green one ───────────────────────
+#
+# clickup-agents phase 12: a defect made the suite fail intermittently on one run and HANG to its
+# watchdog on the next, and the gate had no way to tell the hang from the 1298-test pass before it.
+# `suite_outcome.py` owns the distinction; this pins that the hook ACTS on it.
+
+
+def hanging_phase_tests(project: Path) -> None:
+    """The phase's own test directory, holding a test that never returns."""
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    (tests / "test_hang.py").write_text(
+        "import time\n\n\ndef test_hangs():\n    time.sleep(120)\n", encoding="utf-8"
+    )
+
+
+def test_a_suite_that_hangs_to_its_watchdog_fails_the_hook(project: Path) -> None:
+    """RED against the unfixed hook in the worst possible way: it does not fail, it does not
+    return - the bare `pytest` call blocks until something outside kills the hook."""
+    write_spec(project)
+    hanging_phase_tests(project)
+    attempts(project, [(1, 0, "pass")])
+    proc = subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}'
+        % (phase_dir(project) / "handover.md"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            "SUITE_BUDGET_S": "2",
+        },
+    )
+    assert proc.returncode != 0, proc.stdout
+    assert "did not complete" in (proc.stdout + proc.stderr).lower(), (
+        proc.stdout + proc.stderr
+    )
+
+
+def test_a_green_phase_suite_still_passes_the_same_gate(project: Path) -> None:
+    """The counterweight: the check must fail a hang WITHOUT failing an ordinary green run."""
+    write_spec(project)
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    (tests / "test_ok.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    attempts(project, [(1, 0, "pass")])
+    proc = run_hook(project, SUITE_BUDGET_S="60")
+    assert "did not complete" not in (proc.stdout + proc.stderr).lower(), (
+        proc.stdout + proc.stderr
+    )

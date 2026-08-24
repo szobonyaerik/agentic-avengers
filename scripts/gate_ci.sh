@@ -19,7 +19,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/bypass_reason.sh"   # one owner of the break-glass reason's on-disk shape
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
-OVERRIDE_LOG="$ROOT/gate-overrides.log"
 cd "$ROOT"
 
 FULL=0
@@ -182,6 +181,47 @@ elif [ "$breaker_rc" -ne 0 ]; then
   record_fail "breaker:undecidable"
 fi
 
+# 1bg) Defect emission — a phase does not close carrying fewer defects than its own verdicts
+#      describe. `found_by` is the one field in firstmate's record that cannot be reconstructed
+#      after a run, and two measured phases closed reporting 1 defect against at least 5 and 0
+#      against at least 2, while their Verifiers were returning real, EXECUTED findings. The
+#      emission itself is fail-open by design (measurement may never fail a phase), so without this
+#      a writer that refused every entry looks exactly like a phase that found nothing.
+#
+#      Enforced here as well as in scripts/hook_verifier.sh for the same reason the attempt cap is:
+#      a rule only an in-session hook applies stops existing the moment the phase is driven another
+#      way. DIFF-SCOPED (CLAUDE.md §3a) — a phase this change did not touch is not this change's
+#      responsibility, and a phase with no metrics record at all is NOT CHECKED and says so.
+echo "• defect emission: the record carries every defect these phases concluded"
+python3 "$SCRIPT_DIR/emission_gate.py" defects --root "$ROOT"
+emission_rc=$?
+if [ "$emission_rc" -eq 1 ]; then
+  record_fail "defects-unrecorded"
+elif [ "$emission_rc" -ne 0 ]; then
+  record_fail "defects-undecidable"
+fi
+
+# 1bh) The close stamp — a phase that has LANDED does not carry a null `closed`. Issue #46 moved the
+#      stamp from implementation-finish to landing and nothing emitted it there, so the premature
+#      stamp was replaced by NO stamp: one phase landed with `closed`, `elapsed_minutes`,
+#      `tests_before`, `tests_after` and `verification_attempts` all null, and all six were entered
+#      by hand hours later. Note what watched it and reported success — the hypothesis counted
+#      OVERRIDES CORRECTING a close stamp and found none, which is what a producer that stopped
+#      looks like. A check that only looks for a WRONG value can never see an absent one.
+#
+#      `scripts/hook_phase_close.sh` is the emitter; this is what makes a missed stamp visible. Only
+#      phases that already have a metrics record of this project are read — a phase this pipeline
+#      never measured has no producer to have stopped — so a repository with no writer configured is
+#      NOT CHECKED and says so.
+echo "• close stamp: no landed phase carries a null \`closed\`"
+python3 "$SCRIPT_DIR/emission_gate.py" close --root "$ROOT"
+close_rc=$?
+if [ "$close_rc" -eq 1 ]; then
+  record_fail "close-stamp-missing"
+elif [ "$close_rc" -ne 0 ]; then
+  record_fail "close-stamp-undecidable"
+fi
+
 # 1ba) The Verifier's bookkeeping, done by a script. 26% of everything the Verifier raised across one
 #      measured feature was this class — untraced requirement ids, stale gate stamps, a deleted
 #      `## Acceptance criteria` heading — and all of it was mechanically decidable. It runs on EVERY
@@ -194,6 +234,63 @@ if [ "$FULL" -eq 1 ]; then
   python3 "$SCRIPT_DIR/verifier_precheck.py" --all --root "$ROOT" || record_fail "verifier-precheck"
 else
   python3 "$SCRIPT_DIR/verifier_precheck.py" --root "$ROOT" || record_fail "verifier-precheck"
+fi
+
+# 1bcf) Fixture realism against the shapes the PROJECT declared (issue #33). It shipped as
+#      instruction in three skills and a stage brief, and one phase then shipped a credential
+#      refusal that could never fire: 1,009 tests green against Telegram supergroup ids an order of
+#      magnitude too small, an int32 column, and a DataError before the control ran. No static rule
+#      decides "a shape a real deployment produces" generically — so the project declares it in
+#      fixture-shapes.toml and this check is generic. DIFF-SCOPED, like subprocess_check.py and for
+#      the same measured reason. A project with no declaration is CLEAN and says so on stderr:
+#      permanently green with no output is the invisible pass this exists to remove.
+echo "• fixture shapes: no fixture contradicts a shape this project declared"
+python3 "$SCRIPT_DIR/fixture_shapes.py"
+fixtures_rc=$?
+if [ "$fixtures_rc" -eq 1 ]; then
+  record_fail "fixture-shapes"
+elif [ "$fixtures_rc" -ne 0 ]; then
+  record_fail "fixture-shapes:undecidable"
+fi
+
+# 1bcg) Interface drift — a spec's Interfaces block is a claim about code, and nothing compared the
+#      two. One phase's block said the poll loop polls then sleeps while the shipped code did the
+#      reverse (it had to: polling first opened a second concurrent DB session and hung the suite to
+#      its watchdog); the next phase's spec over-claimed what its code did. Both were caught by an
+#      implementer choosing to look. This decides the half a static rule can: a call signature the
+#      block NAMES must exist in the source tree. What it cannot decide — the order of two
+#      operations, i.e. that very instance — is pinned as a test in tests/test_interface_drift.py
+#      rather than claimed here. DIFF-SCOPED, like fixture_shapes.py above.
+echo "• interface drift: every signature a spec's Interfaces block names exists in the code"
+python3 "$SCRIPT_DIR/interface_drift.py" --root "$ROOT"
+drift_rc=$?
+if [ "$drift_rc" -eq 1 ]; then
+  record_fail "interface-drift"
+elif [ "$drift_rc" -ne 0 ]; then
+  record_fail "interface-drift:undecidable"
+fi
+
+# 1bd) Verdict currency — a passing verdict must not stand over a tree that has since changed
+#      (issue #51). The feature-close ship gate owns both findings and fixes while it runs, so it
+#      changes verified production code and touches no phase artifact; verdict.json then goes on
+#      asserting a named source file is byte-identical after the fix commit changed it. The
+#      mechanism for the correction already existed (scripts/amendments.py); this is the trigger
+#      that makes it mandatory. NEVER a rewritten verdict — that would restate a verification nobody
+#      performed, which two separate phase workers correctly refused to do.
+#      --full only: it anchors on the newest verdict in a feature and asks git what came after, so
+#      on a partial run it would be answering about commits the diff is not responsible for.
+if [ "$FULL" -eq 1 ]; then
+  echo "• verdict currency: no passing verdict stands over a tree that changed after it"
+  for feature_dir in "$ROOT"/docs/features/*/; do
+    [ -d "$feature_dir" ] || continue
+    python3 "$SCRIPT_DIR/verdict_currency.py" check "$feature_dir"
+    currency_rc=$?
+    if [ "$currency_rc" -eq 1 ]; then
+      record_fail "verdict-currency"
+    elif [ "$currency_rc" -ne 0 ]; then
+      record_fail "verdict-currency:undecidable"
+    fi
+  done
 fi
 
 # 1bc) Required skills exist, and every skill a stage was owed was actually observed being loaded. A
@@ -254,6 +351,18 @@ fi
 #      later rule would hold hostage.
 echo "• stage effort: every stage declares it, and no document claims one nothing applies"
 python3 "$SCRIPT_DIR/stage_effort.py" check --root "$ROOT" || record_fail "stage-effort"
+
+# 1b2) Lint, in BOTH its dimensions. `ruff check` judges rules and says nothing about formatting, so
+#      drift passed the gate untouched and two consecutive measured phases reported "ruff clean"
+#      about a dimension nothing could have failed on. scripts/lint_gate.py owns both; its format
+#      half is diff-scoped on the applicability boundary, so a tree written before the rule is
+#      counted rather than held hostage.
+#
+#      A missing ruff is NOT a silent pass: the gate says so and this records it as a failure the
+#      same way any other unrunnable check would, because "the linter was not installed" and "the
+#      code is clean" must never arrive looking alike.
+echo "• lint: ruff rules (whole tree) + ruff format (what this change touched)"
+python3 "$SCRIPT_DIR/lint_gate.py" || record_fail "lint"
 
 # 1c) Cross-family assertion — on the model that actually FORMS THE JUDGEMENT.
 #     Checking an agent's own `model:` would be meaningless here: every subagent in this runtime is
@@ -419,14 +528,22 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
 fi
 
 # Break-glass: a visible, logged override of a failing gate. Never silent.
+#
+# Through `bypass_log.sh`, the ONE writer of this log, exactly as the hook bypass and the Verifier's
+# per-finding waiver do. This block used to format its own identical `printf`, so the record grammar
+# lived in two places: behaviour agreed, but a change to one silently desynced the other and nothing
+# failed when it did (issue #10). Routing every writer through one is what makes the guarantee
+# structural rather than a rule each caller has to remember.
+#
+# **An override that could not be logged is not an override.** `bypass_log.sh` exits 2 when the
+# append does not land, and that failure is this script's failure: the gates stay failed and CI stays
+# red, rather than the bypass proceeding with no audit line behind it.
 if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
-  who="$(git config user.email 2>/dev/null || whoami)"
-  when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  reason="$(bypass_reason_oneline "$GATE_BYPASS")"
-  printf '%s\t%s\tgates:%s\treason: %s\n' "$when" "$who" "${failed_gates# }" "$reason" >> "$OVERRIDE_LOG"
-  echo "⚠ BYPASSED failing gate(s):${failed_gates} — reason: $GATE_BYPASS" >&2
-  echo "  logged to $OVERRIDE_LOG. Record this in the phase handover.md." >&2
-  exit 0
+  if CLAUDE_PROJECT_DIR="$ROOT" bash "$SCRIPT_DIR/bypass_log.sh" --gates "${failed_gates# }"; then
+    exit 0
+  fi
+  echo "✗ pipeline gates failed:${failed_gates} — and the override was NOT recorded (above)." >&2
+  exit 1
 fi
 
 if [ "$fail" -ne 0 ]; then

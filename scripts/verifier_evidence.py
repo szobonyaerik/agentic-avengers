@@ -91,6 +91,7 @@ sys.path.insert(0, str(HERE))
 
 import applicability  # noqa: E402
 import evidence_redaction  # noqa: E402
+import suite_outcome  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
 
 OK = 0
@@ -461,6 +462,30 @@ def _entry_problems(entry: object, phase: Path) -> list[str]:
     return problems
 
 
+def _suite_incompleteness(entry: dict, phase: Path) -> list[str]:
+    """Every reason this zero-exit `suite` run is not evidence that a suite RAN to completion.
+
+    The decision itself belongs to `suite_outcome`, not here: `hook_verifier.sh` asks the same
+    question of its own run of the same tests, and a rule written twice is a rule that drifts.
+    """
+    log_rel = entry.get("log")
+    if not isinstance(log_rel, str) or not log_rel:
+        return []  # `_entry_problems` already refuses a run that names no log
+    log_file = phase / log_rel
+    try:
+        output = log_file.read_text(encoding="utf-8")
+    except OSError:
+        return []  # likewise: an unreadable log is already a problem, reported once
+    try:
+        return suite_outcome.problems(
+            exit_code=int(entry.get("exit_code") or 0),
+            timed_out=bool(entry.get("timed_out")),
+            output=output,
+        )
+    except suite_outcome.SuiteOutcomeError as exc:
+        return [f"whether this run completed could not be decided ({exc})"]
+
+
 def problems(phase_dir: Path, *, verdict_path: Path | None = None,
              root: Path | None = None) -> list[str]:
     """Every reason this phase's execution evidence does not back a verdict. Empty list = it does."""
@@ -494,18 +519,35 @@ def problems(phase_dir: Path, *, verdict_path: Path | None = None,
             f"about what is here now. Re-run the verification commands through `record`"
         )
     else:
-        passing_suites = [e for e in current
-                          if e.get("kind") == REQUIRED_KIND and e.get("exit_code") == 0]
-        if not any(e.get("kind") == REQUIRED_KIND for e in current):
+        suites = [e for e in current if e.get("kind") == REQUIRED_KIND]
+        if not suites:
             found.append(
                 f"no current run of kind '{REQUIRED_KIND}' - a verification that never ran the "
                 f"phase's tests against the code that is here verified nothing, whatever else it ran"
             )
-        elif not passing_suites:
-            found.append(
-                f"every current '{REQUIRED_KIND}' run exited non-zero - the phase's own tests did "
-                f"not pass in the run this verdict stands on"
-            )
+        else:
+            # A zero exit code is not the same as a suite that FINISHED, and a run killed by its
+            # watchdog is not a red suite either - each stop names which. `suite_outcome` owns that
+            # distinction for every caller in this pipeline (see its module docstring for the
+            # clickup-agents phase-12 instance that made it necessary); `timed_out` had been on
+            # every entry since this module was written with nothing reading it.
+            backing: list[dict] = []
+            refused: list[tuple[dict, list[str]]] = []
+            for entry in suites:
+                why = _suite_incompleteness(entry, phase)
+                if not why and entry.get("exit_code") != 0:
+                    why = [
+                        f"exited non-zero ({entry.get('exit_code')!r}) - the phase's own tests did "
+                        f"not pass in this run"
+                    ]
+                if why:
+                    refused.append((entry, why))
+                else:
+                    backing.append(entry)
+            if not backing:
+                for entry, why in refused:
+                    label = f"run {entry.get('seq', '?')} ({REQUIRED_KIND})"
+                    found.extend(f"{label}: {reason}" for reason in why)
 
     head = chain_head(runs)
     stored = data.get("chain")

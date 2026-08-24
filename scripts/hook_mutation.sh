@@ -47,8 +47,19 @@ case "$MUTATION_POLICY" in
     exit 2 ;;
 esac
 
+# A gate that could not run must leave a record saying so. `advisory` never blocks — that is a
+# deliberate decision, not the defect — but for two whole phases the gate never once ran (no config
+# at the repo root, the tool not installed) and nothing DURABLE distinguished that from a gate that
+# ran and found nothing. A hypothesis then settled on the premise that MUTATION_POLICY=advisory was
+# its changed variable, while the gate under test had never executed. Stderr is not where a later
+# reader looks. Fails open like every other metrics call here: `|| true`, and the CLI exits 0.
+record_unavailable() {
+  python3 "$SD/pipeline_metrics.py" mutation-unavailable "$FILE" "$1" >/dev/null 2>&1 || true
+}
+
 CFG="$CLAUDE_PROJECT_DIR/cosmic-ray.toml"
 if [ ! -f "$CFG" ]; then
+  record_unavailable "cosmic-ray.toml missing at repo root"
   if [ "$MUTATION_POLICY" = "advisory" ]; then
     echo "mutation [advisory]: cosmic-ray.toml missing at repo root — gate could not run, not blocking" >&2
     exit 0
@@ -156,6 +167,7 @@ run_child() {
 # Every stopping condition funnels through here so `advisory` cannot be forgotten at one of them.
 # $1 = bypass tag, $2 = what went wrong (already printed in detail by the caller).
 stop_or_report() {
+  record_unavailable "$2"
   if [ "$MUTATION_POLICY" = "advisory" ]; then
     printf 'mutation [advisory]: %s — reporting only, not blocking (MUTATION_POLICY=advisory)\n' "$2" >&2
     exit 0

@@ -255,3 +255,154 @@ def test_a_logged_override_still_exits_zero_so_the_session_continues(project: Pa
 
     assert proc.returncode == 0
     assert (project / "gate-overrides.log").read_text(encoding="utf-8").strip()
+
+
+# ── the third writer path: gate_ci.sh's multi-gate CI bypass (issue #10) ─────────────────────
+
+
+def run_gates_bypass(project: Path, reason: str, gates: str = "tests spec-gate") -> str:
+    """Run the real writer the way `gate_ci.sh` now does, for a multi-gate CI bypass."""
+    subprocess.run(
+        ["bash", str(BYPASS_LOG), "--gates", gates],
+        cwd=project,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            "GATE_BYPASS": reason,
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return (project / "gate-overrides.log").read_text(encoding="utf-8")
+
+
+def test_the_ci_bypass_scope_is_written_by_the_one_writer(project: Path) -> None:
+    """The record grammar lived in two `printf`s. Behaviour agreed, but a change to one silently
+    desynced the other and nothing failed when it did."""
+    body = run_gates_bypass(project, "provider outage; shipping the docs fix")
+
+    (record,) = body.strip().splitlines()
+    when, who, scope, reason = record.split("\t")
+    assert when.endswith("Z")
+    assert who == "dev@example.com"
+    assert scope == "gates:tests spec-gate"
+    assert reason == "reason: provider outage; shipping the docs fix"
+
+
+@pytest.mark.parametrize("separator", SEPARATORS)
+def test_a_multi_gate_bypass_reason_cannot_split_the_record(
+    project: Path, separator: str
+) -> None:
+    """The property the whole log rests on, asserted for the third path too."""
+    body = run_gates_bypass(project, f"first line{separator}second line")
+
+    assert len(body.strip().splitlines()) == 1
+    assert "first line" in body and "second line" in body
+
+
+def test_all_three_writer_paths_share_one_log_and_one_grammar(project: Path) -> None:
+    """A gate bypass, a per-finding waiver and a CI multi-gate bypass, in one log."""
+    run_bypass(project, "hook bypass", gate="spec-gate")
+    run_bypass(project, "waived", gate="verifier", finding="F1", waived_by="captain")
+    body = run_gates_bypass(project, "ci bypass")
+
+    records = body.strip().splitlines()
+    assert len(records) == 3
+    scopes = [line.split("\t")[2] for line in records]
+    assert scopes[0] == "gate:spec-gate"
+    assert scopes[1] == "gate:verifier"
+    assert scopes[2] == "gates:tests spec-gate"
+    # Reason is always last, because it is the only free-text field.
+    assert all(line.split("\t")[-1].startswith("reason: ") for line in records)
+
+
+def test_gate_ci_no_longer_formats_its_own_record() -> None:
+    """The structural claim, checked rather than documented: exactly one `printf` appends to the
+    log, so 'one writer' is true because there is one, not because a comment says so."""
+    gate_ci = (ROOT / "scripts" / "gate_ci.sh").read_text(encoding="utf-8")
+
+    assert "OVERRIDE_LOG" not in gate_ci or ">> \"$OVERRIDE_LOG\"" not in gate_ci
+    assert "bypass_log.sh" in gate_ci
+
+
+# ── scoping an override to the gate it was aimed at (issue #59) ──────────────────────────────
+
+
+def run_scoped(
+    project: Path,
+    reason: str,
+    gate: str,
+    allow: str | None,
+    *,
+    multi: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run the writer with an optional `GATE_BYPASS_GATES` allowlist. Never `check=True`: the
+    refusal IS the behaviour under test."""
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "HOME": str(project),
+        "CLAUDE_PROJECT_DIR": str(project),
+        "GATE_BYPASS": reason,
+    }
+    if allow is not None:
+        env["GATE_BYPASS_GATES"] = allow
+    argv = ["--gates", gate] if multi else [gate]
+    return subprocess.run(
+        ["bash", str(BYPASS_LOG), *argv],
+        cwd=project, env=env, capture_output=True, text=True, check=False,
+    )
+
+
+def test_without_an_allowlist_every_gate_is_still_overridable(project: Path) -> None:
+    """The default is unchanged, deliberately: scoping is opt-in, so no existing caller breaks."""
+    result = run_scoped(project, "why", "spec-gate-subprocess", None)
+
+    assert result.returncode == 0
+    assert (project / "gate-overrides.log").exists()
+
+
+def test_an_allowlisted_gate_is_overridden_and_logged(project: Path) -> None:
+    result = run_scoped(project, "why", "spec-gate-subprocess", "spec-gate-subprocess")
+
+    assert result.returncode == 0
+    assert "spec-gate-subprocess" in (project / "gate-overrides.log").read_text()
+
+
+def test_a_gate_outside_the_allowlist_is_refused_and_writes_nothing(project: Path) -> None:
+    """The leak: both halves of one hook read one shared switch, so a break-glass aimed at the
+    subprocess half also waived a cross-family NO-GO in the same run."""
+    result = run_scoped(project, "why", "cross-family", "spec-gate-subprocess")
+
+    assert result.returncode == 2, "a refused override must block, like an unlogged one"
+    assert not (project / "gate-overrides.log").exists()
+    assert "cross-family" in result.stderr
+    assert "GATE_BYPASS_GATES" in result.stderr
+
+
+def test_the_allowlist_matches_exactly_and_not_by_prefix(project: Path) -> None:
+    """`spec-gate` must not silently cover `spec-gate-requirement-cap`: prefix matching would
+    reinstate the same leak one level down, which is the whole defect."""
+    result = run_scoped(project, "why", "spec-gate-requirement-cap", "spec-gate")
+
+    assert result.returncode == 2
+    assert not (project / "gate-overrides.log").exists()
+
+
+def test_a_multi_gate_ci_bypass_needs_every_failing_gate_allowed(project: Path) -> None:
+    """A scoped override must not waive gates it did not name, however they arrive."""
+    allowed = run_scoped(project, "why", "tests read-path", "tests read-path", multi=True)
+    assert allowed.returncode == 0
+
+    (project / "gate-overrides.log").unlink()
+    partial = run_scoped(project, "why", "tests read-path", "tests", multi=True)
+    assert partial.returncode == 2
+    assert not (project / "gate-overrides.log").exists()
+    assert "read-path" in partial.stderr
+
+
+def test_the_allowlist_accepts_commas_as_well_as_spaces(project: Path) -> None:
+    result = run_scoped(project, "why", "cross-family", "spec-gate-subprocess,cross-family")
+
+    assert result.returncode == 0

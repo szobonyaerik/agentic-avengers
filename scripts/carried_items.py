@@ -31,7 +31,19 @@ forward-looking claims alongside open findings, and makes it binding**:
    `declined` and **re-carried on this phase's own card**, which is what makes a multi-phase claim
    survive without being owed to every phase at once.
 
-3. **Filed, on the LAST card.** The final phase has no successor, so obligation 2 has nobody to bind
+3. **Resolved, not merely named.** A discharge as `built` or `tested` names the artifact that now
+   covers the item, and until this module resolved that name it could be anything at all - `--by x`
+   was accepted, while this module's own docstring said "naming it is what makes the discharge
+   checkable later". That is the shape the whole module exists to remove, one layer down: a sentence
+   claiming behaviour nothing enforces. The name is resolved when the discharge is written AND
+   re-resolved every time the obligation is checked, so a claim discharged into a test somebody later
+   deleted is owed again rather than left pointing at nothing. **This is the executable form of a
+   forward-looking warning**: clickup-agents phase 12 warned phase 13 that single-replica deployment
+   was load-bearing - the poller has no cross-process lock, so its at-most-once property holds only
+   with a single writer - and phase 13 honoured it only because a human copied the warning into the
+   next worker's instructions by hand.
+
+4. **Filed, on the LAST card.** The final phase has no successor, so obligation 2 has nobody to bind
    and its forward claims would be owed to no one - the one card where the hole this module closes
    would reopen. A card whose `next:` is `e2e` or `ship` must therefore name an **issue reference**
    on every `forward-claim` row. That is a presence check and nothing more: whether the claim was
@@ -52,6 +64,9 @@ Usage:
     carried_items.py list <phase-dir>       the prior phase's items this phase owes an answer to
     carried_items.py discharge <phase-dir> <item-id> --as built|tested|declined
                                             [--by <spec/test/requirement>] [--reason-file <f>]
+                                            `--by` is RESOLVED, not merely recorded: a requirement
+                                            id no spec or test-mapping row under this feature
+                                            states, or a path that is not a file, is refused.
     carried_items.py due <phase-dir>        exit 1 when any owed item is undischarged
 
     `list`, `discharge` and `due` read the PRIOR phase's card, so all three exit 2 - undecidable,
@@ -61,7 +76,7 @@ Usage:
     carried_items.py filed <phase-dir>      exit 1 when a forward claim on the LAST card names no
                                             issue. Clean for every card that has a successor.
     carried_items.py check [--root .] [--all]
-                                            both obligations over every phase, for CI. Diff-scoped
+                                            every obligation over every phase, for CI. Diff-scoped
                                             by default; `--all` audits every phase.
 """
 
@@ -116,6 +131,29 @@ NEXT_FIELD = re.compile(r"^next:[ \t]*(.+?)[ \t]*$", re.IGNORECASE | re.MULTILIN
 #: rather than a regex hunt: a `#<number>` token, or an issue URL (GitHub, GitLab and the rest all
 #: put `/issues/<number>` in the path). It is a presence test over the row's text and nothing more.
 ISSUE_REFERENCE = re.compile(r"#\d+|https?://\S+/issues/\d+", re.IGNORECASE)
+
+#: What a `--by` value has to CONTAIN before it can be resolved. A discharge names "the spec,
+#: requirement id or test that now covers it", and until this module resolved it that name could be
+#: anything at all - `--by x` was accepted. A prediction discharged into a name that resolves to
+#: nothing is the prose this module exists to replace, one layer down.
+#:
+#: Two shapes are resolved and nothing else is: a requirement id, and a path. Everything else in the
+#: value is prose the writer is free to add ("R9.1.4 in the write spec"), because the check is on the
+#: REFERENCES, never on the sentence around them.
+REQUIREMENT_REFERENCE = re.compile(r"\AR\d+\.\d+\.\d+\Z")
+
+#: A path-shaped token: it holds a separator, or a file extension (a letter after the dot, so
+#: `R9.1.4` is a requirement id and never a file). An optional `::node` suffix names a test inside it.
+PATH_REFERENCE = re.compile(r"\A[\w.\-/]+\.[A-Za-z][A-Za-z0-9]{0,7}(::[^\s]+)?\Z")
+
+#: Trimmed off a token before it is judged: markdown emphasis, and the punctuation a sentence puts
+#: after a reference. A writer who wrote ``R9.1.4`` or "…spec.md," named the same thing.
+TOKEN_TRIM = "*`_,;:.()[]\"'"
+
+#: Where a requirement id is looked for. The id is the pipeline's own identifier, so a spec or a
+#: test-mapping row naming it is the artifact that covers it. The card itself is deliberately NOT
+#: searched: an id that appears only on the handover that predicted it resolves to the prediction.
+REQUIREMENT_ARTIFACTS = ("phases/*/specs/*/spec.md", "phases/*/specs/*/test-mapping.md")
 
 #: An item id: something a later phase can grep for. `OBS-1`, `FWD-2`, `CARRY-8.1` all qualify; a
 #: template placeholder (`OBS-<n>`) does not, and neither does a prose fragment.
@@ -333,6 +371,131 @@ def unfiled(phase_dir: Path) -> list[Item]:
     return [item for item in items if item.is_forward() and not item.names_an_issue()]
 
 
+def repo_root(phase_dir: Path) -> Path | None:
+    """The tree a path-shaped reference is resolved against - the directory holding `docs/features`.
+
+    Derived from the phase's own location rather than from the process's cwd, because `check`,
+    `hook_verifier.sh` and a human at a shell all run from different places and a reference that
+    resolves from one of them and not the others is worse than one that never resolves.
+    """
+    where = layout(Path(phase_dir))
+    if where is None:
+        return None
+    feature_dir, _phase = where
+    parents = feature_dir.resolve().parents
+    return parents[2] if len(parents) > 2 else None
+
+
+def references(by: str) -> list[str]:
+    """The reference-shaped tokens in a `--by` value. Prose around them is not a reference."""
+    out: list[str] = []
+    for raw in re.split(r"[\s,]+", by or ""):
+        token = raw.strip(TOKEN_TRIM)
+        if not token:
+            continue
+        if REQUIREMENT_REFERENCE.match(token) or PATH_REFERENCE.match(token):
+            out.append(token)
+    return out
+
+
+def _requirement_resolves(phase_dir: Path, identifier: str) -> bool:
+    """Whether some spec or test-mapping row under this feature states the requirement id."""
+    where = layout(Path(phase_dir))
+    if where is None:
+        return False
+    feature_dir, _phase = where
+    for pattern in REQUIREMENT_ARTIFACTS:
+        for artifact in feature_dir.glob(pattern):
+            try:
+                if identifier in artifact.read_text(encoding="utf-8"):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _bases(phase_dir: Path) -> list[Path]:
+    """Where a path-shaped reference may be rooted, nearest-writer-first.
+
+    A writer names an artifact the way they would say it out loud: `tests/demo/9-b/test_x.py` from
+    the repository root, or `specs/9.1-write/spec.md` from the phase they are standing in. Both are
+    real references to a real file, and refusing the second would push writers back to prose.
+    """
+    bases: list[Path] = []
+    where = layout(Path(phase_dir))
+    root = repo_root(phase_dir)
+    if root is not None:
+        bases.append(root)
+    if where is not None:
+        bases.extend([Path(phase_dir), where[0]])
+    bases.append(Path.cwd())
+    return bases
+
+
+def _path_resolves(phase_dir: Path, token: str) -> bool:
+    """Whether a path-shaped reference names a file that exists - and, with `::node`, holds it.
+
+    The file existing is not the claim a discharge makes; the named test existing is. A node id
+    pointing into a file that no longer contains it is the same rot one level finer, so it is read.
+    """
+    relative, _, node = token.partition("::")
+    wanted = node.split("::")[-1].split("[")[0] if node else ""
+    for base in _bases(phase_dir):
+        candidate = base / relative
+        if not candidate.is_file():
+            continue
+        if not wanted:
+            return True
+        try:
+            if wanted in candidate.read_text(encoding="utf-8"):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def unresolved(phase_dir: Path, by: str) -> list[str]:
+    """The reference-shaped tokens in `by` that name nothing on disk. Empty means every one resolves."""
+    return [
+        token
+        for token in references(by)
+        if not (
+            _requirement_resolves(phase_dir, token)
+            if REQUIREMENT_REFERENCE.match(token)
+            else _path_resolves(phase_dir, token)
+        )
+    ]
+
+
+def _by_problem(phase_dir: Path, by: str, how: str) -> str | None:
+    """Why this `--by` value names nothing checkable, or None when it names something that resolves.
+
+    ONE function, used at both ends on purpose. A discharge is refused here when it is written, and
+    every later check re-resolves it: the artifact a claim was discharged into can be deleted, and a
+    ledger entry pointing at a test somebody removed is a discharged item that is no longer answered.
+    That re-resolution is what gives a forward-looking warning a form that can FAIL - phase 12 warned
+    phase 13 that single-replica deployment was load-bearing and the warning survived only because a
+    human copied it forward by hand.
+    """
+    found = references(by)
+    if not found:
+        return (
+            f"`--by {by!r}` names nothing this check can resolve. Discharging an item as {how!r} "
+            f"names the artifact that now covers it - a requirement id (`R9.1.4`), a spec or a test "
+            f"path (`tests/demo/9-b/test_x.py`, optionally `::test_name`). Naming it is the whole "
+            f"difference between a discharge and a second sentence about the first one."
+        )
+    missing = unresolved(phase_dir, by)
+    if missing:
+        return (
+            f"`--by` names {', '.join(missing)}, which resolve to nothing: a requirement id no "
+            f"spec or test-mapping row under this feature states, or a path that is not a file "
+            f"here. A claim discharged into a name that resolves to nothing is prose with an id on "
+            f"it."
+        )
+    return None
+
+
 def path_for(phase_dir: Path) -> Path:
     return Path(phase_dir) / FILENAME
 
@@ -403,6 +566,10 @@ def discharge(
             f"discharging an item as {how!r} needs `--by`: the spec, requirement id or test that "
             f"now covers it. Naming it is what makes the discharge checkable later."
         )
+    else:
+        problem = _by_problem(phase_dir, by, how)
+        if problem is not None:
+            raise CarriedError(problem)
 
     ledger = load(phase_dir)
     ledger["discharges"] = [d for d in ledger["discharges"] if d.get("item") != item_id]
@@ -420,10 +587,40 @@ def discharge(
     return record
 
 
+def stale_discharges(phase_dir: Path) -> list[str]:
+    """Discharges whose named artifact no longer resolves, as lines. Empty means every one still does.
+
+    A discharge is not a one-time ceremony. The test that pinned a carried claim can be deleted, the
+    spec renamed, the requirement id dropped - and the ledger would go on saying the claim was
+    answered. Re-resolving here is what makes the answer keep having to be true.
+    """
+    out: list[str] = []
+    for record in load(phase_dir)["discharges"]:
+        by = record.get("by")
+        if record.get("as") not in ("built", "tested") or not by:
+            continue
+        problem = _by_problem(phase_dir, by, record.get("as") or "built")
+        if problem is not None:
+            out.append(
+                f"{record.get('item')} is discharged as {record.get('as')}, but {problem}"
+            )
+    return out
+
+
+def answered(phase_dir: Path) -> set[str]:
+    """The ids this phase has answered with an answer that still holds."""
+    stale = {line.split(" ", 1)[0] for line in stale_discharges(phase_dir)}
+    return {
+        d.get("item")
+        for d in load(phase_dir)["discharges"]
+        if d.get("item") not in stale
+    }
+
+
 def undischarged(phase_dir: Path) -> list[Item]:
-    """Items the prior phase carried that this phase has not answered."""
-    answered = {d.get("item") for d in load(phase_dir)["discharges"]}
-    return [item for item in owed(phase_dir) if item.id not in answered]
+    """Items the prior phase carried that this phase has not answered - or no longer answers."""
+    done = answered(phase_dir)
+    return [item for item in owed(phase_dir) if item.id not in done]
 
 
 def _unfiled_line(phase_dir: Path, item: Item) -> str:
@@ -436,7 +633,7 @@ def _unfiled_line(phase_dir: Path, item: Item) -> str:
 
 
 def phase_problems(phase_dir: Path) -> list[str]:
-    """All three obligations for one closed phase, as lines. Empty means clean."""
+    """Every obligation for one closed phase, as lines. Empty means clean."""
     out: list[str] = []
     items, says_none, present = declared(phase_dir)
     if not present:
@@ -456,14 +653,15 @@ def phase_problems(phase_dir: Path) -> list[str]:
     # many phases in one pass and one phase's unreadable prior card must not abort the scan of the
     # rest; `declared`/`due` run standalone (hook_verifier.sh, one phase at a time) and let the same
     # CarriedError reach `main()` as the loud, undecidable failure.
-    answered = {d.get("item") for d in load(phase_dir)["discharges"]}
+    settled = answered(phase_dir)
+    out.extend(f"{phase_dir}: {line}" for line in stale_discharges(phase_dir))
     try:
         carried = owed(phase_dir)
     except CarriedError as exc:
         out.append(f"{phase_dir}: {exc}")
         carried = []
     for item in carried:
-        if item.id in answered:
+        if item.id in settled:
             continue
         out.append(
             f"{phase_dir}: {item.id} ({item.phase}) has no answer here - {item.title}"
@@ -573,7 +771,10 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     )
     p_discharge.add_argument(
         "--by",
-        help="the spec, requirement id or test that now covers it (built/tested)",
+        help="the spec, requirement id or test that now covers it (built/tested). It is RESOLVED: "
+        "a requirement id (R9.1.4) some spec or test-mapping row under this feature states, or a "
+        "path to a file that exists, optionally ::the-test-inside-it. Prose around the reference "
+        "is fine; a value with no resolvable reference in it is refused.",
     )
     p_discharge.add_argument(
         "--reason-file",

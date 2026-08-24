@@ -62,14 +62,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from pipeline_metrics import record_triage_decision
 except ImportError:  # pragma: no cover - vendored without the metrics modules
+
     def record_triage_decision(**_kwargs):
         return False
+
 
 APPROVED = 0
 BLOCKED = 1
 ERROR = 2
 
-#: The closed blocking set. Four entries, each one a defect that makes a spec unbuildable as written.
+#: The closed blocking set. Five entries, each one a defect that makes a spec unbuildable as written.
 #: The wording is the contract the triage prompt restates; `tests/test_spec_gate_triage.py` asserts
 #: the prompt and this table name the same categories, so the two cannot drift apart silently.
 BLOCKING: dict[str, str] = {
@@ -87,6 +89,19 @@ BLOCKING: dict[str, str] = {
     "unhandled-critical-edge-case": (
         "a boundary, failure, duplicate or unauthorized path on a critical surface that the spec "
         "neither handles nor consciously excludes"
+    ),
+    # The fifth, added deliberately (retro: a reply may assert a change that was not made). Three
+    # write paths in one measured phase answered a SUPPRESSED write with a success reply, and one
+    # requirement explicitly SANCTIONED it - so the class was a spec-level invariant nobody had
+    # written down, and each instance was repaired on its own path while the rule stayed unstated.
+    # The same phase produced it at process level: one poisoned credential row aborted an entire
+    # poll cycle forever while the loop stayed alive announcing nothing, a system reporting healthy
+    # while doing none of its work. It belongs here and not in a lint because it is decided in the
+    # SPEC - a requirement that sanctions the lie is where the three paths came from.
+    "false-acknowledgement": (
+        "a requirement or criterion under which a write that was suppressed, skipped, rejected or "
+        "failed is still answered with success - or a process that keeps reporting healthy while "
+        "doing none of its work. The caller is told a change was made that was not"
     ),
 }
 
@@ -243,7 +258,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             print(report(json.loads(Path(args[1]).read_text(encoding="utf-8"))))
         except (OSError, ValueError) as exc:
-            print(f"[spec-gate-triage] cannot render the report: {exc}", file=sys.stderr)
+            print(
+                f"[spec-gate-triage] cannot render the report: {exc}", file=sys.stderr
+            )
             return ERROR
         return APPROVED
     if len(args) != 3 or args[0] != "decide":

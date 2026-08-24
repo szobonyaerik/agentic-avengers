@@ -20,7 +20,7 @@ the thing meant to make delivery cheaper.
 corrupt a hook's contract, so every message from this module goes to stderr and to the log file, and
 every subprocess has its stdout captured.
 
-Environment:
+Environment (each also readable from the project's `.env`, see below):
     AVENGER_METRICS_CMD      path to `fm-pipeline-metrics.sh`; else it is looked up on PATH
     AVENGER_METRICS_OFF=1    disable emission entirely (still fail-open, just silent)
     AVENGER_METRICS_PROJECT  the record's `project`; else the git repository's name
@@ -31,6 +31,15 @@ Emission is OFF when the CLI is not resolvable, because agentic-avengers ships s
 repositories have no firstmate home. That absence is logged once per process rather than passed over
 in silence: a measurement layer that is quietly doing nothing is the failure this record exists to
 remove.
+
+**Configuration is read from the project's `.env`, not only from an export** (issue #66). Every hook
+already gets these values that way, because each one sources `scripts/load_env.sh` before it runs.
+`pipeline_metrics.py defect` is the one command a STAGE runs directly, from a subagent shell that
+inherited no export, so it resolved nothing and lost the defect silently — and `found_by` is the one
+field that cannot be reconstructed after a run. The fix belongs HERE rather than at that one caller:
+this module is the single point every emission passes through, so a writer configured once in `.env`
+is found by hooks and stages alike. The real environment still wins, so a CI secret is never shadowed
+by a committed default.
 """
 
 from __future__ import annotations
@@ -41,6 +50,19 @@ import shutil
 import subprocess  # noqa: S404 — the firstmate CLI is the only supported writer of the record
 import sys
 from pathlib import Path
+
+# Pull AVENGER_METRICS_* out of the project's `.env` when the environment does not already define
+# them, exactly as `gate_runner.py` does for its own keys. Hooks get the same values through
+# `load_env.sh`; this covers being invoked directly by a stage, which is the path issue #66 lost its
+# defects on. The real environment always wins — `load_into` fills only what is unset.
+try:
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from env_file import load_into
+
+    load_into(os.environ, root=os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+except Exception:  # noqa: BLE001 — vendored without env_file.py, or an unreadable file: proceed
+    pass
 
 #: Written before every diagnostic so a reader can tell these lines from a gate's.
 PREFIX = "[metrics]"
