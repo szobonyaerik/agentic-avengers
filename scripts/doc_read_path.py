@@ -355,10 +355,17 @@ READERS_RE = re.compile(r"^readers:[ \t]*(.*)$", re.MULTILINE)
 
 
 def _read(path: Path) -> str:
-    """Read a file, or fail closed. A file we cannot read is not a file we can clear."""
+    """Read a file, or fail closed. A file we cannot read is not a file we can clear.
+
+    `ValueError` is caught beside `OSError` because `UnicodeDecodeError` is a `ValueError`, and
+    `check --contract` scans every `.md/.json/.py/.sh` under `scripts/` and `docs/templates/` -
+    arbitrary project code in a consumer repo, where one latin-1 file would otherwise turn the CI
+    gate into a stack trace instead of a named finding. Same failure shape either way: unreadable is
+    unreadable.
+    """
     try:
         return path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise SystemExit(f"[doc_read_path] cannot read {path}: {exc} — fail closed")
 
 

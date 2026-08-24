@@ -68,7 +68,18 @@ deleted; the read directives changed.**
   Its replacement key is `scripts/phase_artifacts.py` - **a phase whose every spec is stamped
   `status: done`** - the pipeline's own completion stamp, written by the implementer, fired on by
   `hook_verifier.sh` and reverted by `spec_done_guard.py` when it is not backed by evidence. Nothing
-  new is written to make the sweep possible, which is the point. The sweep's other half was
+  new is written to make the sweep possible, which is the point. **Its two halves are keyed at
+  different moments, because they are owed at different moments**: each spec owes `test-mapping.md`
+  at its own `status: done` stamp, which is exactly what `spec_done_guard.py` already enforces at
+  the stamp, while the phase owes `handover.md` only once a **passing `verdict.json`** exists -
+  keyed on the stamp instead, it demanded a document `hook_verifier.sh` REFUSES to let anyone write
+  until the Verifier has passed the phase, and the window between the two spans the whole
+  verification stage, 3 attempts plus route-backs, which a resumable run legitimately stops inside.
+  That reading is imported, never restated: `verifier_attempts` owns what the verdict record is and
+  `verdict_findings` owns what is still open. It is **diff-scoped** on the same boundary as every
+  other check here (§3a) - a phase this change did not touch is counted and named, never blocked,
+  which is what stops a consumer repo full of pre-rule phases failing every Stop it ever runs;
+  `check --all` is the deliberate audit. The sweep's other half was
   corrected in the same pass: it looked for `test-mapping.md` in the PHASE directory, which has not
   been its home since specs became `<n>.<k>` directories. This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans

@@ -23,7 +23,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    possible reader — the review that asked for the fan-out), and `fidelity-report.md`,
    `implementation-report.md` and `test-execution-report.md` were **removed**, having no writer
    instruction at all. `implementation-report.md` keyed the Stop-hook artifact sweep; that key is
-   now `scripts/phase_artifacts.py` — a phase whose every spec is `status: done`.
+   now `scripts/phase_artifacts.py` — a phase whose every spec is `status: done` owes each spec's
+   `test-mapping.md`, and a phase whose `verdict.json` PASSES owes `handover.md`, which is the only
+   moment `hook_verifier.sh` will let one be written. Diff-scoped (§3a); `check --all` audits.
 1a. **The read path.** Documentation cost is `size x reads x turns resident`, not size:
    `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
    `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a

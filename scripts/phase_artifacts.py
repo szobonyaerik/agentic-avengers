@@ -20,13 +20,27 @@ its `spec-done` trigger on it, and `scripts/spec_done_guard.py` reverts one that
 recorded mapping row and a green suite (issue #68). It is the same stamp `applicability.py` reads to
 call a spec shipped. Nothing new is written to make this check possible, which is the point.
 
-What it then requires of such a phase is what the old sweep required, corrected for where those
-files actually live today:
+**The two halves it then requires are keyed to DIFFERENT moments, because they are owed at
+different moments.**
 
-  * `handover.md` beside `verdict.json`, per phase; and
-  * `test-mapping.md` beside each spec - PER SPEC, not per phase. The old sweep looked for it in
-    the phase directory, which has not been its home since specs became `<n>.<k>` directories, so
-    that half asked for a file at a path the pipeline never writes.
+  * `test-mapping.md` beside each spec - PER SPEC, not per phase - is keyed to `status: done`, where
+    it is correct: the implementer owes a mapping row the instant it stamps a spec done, which is
+    exactly what `spec_done_guard.py` enforces at the stamp itself. The old sweep looked for this
+    file in the phase directory, which has not been its home since specs became `<n>.<k>`
+    directories, so that half asked for a file at a path the pipeline never writes.
+  * `handover.md` beside `verdict.json`, per phase, is keyed to a **passing verdict**, never to
+    `status: done`. Between the last spec being stamped and the Verifier passing the phase lies the
+    entire verification stage - up to 3 attempts plus implementer route-backs - and `hook_verifier.sh`
+    REFUSES the handover write until a passing `verdict.json` exists. Keyed on the stamp, this
+    check demanded a document the pipeline's own rules forbid writing yet, and `/avenger-run` is
+    resumable across sessions, so a session ending inside that window is ordinary usage rather than
+    an unfinished artifact set.
+
+"Passing verdict" is not re-derived here. `verifier_attempts.attempts` owns what the verdict record
+is (the live `verdict.json` plus its `verdict-attempt-<n>.json` archives) and `verdict_findings`
+owns what "still open" means, so this asks them: the latest attempt says `pass` and has nothing
+unresolved. A second reading here would be a second answer to a question the pipeline has already
+settled twice.
 
 A spec that owes no mapping row at all is exempt by construction, read from
 `spec_done_guard.mapping_owed`: every requirement `binding: none` gets no test and no row (§4a), and
@@ -35,6 +49,20 @@ whose requirements cannot be read, or that declares none, is reported rather tha
 reading `spec_done_guard` takes.
 
 A phase with no spec directory at all has not started, not finished: it is not swept.
+
+**It binds only what this change is responsible for** (§3a, `scripts/applicability.py`). A phase the
+diff does not touch is CLOSED to this sweep: it is counted and named on stderr through the
+boundary's one spelling, never blocked. Without that, a consumer repo installing this release with
+phases built under the older layout would fail every Stop from then on over locked artifacts whose
+only remedy is rewriting shipped phases - the hostage failure the cost gate and the requirement cap
+were scoped to remove. `check --all` is the full audit somebody runs deliberately. When git cannot
+say what changed the scope is unknowable, so nothing is enforced and that is said out loud.
+
+**What it does not decide**, stated rather than implied: it reads stamps and file presence, never
+content, so a `handover.md` that says nothing and a `test-mapping.md` with no real row both satisfy
+it here - `doc_read_path.py` holds the first and `spec_done_guard.py` the second. It cannot tell a
+phase abandoned mid-verification from one still being verified, so a phase with no passing verdict
+is simply not asked for a handover, however long it has stood that way.
 """
 
 from __future__ import annotations
@@ -45,14 +73,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from applicability import changed_paths, report_unenforced, touched  # noqa: E402
 from spec_done_guard import (  # noqa: E402
     NoRequirementsDeclared,
     UndecidableRequirements,
     mapping_owed,
 )
 from spec_gate_state import frontmatter  # noqa: E402
+from verifier_attempts import UnreadableVerdict, attempts  # noqa: E402
 
 DONE = "done"
+PASS = "pass"
 
 
 def spec_paths(phase_dir: Path) -> list[Path]:
@@ -85,6 +116,28 @@ def finished_implementing(phase_dir: Path) -> bool:
     return bool(specs) and all(_status(spec) == DONE for spec in specs)
 
 
+def verified(phase_dir: Path) -> bool:
+    """Whether the phase's latest verdict PASSES with nothing still open.
+
+    The same reading `hook_verifier.sh` makes before it will let a handover be written, taken from
+    the modules that own each half rather than restated: `verifier_attempts.attempts` for what the
+    verdict record is, and `verdict_findings.open_findings` (which `Attempt.unresolved` counts) for
+    what is still open, so a finding waived through break-glass reads as resolved here exactly as it
+    does at the attempt cap.
+
+    An unreadable or absent record is NOT a pass - under-report, so the sweep asks for nothing it
+    cannot show is owed.
+    """
+    try:
+        records = attempts(phase_dir)
+    except (UnreadableVerdict, OSError, ValueError):
+        return False
+    if not records:
+        return False
+    latest = records[-1]
+    return latest.verdict == PASS and latest.unresolved == 0
+
+
 def phase_dirs(root: Path) -> list[Path]:
     """Every phase directory under the artifact tree, in a stable order."""
     features = root / "docs" / "features"
@@ -114,20 +167,66 @@ def _spec_problems(spec_path: Path) -> list[str]:
     return [f"{mapping}: missing (this spec is `status: done` and owes a mapping row)"]
 
 
-def problems(root: Path) -> list[str]:
-    """Every artifact a phase that finished implementing still owes."""
+def phase_problems(phase_dir: Path) -> list[str]:
+    """Every artifact this one phase owes, or nothing when it has not finished implementing."""
+    if not finished_implementing(phase_dir):
+        return []
     found: list[str] = []
-    for phase_dir in phase_dirs(root):
-        if not finished_implementing(phase_dir):
-            continue
-        handover = phase_dir / "handover.md"
-        if not handover.is_file():
-            found.append(
-                f"{handover}: missing (every spec in this phase is `status: done`)"
-            )
-        for spec_path in spec_paths(phase_dir):
-            found += _spec_problems(spec_path)
+    handover = phase_dir / "handover.md"
+    if verified(phase_dir) and not handover.is_file():
+        found.append(
+            f"{handover}: missing (this phase has a passing verdict.json and every spec in it is "
+            f"`status: done`)"
+        )
+    for spec_path in spec_paths(phase_dir):
+        found += _spec_problems(spec_path)
     return found
+
+
+def problems(root: Path, *, enforce_all: bool = False) -> list[str]:
+    """Every artifact a phase that finished implementing still owes, inside the change's scope.
+
+    Diff-scoped by default (§3a): a phase this change did not touch is counted and named through
+    `applicability.report_unenforced`, never blocked.
+    """
+    scope: set[Path] | None = None
+    if not enforce_all:
+        scope = changed_paths(root)
+        if scope is None:
+            print(
+                f"[phase_artifacts] git cannot say what changed under {root}, so the scope is "
+                f"unknowable and no phase is enforced. Run `check --all` for a full audit.",
+                file=sys.stderr,
+            )
+            return []
+
+    found: list[str] = []
+    unenforced = 0
+    untouched: list[str] = []
+    for phase_dir in phase_dirs(root):
+        owed = phase_problems(phase_dir)
+        if not owed:
+            continue
+        if enforce_all or touched(phase_dir, scope or set()):
+            found += owed
+            continue
+        unenforced += len(owed)
+        untouched.append(_name(root, phase_dir))
+
+    report_unenforced(
+        "phase_artifacts",
+        unenforced,
+        f"{len(untouched)} phase(s) this change did not touch ({', '.join(untouched)}) - they are "
+        f"checked when you next change them, and `check --all` audits them now",
+    )
+    return found
+
+
+def _name(root: Path, phase_dir: Path) -> str:
+    try:
+        return phase_dir.relative_to(root).as_posix()
+    except ValueError:
+        return str(phase_dir)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -139,6 +238,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     check.add_argument(
         "root", nargs="?", default=".", help="repository root (default: .)"
+    )
+    check.add_argument(
+        "--all",
+        action="store_true",
+        dest="enforce_all",
+        help="audit every phase, not only the ones this change touches",
     )
 
     listing = sub.add_parser(
@@ -157,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(phase_dir.relative_to(root).as_posix())
         return 0
 
-    found = problems(root)
+    found = problems(root, enforce_all=args.enforce_all)
     if found:
         print("Phase artifacts missing (create them before stopping):", file=sys.stderr)
         for problem in found:

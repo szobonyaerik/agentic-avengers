@@ -21,6 +21,8 @@ The last two tests run it against the real repository, which is where a regressi
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from doc_read_path import (  # noqa: E402
@@ -222,3 +224,26 @@ def test_the_cli_returns_one_on_a_contract_violation_and_zero_when_clean(
         "docs/features/<feature>/phases/<n>-<slug>/implementation-report.md\n"
     )
     assert main(["check", "--contract-only", str(tmp_path)]) == 1
+
+
+def test_a_source_that_is_not_utf8_is_a_named_finding_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    """`check --contract` scans arbitrary project code, so one latin-1 file must not crash CI.
+
+    The source scan widened from `*.md` under four canonical directories to every `.md/.json/.py/.sh`
+    under `scripts/` and `docs/templates/`, which in a consumer repo is that project's own code.
+    `UnicodeDecodeError` is a `ValueError`, not an `OSError`, so it escaped the fail-closed guard and
+    reached `gate_ci.sh` as a stack trace instead of the named refusal every other unreadable file
+    gets. The same bug class this change fixed in `phase_artifacts._status`.
+    """
+    scaffold(tmp_path)
+    rogue = tmp_path / "scripts" / "rogue.py"
+    rogue.parent.mkdir(parents=True, exist_ok=True)
+    rogue.write_bytes(b"# caf\xe9 in latin-1\n")
+
+    with pytest.raises(SystemExit) as raised:
+        check_contract(tmp_path)
+    assert "cannot read" in str(raised.value)
+    assert "rogue.py" in str(raised.value)
+    assert "fail closed" in str(raised.value)

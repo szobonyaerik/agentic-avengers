@@ -145,12 +145,26 @@ Five rules follow from it, and each one is enforced rather than requested:
 (`scripts/phase_artifacts.py`): a phase has finished implementing when **every spec it holds is
 stamped `status: done`**. It used to be keyed to the presence of `implementation-report.md`, a file
 no template, agent, skill, command or script instructed anyone to write, so the set of phases it
-swept was the set where an implementer happened to invent an undocumented file. A phase that
-finished owes `handover.md`, and each of its specs owes `test-mapping.md` **beside the spec** — the
-old sweep looked in the phase directory, which has not been that file's home since specs became
-`<n>.<k>` directories. A spec whose every requirement is `binding: none` owes no row by construction
+swept was the set where an implementer happened to invent an undocumented file.
+
+**Its two halves are keyed at different moments, because they are owed at different moments.** Each
+spec owes `test-mapping.md` **beside the spec** at its own `status: done` stamp - the implementer
+owes a row the instant it stamps, which is what `spec_done_guard.py` enforces at the stamp itself,
+and the old sweep looked in the phase directory, which has not been that file's home since specs
+became `<n>.<k>` directories. The phase owes `handover.md` only once its `verdict.json` **passes**,
+never at the stamp: `hook_verifier.sh` refuses the handover write until the Verifier has passed the
+phase, so keyed on the stamp this check demanded a document the pipeline's own rules forbid writing
+yet, across a window spanning the whole verification stage - 3 attempts plus route-backs - that a
+resumable run legitimately stops inside. What "passes" means is imported rather than restated
+(`verifier_attempts` for the verdict record, `verdict_findings` for what is still open).
+
+A spec whose every requirement is `binding: none` owes no row by construction
 and is exempt; a spec that declares no requirement at all, or whose requirements cannot be read, is
-reported rather than skipped.
+reported rather than skipped. The sweep is **diff-scoped** on the applicability boundary (§3a): a
+phase this change did not touch is counted and named on stderr in the boundary's one spelling,
+never blocked, so a repository full of phases built under the older layout can adopt it;
+`check --all` is the full audit. When git cannot say what changed, nothing is enforced and it says
+so out loud.
 
 ## Tiered requirement binding — what decides suite size
 
