@@ -13,16 +13,17 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 
 ## Conventions (always apply)
 1. **Artifacts** under `docs/features/<feature>/` (feature-level: `task-analysis.md`, `overview.md`,
-   `plan.md`, `fidelity-report.md`, `scoped/review-*.md`), `docs/features/<feature>/phases/<n>-<slug>/`
-   (`test-mapping.md`, `test-evidence.md`, `implementation-report.md`, `test-execution-report.md`,
-   `handover.md`, `handover-archive.md`), and spec-level
-   `.../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`. YAML frontmatter on each. The classes
-   `scripts/doc_read_path.py`'s `READ_PATH` governs additionally carry a **`readers:` line** — see 1a.
-   `fidelity-report.md`, `scoped/review-*.md`, `implementation-report.md` and
-   `test-execution-report.md` are **not** in that table and are not claimed to carry one; whether
-   they belong on the read path is [#29](https://github.com/szobonyaerik/agentic-avengers/issues/29),
-   open. Promising the line for a class nothing instructs and nothing checks is the gap this rule
-   exists to close, so the promise is scoped to what is enforced.
+   `plan.md`, `scoped/review-*.md`), `docs/features/<feature>/phases/<n>-<slug>/`
+   (`verdict.json`, `handover.md`, `handover-archive.md`), spec-level
+   `.../specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`). YAML
+   frontmatter on each. Every class `scripts/doc_read_path.py`'s `READ_PATH` governs carries a
+   **`readers:` line** — see 1a — and that is now every artifact class the pipeline names.
+   Issue [#29](https://github.com/szobonyaerik/agentic-avengers/issues/29) closed the four that had
+   no decision either way: `scoped/review-*.md` joined the table (a real writer instruction, and one
+   possible reader — the review that asked for the fan-out), and `fidelity-report.md`,
+   `implementation-report.md` and `test-execution-report.md` were **removed**, having no writer
+   instruction at all. `implementation-report.md` keyed the Stop-hook artifact sweep; that key is
+   now `scripts/phase_artifacts.py` — a phase whose every spec is `status: done`.
 1a. **The read path.** Documentation cost is `size x reads x turns resident`, not size:
    `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
    `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a
@@ -33,7 +34,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    favour of its card. `scripts/doc_read_path.py` is the table and the check; `check --sources` is
    what stops a removed read coming back one caller at a time, and the artifact half is **diff-scoped**
    (it enforces what you changed and only counts the rest, `--all` for a full audit).
-   `docs/lessons/` is untouched.
+   `docs/lessons/` is untouched. `check --contract` is the other direction — every documented claim
+   about an artifact's frontmatter has a writer instructed to produce it, and every artifact class a
+   canonical source names is one the table governs. That is the general form of the defect behind
+   #29: documentation making a claim nothing enforces.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **The quality wall (per spec): ONE machine gate, then one human.** The spec gate fires on spec

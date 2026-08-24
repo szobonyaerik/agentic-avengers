@@ -7,7 +7,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
-- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
+- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
 - Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `verification-evidence.json` + its `evidence/` logs, `breaker.json`, `handover.md`, `handover-archive.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
@@ -48,15 +48,46 @@ deleted; the read directives changed.**
   and caps `report` at 1500 chars. The schema is frozen — a bespoke top-level key is a finding.
 - **A locked phase leaves the read path.** Later phases read its contract card, not its specs.
 - **Every document the read-path table governs declares `readers:`. A document no stage reads does
-  not get written.** Four classes are deliberately outside that table today — `fidelity-report.md`,
-  `scoped/review-*.md`, `implementation-report.md`, `test-execution-report.md` — and are not claimed
-  to carry the line; whether they belong on the read path is issue #29. This is
+  not get written.** Four classes had no decision recorded either way (issue #29); each now has one,
+  taken from what actually reads them rather than from preference. **`scoped/review-<slice>.md` is
+  on the table**: `skills/spec-isolation-review` is a real writer instruction naming the path it
+  writes, and the fan-out has exactly one possible reader, because every other reviewer is forbidden
+  to open it - the review that asked for it. Its skill used to say the findings were for *"the
+  gate"*, which was the automated half of spec-review, deleted in the one-gate collapse; a document
+  whose only stated consumer no longer exists is the state this issue found the class in. The other
+  three are **removed, not declared**, because none had a writer at all: `fidelity-report.md` is
+  residue of the deleted Fidelity Gate and was named only in two artifact lists;
+  `test-execution-report.md` is residue of the deleted Test-Author and existed only as a link line
+  in the card template telling the writer to point at a file nothing produces; and
+  `implementation-report.md` was the same link line plus a mention in `skills/ponytail`'s list of
+  artifacts to write *"to their template every time"* - a template that does not exist, delivered
+  only to the two implementers and not at all under `PONYTAIL_OFF=1`. **That one was load-bearing
+  and is the reason it is worth stating**: `hook_artifact_check.sh` keyed its whole Stop-hook
+  artifact sweep to that file's presence, so what it swept was the set of phases where an
+  implementer happened to invent an undocumented file, and a gate keyed to that mostly does not run.
+  Its replacement key is `scripts/phase_artifacts.py` - **a phase whose every spec is stamped
+  `status: done`** - the pipeline's own completion stamp, written by the implementer, fired on by
+  `hook_verifier.sh` and reverted by `spec_done_guard.py` when it is not backed by evidence. Nothing
+  new is written to make the sweep possible, which is the point. The sweep's other half was
+  corrected in the same pass: it looked for `test-mapping.md` in the PHASE directory, which has not
+  been its home since specs became `<n>.<k>` directories. This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
   `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
   removed read. **That check is one-directional** — it catches a removed read coming back, never a
   stage instructed to read something the table does not declare, so the table is not self-verifying
   and an undeclared reader leaves it incomplete rather than wrong (which is how the human
-  spec-review's two reads went undeclared). **Change the directive at the table, never one caller at
+  spec-review's two reads went undeclared). **`check --contract` is the other direction, and the
+  general form of what keeps producing these**: documentation making a claim nothing enforces. It
+  asks that every documented claim about an artifact's frontmatter has a writer instructed to
+  produce it - the table's `emitted_by` exists and really instructs `readers:`, AND every artifact
+  class a canonical source names is one the table governs. It reads two inventories, artifact PATH
+  literals under `docs/features/` and the canonical layout block in `skills/pipeline-conventions`,
+  and it is **not diff-scoped**, for the same reason `--sources` is not. **What it does not see is
+  stated rather than implied**: a class named only as a bare filename in prose is invisible to it -
+  `fidelity-report.md` was named exactly that way and this check would not have caught it - because
+  generalising to bare filenames means guessing which backticked `*.md` in a sentence is a pipeline
+  artifact, which needs a denylist of everything else in the repository, and a list that rots is
+  worse than a stated limit. **Change the directive at the table, never one caller at
   a time.** Every entry also
   names the template or stage instruction that makes its writer emit the line: declaring a reader is
   not the same as instructing anyone to write it down, and three artifact classes shipped with the

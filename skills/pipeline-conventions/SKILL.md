@@ -91,8 +91,9 @@ deleted to fix this; the read directives changed.
 | `handover-archive.md` | **nobody** — archive | — |
 | `pipeline-observations.md` | the retrospective triage, once at feature close; the preflight sweep, frontmatter only | whole |
 | `e2e-mapping.md` | feature close, once | whole |
+| `scoped/review-<slice>.md` | the review that invoked the fan-out, once — **no other reviewer may open it**, which is what makes the isolation real | whole |
 
-Four rules follow from it, and each one is enforced rather than requested:
+Five rules follow from it, and each one is enforced rather than requested:
 
 - **Every pipeline document declares `readers:` in its own frontmatter** — who reads it and when.
   **A document no stage reads does not get written**, and an archive says so explicitly
@@ -116,12 +117,40 @@ Four rules follow from it, and each one is enforced rather than requested:
   `doc_read_path.py check --sources` scans `agents/`, `skills/`, `commands/` and `prompts/` and
   fails when a stage instruction names a document that left the read path. A guard bolted onto one
   command is a guard the next command does not have.
-  **That guard is one-directional**: it catches a removed read coming back, and nothing catches the
+  **That guard is one-directional**: it catches a removed read coming back, and it cannot catch the
   inverse — a stage instructed to read something the table never declares. So the table is not
   self-verifying; a reader that is instructed but undeclared leaves it *incomplete* rather than
   wrong, which is harder to spot. The human spec-review reached this list that way. When a stage
   genuinely needs a read, add the reader to the table; never bend the instruction to match a silent
   one.
+- **Every documented claim about an artifact's frontmatter has a writer instructed to produce it.**
+  `doc_read_path.py check --contract` is the inverse direction, and the general form of the defect
+  that keeps producing these one instance at a time: documentation making a claim nothing enforces.
+  It asks two things. The table's `emitted_by` must exist and must really instruct the `readers:`
+  line — a template that mentions it only in prose teaches a document that fails `check`. And every
+  artifact class a canonical source names must be one the table governs: a stage told to write, link
+  or read a document with no `READ_PATH` entry is a class with **no decision recorded either way**,
+  which is the state four classes sat in until issue #29 — one of them,
+  `implementation-report.md`, keying the Stop-hook artifact sweep while nothing was instructed to
+  write it. It is **not diff-scoped**, for the same reason `--sources` is not: the table and the
+  canonical stage instructions are always open, never shipped artifacts a later rule holds hostage.
+  **What it does not see**: it reads two inventories — artifact PATH literals under `docs/features/`
+  and the layout block above — so a class named only as a bare filename in prose is invisible to it.
+  `fidelity-report.md` was named exactly that way, in two artifact lists and nowhere else; it was
+  caught by reading, not by this. Generalising to bare filenames means guessing which backticked
+  `*.md` in a sentence is a pipeline artifact, which needs a denylist of everything else in the
+  repository — a list that rots, which is worse than a stated limit.
+
+**The Stop-hook artifact sweep is keyed to the pipeline's own completion stamp**
+(`scripts/phase_artifacts.py`): a phase has finished implementing when **every spec it holds is
+stamped `status: done`**. It used to be keyed to the presence of `implementation-report.md`, a file
+no template, agent, skill, command or script instructed anyone to write, so the set of phases it
+swept was the set where an implementer happened to invent an undocumented file. A phase that
+finished owes `handover.md`, and each of its specs owes `test-mapping.md` **beside the spec** — the
+old sweep looked in the phase directory, which has not been that file's home since specs became
+`<n>.<k>` directories. A spec whose every requirement is `binding: none` owes no row by construction
+and is exempt; a spec that declares no requirement at all, or whose requirements cannot be read, is
+reported rather than skipped.
 
 ## Tiered requirement binding — what decides suite size
 

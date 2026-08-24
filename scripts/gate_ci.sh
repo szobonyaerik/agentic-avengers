@@ -319,6 +319,21 @@ if ! python3 "$SCRIPT_DIR/doc_read_path.py" $READ_PATH_ARGS "$ROOT"; then
   record_fail "read-path"
 fi
 
+# 1bba) The frontmatter contract, in BOTH directions. `--sources` above catches a removed read
+#       coming back; it cannot see a document class nobody ever decided about. Four of them sat in
+#       exactly that state until issue #29 - named by stage instructions, absent from the table, one
+#       of them keying the Stop-hook artifact sweep while nothing was instructed to write it - and
+#       the recurring shape behind that issue is documentation making a claim nothing enforces.
+#       So this asks the general question: every documented claim about an artifact's frontmatter
+#       has a writer instructed to produce it.
+#       NOT diff-scoped, for the same reason `--sources` and `stage_effort.py check` are not: the
+#       table and the canonical stage instructions are always open, never shipped artifacts a later
+#       rule would hold hostage.
+echo "• frontmatter contract: the table, the templates and the writer instructions agree"
+if ! python3 "$SCRIPT_DIR/doc_read_path.py" check --contract-only "$ROOT"; then
+  record_fail "frontmatter-contract"
+fi
+
 # 1bcx) Every overview.md carries the `## Contracts and Decisions` heading the spec gate's CONTEXT
 #       block reads (scripts/spec_gate_context.py). Without it, `contradiction` — one of the four
 #       things that block a spec — can only ever be checked against the prior phase's card, never
