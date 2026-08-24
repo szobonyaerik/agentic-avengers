@@ -308,9 +308,56 @@ def test_an_unknowable_scope_enforces_nothing_and_says_so(
 # --- scope and CLI ------------------------------------------------------------------------------
 
 
-def test_an_absent_artifact_tree_scans_nothing(tmp_path: Path) -> None:
+def test_an_absent_artifact_tree_scans_nothing_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLEAN, but never invisibly: the sibling check in the same hook says this out loud too.
+
+    `doc_read_path.check_artifacts` prints its own absent-tree line, and two checks answering the
+    same absence differently is how one of them stops meaning anything to whoever reads the session.
+    """
     assert phase_dirs(tmp_path) == []
     assert owed(tmp_path) == []
+    assert "nothing to check" in capsys.readouterr().err
+
+
+def test_an_undecidable_spec_is_not_told_to_create_a_file(tmp_path: Path) -> None:
+    """The regression: the prescribed remedy WORKED and left the defect in place.
+
+    A `status: done` spec whose requirement layout cannot be read, with no `test-mapping.md`, is
+    reported and blocks the Stop. Under one shared header, "create them before stopping", the
+    available fix was to write a mapping file - and `_spec_problems` returns clean the moment one
+    exists, so the report vanished and the spec stayed unreadable. Each report now carries its own
+    remedy, and this one points at the spec.
+    """
+    phase(
+        tmp_path,
+        spec_body=(
+            "---\nfeature: demo\nstatus: done\n---\n\n# Spec\n\n"
+            "## Requirements\n\nSee the appendix, where R1.1.1 lives in prose.\n"
+        ),
+    )
+    found = owed(tmp_path)
+    problem = next((p for p in found if "cannot be read" in p), None)
+    assert problem is not None, found
+    assert "repair the requirement layout in the spec itself" in problem.lower(), (
+        problem
+    )
+    assert "silences this report" in problem, problem
+
+
+def test_the_owed_header_prescribes_nothing_of_its_own(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One header cannot be right for three shapes, only one of which is a missing file."""
+    phase(
+        tmp_path,
+        spec_body="---\nfeature: demo\nstatus: done\n---\n\n# Spec\n\n## Requirements\n",
+    )
+    assert main(["check", str(tmp_path), "--all"]) == 1
+    header = capsys.readouterr().err.splitlines()[0]
+    assert "create them before stopping" not in header, header
+    assert "own remedy" in header, header
 
 
 def test_the_cli_returns_one_on_a_violation_and_zero_when_clean(tmp_path: Path) -> None:

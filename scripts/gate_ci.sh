@@ -334,8 +334,12 @@ fi
 #       The step announces which of the two it is, so a skipped check never reads as a passed one.
 #       Which tree this is is ASKED of the module that decides it, never restated here: a second
 #       copy of the marker rule in shell is the copy that drifts.
+#       The canonical bullet names its SUBJECT, never a verdict, because it prints BEFORE the check
+#       runs: worded as an outcome it announced that the table and the writer instructions agree and
+#       then failed two lines later, which is a failed step reading as a pass. The vendored branch
+#       below reports a STATE rather than an outcome, which is why it may say what it says.
 if python3 "$SCRIPT_DIR/doc_read_path.py" canonical "$ROOT"; then
-  echo "• frontmatter contract: the table, the templates and the writer instructions agree"
+  echo "• frontmatter contract: the table, the templates and the writer instructions"
 else
   echo "• frontmatter contract: NOT CHECKED — not the canonical pipeline repository, remedy upstream"
 fi

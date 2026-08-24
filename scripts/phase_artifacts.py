@@ -63,6 +63,11 @@ that at the stamp. It says nothing whatsoever about a phase's handover, its verd
 its Breaker record; every one of those belongs to `hook_verifier.sh`. And a phase abandoned
 mid-verification is indistinguishable to it from one still being verified, which costs nothing now
 that the only thing it asks for is owed at the stamp rather than at the close.
+
+**Every report carries its own REMEDY, never one taken from a shared header.** Only one of the
+three shapes `_spec_problems` can produce is a missing file; telling an author to create one for
+the other two prescribes a fix that silences the report and leaves the defect exactly where it was,
+because the `test-mapping.md` presence test short-circuits ahead of both.
 """
 
 from __future__ import annotations
@@ -119,14 +124,30 @@ def finished_implementing(phase_dir: Path) -> bool:
 
 
 def phase_dirs(root: Path) -> list[Path]:
-    """Every phase directory under the artifact tree, in a stable order."""
+    """Every phase directory under the artifact tree, in a stable order.
+
+    An absent tree scans nothing. That is CLEAN, and it is said out loud rather than passing
+    invisibly, because `doc_read_path.check_artifacts` says exactly that two lines later in the same
+    Stop hook and two checks giving different answers to the same absence is how one of them stops
+    meaning anything. Same discipline `subprocess_check.py` uses for an absent test root.
+    """
     features = root / "docs" / "features"
     if not features.is_dir():
+        print(f"[phase_artifacts] no {features} - nothing to check", file=sys.stderr)
         return []
     return sorted(path for path in features.glob("*/phases/*") if path.is_dir())
 
 
 def _spec_problems(spec_path: Path) -> list[str]:
+    """What one `status: done` spec still owes, or why that cannot be decided.
+
+    Each string carries ITS OWN remedy, because only one of the three shapes is a missing file. The
+    caller used to supply one header for all three - "create them before stopping" - and for the two
+    undecidable shapes that prescription was not merely wrong, it WORKED: the `mapping.is_file()`
+    short-circuit above returns clean the moment any `test-mapping.md` exists, so an agent obeying
+    the header wrote an empty one and silenced a report about an unreadable spec while leaving the
+    spec unreadable.
+    """
     mapping = spec_path.parent / "test-mapping.md"
     if mapping.is_file():
         return []
@@ -137,14 +158,20 @@ def _spec_problems(spec_path: Path) -> list[str]:
         return [
             f"{spec_path}: is `status: done` and declares no requirement at all. That is not the "
             f"`binding: none` exemption; a spec with nothing to require has nothing to have "
-            f"finished."
+            f"finished. REMEDY: declare this spec's requirements, or take the stamp back off it. "
+            f"Writing a `test-mapping.md` silences this report and changes nothing."
         ]
     except UndecidableRequirements as exc:
         return [
             f"{spec_path}: is `status: done` and its requirements cannot be read ({exc}), so "
-            f"whether it owes a `test-mapping.md` cannot be decided - unknown is not exempt."
+            f"whether it owes a `test-mapping.md` cannot be decided - unknown is not exempt. "
+            f"REMEDY: repair the requirement layout in the spec itself. Writing a "
+            f"`test-mapping.md` silences this report and leaves the spec just as unreadable."
         ]
-    return [f"{mapping}: missing (this spec is `status: done` and owes a mapping row)"]
+    return [
+        f"{mapping}: missing. This spec is `status: done` and owes a mapping row. "
+        f"REMEDY: write the row that traces its requirements to their tests."
+    ]
 
 
 def phase_problems(phase_dir: Path) -> list[str]:
@@ -248,7 +275,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return UNDECIDABLE
     if found:
-        print("Phase artifacts missing (create them before stopping):", file=sys.stderr)
+        print(
+            "Phase artifacts owed or undecidable (each line states its own remedy):",
+            file=sys.stderr,
+        )
         for problem in found:
             print(f"  - {problem}", file=sys.stderr)
         return OWED
