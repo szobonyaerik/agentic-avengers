@@ -28,23 +28,37 @@ def phase(tmp_path: Path) -> Path:
 
 
 def verdict(
-    phase: Path, attempt: int, findings: int, result: str = "fail", status: str = "open",
+    phase: Path,
+    attempt: int,
+    findings: int,
+    result: str = "fail",
+    status: str = "open",
     break_glass: bool = False,
 ) -> None:
-    (phase / "verdict.json").write_text(json.dumps({
-        "attempt": attempt, "verdict": result,
-        "findings": [
-            {"id": f"f{i}", "status": status, "break_glass": break_glass}
-            for i in range(findings)
-        ],
-    }))
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": attempt,
+                "verdict": result,
+                "findings": [
+                    {"id": f"f{i}", "status": status, "break_glass": break_glass}
+                    for i in range(findings)
+                ],
+            }
+        )
+    )
 
 
 def archive(phase: Path, attempt: int, findings: int, result: str = "fail") -> None:
-    (phase / f"verdict-attempt-{attempt}.json").write_text(json.dumps({
-        "attempt": attempt, "verdict": result,
-        "findings": [{"id": f"a{attempt}-{i}"} for i in range(findings)],
-    }))
+    (phase / f"verdict-attempt-{attempt}.json").write_text(
+        json.dumps(
+            {
+                "attempt": attempt,
+                "verdict": result,
+                "findings": [{"id": f"a{attempt}-{i}"} for i in range(findings)],
+            }
+        )
+    )
 
 
 # ── the series ───────────────────────────────────────────────────────────────
@@ -59,7 +73,9 @@ def test_the_series_comes_from_the_archives_plus_the_live_verdict(phase: Path) -
     archive(phase, 2, 2)
     verdict(phase, 3, 8)
     assert [(a.number, a.findings, a.verdict) for a in attempts(phase)] == [
-        (1, 6, "fail"), (2, 2, "fail"), (3, 8, "fail"),
+        (1, 6, "fail"),
+        (2, 2, "fail"),
+        (3, 8, "fail"),
     ]
     assert current(phase) == 3
 
@@ -72,10 +88,14 @@ def test_a_phase_never_verified_is_attempt_zero(phase: Path) -> None:
 def test_an_unreadable_archive_is_skipped_not_fatal(phase: Path) -> None:
     (phase / "verdict-attempt-1.json").write_text("{broken")
     verdict(phase, 2, 1)
-    assert [(a.number, a.findings, a.verdict) for a in attempts(phase)] == [(2, 1, "fail")]
+    assert [(a.number, a.findings, a.verdict) for a in attempts(phase)] == [
+        (2, 1, "fail")
+    ]
 
 
-def test_an_attempt_separates_what_it_raised_from_what_is_still_unresolved(phase: Path) -> None:
+def test_an_attempt_separates_what_it_raised_from_what_is_still_unresolved(
+    phase: Path,
+) -> None:
     """The series is what each attempt RAISED — a finding later fixed or waived still happened. The
     verdict can only be judged clean against what is still open and unwaived."""
     verdict(phase, 1, 3, result="pass", status="acknowledged", break_glass=True)
@@ -143,6 +163,21 @@ def test_at_the_cap_with_every_finding_waived_is_resolved(phase: Path) -> None:
     assert main(["check", str(phase)]) == 0
 
 
+def test_a_finding_left_OPEN_but_WAIVED_is_resolved(phase: Path) -> None:
+    """`break_glass` is what resolves it, and reading `status` alone would miss that.
+
+    The Verifier records a waiver by leaving the finding exactly where it is and marking it waived,
+    so the row still says `status: open`. A reading that resolved findings on the status word alone
+    would hold the phase at the cap over a finding a human had already decided about - and, in the
+    other direction, would resolve one whose writer happened to type any other word. The waiver is
+    the recorded decision; the status is prose.
+    """
+    archive(phase, 1, 3)
+    archive(phase, 2, 1)
+    verdict(phase, 3, 2, result="pass", status="open", break_glass=True)
+    assert main(["check", str(phase)]) == 0
+
+
 def test_a_pass_still_carrying_an_open_finding_is_not_resolved(phase: Path) -> None:
     archive(phase, 1, 6)
     archive(phase, 2, 2)
@@ -150,7 +185,9 @@ def test_a_pass_still_carrying_an_open_finding_is_not_resolved(phase: Path) -> N
     assert main(["check", str(phase)]) == 1
 
 
-def test_a_phase_past_the_cap_that_ended_resolved_is_not_held_hostage(phase: Path) -> None:
+def test_a_phase_past_the_cap_that_ended_resolved_is_not_held_hostage(
+    phase: Path,
+) -> None:
     """The cap stops a LOOP, and a resolved verdict has ended it. A phase cannot un-run its own
     history, so refusing it forever would be a red with no clearing action — and the measured feature
     ran eight attempts, so a repo upgrading to this version would fail CI on its own past."""
@@ -191,7 +228,9 @@ def test_the_stop_message_offers_the_three_honest_ways_out(
     assert "A fourth attempt is not one of the three" in err
 
 
-def test_the_stop_message_shows_the_trickle(phase: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_stop_message_shows_the_trickle(
+    phase: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """A drop in new findings is not convergence when the same gate later produces six more, so the
     series is printed rather than the shape being inferred from a feeling."""
     archive(phase, 1, 6)
@@ -204,7 +243,9 @@ def test_the_stop_message_shows_the_trickle(phase: Path, capsys: pytest.CaptureF
     assert "attempt 3: 8 finding(s)" in err
 
 
-def test_series_prints_without_judging(phase: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_series_prints_without_judging(
+    phase: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     archive(phase, 1, 6)
     verdict(phase, 2, 0, result="pass")
     assert main(["series", str(phase)]) == 0
@@ -226,9 +267,15 @@ def test_a_missing_phase_directory_is_an_error(tmp_path: Path) -> None:
 def test_a_malformed_attempt_is_an_error_and_never_the_cap(
     phase: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (phase / "verdict.json").write_text(json.dumps({
-        "attempt": "N/A", "verdict": "pass", "findings": [],
-    }))
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": "N/A",
+                "verdict": "pass",
+                "findings": [],
+            }
+        )
+    )
 
     assert main(["check", str(phase)]) == 2
 
@@ -240,7 +287,9 @@ def test_a_malformed_attempt_is_an_error_and_never_the_cap(
     )
 
 
-def test_an_unreadable_verdict_file_is_an_error_rather_than_a_silent_pass(phase: Path) -> None:
+def test_an_unreadable_verdict_file_is_an_error_rather_than_a_silent_pass(
+    phase: Path,
+) -> None:
     """Skipping it would let a phase past the cap on the strength of a file nobody could read."""
     (phase / "verdict.json").write_text("{not json")
     assert main(["check", str(phase)]) == 2
@@ -250,13 +299,21 @@ def test_an_unreadable_verdict_file_is_an_error_rather_than_a_silent_pass(phase:
 def test_every_shape_that_is_not_a_whole_number_of_attempts_is_an_error(
     phase: Path, value: object
 ) -> None:
-    (phase / "verdict.json").write_text(json.dumps({
-        "attempt": value, "verdict": "pass", "findings": [],
-    }))
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": value,
+                "verdict": "pass",
+                "findings": [],
+            }
+        )
+    )
     assert main(["check", str(phase)]) == 2
 
 
-def test_an_absent_or_zero_attempt_still_falls_back_rather_than_erroring(phase: Path) -> None:
+def test_an_absent_or_zero_attempt_still_falls_back_rather_than_erroring(
+    phase: Path,
+) -> None:
     """Attempts are 1-based, so absent, empty and zero all mean "not declared" — unchanged."""
     archive(phase, 1, 6)
     (phase / "verdict.json").write_text(json.dumps({"verdict": "fail", "findings": []}))
@@ -269,9 +326,15 @@ def test_a_malformed_archive_does_not_crash_the_series(
     """Its filename carries the number authoritatively, so falling back to it invents nothing — and
     losing the whole series to one malformed archive would hide the trickle this module makes
     visible."""
-    (phase / "verdict-attempt-1.json").write_text(json.dumps({
-        "attempt": "oops", "verdict": "fail", "findings": [{"id": "a"}],
-    }))
+    (phase / "verdict-attempt-1.json").write_text(
+        json.dumps(
+            {
+                "attempt": "oops",
+                "verdict": "fail",
+                "findings": [{"id": "a"}],
+            }
+        )
+    )
     verdict(phase, 2, 1)
 
     assert [a.number for a in attempts(phase)] == [1, 2]

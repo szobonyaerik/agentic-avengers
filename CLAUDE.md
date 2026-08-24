@@ -1181,3 +1181,40 @@ the current project into the live cache and registry (`AVENGER_PLUGIN_CACHE_ROOT
 *other* caller off a real installation is that the `cut()` function has no default `cache_root` or
 `pin_path`, and `check` writes nowhere. `tests/test_plugin_release.py` proves every guard here red
 before green.
+
+### 10. Every guard is proven by going RED (issue #69)
+Issue #69 is one class with many symptoms: **a component reports success while doing nothing, and
+nothing notices.** Its instance list closed one at a time, but the issue names the only test that
+says the class is fixed, and it is not the list emptying: **pick any check in the pipeline, break the
+thing it guards, and confirm it goes red.** A green suite proves the tests pass; it says nothing
+about whether any of them would notice the defect its guard exists for.
+
+**So each guard declares how to break it, and something breaks it.** `scripts/guards.toml` is the
+inventory - per guard: the file that decides, the defect it catches, the tests that must go red, and
+the exact edit that reintroduces the defect. `scripts/guard_proof.py` applies each mutation to a
+**throwaway copy**, runs the named tests and asserts they FAIL; it never writes inside the working
+tree, so a killed sweep cannot leave a neutered guard behind. Five outcomes, one of them a pass:
+**proven** · **unproven** (the defect is back and the suite does not care - the guard is decoration)
+· **unanchored** (the anchor is no longer in the file, so the declaration drifted from the code and
+nothing was proved - a finding, never a skip) · **baseline-red** · **errored**.
+
+**The UNDECLARED count is the interesting number**, because those guards have no evidence at all. It
+is derived, never listed: the enforcement surfaces are `scripts/gate_ci.sh` and every hook script
+`hooks/hooks.json` runs, and the universe is those plus every sibling script they invoke **and every
+sibling module those import**, to a fixed point - `gate_plausibility.py`, the guard issue #69's own
+last instance produced, is reached by no shell line at all. Each file is declared or carries an
+`[[exempt]]` entry saying why it decides nothing; there is no third state, and an exemption nothing
+invokes any more is a finding exactly as a stale guard is.
+
+**Diff-scoped on the applicability boundary** (§3a): `check` binds what the change touches - the
+guards whose implementation, mutation target or tests it edits, plus any guard it newly puts on the
+enforcement path with no entry - and counts the rest by name; `prove` proves every declared guard
+and prints the undeclared count without failing on it; `report` is the deliberate full audit, never
+what CI runs unconditionally. Unknowable scope enforces nothing and says so.
+
+**The harness is in its own inventory and proved by its own mechanism**: a guard deliberately built
+to be worthless - a real check whose test only exercises the happy path - must come back `unproven`
+and fail the run (`tests/test_guard_proof.py`). **What it does not claim** is stated at the module: it
+proves a named test set NOTICES a named defect, not that the guard is correct, not that the mutation
+is the only way back to the defect, and it cannot see a check that is neither declared nor invoked
+from an enforcement surface.

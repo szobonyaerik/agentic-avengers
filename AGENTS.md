@@ -477,6 +477,27 @@ fail-closed rule in `scripts/` and both runtimes get it; the plugin does not nee
 grow logic of its own. (It used to reimplement every gate in TypeScript, and the two copies drifted —
 the TS side kept a zero-survivor mutation gate and an unscoped verifier after the bash side moved on.)
 
+## Every guard is proven by going RED (issue #69)
+
+A green suite proves the tests pass, not that any of them would notice the defect its guard exists
+for. So each guard declares how to break it: `scripts/guards.toml` names, per guard, the file that
+decides, the defect it catches, the tests that must go red, and the exact edit that reintroduces the
+defect. `scripts/guard_proof.py` applies each mutation to a **throwaway copy**, runs the named tests
+and asserts they FAIL - never inside the working tree. `unproven` (the defect is back and the suite
+stayed green) and `unanchored` (the anchor moved, so nothing was proved) are findings, not skips.
+
+The **undeclared** count is the interesting number: every `scripts/*` the gate floor or a hook
+invokes, and every sibling module those import, is either declared or carries an `[[exempt]]` entry
+saying why it decides nothing.
+
+    python3 scripts/guard_proof.py check            # diff-scoped: what this change is responsible for
+    python3 scripts/guard_proof.py prove            # every declared guard (the undeclared count is printed)
+    python3 scripts/guard_proof.py report           # the full audit, undeclared count enforced
+    python3 scripts/guard_proof.py discover --all   # who invokes what, and what nobody declared
+
+Adding a check to the gate floor or a hook means adding its entry here in the same change. Full
+statement in `skills/pipeline-conventions/SKILL.md`.
+
 ## Environment
 | var | default | effect |
 |---|---|---|

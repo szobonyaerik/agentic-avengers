@@ -1,0 +1,60 @@
+# The guard-proof sweep, on its own schedule.
+#
+# `pipeline-gates` already proves every declared guard on each PR. This exists for the drift a PR
+# cannot show: a dependency, a runner or a toolchain change that quietly makes a guard's test stop
+# noticing its defect, with nobody's diff to attach it to.
+#
+# `audit: true` on a manual run switches to the full audit, which additionally enforces the
+# UNDECLARED count over the whole tree - the guards nobody has ever broken on purpose. That is the
+# number issue #69 is really about, and it is deliberately something somebody runs rather than a
+# condition on every build: a rule added after the tree it runs on binds what a change touches.
+name: guard-proof
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      audit:
+        description: "Enforce the undeclared count over the whole tree, not only the declared guards"
+        type: boolean
+        default: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test tooling
+        run: pip install pytest ruff
+
+      - name: Sweep
+        id: sweep
+        run: |
+          set -uo pipefail
+          if [ "${{ inputs.audit }}" = "true" ]; then VERB=report; else VERB=prove; fi
+          python3 scripts/guard_proof.py "$VERB" --jobs 4 --json > guard-proof.json
+          FAILED=$?
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          report = json.load(open("guard-proof.json"))
+          print(f"## guard-proof ({report['scope']})\n")
+          print(f"- **{report['declared']}** guards declared")
+          print(f"- **{report['proved']}** proved")
+          print(f"- **{report['undeclared']}** invoked by the pipeline with no inventory entry\n")
+          for proof in report["proofs"]:
+              if proof["status"] != "proven":
+                  print(f"- `{proof['guard']}` — **{proof['status']}**")
+          PY
+          exit "$FAILED"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: guard-proof
+          path: guard-proof.json

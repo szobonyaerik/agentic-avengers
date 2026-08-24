@@ -10,3 +10,13 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      # Every check must prove it ran (issue #69). Diff-scoped: it breaks the guards THIS commit
+      # touches in a throwaway copy and asserts their tests go red, and it refuses a guard the
+      # commit puts on the enforcement path with no entry in scripts/guards.toml. Guards the commit
+      # does not touch are counted and named, never blocked - `guard_proof.py report` is the audit.
+      - id: guard-proof
+        name: guard proof (the guards this commit touches actually go red)
+        entry: python3 scripts/guard_proof.py check
+        language: system
+        pass_filenames: false
+        always_run: true
