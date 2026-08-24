@@ -914,7 +914,12 @@ phases reported "ruff clean" and **neither statement was evidence about formatti
 nothing in the gate could have failed on it. `scripts/lint_gate.py` runs both and is what
 `.no-mistakes.yaml` and `gate_ci.sh` now call, so a future edit back to a bare `ruff check`
 reintroduces the gap at the one place a test pins. Rules stay unscoped — the tree is clean and stays
-clean. **Format is diff-scoped** on the applicability boundary (§3a): 93 files predate the rule and a
+clean. **Both dimensions answer to a declared contract rather than to whichever ruff is installed**: with
+no config in the repository the verdict was a property of the toolchain, and ruff 0.16's wider
+defaults reported 504 findings on a tree nobody had changed, so `ruff.toml` names the rule set; and
+the format half parses **both** shapes ruff has used to name a drifted file, failing with an ERROR
+on drift it cannot read instead of letting an empty list read as clean. **Format is diff-scoped** on
+the applicability boundary (§3a): 93 files predate the rule and a
 gate that failed the build over them would be a wedge, so what the change touches is enforced and
 the rest is counted and named. `--all` audits the tree. When git cannot state what changed the format
 half enforces **nothing** and says so, rather than falling back to enforcing everything; a missing

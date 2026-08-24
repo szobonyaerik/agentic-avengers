@@ -307,7 +307,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `scripts/lint_gate.py` runs `ruff check` (whole tree) *and* `ruff format --check` (diff-scoped on
    the applicability boundary, so a tree written before the rule is counted rather than held
    hostage); a bare `ruff check` says nothing about formatting and two phases reported "ruff clean"
-   about a dimension nothing could have failed on. **A verdict names what produced it** —
+   about a dimension nothing could have failed on. **Both dimensions answer to a declared contract,
+   never to whichever ruff is installed** — `ruff.toml` names the rule set, because with no config
+   the gate's verdict was a property of the toolchain (ruff 0.16 widened its defaults and reported
+   504 findings on a tree nobody had changed), and the format half parses **both** shapes ruff has
+   used to name a drifted file, refusing as an ERROR any drift it could not read rather than
+   reporting the empty list as clean — reading one shape made a newer ruff's drift arrive as a
+   silent pass, which is the exact defect this gate exists to remove. **A verdict names what produced it** —
    `gate_runner.py` announces model, family and transport for every reached verdict, and the spec
    gate stamps them onto the spec as `<gate>_gated_by` beside the hash and the verdict; no
    attribution is recorded as `unrecorded`, a named state rather than an absent key.

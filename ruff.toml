@@ -1,0 +1,12 @@
+# The lint gate's rule set, declared rather than inherited.
+#
+# This repository shipped with NO ruff configuration, so `ruff check` ran whatever the installed
+# ruff version happened to select by default. That is a gate whose verdict is a property of the
+# toolchain rather than of the code: CI installs ruff unpinned, ruff 0.16 widened its defaults, and
+# the same tree that was clean on 0.15.5 reported 504 findings - none of them a change anyone made.
+# A rule nobody in this repository chose is not a rule this repository can be held to.
+#
+# The set below is the one this tree was actually written against (ruff's historical default).
+# Widening it is a deliberate edit here, with the findings fixed in the same change.
+[lint]
+select = ["E4", "E7", "E9", "F"]
