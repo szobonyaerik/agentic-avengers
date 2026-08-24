@@ -18,6 +18,7 @@ when its claim is violated:
 The last two tests run it against the real repository, which is where a regression would land.
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -53,6 +54,12 @@ def scaffold(root: Path) -> None:
         ].endswith(".md"):
             emitter.write_text(
                 f"---\nreaders: {'; '.join(spec['readers']) or 'none'}\n---\n"
+            )
+        elif spec["emitted_by"].endswith(".md"):
+            emitter.write_text(
+                "Prose about the artifact.\n\n```markdown\n---\n"
+                "readers: declared in the block this stage tells its writer to copy\n"
+                "---\n```\n"
             )
         else:
             emitter.write_text('readers: declared here\n"readers"\n')
@@ -92,7 +99,98 @@ def test_a_non_template_emitter_that_never_says_readers_is_a_violation(
         "# the Breaker writes a record and is told nothing about who reads it\n"
     )
     problems = check_contract(tmp_path)
-    assert any("never says so" in p and "breaker.json" in p for p in problems), problems
+    assert any("breaker.json" in p for p in problems), problems
+
+
+# --- C2: an instruction, not a sentence about one -------------------------------------------------
+
+
+def test_the_real_slice_review_instruction_cannot_be_deleted_while_c2_stays_green(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's exact reproduction, on the REAL canonical sources.
+
+    `review-<slice>.md` is the class issue #29 added to the table, and its writer instruction is the
+    `readers:` line inside the output block of `skills/spec-isolation-review/SKILL.md`. Deleting
+    that line used to leave `check --contract` clean, because two lines below it a sentence reads
+    "`readers:` is not decoration" and the bare substring test could not tell an instruction from a
+    remark about one. So C2 was decoration on precisely the instruction it was built to protect.
+
+    Proven by FAILING: the whole canonical source set is copied, the one line is removed, the prose
+    sentence is left in place, and the check must go red naming that emitter.
+    """
+    root = tmp_path / "tree"
+    for name in ("agents", "skills", "commands", "prompts", "docs", "scripts"):
+        source = REPO / name
+        if source.is_dir():
+            shutil.copytree(source, root / name, symlinks=False, dirs_exist_ok=True)
+    shutil.copy2(REPO / "AGENTS.md", root / "AGENTS.md")
+
+    assert is_canonical_repo(root), "the copy must be judged canonical or C2 never runs"
+    assert check_contract(root) == [], (
+        "the real tree is clean before the line is removed"
+    )
+
+    emitter = READ_PATH["review-<slice>.md"]["emitted_by"]
+    skill = root / emitter
+    body = skill.read_text(encoding="utf-8")
+    instruction = (
+        "readers: the invoking spec review @ once, at the end of the fan-out\n"
+    )
+    assert instruction in body, "the writer instruction moved; update this reproduction"
+    skill.write_text(body.replace(instruction, ""), encoding="utf-8")
+    assert "`readers:` is not decoration" in skill.read_text(encoding="utf-8"), (
+        "the prose sentence is what made the old substring test pass; it must stay"
+    )
+
+    problems = check_contract(root)
+    assert any(emitter in p for p in problems), problems
+
+
+def test_a_markdown_emitter_that_only_talks_about_readers_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The same shape in miniature: a sentence naming the key is not an instruction to write it."""
+    scaffold(tmp_path)
+    emitter = READ_PATH["breaker.json"]["emitted_by"]
+    (tmp_path / emitter).write_text(
+        "Write the record. Remember that `readers:` is not decoration.\n"
+    )
+    problems = check_contract(tmp_path)
+    assert any(emitter in p and "not an instruction" in p for p in problems), problems
+
+
+def test_a_markdown_emitter_shipping_the_key_in_a_json_block_is_accepted(
+    tmp_path: Path,
+) -> None:
+    """`breaker.json` has no frontmatter, so its shipped shape is a JSON fence, and that counts.
+
+    The fence is what the rule asks for, never YAML specifically: an emitter for a JSON artifact
+    ships an object with a `readers` key, and demanding frontmatter there would prescribe a shape
+    the artifact does not have.
+    """
+    scaffold(tmp_path)
+    (tmp_path / READ_PATH["breaker.json"]["emitted_by"]).write_text(
+        'Write it:\n\n```json\n{"verdict": "clean", "readers": ["breaker_gate.py"]}\n```\n'
+    )
+    assert check_contract(tmp_path) == []
+
+
+def test_a_script_emitter_still_passes_on_the_key_written_in_code(
+    tmp_path: Path,
+) -> None:
+    """The stated limit: for a `.py` or `.sh` emitter C2 confirms the key is there, not where.
+
+    There is no shipped shape to point at in code, and locating a dict key by parsing arbitrary
+    Python buys less than it costs, so this branch keeps the substring test and says so.
+    """
+    scaffold(tmp_path)
+    emitter = READ_PATH["carried.json"]["emitted_by"]
+    assert emitter.endswith(".py"), emitter
+    (tmp_path / emitter).write_text(
+        'def write(entry):\n    entry["readers"] = ["the next phase\'s spec writer"]\n'
+    )
+    assert check_contract(tmp_path) == []
 
 
 def test_a_correctly_instructed_tree_is_clean(tmp_path: Path) -> None:

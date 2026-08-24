@@ -588,7 +588,12 @@ def check_sources(root: Path) -> list[str]:
 #       and not the second, which is what put `emitted_by` in the table in the first place. A
 #       markdown template must carry the line in its own frontmatter, not merely mention it in
 #       prose - a template that only talks about `readers:` teaches a document that fails
-#       `check_artifacts`.
+#       `check_artifacts`. Any OTHER markdown emitter - an agent definition, a skill - must show it
+#       inside a fenced block, the shape it tells its writer to produce (`instructs_readers`).
+#       **What C2 does not decide, said rather than implied**: for a NON-markdown emitter, a `.py`
+#       or a `.sh` that writes the key in code, it confirms the key appears somewhere in the file
+#       and NOT where, because there is no shipped shape to point at and locating a dict key by
+#       parsing arbitrary code buys less than it costs.
 #   C3  the INVERSE, which nothing checked before: an artifact class a canonical source names is
 #       one this table governs. A stage told to write, link or read a document the read path has no
 #       entry for is a class with no decision recorded either way - `fidelity-report.md`,
@@ -649,6 +654,12 @@ LAYOUT_NAME_RE = re.compile(r"[A-Za-z0-9_<>*.-]+\.(?:md|json)")
 #: YAML frontmatter write the line.
 READERS_TOKENS = ("readers:", '"readers"', "'readers'")
 
+#: A markdown fence, opening or closing. A stage that instructs a writer to produce a document ships
+#: that document's SHAPE inside one - YAML frontmatter for a markdown artifact, a JSON object for a
+#: JSON one - so a fence is where C2 looks in a markdown emitter, and prose outside every fence does
+#: not count. See `instructs_readers`.
+FENCE_RE = re.compile(r"^[ \t]*(?:```|~~~)")
+
 
 def _contract_sources(root: Path) -> list[Path]:
     """Every canonical file that may name an artifact, in a stable order."""
@@ -701,6 +712,45 @@ def is_canonical_repo(root: Path) -> bool:
     return (root / CANONICAL_MARKER).is_file()
 
 
+def fenced_blocks(text: str) -> list[str]:
+    """The body of every fenced code block, which is where a stage ships a document's shape.
+
+    Unclosed fences are tolerated: the last block simply runs to the end of the file. The fence's
+    info string (` ```markdown `, ` ```json `) is deliberately not read - what matters is that the
+    declaration sits in the shipped shape rather than in a sentence about it.
+    """
+    blocks: list[str] = []
+    current: list[str] | None = None
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            if current is None:
+                current = []
+            else:
+                blocks.append("\n".join(current))
+                current = None
+            continue
+        if current is not None:
+            current.append(line)
+    if current is not None:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def instructs_readers(text: str) -> bool:
+    """Whether a markdown emitter really INSTRUCTS `readers:`, rather than talking about it.
+
+    C2's whole claim is that the declared writer instruction produces the line, and for a markdown
+    emitter that is only true when the declaration is in the shape the writer is told to copy. A
+    bare substring test over the file is satisfied by any nearby sentence, which is how the
+    `review-<slice>.md` instruction this table added could be deleted from its own output block with
+    the check that exists to catch that removal staying green: two lines below it a sentence reads
+    "`readers:` is not decoration", and the token is in it.
+    """
+    return any(
+        token in block for block in fenced_blocks(text) for token in READERS_TOKENS
+    )
+
+
 def _emitter_problems(root: Path) -> list[str]:
     """C1 and C2: the table's declared writer instruction exists, and it instructs the line."""
     problems: list[str] = []
@@ -727,6 +777,15 @@ def _emitter_problems(root: Path) -> list[str]:
                     f"{emitter} is the template for `{name}` and carries no `readers:` in its own "
                     f"frontmatter. A template that mentions the line only in prose teaches a "
                     f"document that fails `check` - authored exactly as instructed."
+                )
+            continue
+        if emitter.endswith(".md"):
+            if not instructs_readers(text):
+                problems.append(
+                    f"{emitter} is where `{name}`'s writer is told to declare `readers:`, and no "
+                    f"fenced block in it shows the line. Prose ABOUT `readers:` is not an "
+                    f"instruction to write it: put the declaration inside the block that ships the "
+                    f"document's shape, or stop declaring readers for `{name}` in READ_PATH."
                 )
             continue
         if not any(token in text for token in READERS_TOKENS):
