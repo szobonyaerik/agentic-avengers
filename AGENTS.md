@@ -42,11 +42,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    #29: documentation making a claim nothing enforces. It reads **canonical stage instruction only**
    (`agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/`, `AGENTS.md`), never `scripts/`,
    `README.md` or `CLAUDE.md`, which belong to the consumer in a vendored install, and it asks the
-   `emitted_by` half only where the canonical source directory is present - a tree with no `agents/`
-   reports nothing-checked on stderr rather than a broken declaration. The sweep's `handover.md`
-   half is owed at a **passing `verdict.json`**, read the strict way `hook_verifier.sh` reads it:
-   `status: open` counted literally, waiver included, so the two gates cannot disagree about one
-   verdict.
+   `emitted_by` half only in the pipeline's OWN repository, detected by a marker `install.sh` does
+   not vendor - elsewhere it says on stderr that the direction was not checked and that the remedy
+   lives upstream, never a silent pass. The Stop-hook artifact sweep
+   (`scripts/phase_artifacts.py`) asks for **one** artifact, `test-mapping.md` beside each spec at
+   that spec's own `status: done` stamp; it never asks for `handover.md`, because `hook_verifier.sh`
+   gates that write on a passing verdict plus six further checks and a weaker second copy of a rule
+   only produces phases told to create a document nothing will let them write.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **The quality wall (per spec): ONE machine gate, then one human.** The spec gate fires on spec

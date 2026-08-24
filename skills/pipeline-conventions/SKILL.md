@@ -139,10 +139,13 @@ Five rules follow from it, and each one is enforced rather than requested:
   read `scripts/`, `README.md` or `CLAUDE.md`, because `gate_ci.sh` sets its root to the repository
   it runs in, so in a vendored install those are the CONSUMER's code, readme and instructions. A
   check that judges files the pipeline does not own is not a wider version of this check, it is a
-  different and wrong one. For the same reason the `emitted_by` half is asked only where the
-  canonical source directory is **present**: a vendored install receives no `agents/`, and an entry
-  emitted from one is reported as nothing-checked on stderr there rather than as a broken
-  declaration - never a silent clean pass, and never a check that cannot run where it ships.
+  different and wrong one. For the same reason the `emitted_by` half is asked only in the
+  pipeline's **own repository**, detected by `scripts/sync_opencode.py`, a marker `install.sh` does
+  not vendor: a consumer holds few of those writer instructions, so asked there the direction reports
+  the rest as broken declarations. Keying it on a DIRECTORY named `agents/` was the first attempt and
+  any consumer that owns one defeats it. Elsewhere the direction says on stderr that it was not
+  checked and that the remedy lives upstream - never a silent clean pass, and never a check that
+  cannot run where it ships.
   **What it does not see**: it reads two inventories — artifact PATH literals under `docs/features/`
   and the layout block above — so a class named only as a bare filename in prose is invisible to it.
   `fidelity-report.md` was named exactly that way, in two artifact lists and nowhere else; it was
@@ -159,22 +162,23 @@ stamped `status: done`**. It used to be keyed to the presence of `implementation
 no template, agent, skill, command or script instructed anyone to write, so the set of phases it
 swept was the set where an implementer happened to invent an undocumented file.
 
-**Its two halves are keyed at different moments, because they are owed at different moments.** Each
-spec owes `test-mapping.md` **beside the spec** at its own `status: done` stamp - the implementer
-owes a row the instant it stamps, which is what `spec_done_guard.py` enforces at the stamp itself,
-and the old sweep looked in the phase directory, which has not been that file's home since specs
-became `<n>.<k>` directories. The phase owes `handover.md` only once its `verdict.json` **passes**,
-never at the stamp: `hook_verifier.sh` refuses the handover write until the Verifier has passed the
-phase, so keyed on the stamp this check demanded a document the pipeline's own rules forbid writing
-yet, across a window spanning the whole verification stage - 3 attempts plus route-backs - that a
-resumable run legitimately stops inside. What "passes" means is imported rather than restated
-(`verifier_attempts` for the verdict record, `verdict_findings` for what is still open), and it is
-the **stricter** of the two readings that module owns: `status: open` counted literally, break-glass
-waiver included, which is what `hook_verifier.sh` counts before it allows the write. The attempt
-cap's reading treats a waiver as resolved, correctly, because it asks whether the LOOP has ended;
-answering with that one here made the sweep demand a handover the hook then refuses to let anyone
-write, which is a phase with no reachable end state. Between a sweep that asks too early and one
-that asks a little late, only the first can wedge a phase.
+**It asks for ONE artifact: `test-mapping.md` beside each spec, at that spec's own `status: done`
+stamp** - the implementer owes a row the instant it stamps, which is what `spec_done_guard.py`
+enforces at the stamp itself, and the old sweep looked in the phase directory, which has not been
+that file's home since specs became `<n>.<k>` directories.
+
+**It does NOT ask for `handover.md`, and that is a decision rather than an omission.**
+`hook_verifier.sh` owns that write and refuses it on a passing verdict PLUS six further checks -
+`verifier_precheck.py`, `required_skills.py audit`, `verifier_evidence.py check`,
+`breaker_gate.py due`, the carried-items gate and `emission_gate.py defects`. Any condition this
+sweep could ask is strictly WEAKER than that set, so a phase always exists where the Stop hook says
+"create handover.md before stopping" and the handover trigger then refuses to let anyone write it: a
+required skill with no observed load, a critical phase whose Breaker never ran, a verdict with no
+execution transcript. In each case the prescribed remedy is unavailable to a stage that has ended
+and only `GATE_BYPASS` is left. Duplicating the six checks here was considered and rejected for the
+reason this repository rejects it everywhere - **a second, weaker copy of a rule is not extra
+safety, it is the drift defect.** `doc_read_path.py check`, two lines later in the same hook, holds
+the card's byte cap and its `readers:` line once it exists.
 
 A spec whose every requirement is `binding: none` owes no row by construction
 and is exempt; a spec that declares no requirement at all, or whose requirements cannot be read, is

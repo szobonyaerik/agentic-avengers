@@ -31,23 +31,3 @@ def open_findings(findings: list[dict]) -> list[dict]:
         and str(f.get("status") or "open").lower() == "open"
         and not f.get("break_glass")
     ]
-
-
-def flagged_findings(findings: list[dict]) -> list[dict]:
-    """Findings whose `status` still literally reads `open`, waived or not.
-
-    A STRICTER reading than `open_findings`, and it lives here rather than anywhere else because the
-    difference between the two is the thing worth stating in one place. `open_findings` answers "is
-    the loop over?", and a break-glass waiver ends the loop by design. `hook_verifier.sh` asks a
-    narrower question before it will let a `handover.md` be written - it counts `status: open`
-    literally, waiver included, and fails closed on a `pass` that carries one - so anything deciding
-    whether that write will be ALLOWED has to ask this one instead. Answering with `open_findings`
-    made one gate demand a document the other refuses to let anyone write.
-
-    Same default as `open_findings`: a missing `status` reads as open.
-    """
-    return [
-        f
-        for f in findings
-        if isinstance(f, dict) and str(f.get("status") or "open").lower() == "open"
-    ]

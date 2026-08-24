@@ -6,15 +6,19 @@ list of phases where an implementer happened to invent an undocumented file, and
 that mostly does not run. That is why issue #29's outcome for that class is removal rather than a
 `readers: none` declaration: the honest replacement is a signal the pipeline actually produces.
 
-The replacement is `status: done` on every spec in the phase — the implementer's own completion
+The replacement is `status: done` on every spec in the phase - the implementer's own completion
 stamp, the one `hook_verifier.sh` fires its `spec-done` trigger on and `spec_done_guard.py` reverts
-when it is not backed by evidence - for the per-spec `test-mapping.md`, and a PASSING `verdict.json`
-for the phase's `handover.md`, which is the first moment `hook_verifier.sh` will let one be written.
+when it is not backed by evidence - and what it then asks for is the per-spec `test-mapping.md`,
+which is owed at that same stamp.
 
-The dangerous directions are a sweep that fires EARLY (on a phase still being built, or on one still
-inside the verification stage, where the handover it demands is forbidden), one that never fires at
-all (what the old key did), and one that fires on phases the change is not responsible for. All get
-a test.
+It asks for NOTHING else, and `test_the_sweep_never_asks_for_a_handover` pins that: `handover.md`
+belongs to `hook_verifier.sh`, which refuses the write on six checks beyond the verdict, so any
+condition this sweep could ask is weaker than the one that permits the write. A Stop hook demanding
+a document another gate refuses to let anyone write is a phase with no reachable end state.
+
+The dangerous directions are a sweep that fires EARLY (on a phase still being built), one that never
+fires at all (what the old key did), one that fires on phases the change is not responsible for, and
+one that reports a crash as an artifact somebody forgot to write. All get a test.
 """
 
 import json
@@ -32,7 +36,6 @@ from phase_artifacts import (  # noqa: E402
     main,
     phase_dirs,
     problems,
-    verified,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -74,8 +77,6 @@ readers: avenger-verifier @ per phase
 | R1.1.1 | tests/demo/1-slice/test_thing.py::test_thing | integration |
 """
 
-HANDOVER = "---\nreaders: the next phase's spec writer @ per phase\n---\n\nDone.\n"
-
 
 def phase(root: Path, *, status: str = "done", spec_body: str | None = None) -> Path:
     phase_dir = root / "docs" / "features" / "demo" / "phases" / "1-slice"
@@ -104,8 +105,7 @@ def verdict(
 
 
 def complete(phase_dir: Path) -> None:
-    verdict(phase_dir)
-    (phase_dir / "handover.md").write_text(HANDOVER)
+    """Everything this sweep asks of a finished phase, which is the mapping row and nothing else."""
     (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
 
 
@@ -151,104 +151,39 @@ def test_an_unreadable_status_is_not_done(tmp_path: Path) -> None:
     assert not finished_implementing(phase_dir)
 
 
-# --- the handover is owed at the VERDICT, not at the stamp -------------------------------------
-
-
-def test_a_done_phase_still_in_verification_is_not_asked_for_a_handover(
-    tmp_path: Path,
-) -> None:
-    """The regression: `hook_verifier.sh` REFUSES the handover write until a verdict passes.
-
-    Every spec stamped `done` with no verdict yet is the whole verification stage - 3 attempts plus
-    implementer route-backs - and `/avenger-run` is resumable, so a session ending here is ordinary
-    usage. Demanding the handover here wedges it: the hook that would write it refuses to.
-    """
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    assert not (phase_dir / "verdict.json").exists()
-    assert owed(tmp_path) == []
-
-
-def test_a_passing_verdict_is_what_makes_the_handover_owed(tmp_path: Path) -> None:
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    verdict(phase_dir)
-    assert verified(phase_dir)
-    found = owed(tmp_path)
-    assert any("handover.md" in problem for problem in found), found
-
-
-def test_a_failing_verdict_does_not_ask_for_a_handover(tmp_path: Path) -> None:
-    """A phase routed back is still in the loop, and the handover is still refused."""
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    verdict(phase_dir, result="fail", findings=[{"id": "F1", "status": "open"}])
-    assert not verified(phase_dir)
-    assert owed(tmp_path) == []
-
-
-def test_a_pass_still_carrying_an_open_finding_is_not_a_pass(tmp_path: Path) -> None:
-    """`verdict_findings` owns this, and `hook_verifier.sh` fails closed on it too."""
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    verdict(phase_dir, result="pass", findings=[{"id": "F1", "status": "open"}])
-    assert not verified(phase_dir)
-    assert owed(tmp_path) == []
-
-
-def test_a_waived_but_open_finding_does_not_make_a_handover_owed(
-    tmp_path: Path,
-) -> None:
-    """The regression: this sweep and `hook_verifier.sh` must not disagree about one verdict.
-
-    Break-glass is one of the three remedies the attempt cap prescribes, so a `pass` carrying a
-    waived-but-still-open finding is reachable through the documented route. `hook_verifier.sh`
-    counts `status: open` literally and fails closed on exactly that shape, so demanding a
-    `handover.md` here would demand a document the hook refuses to let anyone write - a phase with
-    no reachable end state. The sweep asks for less.
-    """
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    verdict(
-        phase_dir,
-        result="pass",
-        findings=[{"id": "F1", "status": "open", "break_glass": "waived by captain"}],
-    )
-    assert not verified(phase_dir)
-    assert owed(tmp_path) == []
-
-
-def test_a_waived_finding_that_is_no_longer_open_is_a_clean_pass(
-    tmp_path: Path,
-) -> None:
-    """The other side of it: once the finding is closed, the handover is owed as usual."""
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    verdict(
-        phase_dir,
-        result="pass",
-        findings=[{"id": "F1", "status": "fixed", "break_glass": "waived by captain"}],
-    )
-    assert verified(phase_dir)
-    assert any("handover.md" in problem for problem in owed(tmp_path))
-
-
-def test_an_unreadable_verdict_is_not_a_pass(tmp_path: Path) -> None:
-    phase_dir = phase(tmp_path, status="done")
-    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").write_text(MAPPING)
-    (phase_dir / "verdict.json").write_text("{not json")
-    assert not verified(phase_dir)
-    assert owed(tmp_path) == []
-
-
 # --- what a finished phase owes ---------------------------------------------------------------
 
 
-def test_a_missing_handover_is_a_violation(tmp_path: Path) -> None:
-    phase_dir = phase(tmp_path)
+def test_the_sweep_never_asks_for_a_handover(tmp_path: Path) -> None:
+    """The regression: a Stop hook must not demand what `hook_verifier.sh` may refuse to permit.
+
+    That hook gates the handover write on a passing verdict PLUS `verifier_precheck.py`,
+    `required_skills.py audit`, `verifier_evidence.py check`, `breaker_gate.py due`, the
+    carried-items gate and `emission_gate.py defects`. Any condition this sweep could ask is weaker
+    than that set, so asking at all produces phases told to create a document nothing will let them
+    write, with the prescribed remedies unavailable and only `GATE_BYPASS` left.
+    """
+    phase_dir = phase(tmp_path, status="done")
     complete(phase_dir)
-    (phase_dir / "handover.md").unlink()
-    assert any("handover.md" in p for p in owed(tmp_path))
+    verdict(phase_dir, result="pass")
+    assert not (phase_dir / "handover.md").exists()
+    assert owed(tmp_path) == []
+
+
+def test_no_verdict_state_makes_the_sweep_ask_for_anything_extra(
+    tmp_path: Path,
+) -> None:
+    """Whatever the verdict says, the sweep's answer is the same: it does not read one."""
+    for findings in (
+        [],
+        [{"id": "F1", "status": "open"}],
+        [{"id": "F1", "status": "fixed"}],
+    ):
+        root = tmp_path / f"tree{len(findings)}{findings and findings[0]['status']}"
+        phase_dir = phase(root, status="done")
+        complete(phase_dir)
+        verdict(phase_dir, result="pass", findings=findings)
+        assert owed(root) == []
 
 
 def test_the_mapping_is_looked_for_beside_the_SPEC_not_the_phase(
@@ -279,9 +214,7 @@ def test_a_complete_phase_is_clean(tmp_path: Path) -> None:
 def test_a_spec_whose_every_requirement_is_unbound_owes_no_mapping(
     tmp_path: Path,
 ) -> None:
-    phase_dir = phase(tmp_path, spec_body=SPEC_ALL_NONE)
-    verdict(phase_dir)
-    (phase_dir / "handover.md").write_text(HANDOVER)
+    phase(tmp_path, spec_body=SPEC_ALL_NONE)
     assert owed(tmp_path) == []
 
 
@@ -293,8 +226,7 @@ def test_a_done_spec_declaring_no_requirement_is_reported_not_exempted(
         tmp_path,
         spec_body="---\nfeature: demo\nstatus: done\n---\n\n# Spec\n\n## Requirements\n",
     )
-    verdict(phase_dir)
-    (phase_dir / "handover.md").write_text(HANDOVER)
+    assert phase_dir.is_dir()
     found = owed(tmp_path)
     assert any("declares no requirement at all" in p for p in found), found
 
@@ -311,10 +243,9 @@ def git(root: Path, *args: str) -> None:
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """A repository holding one phase that finished, passed, and owes both artifacts."""
+    """A repository holding one committed phase that finished and owes its mapping row."""
     git(tmp_path, "init", "-q")
     phase(tmp_path, status="done")
-    verdict(tmp_path / "docs" / "features" / "demo" / "phases" / "1-slice")
     git(tmp_path, "add", "-A")
     git(
         tmp_path,
@@ -345,7 +276,6 @@ def test_a_phase_the_diff_did_not_touch_is_counted_not_blocked(
 )
 def test_all_enforces_the_phase_the_diff_did_not_touch(repo: Path) -> None:
     found = problems(repo, enforce_all=True)
-    assert any("handover.md" in p for p in found), found
     assert any("test-mapping.md" in p for p in found), found
 
 
@@ -359,7 +289,6 @@ def test_a_phase_this_change_touched_is_enforced(repo: Path) -> None:
     )
     other.mkdir(parents=True)
     (other / "spec.md").write_text(SPEC.format(status="done"))
-    verdict(other.parent.parent)
     found = problems(repo)
     assert any("2-next" in p for p in found), found
     assert not any("1-slice" in p for p in found), found
@@ -369,10 +298,9 @@ def test_a_phase_this_change_touched_is_enforced(repo: Path) -> None:
 def test_an_unknowable_scope_enforces_nothing_and_says_so(
     tmp_path: Path, capsys
 ) -> None:
-    complete(phase(tmp_path))
-    (
-        tmp_path / "docs" / "features" / "demo" / "phases" / "1-slice" / "handover.md"
-    ).unlink()
+    phase_dir = phase(tmp_path)
+    complete(phase_dir)
+    (phase_dir / "specs" / "1.1-thing" / "test-mapping.md").unlink()
     assert problems(tmp_path) == []
     assert "scope is unknowable" in capsys.readouterr().err
 
@@ -390,6 +318,30 @@ def test_the_cli_returns_one_on_a_violation_and_zero_when_clean(tmp_path: Path) 
     assert main(["check", str(tmp_path), "--all"]) == 1
     complete(phase_dir)
     assert main(["check", str(tmp_path), "--all"]) == 0
+
+
+def test_a_sweep_that_could_not_answer_exits_two_and_not_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """§6: every stop names which it is, and this one had only one code for two situations.
+
+    Exit 1 reaches the operator as "create them before stopping" through
+    `hook_artifact_check.sh`, which is a remedy that cannot repair a crash. No artifact shape
+    reaches this branch today - every one of them is caught and reported as a finding - and that is
+    exactly why the split has to be structural rather than a handler for the failures somebody has
+    already thought of, so the collaborator is made to fail here.
+    """
+    complete(phase(tmp_path))
+
+    def exploding(_root: Path) -> list[Path]:
+        raise RuntimeError("the artifact tree could not be walked")
+
+    monkeypatch.setattr("phase_artifacts.phase_dirs", exploding)
+    assert main(["check", str(tmp_path), "--all"]) == 2
+    said = capsys.readouterr().err
+    assert "could not decide what" in said, said
+    assert "RuntimeError" in said, said
+    assert "create them before stopping" not in said, said
 
 
 def test_list_prints_only_the_finished_phases(tmp_path: Path, capsys) -> None:
@@ -429,7 +381,7 @@ def run_hook(root: Path) -> subprocess.CompletedProcess:
 @pytest.mark.subprocess(
     "the subject IS the hook: what it keys on is only observable by running it"
 )
-def test_the_hook_keys_on_the_stamp_and_the_verdict_not_on_a_stray_report(
+def test_the_hook_keys_on_the_stamp_not_on_a_stray_report(
     tmp_path: Path,
 ) -> None:
     """The regression that matters: the old key coming back into the hook.
@@ -437,7 +389,7 @@ def test_the_hook_keys_on_the_stamp_and_the_verdict_not_on_a_stray_report(
     A phase that has NOT finished carries a stray `implementation-report.md`. Under the old key that
     file alone put the phase in the swept set, and the sweep then demanded artifacts it does not
     owe. Under the new key the phase is not swept at all, so the hook passes over it - and the same
-    tree with the FINISHED phase's handover removed fails, which is what proves the sweep is
+    tree with the FINISHED phase's mapping row removed fails, which is what proves the sweep is
     running rather than silently doing nothing.
 
     Both phases are written after the initial commit, so both are inside the diff scope: a pass here
@@ -462,8 +414,8 @@ def test_the_hook_keys_on_the_stamp_and_the_verdict_not_on_a_stray_report(
     assert clean.returncode == 0, clean.stderr
     assert "NOT enforced" not in clean.stderr, clean.stderr
 
-    (done / "handover.md").unlink()
+    (done / "specs" / "1.1-thing" / "test-mapping.md").unlink()
     blocked = run_hook(tmp_path)
     assert blocked.returncode == 2, blocked.stdout
-    assert "handover.md" in blocked.stderr
+    assert "test-mapping.md" in blocked.stderr
     assert "implementation-report.md" not in blocked.stderr

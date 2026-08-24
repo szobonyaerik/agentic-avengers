@@ -68,20 +68,20 @@ deleted; the read directives changed.**
   Its replacement key is `scripts/phase_artifacts.py` - **a phase whose every spec is stamped
   `status: done`** - the pipeline's own completion stamp, written by the implementer, fired on by
   `hook_verifier.sh` and reverted by `spec_done_guard.py` when it is not backed by evidence. Nothing
-  new is written to make the sweep possible, which is the point. **Its two halves are keyed at
-  different moments, because they are owed at different moments**: each spec owes `test-mapping.md`
-  at its own `status: done` stamp, which is exactly what `spec_done_guard.py` already enforces at
-  the stamp, while the phase owes `handover.md` only once a **passing `verdict.json`** exists -
-  keyed on the stamp instead, it demanded a document `hook_verifier.sh` REFUSES to let anyone write
-  until the Verifier has passed the phase, and the window between the two spans the whole
-  verification stage, 3 attempts plus route-backs, which a resumable run legitimately stops inside.
-  That reading is imported, never restated: `verifier_attempts` owns what the verdict record is and
-  `verdict_findings` owns what is still open - and it is the **stricter** of the two readings that
-  module owns, `status: open` counted literally with the break-glass waiver included, because that
-  is what `hook_verifier.sh` counts before it allows the write. The attempt cap's reading treats a
-  waiver as resolved, correctly, since it asks whether the LOOP ended; answering with that one here
-  made the sweep demand a handover the hook then refuses to let anyone write, which is a phase with
-  no reachable end state, reached through the cap's own documented remedy. It is **diff-scoped** on the same boundary as every
+  new is written to make the sweep possible, which is the point. **What it asks for is ONE artifact**:
+  `test-mapping.md` beside each spec, owed at that spec's own `status: done` stamp, which is exactly
+  what `spec_done_guard.py` already enforces at the stamp. **It does NOT ask for `handover.md`, and
+  that is a decision rather than an omission**: `hook_verifier.sh` owns that write and refuses it on
+  a passing verdict PLUS `verifier_precheck.py`, `required_skills.py audit`,
+  `verifier_evidence.py check`, `breaker_gate.py due`, the carried-items gate and
+  `emission_gate.py defects`. Any condition the sweep could ask is strictly WEAKER than that set, so
+  a phase always exists where the Stop hook says "create handover.md before stopping" and the
+  handover trigger then refuses to let anyone write it - a required skill with no observed load, a
+  critical phase whose Breaker never ran - with the prescribed remedy unavailable to a stage that
+  has ended and only `GATE_BYPASS` left. Duplicating the six checks here was considered and rejected
+  for the reason this repository rejects it everywhere: **a second, weaker copy of a rule is not
+  extra safety, it is the drift defect.** `doc_read_path.py check`, two lines later in the same
+  hook, holds the card's cap and its `readers:` line once it exists. It is **diff-scoped** on the same boundary as every
   other check here (§3a) - a phase this change did not touch is counted and named, never blocked,
   which is what stops a consumer repo full of pre-rule phases failing every Stop it ever runs;
   `check --all` is the deliberate audit. The sweep's other half was
@@ -102,10 +102,13 @@ deleted; the read directives changed.**
   `prompts/`, `docs/templates/`, `AGENTS.md` - never `scripts/`, `README.md` or `CLAUDE.md`, since
   `gate_ci.sh` roots at the repository it runs in and those are the CONSUMER's own files there. That
   boundary is the check's correctness rather than its size, and it is also what keeps it honestly
-  **not diff-scoped**, for the same reason `--sources` is not. The `emitted_by` half is asked only
-  where the canonical source directory is **present**: a vendored install ships no `agents/`, so an
-  entry emitted from one is reported as nothing-checked on stderr rather than as a broken
-  declaration, which is the same boundary `stage_effort.py check` takes on the same tree - a check
+  **not diff-scoped**, for the same reason `--sources` is not. The `emitted_by` half is asked only in the
+  pipeline's **own repository**, detected by `scripts/sync_opencode.py`, a marker `install.sh`
+  deliberately does not vendor and a test pins as unvendored: a consumer holds few of those writer
+  instructions, so asked there the direction reports the rest as broken declarations and fails every
+  commit from installation onwards. Keying it on the presence of a DIRECTORY named `agents/` was the
+  first attempt and any consumer owning one of its own defeats it. Elsewhere the direction says on
+  stderr that it was not checked and that the remedy lives upstream, never a silent pass - a check
   that cannot run where it ships is the defect, not the finding. **What it does not see is
   stated rather than implied**: a class named only as a bare filename in prose is invisible to it -
   `fidelity-report.md` was named exactly that way and this check would not have caught it - because

@@ -8,12 +8,11 @@
 # no agent, no skill, no command, no script. A sweep keyed to an artifact nobody produces is a sweep
 # that mostly does not run, and it is why that class was removed rather than declared (issue #29).
 #
-# Its two halves are keyed at different moments: each spec owes `test-mapping.md` at its own
-# `status: done` stamp, and the phase owes `handover.md` only once a PASSING verdict.json exists,
-# because `hook_verifier.sh` refuses the handover write before that and the verification stage is a
-# window a resumable run legitimately stops inside. "Passing" is read the strict way that hook reads
-# it — `status: open` counted literally, break-glass waiver included — so the gate that asks for the
-# handover and the gate that allows it cannot disagree about one verdict.
+# It asks for ONE artifact: `test-mapping.md` beside each spec, owed at that spec's own
+# `status: done` stamp. It deliberately does NOT ask for `handover.md` — `hook_verifier.sh` owns
+# that write and refuses it on a passing verdict plus six further checks, so any condition this
+# sweep could ask is weaker than the one that permits the write, and asking at all produces phases
+# told to create a document nothing will let them write.
 # Diff-scoped like the check below it (no --all):
 # phases you have not touched are counted on stderr rather than blocking the session.
 set -uo pipefail

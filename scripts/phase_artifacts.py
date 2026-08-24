@@ -20,29 +20,26 @@ its `spec-done` trigger on it, and `scripts/spec_done_guard.py` reverts one that
 recorded mapping row and a green suite (issue #68). It is the same stamp `applicability.py` reads to
 call a spec shipped. Nothing new is written to make this check possible, which is the point.
 
-**The two halves it then requires are keyed to DIFFERENT moments, because they are owed at
-different moments.**
+**What it requires is ONE thing: `test-mapping.md` beside each spec, keyed to that spec's own
+`status: done`.** That is where the stamp is the right key: the implementer owes a mapping row the
+instant it stamps a spec done, which is exactly what `spec_done_guard.py` enforces at the stamp
+itself. The old sweep looked for this file in the PHASE directory, which has not been its home since
+specs became `<n>.<k>` directories, so that half asked for a file at a path the pipeline never
+writes.
 
-  * `test-mapping.md` beside each spec - PER SPEC, not per phase - is keyed to `status: done`, where
-    it is correct: the implementer owes a mapping row the instant it stamps a spec done, which is
-    exactly what `spec_done_guard.py` enforces at the stamp itself. The old sweep looked for this
-    file in the phase directory, which has not been its home since specs became `<n>.<k>`
-    directories, so that half asked for a file at a path the pipeline never writes.
-  * `handover.md` beside `verdict.json`, per phase, is keyed to a **passing verdict**, never to
-    `status: done`. Between the last spec being stamped and the Verifier passing the phase lies the
-    entire verification stage - up to 3 attempts plus implementer route-backs - and `hook_verifier.sh`
-    REFUSES the handover write until a passing `verdict.json` exists. Keyed on the stamp, this
-    check demanded a document the pipeline's own rules forbid writing yet, and `/avenger-run` is
-    resumable across sessions, so a session ending inside that window is ordinary usage rather than
-    an unfinished artifact set.
-
-"Passing verdict" is not re-derived here. `verifier_attempts.attempts` owns what the verdict record
-is (the live `verdict.json` plus its `verdict-attempt-<n>.json` archives) and `verdict_findings`
-owns what "still open" means, so this asks them: the latest attempt says `pass` and carries no
-finding still marked open, break-glass waiver included. That is the STRICTER of the two readings
-that module owns, and it is the one `hook_verifier.sh` applies before it will let a handover be
-written - see `verified`, where the difference is stated. A second reading here would be a second
-answer to a question the pipeline has already settled twice.
+**It does NOT ask for `handover.md`, and that is a decision rather than an omission.**
+`hook_verifier.sh` already owns whether a handover may be written, and it refuses on a passing
+verdict plus six further checks: `verifier_precheck.py`, `required_skills.py audit`,
+`verifier_evidence.py check`, `breaker_gate.py due`, the carried-items gate and
+`emission_gate.py defects`. Any condition this sweep could ask is strictly WEAKER than that set, so
+a phase always exists where the Stop hook says "create handover.md before stopping" and the handover
+trigger then refuses to let anyone write it - a required skill with no observed load, a critical
+phase whose Breaker never ran, a verdict with no execution transcript - and in each case the
+prescribed remedy is unavailable to a stage that has ended, leaving only `GATE_BYPASS`. Duplicating
+the six checks here was considered and rejected for the same reason it is rejected everywhere else
+in this repository: a second, weaker copy of a rule is not extra safety, it is the drift defect.
+`hook_verifier.sh` is the authoritative point for that artifact, and `doc_read_path.py check` - two
+lines later in this same hook - holds the card's byte cap and its `readers:` line once it exists.
 
 A spec that owes no mapping row at all is exempt by construction, read from
 `spec_done_guard.mapping_owed`: every requirement `binding: none` gets no test and no row (§4a), and
@@ -61,10 +58,11 @@ were scoped to remove. `check --all` is the full audit somebody runs deliberatel
 say what changed the scope is unknowable, so nothing is enforced and that is said out loud.
 
 **What it does not decide**, stated rather than implied: it reads stamps and file presence, never
-content, so a `handover.md` that says nothing and a `test-mapping.md` with no real row both satisfy
-it here - `doc_read_path.py` holds the first and `spec_done_guard.py` the second. It cannot tell a
-phase abandoned mid-verification from one still being verified, so a phase with no passing verdict
-is simply not asked for a handover, however long it has stood that way.
+content, so a `test-mapping.md` with no real row satisfies it here - `spec_done_guard.py` holds
+that at the stamp. It says nothing whatsoever about a phase's handover, its verdict, its evidence or
+its Breaker record; every one of those belongs to `hook_verifier.sh`. And a phase abandoned
+mid-verification is indistinguishable to it from one still being verified, which costs nothing now
+that the only thing it asks for is owed at the stamp rather than at the close.
 """
 
 from __future__ import annotations
@@ -82,10 +80,12 @@ from spec_done_guard import (  # noqa: E402
     mapping_owed,
 )
 from spec_gate_state import frontmatter  # noqa: E402
-from verifier_attempts import UnreadableVerdict, attempts  # noqa: E402
 
 DONE = "done"
-PASS = "pass"
+
+CLEAN = 0
+OWED = 1  # a phase genuinely owes an artifact. The remedy is to write it.
+UNDECIDABLE = 2  # the sweep could not answer at all. §6: every stop names which it is.
 
 
 def spec_paths(phase_dir: Path) -> list[Path]:
@@ -116,35 +116,6 @@ def finished_implementing(phase_dir: Path) -> bool:
     """Whether every spec this phase holds is stamped `status: done`."""
     specs = spec_paths(phase_dir)
     return bool(specs) and all(_status(spec) == DONE for spec in specs)
-
-
-def verified(phase_dir: Path) -> bool:
-    """Whether the phase's latest verdict PASSES carrying no finding still marked open.
-
-    Taken from the modules that own each half rather than restated: `verifier_attempts.attempts` for
-    what the verdict record is, and `verdict_findings` for what open means. Which of that module's
-    two readings applies is the whole question here, and this asks for LESS than the attempt cap
-    does. `Attempt.unresolved` counts `open_findings`, which treats a break-glass waiver as
-    resolved, because the cap asks whether the loop has ended and a waiver ends it.
-    `Attempt.flagged` counts `status: open` literally, and that is the reading `hook_verifier.sh`
-    takes before it will let a `handover.md` be written: a `pass` carrying a waived-but-open finding
-    fails closed there. Answering with `unresolved` made this sweep demand a handover the hook then
-    refused to let anyone write - a phase with no reachable end state, reached through the documented
-    remedy at the attempt cap.
-
-    So the two gates are aligned at the strict end, deliberately: between a sweep that asks for a
-    document too early and one that asks a little late, only the first can wedge a phase. An
-    unreadable or absent record is NOT a pass for the same reason - under-report, so the sweep asks
-    for nothing it cannot show is owed.
-    """
-    try:
-        records = attempts(phase_dir)
-    except (UnreadableVerdict, OSError, ValueError):
-        return False
-    if not records:
-        return False
-    latest = records[-1]
-    return latest.verdict == PASS and latest.flagged == 0
 
 
 def phase_dirs(root: Path) -> list[Path]:
@@ -181,12 +152,6 @@ def phase_problems(phase_dir: Path) -> list[str]:
     if not finished_implementing(phase_dir):
         return []
     found: list[str] = []
-    handover = phase_dir / "handover.md"
-    if verified(phase_dir) and not handover.is_file():
-        found.append(
-            f"{handover}: missing (this phase has a passing verdict.json and every spec in it is "
-            f"`status: done`)"
-        )
     for spec_path in spec_paths(phase_dir):
         found += _spec_problems(spec_path)
     return found
@@ -269,15 +234,25 @@ def main(argv: list[str] | None = None) -> int:
         for phase_dir in phase_dirs(root):
             if finished_implementing(phase_dir):
                 print(phase_dir.relative_to(root).as_posix())
-        return 0
+        return CLEAN
 
-    found = problems(root, enforce_all=args.enforce_all)
+    try:
+        found = problems(root, enforce_all=args.enforce_all)
+    except Exception as exc:  # noqa: BLE001 - the split IS the point, see below
+        print(
+            f"[phase_artifacts] could not decide what {root} owes: "
+            f"{type(exc).__name__}: {exc}. Nothing is claimed missing. This is a defect in the "
+            f"sweep or in an artifact it reads, not a document anyone forgot to write, so the "
+            f"remedy is not 'create it'.",
+            file=sys.stderr,
+        )
+        return UNDECIDABLE
     if found:
         print("Phase artifacts missing (create them before stopping):", file=sys.stderr)
         for problem in found:
             print(f"  - {problem}", file=sys.stderr)
-        return 1
-    return 0
+        return OWED
+    return CLEAN
 
 
 if __name__ == "__main__":

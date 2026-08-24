@@ -562,10 +562,11 @@ def check_sources(root: Path) -> list[str]:
 # making a claim nothing enforces. Three claims, all mechanical:
 #
 #   C1  every entry's `emitted_by` names a file that EXISTS. A declared writer instruction that is
-#       not on disk is fiction, and nothing else would ever notice. Asked only where the canonical
-#       source DIRECTORY is present: a vendored install has no `agents/`, and reporting every entry
-#       emitted from one as a broken declaration there would fail every commit in that repository
-#       from installation onwards. Absent is reported on stderr, never a silent clean pass.
+#       not on disk is fiction, and nothing else would ever notice. Asked ONLY in the canonical
+#       pipeline repository (`is_canonical_repo`): a vendored install holds few of these files, and
+#       reporting the rest as broken declarations there would fail every commit in that repository
+#       from installation onwards. Not checked is said out loud on stderr, never a silent clean
+#       pass, and it names the remedy as living upstream.
 #   C2  that file actually INSTRUCTS the `readers:` line. Declaring a reader in this table is not
 #       the same as telling anyone to write it down: three document classes shipped with the first
 #       and not the second, which is what put `emitted_by` in the table in the first place. A
@@ -615,6 +616,10 @@ ARTIFACT_PATH_RE = re.compile(r"docs/features/[A-Za-z0-9_<>*./-]+")
 #: A `<...>` placeholder segment, stripped before deciding whether a filename names anything real.
 PLACEHOLDER_RE = re.compile(r"<[^>]*>|\*")
 
+#: The file that says this tree is the pipeline's own repository. Chosen because `scripts/install.sh`
+#: SRC_SETS does not vendor it, so no consumer repo acquires it by installing the pipeline.
+CANONICAL_MARKER = "scripts/sync_opencode.py"
+
 #: The other inventory: the fenced tree under `- **Layout:**` in the canonical rulebook.
 LAYOUT_SOURCE = "skills/pipeline-conventions/SKILL.md"
 LAYOUT_HEADING = "**Layout:**"
@@ -644,27 +649,43 @@ def _contract_sources(root: Path) -> list[Path]:
     return found
 
 
-def _emitter_dir_absent(root: Path, emitter: str) -> bool:
-    """Whether the canonical source directory an `emitted_by` lives under is not in this tree.
+def is_canonical_repo(root: Path) -> bool:
+    """Whether this tree is the pipeline's OWN repository rather than a repo that installed it.
 
-    A vendored install receives `skills/`, `prompts/`, `docs/templates/` and part of `scripts/`, and
-    no `agents/` at all (`scripts/install.sh` SRC_SETS). Asked there, C1 would report every entry
-    emitted by an agent definition as a broken declaration and fail every commit and every CI run in
-    that repository from installation onwards, with no diff-scope and no exception route - a check
-    that cannot run where it ships. This is the same boundary `stage_effort.py check` already takes
-    for the same tree: nothing to read is reported, never resolved to a verdict either way.
+    C1 and C2 ask whether every declared writer instruction is on disk and really instructs
+    `readers:`, and only the canonical repository holds all of them: `scripts/install.sh` SRC_SETS
+    vendors `skills/`, `prompts/`, `docs/templates/`, `AGENTS.md` and part of `scripts/`, and no
+    `agents/` at all. Asked in a consumer repo this direction reports every agent-emitted entry as a
+    broken declaration and fails every commit and every CI run there from installation onwards, with
+    no diff-scope and no exception route - a check that cannot run where it ships.
 
-    An emitter whose directory IS present and whose file is missing stays a violation: that is a
-    real broken declaration rather than an absent inventory.
+    The marker is a file `install.sh` deliberately does not vendor, NOT the presence of a directory
+    named `agents/`. Keying on the name was the first attempt and it is defeated by any consumer
+    that owns a top-level `agents/` of its own, which is ordinary in this kind of project: the check
+    then reads that unrelated directory as the canonical inventory and reports the pipeline's own
+    entries as missing. `scripts/sync_opencode.py` is the canonical-source tooling of §7, it exists
+    only where canonical sources are edited, and `tests/test_frontmatter_contract.py` pins it as
+    absent from SRC_SETS so a future vendoring change cannot turn this marker into a silent no-op.
+
+    What this does NOT decide: it says nothing about C3, which reads the vendored stage instructions
+    and runs everywhere.
     """
-    top = emitter.split("/", 1)[0]
-    return not (root / top).is_dir()
+    return (root / CANONICAL_MARKER).is_file()
 
 
 def _emitter_problems(root: Path) -> list[str]:
     """C1 and C2: the table's declared writer instruction exists, and it instructs the line."""
+    if not is_canonical_repo(root):
+        print(
+            f"[doc_read_path] contract: the `emitted_by` direction was NOT CHECKED under {root} - "
+            f"this tree is not the canonical pipeline repository ({CANONICAL_MARKER} is absent, and "
+            f"`scripts/install.sh` does not vendor it), so most declared writer instructions are not "
+            f"here to read. A broken `emitted_by` declaration is fixed upstream in agentic-avengers, "
+            f"not here. The artifact-class direction was checked as usual.",
+            file=sys.stderr,
+        )
+        return []
     problems: list[str] = []
-    unread: dict[str, list[str]] = {}
     for name, spec in READ_PATH.items():
         emitter = spec.get("emitted_by")
         if not emitter:
@@ -673,9 +694,6 @@ def _emitter_problems(root: Path) -> list[str]:
                 f"declared reader nobody is instructed to write down is a promise with no "
                 f"mechanism, which is the gap `emitted_by` exists to close."
             )
-            continue
-        if _emitter_dir_absent(root, emitter):
-            unread.setdefault(emitter.split("/", 1)[0], []).append(name)
             continue
         path = root / emitter
         if not path.is_file():
@@ -699,14 +717,6 @@ def _emitter_problems(root: Path) -> list[str]:
                 f"never says so. Either instruct it there, or stop declaring readers for "
                 f"`{name}` in READ_PATH."
             )
-    for top, names in sorted(unread.items()):
-        print(
-            f"[doc_read_path] contract: no {top}/ under {root} - nothing checked for "
-            f"{len(names)} entry(ies) emitted from it ({', '.join(sorted(names))}). Those writer "
-            f"instructions live in the canonical repository, which is where this direction of the "
-            f"contract is asked.",
-            file=sys.stderr,
-        )
     return problems
 
 

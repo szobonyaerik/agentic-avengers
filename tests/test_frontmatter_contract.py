@@ -26,8 +26,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from doc_read_path import (  # noqa: E402
+    CANONICAL_MARKER,
     READ_PATH,
     check_contract,
+    is_canonical_repo,
     layout_inventory,
     main,
 )
@@ -36,7 +38,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def scaffold(root: Path) -> None:
-    """A minimal repository the contract check passes: one entry, one template that instructs it."""
+    """A minimal CANONICAL repository the contract check passes, marker and all."""
+    (root / CANONICAL_MARKER).parent.mkdir(parents=True, exist_ok=True)
+    (root / CANONICAL_MARKER).write_text("# canonical-source tooling\n")
     (root / "docs" / "templates").mkdir(parents=True)
     (root / "skills" / "pipeline-conventions").mkdir(parents=True)
     (root / "agents").mkdir()
@@ -250,39 +254,103 @@ def test_a_source_that_is_not_utf8_is_a_named_finding_not_a_traceback(
 # --- the vendored install: what this check may read, and where it may run -------------------------
 
 
-def test_a_tree_without_agents_reports_nothing_checked_rather_than_a_broken_declaration(
+def vendored(root: Path) -> Path:
+    """A tree shaped like a repo that INSTALLED the pipeline: no canonical marker, no `agents/`.
+
+    `scripts/install.sh` SRC_SETS vendors `skills/`, `prompts/`, `docs/templates/`, `AGENTS.md` and
+    a named subset of `scripts/`. It does not vendor `agents/`, and it does not vendor
+    `scripts/sync_opencode.py`, which is what makes that file usable as the canonical marker.
+    """
+    scaffold(root)
+    (root / CANONICAL_MARKER).unlink()
+    for path in sorted((root / "agents").rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    (root / "agents").rmdir()
+    return root
+
+
+def test_the_canonical_marker_is_not_vendored_by_install_sh() -> None:
+    """The marker only works while `install.sh` leaves it out, so that is pinned, not assumed.
+
+    SRC_SETS is a shipped payload manifest - a declared contract about what a consumer receives -
+    and this reads it as one: the set of entries, asked whether any of them grants the marker. A
+    future change that starts vendoring it would silently turn the guard into a no-op, and every
+    consumer repo would go back to failing C1 from installation onwards.
+    """
+    line = next(
+        raw
+        for raw in (REPO / "scripts" / "install.sh").read_text().splitlines()
+        if raw.startswith("SRC_SETS=")
+    )
+    shipped = line.split("=", 1)[1].strip().strip('"').split()
+    granted = [
+        entry
+        for entry in shipped
+        if entry == CANONICAL_MARKER
+        or CANONICAL_MARKER.startswith(f"{entry.rstrip('/')}/")
+    ]
+    assert not granted, f"{CANONICAL_MARKER} is vendored through {granted}"
+
+
+def test_a_vendored_install_does_not_check_the_emitter_direction_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A vendored install has no `agents/`, and this check has to be able to run there.
+    """The regression: a consumer repo that owns a top-level `agents/` of its own.
 
-    `scripts/install.sh` SRC_SETS ships `skills/`, `prompts/`, `docs/templates/` and part of
-    `scripts/`, never `agents/`. `.pre-commit-config.yaml` and the CI workflow are both vendored and
-    both call `gate_ci.sh`, which runs this check non-diff-scoped, so reporting an agent-emitted
-    entry as a missing writer instruction would fail every commit and every CI run in every consumer
-    repository from installation onwards, with no `--all` escape and no exception route. That is a
-    check that cannot run where it ships.
+    Keying the boundary on the DIRECTORY NAME let any such repo defeat it - the check read that
+    unrelated directory as the canonical inventory and reported the pipeline's own entries as broken
+    declarations. `.pre-commit-config.yaml` and the CI workflow are both vendored and both call
+    `gate_ci.sh`, which runs this non-diff-scoped with no `--all` escape and no exception route, so
+    that repo failed every commit and every CI run from installation onwards.
     """
-    scaffold(tmp_path)
-    for path in sorted((tmp_path / "agents").rglob("*"), reverse=True):
-        path.unlink() if path.is_file() else path.rmdir()
-    (tmp_path / "agents").rmdir()
+    root = vendored(tmp_path)
+    (root / "agents").mkdir()
+    (root / "agents" / "my-own-agent.md").write_text("a consumer's own agent\n")
 
-    assert check_contract(tmp_path) == []
+    assert not is_canonical_repo(root)
+    assert check_contract(root) == []
     said = capsys.readouterr().err
-    assert "no agents/" in said and "nothing checked" in said, said
-    assert "breaker.json" in said, said
+    assert "NOT CHECKED" in said, said
+    assert "not the canonical pipeline repository" in said, said
+    assert "agentic-avengers" in said, said
 
 
-def test_an_emitter_missing_from_a_directory_that_IS_present_is_still_a_violation(
-    tmp_path: Path,
+def test_the_cli_never_reports_clean_without_naming_the_skipped_direction(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The boundary is the absent inventory, never a licence to stop checking a present one."""
+    """An absent dimension that reports nothing is the class issue #69 exists for."""
+    root = vendored(tmp_path)
+    assert main(["check", "--contract-only", str(root)]) == 0
+    captured = capsys.readouterr()
+    assert "[doc_read_path] clean" in captured.out
+    assert "NOT CHECKED" in captured.err, captured.err
+
+
+def test_the_canonical_repository_says_nothing_of_the_kind_and_still_fails_c1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half: with the marker present the direction really runs."""
     scaffold(tmp_path)
+    assert is_canonical_repo(tmp_path)
     (tmp_path / READ_PATH["breaker.json"]["emitted_by"]).unlink()
     problems = check_contract(tmp_path)
     assert any("breaker.json" in p and "does not exist" in p for p in problems), (
         problems
     )
+    assert "NOT CHECKED" not in capsys.readouterr().err
+
+
+def test_a_vendored_install_still_runs_the_artifact_class_direction(
+    tmp_path: Path,
+) -> None:
+    """C3 reads the VENDORED stage instructions, so it is unaffected and must keep firing."""
+    root = vendored(tmp_path)
+    skill = root / "skills" / "phase-handover"
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(
+        "write docs/features/<feature>/phases/<n>-<slug>/implementation-report.md\n"
+    )
+    assert any("implementation-report.md" in p for p in check_contract(root))
 
 
 def test_a_consumer_owned_file_naming_an_artifact_path_is_not_judged(
