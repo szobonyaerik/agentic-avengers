@@ -24,8 +24,8 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `implementation-report.md` and `test-execution-report.md` were **removed**, having no writer
    instruction at all. `implementation-report.md` keyed the Stop-hook artifact sweep; that key is
    now `scripts/phase_artifacts.py` — a phase whose every spec is `status: done` owes each spec's
-   `test-mapping.md`, and a phase whose `verdict.json` PASSES owes `handover.md`, which is the only
-   moment `hook_verifier.sh` will let one be written. Diff-scoped (§3a); `check --all` audits.
+   `test-mapping.md`, and that is the whole of what the sweep asks: it never asks for `handover.md`,
+   which `hook_verifier.sh` alone owns. Diff-scoped (§3a); `check --all` audits.
 1a. **The read path.** Documentation cost is `size x reads x turns resident`, not size:
    `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
    `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a
@@ -41,10 +41,11 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    canonical source names is one the table governs. That is the general form of the defect behind
    #29: documentation making a claim nothing enforces. It reads **canonical stage instruction only**
    (`agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/`, `AGENTS.md`), never `scripts/`,
-   `README.md` or `CLAUDE.md`, which belong to the consumer in a vendored install, and it asks the
-   `emitted_by` half only in the pipeline's OWN repository, detected by a marker `install.sh` does
-   not vendor - elsewhere it says on stderr that the direction was not checked and that the remedy
-   lives upstream, never a silent pass. The Stop-hook artifact sweep
+   `README.md` or `CLAUDE.md`. **Both directions run in the pipeline's OWN repository and nowhere
+   else**, decided by a marker `install.sh` does not vendor: every source the check reads lives
+   upstream, so downstream not one of the remedies it prescribes exists, and a half-running check is
+   worse than an honestly absent one. Elsewhere it says on stderr that neither direction ran and
+   where the remedy lives, and `gate_ci.sh` announces the step as NOT CHECKED rather than passed. The Stop-hook artifact sweep
    (`scripts/phase_artifacts.py`) asks for **one** artifact, `test-mapping.md` beside each spec at
    that spec's own `status: done` stamp; it never asks for `handover.md`, because `hook_verifier.sh`
    gates that write on a passing verdict plus six further checks and a weaker second copy of a rule

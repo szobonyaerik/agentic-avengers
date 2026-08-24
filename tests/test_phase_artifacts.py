@@ -419,3 +419,69 @@ def test_the_hook_keys_on_the_stamp_not_on_a_stray_report(
     assert blocked.returncode == 2, blocked.stdout
     assert "test-mapping.md" in blocked.stderr
     assert "implementation-report.md" not in blocked.stderr
+
+
+@pytest.mark.subprocess(
+    "the subject IS the hook's exit mapping, which only a real run of it exposes"
+)
+def test_a_check_that_could_not_answer_lets_the_stop_through_and_names_itself(
+    tmp_path: Path,
+) -> None:
+    """An obligation blocks; a crash does not, and the difference has to reach the session.
+
+    Both codes used to land on the Stop hook's one blocking exit, so an unexpected failure inside
+    the sweep told the agent "create them before stopping" - a remedy that cannot repair a crash -
+    and this hook honours no `GATE_BYPASS`, so a defect in a checker wedged a session that owed
+    nothing. Driven through a sweep made to fail on a real run of the hook, since the mapping lives
+    in the hook and nowhere else.
+    """
+    git(tmp_path, "init", "-q")
+    (tmp_path / "README.md").write_text("demo\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+    complete(phase(tmp_path, status="done"))
+
+    owed_nothing = run_hook(tmp_path)
+    assert owed_nothing.returncode == 0, owed_nothing.stderr
+
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "python3").write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        "  *phase_artifacts.py*) echo 'boom' >&2; exit 2 ;;\n"
+        f'  *) exec {sys.executable} "$@" ;;\n'
+        "esac\n"
+    )
+    (shim / "python3").chmod(0o755)
+
+    stepped_aside = subprocess.run(
+        ["bash", str(REPO / "scripts" / "hook_artifact_check.sh")],
+        env=dict(
+            os.environ,
+            CLAUDE_PROJECT_DIR=str(tmp_path),
+            PATH=f"{shim}{os.pathsep}{os.environ['PATH']}",
+        ),
+        capture_output=True,
+        text=True,
+    )
+    assert stepped_aside.returncode == 0, stepped_aside.stderr
+    assert "phase_artifacts.py check" in stepped_aside.stderr, stepped_aside.stderr
+    assert "could not reach a verdict" in stepped_aside.stderr, stepped_aside.stderr
+    assert "NOT blocked" in stepped_aside.stderr, stepped_aside.stderr
+    assert "before stopping" not in stepped_aside.stderr, stepped_aside.stderr
+
+    (
+        tmp_path
+        / "docs"
+        / "features"
+        / "demo"
+        / "phases"
+        / "1-slice"
+        / "specs"
+        / "1.1-thing"
+        / "test-mapping.md"
+    ).unlink()
+    still_blocks = run_hook(tmp_path)
+    assert still_blocks.returncode == 2, still_blocks.stderr
+    assert "test-mapping.md" in still_blocks.stderr

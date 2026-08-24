@@ -98,18 +98,23 @@ deleted; the read directives changed.**
   produce it - the table's `emitted_by` exists and really instructs `readers:`, AND every artifact
   class a canonical source names is one the table governs. It reads two inventories, artifact PATH
   literals under `docs/features/` and the canonical layout block in `skills/pipeline-conventions`,
-  and it reads them in **canonical stage instruction only** - `agents/`, `skills/`, `commands/`,
-  `prompts/`, `docs/templates/`, `AGENTS.md` - never `scripts/`, `README.md` or `CLAUDE.md`, since
-  `gate_ci.sh` roots at the repository it runs in and those are the CONSUMER's own files there. That
-  boundary is the check's correctness rather than its size, and it is also what keeps it honestly
-  **not diff-scoped**, for the same reason `--sources` is not. The `emitted_by` half is asked only in the
-  pipeline's **own repository**, detected by `scripts/sync_opencode.py`, a marker `install.sh`
-  deliberately does not vendor and a test pins as unvendored: a consumer holds few of those writer
-  instructions, so asked there the direction reports the rest as broken declarations and fails every
-  commit from installation onwards. Keying it on the presence of a DIRECTORY named `agents/` was the
-  first attempt and any consumer owning one of its own defeats it. Elsewhere the direction says on
-  stderr that it was not checked and that the remedy lives upstream, never a silent pass - a check
-  that cannot run where it ships is the defect, not the finding. **What it does not see is
+  and it reads them in `agents/`, `skills/`, `commands/`, `prompts/`,
+  `docs/templates/` and `AGENTS.md` - never `scripts/`, `README.md` or `CLAUDE.md`. **The whole
+  check, both directions, runs in the pipeline's OWN repository and nowhere else**, decided by
+  `scripts/sync_opencode.py`, a marker `install.sh` deliberately does not vendor and a test pins as
+  unvendored. The reason is that **every source it reads lives upstream** - the table itself, the
+  templates it names, the stage instructions it scans - so a repository that merely installed the
+  pipeline has no remedy for anything it could find, and a rule whose remedy is unavailable is a
+  wedge rather than a gate. It was narrowed twice before that: keying on the presence of a DIRECTORY
+  named `agents/` is defeated by any consumer owning one, and `install.sh` vendors neither `agents/`
+  nor `commands/`, so downstream both hold only that project's own files and the artifact-class
+  direction reported the consumer's own documents as undecided classes. **A half-running check,
+  where one direction fires downstream and the other does not, is worse than an honestly absent
+  one**, because its result cannot be read as meaning anything. In the canonical repository it is
+  **not diff-scoped**, for the same reason `--sources` is not. Elsewhere it says on stderr that
+  neither direction ran and that the remedy lives upstream, never a silent pass, and `gate_ci.sh`
+  announces the step as NOT CHECKED rather than as one that passed - a check that cannot run where
+  it ships is the defect, not the finding. **What it does not see is
   stated rather than implied**: a class named only as a bare filename in prose is invisible to it -
   `fidelity-report.md` was named exactly that way and this check would not have caught it - because
   generalising to bare filenames means guessing which backticked `*.md` in a sentence is a pipeline

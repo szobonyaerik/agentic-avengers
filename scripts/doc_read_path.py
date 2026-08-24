@@ -41,7 +41,10 @@ Adding a reader here is how that is fixed; bending the prose to match a silent t
                    `--sources` structurally cannot see, and it is issue #29: four classes named by
                    stage instructions with no read-path decision recorded either way, one of them
                    (`implementation-report.md`) keying a Stop hook while nothing was told to write
-                   it. Its limits are stated at `check_contract` rather than implied.
+                   it. **It runs in the canonical repository ONLY** - every source it reads lives
+                   upstream, so downstream none of the remedies it prescribes exists; elsewhere it
+                   says on stderr that neither direction ran. See `is_canonical_repo`. Its limits
+                   are stated at `check_contract` rather than implied.
 
 The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
 one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
@@ -99,6 +102,14 @@ from verifier_evidence import READERS as EVIDENCE_READERS  # noqa: E402
 # --- the table -----------------------------------------------------------------------------------
 # extent: whole | header | table | card | none. `none` means the document is written but no stage is
 # instructed to read it - it is an archive, kept on disk, off the read path.
+
+CLEAN = 0
+VIOLATIONS = (
+    1  # an artifact or an instruction really breaks the table. The remedy is to fix it.
+)
+UNDECIDABLE = (
+    2  # the check could not answer. §6: every stop names which of the two it is.
+)
 
 HANDOVER_MAX_BYTES = 6144  # the contract card's hard cap (F1). Enforced, not requested.
 VERDICT_REPORT_MAX_CHARS = 1500  # the verdict's free-prose `report` cap (F5).
@@ -361,11 +372,20 @@ def _read(path: Path) -> str:
     single non-UTF-8 file anywhere under the scanned directories would otherwise turn the CI gate
     into a stack trace instead of a named finding. Same failure shape either way: unreadable is
     unreadable.
+
+    It exits `UNDECIDABLE`, never `VIOLATIONS`. The module said "exit 2" for as long as it has
+    existed and produced 1, because `SystemExit("<message>")` prints the message and exits 1 - so an
+    unreadable file arrived at every caller wearing the code that means "an artifact is owed", and
+    `hook_artifact_check.sh` turned that into "create them before stopping", which is not a remedy
+    for a file nothing can decode.
     """
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, ValueError) as exc:
-        raise SystemExit(f"[doc_read_path] cannot read {path}: {exc} — fail closed")
+        print(
+            f"[doc_read_path] cannot read {path}: {exc} - fail closed", file=sys.stderr
+        )
+        raise SystemExit(UNDECIDABLE) from exc
 
 
 def frontmatter(text: str) -> str | None:
@@ -562,11 +582,7 @@ def check_sources(root: Path) -> list[str]:
 # making a claim nothing enforces. Three claims, all mechanical:
 #
 #   C1  every entry's `emitted_by` names a file that EXISTS. A declared writer instruction that is
-#       not on disk is fiction, and nothing else would ever notice. Asked ONLY in the canonical
-#       pipeline repository (`is_canonical_repo`): a vendored install holds few of these files, and
-#       reporting the rest as broken declarations there would fail every commit in that repository
-#       from installation onwards. Not checked is said out loud on stderr, never a silent clean
-#       pass, and it names the remedy as living upstream.
+#       not on disk is fiction, and nothing else would ever notice.
 #   C2  that file actually INSTRUCTS the `readers:` line. Declaring a reader in this table is not
 #       the same as telling anyone to write it down: three document classes shipped with the first
 #       and not the second, which is what put `emitted_by` in the table in the first place. A
@@ -579,32 +595,26 @@ def check_sources(root: Path) -> list[str]:
 #       `implementation-report.md`, `test-execution-report.md` and `scoped/review-<slice>.md` sat in
 #       exactly that state, one of them (`implementation-report.md`) load-bearing for a Stop hook.
 #
-# NOT diff-scoped, deliberately, and for the same reason `--sources` and `stage_effort.py check` are
-# not: these are canonical stage instructions and the table itself, always open to change, never
-# shipped artifacts a later rule would hold hostage. That is only true while the inventory stays
-# canonical, which is why `CONTRACT_SOURCE_DIRS` is what it is.
+# All three are asked in the CANONICAL REPOSITORY ONLY (`is_canonical_repo`), and there they are NOT
+# diff-scoped, for the same reason `--sources` and `stage_effort.py check` are not: canonical stage
+# instructions and the table itself are always open to change, never shipped artifacts a later rule
+# would hold hostage.
 #
 # What C3 does NOT see, said rather than implied. It reads two inventories - artifact PATH literals
-# under `docs/features/`, and the canonical layout block in `skills/pipeline-conventions` - and it
-# reads them in CANONICAL SOURCES ONLY. So a class named only as a bare filename in prose is
-# invisible to it: `fidelity-report.md` was named exactly that way, in two artifact lists and
-# nowhere else, so this check would not have caught it; it was caught by reading. Generalising to
-# bare filenames means guessing which backticked `*.md` in a sentence is a pipeline artifact, which
-# needs a denylist of everything else in the repository - a list that rots, which is worse than a
-# stated limit. And a class named only OUTSIDE canonical stage instruction - in a consumer's
-# `README.md`, in project code under `scripts/`, in a project's own `CLAUDE.md` - is invisible for
-# the same reason stated once at `CONTRACT_SOURCE_DIRS`: those files are not the pipeline's to
-# judge. Both are the same trade, a stated limit over a guess.
+# under `docs/features/`, and the canonical layout block in `skills/pipeline-conventions`. So a class
+# named only as a bare filename in prose is invisible to it: `fidelity-report.md` was named exactly
+# that way, in two artifact lists and nowhere else, so this check would not have caught it; it was
+# caught by reading. Generalising to bare filenames means guessing which backticked `*.md` in a
+# sentence is a pipeline artifact, which needs a denylist of everything else in the repository - a
+# list that rots, which is worse than a stated limit. And a class named only OUTSIDE the directories
+# in `CONTRACT_SOURCE_DIRS` is invisible too. Both are the same trade, a stated limit over a guess.
 
-#: Where a stage instruction or a template may name an artifact path. CANONICAL STAGE INSTRUCTION
-#: ONLY, and that boundary is the check's correctness rather than its size: `gate_ci.sh` sets `ROOT`
-#: to the repository it runs in, so in a vendored install `scripts/` and `README.md` are the
-#: CONSUMER's own files and `CLAUDE.md` is the consumer's own instructions. A check that judges
-#: files the pipeline does not own is not a narrower or a wider version of this check, it is a
-#: different and wrong one, and diff-scoping it would be scoping machinery added to excuse reading
-#: the wrong files. Reading only what the pipeline ships is also what keeps this check honestly
-#: non-diff-scoped: canonical stage instruction is always open to change, never a shipped artifact a
-#: later rule would hold hostage. `AGENTS.md` is here because `scripts/install.sh` vendors it.
+#: Where a stage instruction or a template may name an artifact path. These are read only in the
+#: canonical repository (`is_canonical_repo`), where every one of them is the pipeline's own file
+#: and always open to change - which is what keeps this check honestly non-diff-scoped. `scripts/`,
+#: `README.md` and `CLAUDE.md` are deliberately absent even there: they are the CONSUMER's code,
+#: readme and instructions in a vendored tree, and a boundary that holds in only one of the two
+#: trees is the boundary that keeps being defeated.
 CONTRACT_SOURCE_DIRS = SOURCE_DIRS + ("docs/templates",)
 CONTRACT_SOURCE_FILES = ("AGENTS.md",)
 CONTRACT_SOURCE_SUFFIXES = (".md", ".json", ".py", ".sh")
@@ -619,6 +629,16 @@ PLACEHOLDER_RE = re.compile(r"<[^>]*>|\*")
 #: The file that says this tree is the pipeline's own repository. Chosen because `scripts/install.sh`
 #: SRC_SETS does not vendor it, so no consumer repo acquires it by installing the pipeline.
 CANONICAL_MARKER = "scripts/sync_opencode.py"
+
+#: What a non-canonical tree is told instead of a verdict. One line, both directions, naming where
+#: the remedy lives, because an absent dimension that reports nothing reads exactly like a pass.
+NOT_CHECKED = (
+    "[doc_read_path] frontmatter contract: NOT CHECKED under {root} - neither the `emitted_by` "
+    "direction nor the artifact-class direction ran, because this tree is not the canonical "
+    "pipeline repository ({marker} is absent, and `scripts/install.sh` does not vendor it). Every "
+    "source this check reads lives upstream, so the remedy for anything it could find lives in "
+    "agentic-avengers and not here. This is not a pass."
+)
 
 #: The other inventory: the fenced tree under `- **Layout:**` in the canonical rulebook.
 LAYOUT_SOURCE = "skills/pipeline-conventions/SKILL.md"
@@ -652,39 +672,37 @@ def _contract_sources(root: Path) -> list[Path]:
 def is_canonical_repo(root: Path) -> bool:
     """Whether this tree is the pipeline's OWN repository rather than a repo that installed it.
 
-    C1 and C2 ask whether every declared writer instruction is on disk and really instructs
-    `readers:`, and only the canonical repository holds all of them: `scripts/install.sh` SRC_SETS
-    vendors `skills/`, `prompts/`, `docs/templates/`, `AGENTS.md` and part of `scripts/`, and no
-    `agents/` at all. Asked in a consumer repo this direction reports every agent-emitted entry as a
-    broken declaration and fails every commit and every CI run there from installation onwards, with
-    no diff-scope and no exception route - a check that cannot run where it ships.
+    **`check --contract` runs here and nowhere else, in BOTH directions.** Every source it reads
+    lives upstream: `READ_PATH` itself, the templates it names, and the canonical stage instructions
+    it scans. So downstream there is no remedy for anything it could find - not one of the three
+    outcomes it prescribes is available to a repository that merely installed the pipeline - and a
+    rule whose remedy is unavailable is a wedge rather than a gate.
+
+    Narrowing it once per direction was tried and is what this ends. `scripts/install.sh` SRC_SETS
+    vendors `skills/`, `prompts/`, `docs/templates/`, `AGENTS.md` and part of `scripts/`, and
+    neither `agents/` nor `commands/`, so in a consumer repo those two hold that project's own files
+    and `skills/` holds theirs beside the vendored ones. Asked there, C1 reports every agent-emitted
+    entry as a broken declaration and C3 reports the consumer's own documents as undecided classes,
+    and `gate_ci.sh` runs this with no diff scope, no `--all` escape and no exception ledger, so
+    that repository fails every commit and every CI run from installation onwards. **A half-running
+    check is worse than an honestly absent one**, because a result that means one thing here and
+    another there cannot be read as meaning anything.
 
     The marker is a file `install.sh` deliberately does not vendor, NOT the presence of a directory
     named `agents/`. Keying on the name was the first attempt and it is defeated by any consumer
-    that owns a top-level `agents/` of its own, which is ordinary in this kind of project: the check
-    then reads that unrelated directory as the canonical inventory and reports the pipeline's own
-    entries as missing. `scripts/sync_opencode.py` is the canonical-source tooling of §7, it exists
-    only where canonical sources are edited, and `tests/test_frontmatter_contract.py` pins it as
-    absent from SRC_SETS so a future vendoring change cannot turn this marker into a silent no-op.
+    that owns a top-level `agents/` of its own, which is ordinary in this kind of project.
+    `scripts/sync_opencode.py` is the canonical-source tooling of §7, it exists only where canonical
+    sources are edited, and `tests/test_frontmatter_contract.py` pins it as absent from SRC_SETS so
+    a future vendoring change cannot turn this marker into a silent no-op.
 
-    What this does NOT decide: it says nothing about C3, which reads the vendored stage instructions
-    and runs everywhere.
+    What this does NOT decide: it says nothing about `check` or `check --sources`, which read
+    artifacts and stage instructions this repository is responsible for wherever it runs.
     """
     return (root / CANONICAL_MARKER).is_file()
 
 
 def _emitter_problems(root: Path) -> list[str]:
     """C1 and C2: the table's declared writer instruction exists, and it instructs the line."""
-    if not is_canonical_repo(root):
-        print(
-            f"[doc_read_path] contract: the `emitted_by` direction was NOT CHECKED under {root} - "
-            f"this tree is not the canonical pipeline repository ({CANONICAL_MARKER} is absent, and "
-            f"`scripts/install.sh` does not vendor it), so most declared writer instructions are not "
-            f"here to read. A broken `emitted_by` declaration is fixed upstream in agentic-avengers, "
-            f"not here. The artifact-class direction was checked as usual.",
-            file=sys.stderr,
-        )
-        return []
     problems: list[str] = []
     for name, spec in READ_PATH.items():
         emitter = spec.get("emitted_by")
@@ -803,7 +821,15 @@ def _governed_problems(root: Path) -> list[str]:
 
 
 def check_contract(root: Path) -> list[str]:
-    """Every documented claim about an artifact's frontmatter has a writer instructed to make it."""
+    """Every documented claim about an artifact's frontmatter has a writer instructed to make it.
+
+    Asked only in the canonical repository (`is_canonical_repo`, where the reason is stated).
+    Elsewhere NEITHER direction runs and that is said out loud rather than returning an empty list
+    a caller would read as a pass.
+    """
+    if not is_canonical_repo(root):
+        print(NOT_CHECKED.format(root=root, marker=CANONICAL_MARKER), file=sys.stderr)
+        return []
     return _emitter_problems(root) + _governed_problems(root)
 
 
@@ -863,10 +889,20 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("table", help="print the read path as a markdown table")
 
+    canonical = sub.add_parser(
+        "canonical",
+        help="exit 0 when this tree is the canonical pipeline repository, 1 when it is not",
+    )
+    canonical.add_argument(
+        "root", nargs="?", default=".", help="repository root (default: .)"
+    )
+
     args = parser.parse_args(argv)
     if args.command == "table":
         print(render_table())
         return 0
+    if args.command == "canonical":
+        return 0 if is_canonical_repo(Path(args.root).resolve()) else 1
 
     root = Path(args.root).resolve()
     only = args.sources_only or args.contract_only
@@ -882,9 +918,9 @@ def main(argv: list[str] | None = None) -> int:
         print("read-path violations:", file=sys.stderr)
         for problem in problems:
             print(f"  ✗ {problem}", file=sys.stderr)
-        return 1
+        return VIOLATIONS
     print("[doc_read_path] clean")
-    return 0
+    return CLEAN
 
 
 if __name__ == "__main__":

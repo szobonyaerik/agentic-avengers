@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from doc_read_path import (  # noqa: E402
     CANONICAL_MARKER,
     READ_PATH,
+    UNDECIDABLE,
     check_contract,
     is_canonical_repo,
     layout_inventory,
@@ -231,7 +232,7 @@ def test_the_cli_returns_one_on_a_contract_violation_and_zero_when_clean(
 
 
 def test_a_source_that_is_not_utf8_is_a_named_finding_not_a_traceback(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """One non-UTF-8 file under a scanned directory must not crash CI.
 
@@ -246,9 +247,14 @@ def test_a_source_that_is_not_utf8_is_a_named_finding_not_a_traceback(
 
     with pytest.raises(SystemExit) as raised:
         check_contract(tmp_path)
-    assert "cannot read" in str(raised.value)
-    assert "rogue.md" in str(raised.value)
-    assert "fail closed" in str(raised.value)
+    assert raised.value.code == UNDECIDABLE, (
+        "an unreadable file is not an artifact anybody owes, so it must not wear the code that "
+        "means one - the Stop hook turns that into 'create them before stopping'"
+    )
+    said = capsys.readouterr().err
+    assert "cannot read" in said, said
+    assert "rogue.md" in said, said
+    assert "fail closed" in said, said
 
 
 # --- the vendored install: what this check may read, and where it may run -------------------------
@@ -292,20 +298,28 @@ def test_the_canonical_marker_is_not_vendored_by_install_sh() -> None:
     assert not granted, f"{CANONICAL_MARKER} is vendored through {granted}"
 
 
-def test_a_vendored_install_does_not_check_the_emitter_direction_and_says_so(
+def test_a_vendored_install_checks_NEITHER_direction_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The regression: a consumer repo that owns a top-level `agents/` of its own.
+    """The regression: a consumer repo owning `agents/` and `commands/` files of its own.
 
-    Keying the boundary on the DIRECTORY NAME let any such repo defeat it - the check read that
-    unrelated directory as the canonical inventory and reported the pipeline's own entries as broken
-    declarations. `.pre-commit-config.yaml` and the CI workflow are both vendored and both call
-    `gate_ci.sh`, which runs this non-diff-scoped with no `--all` escape and no exception route, so
-    that repo failed every commit and every CI run from installation onwards.
+    `install.sh` vendors neither directory, so downstream they hold only that project's files - and
+    C3 read them as canonical inventory and reported the consumer's own documents as classes with no
+    read-path decision, while C1 reported the pipeline's own entries as broken declarations.
+    `.pre-commit-config.yaml` and the CI workflow are both vendored and both call `gate_ci.sh`,
+    which runs this non-diff-scoped with no `--all` escape and no exception route, so that repo
+    failed every commit and every CI run from installation onwards, with every prescribed remedy
+    living upstream where it could not reach them.
     """
     root = vendored(tmp_path)
     (root / "agents").mkdir()
-    (root / "agents" / "my-own-agent.md").write_text("a consumer's own agent\n")
+    (root / "agents" / "our-own-reviewer.md").write_text(
+        "our notes: docs/features/<feature>/design-notes.md\n"
+    )
+    (root / "commands").mkdir()
+    (root / "commands" / "our-own-command.md").write_text(
+        "and docs/features/<feature>/rollout-plan.md\n"
+    )
 
     assert not is_canonical_repo(root)
     assert check_contract(root) == []
@@ -313,9 +327,11 @@ def test_a_vendored_install_does_not_check_the_emitter_direction_and_says_so(
     assert "NOT CHECKED" in said, said
     assert "not the canonical pipeline repository" in said, said
     assert "agentic-avengers" in said, said
+    assert "This is not a pass" in said, said
+    assert "`emitted_by` direction nor the artifact-class direction" in said, said
 
 
-def test_the_cli_never_reports_clean_without_naming_the_skipped_direction(
+def test_the_cli_never_reports_clean_without_naming_the_skipped_check(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An absent dimension that reports nothing is the class issue #69 exists for."""
@@ -340,17 +356,37 @@ def test_the_canonical_repository_says_nothing_of_the_kind_and_still_fails_c1(
     assert "NOT CHECKED" not in capsys.readouterr().err
 
 
-def test_a_vendored_install_still_runs_the_artifact_class_direction(
+def test_a_vendored_install_does_not_run_the_artifact_class_direction_either(
     tmp_path: Path,
 ) -> None:
-    """C3 reads the VENDORED stage instructions, so it is unaffected and must keep firing."""
+    """Even a VENDORED source naming an undecided class is not this tree's to answer.
+
+    `READ_PATH` lives upstream, so none of the three outcomes the finding prescribes - a table
+    entry, a `readers: none` declaration, or deleting the writer instruction - is available here. A
+    half-running check, one direction firing downstream and the other not, produces a result that
+    cannot be read as meaning anything.
+    """
     root = vendored(tmp_path)
     skill = root / "skills" / "phase-handover"
     skill.mkdir(parents=True, exist_ok=True)
     (skill / "SKILL.md").write_text(
         "write docs/features/<feature>/phases/<n>-<slug>/implementation-report.md\n"
     )
-    assert any("implementation-report.md" in p for p in check_contract(root))
+    assert check_contract(root) == []
+
+
+def test_the_canonical_repository_fails_on_BOTH_directions(tmp_path: Path) -> None:
+    """The other half: with the marker present, neither direction is quietly asleep."""
+    scaffold(tmp_path)
+    (tmp_path / READ_PATH["breaker.json"]["emitted_by"]).unlink()
+    (tmp_path / "agents" / "avenger-handover.md").write_text(
+        "docs/features/<feature>/phases/<n>-<slug>/implementation-report.md\n"
+    )
+    problems = check_contract(tmp_path)
+    assert any("breaker.json" in p and "does not exist" in p for p in problems), (
+        problems
+    )
+    assert any("implementation-report.md" in p for p in problems), problems
 
 
 def test_a_consumer_owned_file_naming_an_artifact_path_is_not_judged(

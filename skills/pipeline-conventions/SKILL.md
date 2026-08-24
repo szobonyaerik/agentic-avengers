@@ -134,18 +134,20 @@ Five rules follow from it, and each one is enforced rather than requested:
   `implementation-report.md`, keying the Stop-hook artifact sweep while nothing was instructed to
   write it. It is **not diff-scoped**, for the same reason `--sources` is not: the table and the
   canonical stage instructions are always open, never shipped artifacts a later rule holds hostage.
-  That holds only while its inventory stays **canonical stage instruction**, which is what it reads:
-  `agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/` and `AGENTS.md`. It does **not**
-  read `scripts/`, `README.md` or `CLAUDE.md`, because `gate_ci.sh` sets its root to the repository
-  it runs in, so in a vendored install those are the CONSUMER's code, readme and instructions. A
-  check that judges files the pipeline does not own is not a wider version of this check, it is a
-  different and wrong one. For the same reason the `emitted_by` half is asked only in the
-  pipeline's **own repository**, detected by `scripts/sync_opencode.py`, a marker `install.sh` does
-  not vendor: a consumer holds few of those writer instructions, so asked there the direction reports
-  the rest as broken declarations. Keying it on a DIRECTORY named `agents/` was the first attempt and
-  any consumer that owns one defeats it. Elsewhere the direction says on stderr that it was not
-  checked and that the remedy lives upstream - never a silent clean pass, and never a check that
-  cannot run where it ships.
+  That holds because **the whole check, both directions, runs in the pipeline's OWN repository and
+  nowhere else** - decided by `scripts/sync_opencode.py`, a marker `install.sh` does not vendor.
+  Every source it reads lives upstream: the table, the templates it names, and the stage
+  instructions it scans (`agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/`,
+  `AGENTS.md`; never `scripts/`, `README.md` or `CLAUDE.md`). So a repository that merely installed
+  the pipeline has no remedy for anything it could find, and a rule whose remedy is unavailable is a
+  wedge rather than a gate. It was narrowed twice first: keying on a DIRECTORY named `agents/` is
+  defeated by any consumer owning one, and `install.sh` vendors neither `agents/` nor `commands/`,
+  so downstream both hold only that project's files and the artifact-class direction reported the
+  consumer's own documents as undecided classes. **A half-running check is worse than an honestly
+  absent one**, because a result that means one thing here and another there cannot be read as
+  meaning anything. Elsewhere it says on stderr that neither direction ran and that the remedy lives
+  upstream, and `gate_ci.sh` announces the step as NOT CHECKED - never a silent clean pass, and
+  never a check that cannot run where it ships.
   **What it does not see**: it reads two inventories — artifact PATH literals under `docs/features/`
   and the layout block above — so a class named only as a bare filename in prose is invisible to it.
   `fidelity-report.md` was named exactly that way, in two artifact lists and nowhere else; it was

@@ -326,10 +326,19 @@ fi
 #       the recurring shape behind that issue is documentation making a claim nothing enforces.
 #       So this asks the general question: every documented claim about an artifact's frontmatter
 #       has a writer instructed to produce it.
-#       NOT diff-scoped, for the same reason `--sources` and `stage_effort.py check` are not: the
-#       table and the canonical stage instructions are always open, never shipped artifacts a later
-#       rule would hold hostage.
-echo "• frontmatter contract: the table, the templates and the writer instructions agree"
+#       CANONICAL REPOSITORY ONLY, both directions. Every source it reads lives upstream, so a repo
+#       that merely installed the pipeline has no remedy for anything it could find, and a rule
+#       whose remedy is unavailable is a wedge. There it runs NOT diff-scoped, for the same reason
+#       `--sources` and `stage_effort.py check` are not: the table and the canonical stage
+#       instructions are always open, never shipped artifacts a later rule would hold hostage.
+#       The step announces which of the two it is, so a skipped check never reads as a passed one.
+#       Which tree this is is ASKED of the module that decides it, never restated here: a second
+#       copy of the marker rule in shell is the copy that drifts.
+if python3 "$SCRIPT_DIR/doc_read_path.py" canonical "$ROOT"; then
+  echo "• frontmatter contract: the table, the templates and the writer instructions agree"
+else
+  echo "• frontmatter contract: NOT CHECKED — not the canonical pipeline repository, remedy upstream"
+fi
 if ! python3 "$SCRIPT_DIR/doc_read_path.py" check --contract-only "$ROOT"; then
   record_fail "frontmatter-contract"
 fi
