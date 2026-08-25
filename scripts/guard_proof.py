@@ -131,6 +131,24 @@ FINDING_STATUSES = (UNPROVEN, UNANCHORED, BASELINE_RED, ERRORED)
 GATE_CI = "scripts/gate_ci.sh"
 HOOKS_JSON = "hooks/hooks.json"
 
+#: The CLOSED set of files that can put a script on the enforcement path. A change can wire a guard
+#: in without editing the guard at all - one line in `gate_ci.sh`, one entry in `hooks.json` - and a
+#: scope decided on the guard's own file lets exactly that diff pass clean, which is how the
+#: pipeline gains a check nothing proves. Editing one of these files, in a diff that also invokes an
+#: undeclared script from it, puts that script in scope.
+#:
+#: It is closed and named rather than derived, the same discipline `spec_gate_triage.BLOCKING` and
+#: `applicability.RULES` follow: "enforcement surface" is a decision about where this pipeline wires
+#: its checks - the pre-commit/CI gate floor, the hook configuration and the hook scripts it runs,
+#: and the two CI entry points - not something a call graph can be asked. A fifth member is a
+#: deliberate edit here.
+ENFORCEMENT_SURFACES = (
+    GATE_CI,
+    HOOKS_JSON,
+    ".pre-commit-config.yaml",
+    ".github/workflows/pipeline-gates.yml",
+)
+
 #: How a shell file in this repository names a sibling script. The same three spellings
 #: `tests/test_install_manifest.py` derives its expectation from, for the same reason: adding a
 #: script and calling it is enough to move the check, with no second list to remember.
@@ -585,7 +603,7 @@ def run_tests(tree: Path, tests: tuple[str, ...], budget: int) -> Run:
     argv = [*_runner(), "-q", "-x", "-p", "no:cacheprovider", *tests]
     try:
         result = run_bounded(argv, budget, cwd=str(tree))
-    except FileNotFoundError as exc:
+    except OSError as exc:
         return Run(
             returncode=ERROR,
             output=f"the test runner could not be started: {exc}",
@@ -695,6 +713,30 @@ class Scope:
         return any(self.covers(root / name) for name in guard.files)
 
 
+def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
+    """Scripts this change puts on the enforcement path, mapped to the surface that put them there.
+
+    The second way a guard lands in scope. `covers_guard` asks whether the diff touched the guard's
+    own files; this asks whether the diff touched an `ENFORCEMENT_SURFACES` file that invokes it. A
+    diff adding `python3 "$SCRIPT_DIR/new_check.py"` to `gate_ci.sh`, or a `hooks.json` entry
+    pointing at a script that was already sitting in the tree, is a guard newly wired in - and
+    without this it answers to nothing, because the file it names was never edited.
+    """
+    wired: dict[str, str] = {}
+    for surface in (*ENFORCEMENT_SURFACES, *_hook_scripts(root)):
+        target = root / surface
+        if not target.is_file() or not scope.covers(target):
+            continue
+        try:
+            text = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for token in _script_tokens(text):
+            if token != surface and (root / token).is_file():
+                wired.setdefault(token, surface)
+    return wired
+
+
 def resolve_scope(root: Path, *, changed_only: bool, base: str | None) -> Scope:
     if not changed_only:
         return Scope("all", frozenset())
@@ -758,6 +800,14 @@ def sweep(
     limit = budget if budget is not None else budget_s()
     workers = parallel if parallel is not None else jobs()
 
+    unknown = sorted(set(only) - {guard.id for guard in inventory.guards})
+    _require(
+        not unknown,
+        f"no guard in {inventory.path.name} declares the id(s) {unknown}. A run asked to prove a "
+        f"guard nobody declares proved nothing, and reporting that as a clean pass is the silent "
+        f"yes this harness exists to remove - a renamed id would go on 'passing' forever.",
+    )
+
     selected: list[Guard] = []
     skipped: list[str] = []
     for guard in inventory.guards:
@@ -782,6 +832,9 @@ def sweep(
             )
 
     universe = guard_universe(root)
+    wired = newly_wired(root, scope)
+    for name, surface in wired.items():
+        universe.setdefault(name, set()).add(surface)
     declared = inventory.declared_files()
     exempt = inventory.exempt_files()
     undeclared: list[tuple[str, tuple[str, ...]]] = []
@@ -789,7 +842,7 @@ def sweep(
     for name, callers in sorted(universe.items()):
         if name in declared or name in exempt:
             continue
-        if scope.covers(root / name):
+        if scope.covers(root / name) or name in wired:
             undeclared.append((name, tuple(sorted(callers))))
         else:
             undeclared_unenforced.append(name)
@@ -986,6 +1039,9 @@ def _do_list(inventory: Inventory) -> int:
 def _do_discover(root: Path, inventory: Inventory, args: argparse.Namespace) -> int:
     scope = resolve_scope(root, changed_only=not args.all, base=args.base)
     universe = guard_universe(root)
+    wired = newly_wired(root, scope)
+    for name, surface in wired.items():
+        universe.setdefault(name, set()).add(surface)
     declared = inventory.declared_files()
     exempt = inventory.exempt_files()
     findings = 0
@@ -998,7 +1054,7 @@ def _do_discover(root: Path, inventory: Inventory, args: argparse.Namespace) -> 
             if name in exempt
             else "UNDECLARED"
         )
-        if state == "UNDECLARED" and not scope.covers(root / name):
+        if state == "UNDECLARED" and not (scope.covers(root / name) or name in wired):
             unenforced.append(name)
             state = "undeclared (not enforced)"
         elif state == "UNDECLARED":
@@ -1035,6 +1091,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     except GuardProofError as exc:
         print(f"[guard-proof] {exc}", file=sys.stderr)
+        return ERROR
+    except Exception as exc:
+        print(
+            f"[guard-proof] the sweep could not be run at all: {exc!r}. This is ERROR, never a "
+            f"finding: a harness that could not execute has said nothing about any guard, and "
+            f"reporting it as a failed proof sends the reader to fix a guard that may be fine.",
+            file=sys.stderr,
+        )
         return ERROR
 
     if args.json:

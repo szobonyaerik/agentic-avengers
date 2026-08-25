@@ -731,6 +731,30 @@ replace = '''
             undeclared.extend([])'''
 
 [[guard]]
+id = "guard-proof.newly-wired-is-in-scope"
+implements = "scripts/guard_proof.py"
+defect = "A change can put a guard on the enforcement path without editing the guard - one line in gate_ci.sh, one entry in hooks.json. Scoped on the guard's own file alone, exactly that diff passes clean and the pipeline gains a check nothing proves, which is the undeclared count going quietly wrong at the one moment it could have been caught."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        if scope.covers(root / name) or name in wired:'''
+replace = '''
+        if scope.covers(root / name):'''
+
+[[guard]]
+id = "guard-proof.unknown-guard-id-refused"
+implements = "scripts/guard_proof.py"
+defect = "`prove --guard <id>` naming an id the inventory does not hold proved nothing. Reported as a clean pass, a typo or an id renamed in guards.toml while a caller still names the old one goes on 'passing' forever - the silent yes of issue #69, inside the harness built to remove it."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+    unknown = sorted(set(only) - {guard.id for guard in inventory.guards})'''
+replace = '''
+    unknown: list[str] = []'''
+
+[[guard]]
 id = "guard-proof.throwaway-copy"
 implements = "scripts/guard_proof.py"
 defect = "Every mutation lands in a copy. Applied to the working tree, a crashed or killed sweep leaves a neutered guard on disk - a harness that manufactures the defect class it was built to detect."

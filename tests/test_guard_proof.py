@@ -283,6 +283,80 @@ def test_a_runner_that_cannot_start_is_errored_never_a_pass(
     assert main(["prove", "--root", str(root), "--inventory", str(path)]) == FINDINGS
 
 
+def test_a_runner_that_cannot_be_EXECUTED_is_errored_not_a_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A runner that exists and cannot be started is the same answer as one that is not there.
+
+    `FileNotFoundError` is one way a `Popen` fails; a path that is not executable raises
+    `PermissionError` instead. Left uncaught it escapes the thread pool as a traceback and exits
+    `FINDINGS`, so a harness that could not run at all arrives looking exactly like a guard that
+    failed its proof.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    path = inventory(root, entry("floor.latency", "floor"))
+    monkeypatch.setenv("GUARD_PROOF_PYTEST", str(tmp_path))
+
+    assert status_of(root, path) == {"floor.latency": ERRORED}
+    assert main(["prove", "--root", str(root), "--inventory", str(path)]) == FINDINGS
+
+
+def test_an_id_the_inventory_does_not_declare_is_refused_not_a_clean_pass(
+    tmp_path: Path,
+) -> None:
+    """`prove --guard <id>` over an id nobody declares proved nothing, and must say so.
+
+    Selecting a guard by id is how CI, a bisect and a developer address one guard. A typo, or an id
+    renamed in the inventory while a caller still names the old one, would otherwise report a green
+    sweep of zero guards - which is the exact silent yes this harness exists to remove.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    path = inventory(root, entry("floor.latency", "floor"))
+
+    assert (
+        main(
+            [
+                "prove",
+                "--root",
+                str(root),
+                "--inventory",
+                str(path),
+                "--guard",
+                "floor.latency",
+            ]
+        )
+        == OK
+    )
+
+    with pytest.raises(GuardProofError) as exc:
+        guard_proof.sweep(
+            root,
+            load(path),
+            scope=guard_proof.Scope("all", frozenset()),
+            only=("floor.latenc",),
+            parallel=2,
+        )
+    assert "floor.latenc" in str(exc.value)
+    assert (
+        main(
+            [
+                "prove",
+                "--root",
+                str(root),
+                "--inventory",
+                str(path),
+                "--guard",
+                "floor.latenc",
+            ]
+        )
+        == 2
+    ), (
+        "a usage error is ERROR, never FINDINGS - the two codes already mean different things here"
+    )
+
+
 # ── the working tree ────────────────────────────────────────────────────────
 
 
@@ -459,6 +533,62 @@ def test_a_guard_the_change_DOES_touch_is_enforced(tmp_path: Path) -> None:
     )
 
     assert main(["check", "--root", str(root), "--inventory", str(path)]) == FINDINGS
+
+
+def test_a_script_this_change_newly_WIRES_IN_is_enforced_though_it_was_not_edited(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The second way into scope: the diff edits the SURFACE, not the guard.
+
+    `helper.py` was already sitting in the tree and answered to nothing, because no enforcement
+    surface invoked it. This change adds that invocation to `gate_ci.sh` and touches `helper.py` not
+    at all - so a scope decided on the guard's own file lets the one diff that put a wholly unproven
+    check into the pipeline pass clean.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    (root / "scripts" / "helper.py").write_text(GUARD, encoding="utf-8")
+    path = inventory(root, entry("floor.latency", "floor"))
+    git_repo(root)
+    surface = root / "scripts" / "gate_ci.sh"
+    surface.write_text(
+        surface.read_text(encoding="utf-8") + 'python3 "$SCRIPT_DIR/helper.py"\n',
+        encoding="utf-8",
+    )
+
+    code = main(["check", "--root", str(root), "--inventory", str(path)])
+    said = capsys.readouterr()
+
+    assert code == FINDINGS
+    assert "scripts/helper.py" in said.out
+    assert "scripts/helper.py" not in said.err, (
+        "a newly wired guard is enforced, never counted-and-named"
+    )
+
+
+def test_a_script_an_UNTOUCHED_surface_invokes_is_still_only_counted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The boundary is unchanged: this adds one more way to be IN scope, it does not widen it.
+
+    Here the surface already invoked `helper.py` before the change and the change touches neither,
+    so the undeclared guard is pre-existing and may not hold this diff hostage (CLAUDE.md 3a).
+    """
+    root = tree(tmp_path, "floor", "helper")
+    with_test(root, "floor")
+    path = inventory(root, entry("floor.latency", "floor"))
+    git_repo(root)
+    (root / "tests" / "test_floor.py").write_text(
+        GUARDED_TEST.format(module="floor") + "\n\n# touched\n", encoding="utf-8"
+    )
+
+    code = main(["check", "--root", str(root), "--inventory", str(path)])
+    said = capsys.readouterr()
+
+    assert code == OK
+    assert "scripts/helper.py" in said.err, (
+        "what was not enforced is named, never silent"
+    )
 
 
 def test_when_git_cannot_say_what_changed_nothing_is_enforced_and_it_says_so(
