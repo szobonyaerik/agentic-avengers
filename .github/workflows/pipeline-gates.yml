@@ -25,24 +25,6 @@ jobs:
           [ -f requirements.txt ] && pip install -r requirements.txt || true
           [ -f pyproject.toml ] && pip install -e . || true
 
-      # Every check must prove it ran (issue #69). `prove` breaks each declared guard in a throwaway
-      # copy and asserts its named tests go red - a guard that stays green is reported by name and
-      # fails this step. `check` adds the diff-scoped half: a guard this PR ADDS to the enforcement
-      # path with no inventory entry is a finding, while the guards it does not touch are counted
-      # and named rather than blocking (the applicability boundary, CLAUDE.md 3a). The full audit,
-      # which enforces the undeclared count over the whole tree, is `report` - run deliberately, and
-      # nightly, never as a condition on somebody's unrelated PR.
-      - name: Guard proof
-        run: |
-          set -euo pipefail
-          python3 scripts/guard_proof.py prove --jobs 4
-          BASE="${{ github.event.pull_request.base.sha }}"
-          if [ -n "$BASE" ]; then
-            python3 scripts/guard_proof.py check --base "$BASE" --jobs 4
-          else
-            echo "no pull-request base: the diff-scoped half has no scope on a push build" >&2
-          fi
-
       - name: Run pipeline gates (full)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

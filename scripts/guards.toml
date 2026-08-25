@@ -743,6 +743,18 @@ replace = '''
         if scope.covers(root / name):'''
 
 [[guard]]
+id = "install-manifest.shipped-file-runs-unvendored-script"
+defect = "A file install.sh copies into every consumer repo runs a script install.sh does not copy. Over there the command is simply absent: the pre-commit hook fails and no commit can be made, and CI fails on every build. The manifest check knew only the ${CLAUDE_PLUGIN_ROOT}/, $SD/ and $SCRIPT_DIR/ spellings and never opened a repo-root or .github/ file, so the one spelling a pre-commit entry and a workflow run line actually use was invisible to it - and a human reading a diff was the only thing that caught it."
+implements = "tests/test_install_manifest.py"
+tests = ["tests/test_install_manifest.py"]
+[[guard.mutation]]
+file = "tests/test_install_manifest.py"
+find = '''
+EXECUTION = re.compile(r"(?:python3?|bash|sh)\s+(scripts/[A-Za-z0-9_.-]+\.(?:py|sh))")'''
+replace = '''
+EXECUTION = re.compile(r"(?!x)x")'''
+
+[[guard]]
 id = "guard-proof.newly-wired-means-ADDED"
 defect = "Read as 'a touched surface invokes it' rather than 'the diff ADDED the invocation', the scope hands every pre-existing undeclared script a surface calls to whoever edits an unrelated line of that surface. A rule added later then binds what the change is not responsible for - the hostage failure the applicability boundary exists to remove, reintroduced by the check built to honour it."
 implements = "scripts/guard_proof.py"
@@ -750,11 +762,9 @@ tests = ["tests/test_guard_proof.py"]
 [[guard.mutation]]
 file = "scripts/guard_proof.py"
 find = '''
-        added = set(_script_tokens(text)) - set(
-            _script_tokens(_pre_image(root, ref, surface))
-        )'''
+            else invoked - set(_script_tokens(_pre_image(root, ref, surface)))'''
 replace = '''
-        added = set(_script_tokens(text))'''
+            else invoked'''
 
 [[guard]]
 id = "guard-proof.unknown-guard-id-refused"

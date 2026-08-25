@@ -141,13 +141,17 @@ HOOKS_JSON = "hooks/hooks.json"
 #: It is closed and named rather than derived, the same discipline `spec_gate_triage.BLOCKING` and
 #: `applicability.RULES` follow: "enforcement surface" is a decision about where this pipeline wires
 #: its checks - the pre-commit/CI gate floor, the hook configuration and the hook scripts it runs,
-#: and the two CI entry points - not something a call graph can be asked. A fifth member is a
-#: deliberate edit here.
+#: and the CI entry points - not something a call graph can be asked. A sixth member is a deliberate
+#: edit here. `.pre-commit-config.yaml` and `pipeline-gates.yml` stay members because they still
+#: invoke `gate_ci.sh`; `guard-proof.yml` is one because it invokes this file, and it is where this
+#: harness's CI wiring lives precisely because the other two are vendored into consumer repos that
+#: do not receive `guard_proof.py`.
 ENFORCEMENT_SURFACES = (
     GATE_CI,
     HOOKS_JSON,
     ".pre-commit-config.yaml",
     ".github/workflows/pipeline-gates.yml",
+    ".github/workflows/guard-proof.yml",
 )
 
 #: How a shell file in this repository names a sibling script. The same three spellings
@@ -735,7 +739,7 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
 
     The second way a guard lands in scope. `covers_guard` asks whether the diff touched the guard's
     own files; this asks whether the diff ADDED an invocation of it to an `ENFORCEMENT_SURFACES`
-    file. A diff adding `python3 "$SCRIPT_DIR/new_check.py"` to `gate_ci.sh`, or a `hooks.json`
+    file. A diff adding a line that runs a new check to `gate_ci.sh`, or a `hooks.json`
     entry pointing at a script that was already sitting in the tree, is a guard newly wired in - and
     without this it answers to nothing, because the file it names was never edited.
 
@@ -746,11 +750,19 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
     applicability boundary exists to remove. A surface the diff created has no pre-image, so
     everything in it is added; a `base` git cannot resolve makes newness unknowable, which enforces
     nothing and says so.
+
+    ADDED narrows what a CHANGE is answerable for; it is not what a full audit can SEE. Under `all`
+    there is no diff, so every invocation counts and the surfaces `guard_universe` does not walk -
+    the config and workflow members, which reach a script through no shell line it reads - stay in
+    the audit's universe. Without that, a script wired only from one of them would leave the report
+    entirely: neither declared, nor exempt, nor undeclared, which is full coverage claimed over a
+    check nobody has ever broken on purpose.
     """
-    if scope.mode != "changed":
+    if scope.mode == "unknowable":
         return {}
+    audit = scope.mode == "all"
     ref = scope.base or "HEAD"
-    if (
+    if not audit and (
         _git_lines(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
         is None
     ):
@@ -770,8 +782,11 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
             text = target.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        added = set(_script_tokens(text)) - set(
-            _script_tokens(_pre_image(root, ref, surface))
+        invoked = set(_script_tokens(text))
+        added = (
+            invoked
+            if audit
+            else invoked - set(_script_tokens(_pre_image(root, ref, surface)))
         )
         for token in sorted(added):
             if token != surface and (root / token).is_file():

@@ -1,8 +1,20 @@
-# The guard-proof sweep, on its own schedule.
+# The guard-proof sweep. Every check must prove it ran (issue #69).
 #
-# `pipeline-gates` already proves every declared guard on each PR. This exists for the drift a PR
-# cannot show: a dependency, a runner or a toolchain change that quietly makes a guard's test stop
-# noticing its defect, with nobody's diff to attach it to.
+# This workflow is where ALL of the harness's CI wiring lives, and that is not a filing decision:
+# `.pre-commit-config.yaml` and `pipeline-gates.yml` are copied verbatim into every consumer repo by
+# install.sh (SRC_SETS) and by vendor_runtime.sh, while guard_proof.py and guards.toml are
+# deliberately NOT vendored - a consumer repo vendors the guards, not the proof of them, and
+# tests/test_install_manifest.py now refuses that combination. A shipped file running an absent
+# script fails every
+# commit and every build over there. This file does not ship, so it is where the harness may run.
+#
+# On a pull request both halves run: `prove` breaks each declared guard in a throwaway copy and
+# asserts its named tests go red, and `check` adds the diff-scoped half - a guard this PR ADDS to the
+# enforcement path with no inventory entry is a finding, while the guards it does not touch are
+# counted and named rather than blocking (the applicability boundary, CLAUDE.md 3a).
+#
+# The nightly run exists for the drift a PR cannot show: a dependency, a runner or a toolchain change
+# that quietly makes a guard's test stop noticing its defect, with nobody's diff to attach it to.
 #
 # `audit: true` on a manual run switches to the full audit, which additionally enforces the
 # UNDECLARED count over the whole tree - the guards nobody has ever broken on purpose. That is the
@@ -11,6 +23,9 @@
 name: guard-proof
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
@@ -24,7 +39,12 @@ jobs:
   sweep:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 — the diff-scoped half resolves the pull request's base sha, which a shallow
+      # clone does not have. A base git cannot resolve makes the scope unknowable, so the check
+      # would enforce nothing and say so: green, and meaningless.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -58,6 +78,12 @@ jobs:
                   print(f"- `{proof['guard']}` — **{proof['status']}**")
           PY
           exit "$FAILED"
+
+      - name: Guard proof (diff-scoped)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          python3 scripts/guard_proof.py check --base "${{ github.event.pull_request.base.sha }}" --jobs 4
 
       - uses: actions/upload-artifact@v4
         if: always()
