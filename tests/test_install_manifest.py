@@ -65,11 +65,14 @@ SKIP_DIR_PARTS = {".git", "node_modules", "__pycache__"}
 #   ${CLAUDE_PLUGIN_ROOT}/scripts/x.py   (plugin root, from skills/commands/agents/hooks)
 #   $SD/x.sh                             (the running script's own dir, from scripts/*.sh)
 #   $SCRIPT_DIR/x.py                     (same idea, gate_ci.sh's spelling)
-REFERENCE = re.compile(
-    r"\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/([A-Za-z0-9_.-]+\.(?:py|sh))"
-    r"|\$SD/([A-Za-z0-9_.-]+\.(?:py|sh))"
-    r"|\$SCRIPT_DIR/([A-Za-z0-9_.-]+\.(?:py|sh))"
+_SCRIPT_PREFIXES = (
+    r"\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/",
+    r"\$SD/",
+    r"\$SCRIPT_DIR/",
 )
+_SCRIPT_NAME = r"([A-Za-z0-9_.-]+\.(?:py|sh))"
+
+REFERENCE = re.compile("|".join(prefix + _SCRIPT_NAME for prefix in _SCRIPT_PREFIXES))
 
 # A python script's dependency on a SIBLING script, which the shell forms above cannot see:
 #   from proc_group import run_bounded      /      import model_vendors
@@ -82,12 +85,22 @@ PY_IMPORT = re.compile(
     re.M,
 )
 
-# A shipped file RUNNING a sibling script, in the spelling a pre-commit `entry:`, a workflow `run:`
-# line and a documented command all use, and the three above cannot see:
-#   entry: python3 scripts/x.py   /   run: bash scripts/x.sh   /   `python3 scripts/x.py check`
+# A shipped file RUNNING a sibling script — every spelling this repository writes one in: the bare
+# `scripts/x.py` a pre-commit `entry:`, a workflow `run:` line and a documented command use, and the
+# three above, which shipped skills, agents and hook scripts use:
+#   entry: python3 scripts/x.py   /   bash "$SD/x.sh"   /   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/x.py"
+# The prefixes come from the same list `REFERENCE` is built from: a check that knows one spelling of
+# the thing it looks for reports clean about the spellings it cannot see, and a second copy of the
+# list is what drifts into being that check.
+#
 # The interpreter is the whole distinction: it is what separates naming a path from telling somebody
 # to run it, and it is a distinction a machine can draw without guessing at intent.
-EXECUTION = re.compile(r"(?:python3?|bash|sh)\s+(scripts/[A-Za-z0-9_.-]+\.(?:py|sh))")
+EXECUTION = re.compile(
+    r"(?:python3?|bash|sh)\s+\"?(?:"
+    + "|".join((*_SCRIPT_PREFIXES, "scripts/"))
+    + ")"
+    + _SCRIPT_NAME
+)
 
 # A template a shipped file sends its writer to, by path:
 #   docs/templates/test-mapping.template.md   /   docs/templates/verdict.template.json
@@ -140,7 +153,8 @@ def unvendored_executions(root: Path = REPO) -> dict[str, set[str]]:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for target in EXECUTION.findall(text):
+        for name in EXECUTION.findall(text):
+            target = f"scripts/{name}"
             if target not in NOT_VENDORED and not covered_by(sets, target):
                 found.setdefault(target, set()).add(str(path.relative_to(root)))
     return found
@@ -149,29 +163,44 @@ def unvendored_executions(root: Path = REPO) -> dict[str, set[str]]:
 def references() -> dict[str, set[str]]:
     """Every vendored-surface file the repo points at, mapped to the files that point at it."""
     found: dict[str, set[str]] = {}
+    for path in scanned_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for plugin_ref, sd_ref, script_dir_ref in REFERENCE.findall(text):
+            target = f"scripts/{plugin_ref or sd_ref or script_dir_ref}"
+            found.setdefault(target, set()).add(str(path.relative_to(REPO)))
+        for template in TEMPLATE_REFERENCE.findall(text):
+            found.setdefault(f"docs/templates/{template}", set()).add(
+                str(path.relative_to(REPO))
+            )
+        if path.suffix == ".py" and path.parent.name == "scripts":
+            for from_mod, plain_mod in PY_IMPORT.findall(text):
+                module = from_mod or plain_mod
+                if (REPO / "scripts" / f"{module}.py").is_file():
+                    found.setdefault(f"scripts/{module}.py", set()).add(
+                        str(path.relative_to(REPO))
+                    )
+    return found
+
+
+def scanned_files() -> list[Path]:
+    """The files whose pointers are checked: the runtime directories AND every shipped file.
+
+    `SCANNED` alone never opens a repo-root or `.github/` SRC_SETS member - `AGENTS.md`,
+    `.pre-commit-config.yaml`, `pipeline-gates.yml`, `cosmic-ray.toml` - which is half of why a
+    shipped file pointing at an unvendored script stayed invisible here for three rounds. Whatever
+    reaches a consumer is read, whichever directory it happens to sit in.
+    """
+    seen: dict[Path, None] = {}
     for top in SCANNED:
         for path in sorted((REPO / top).rglob("*")):
-            if not path.is_file() or SKIP_DIR_PARTS & set(path.parts):
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError):
-                continue
-            for plugin_ref, sd_ref, script_dir_ref in REFERENCE.findall(text):
-                target = f"scripts/{plugin_ref or sd_ref or script_dir_ref}"
-                found.setdefault(target, set()).add(str(path.relative_to(REPO)))
-            for template in TEMPLATE_REFERENCE.findall(text):
-                found.setdefault(f"docs/templates/{template}", set()).add(
-                    str(path.relative_to(REPO))
-                )
-            if path.suffix == ".py" and path.parent.name == "scripts":
-                for from_mod, plain_mod in PY_IMPORT.findall(text):
-                    module = from_mod or plain_mod
-                    if (REPO / "scripts" / f"{module}.py").is_file():
-                        found.setdefault(f"scripts/{module}.py", set()).add(
-                            str(path.relative_to(REPO))
-                        )
-    return found
+            if path.is_file() and not SKIP_DIR_PARTS & set(path.parts):
+                seen.setdefault(path, None)
+    for path in shipped_files():
+        seen.setdefault(path, None)
+    return list(seen)
 
 
 def covered_by(sets: list[str], path: str) -> bool:
@@ -246,6 +275,33 @@ def test_shipped_DOCUMENTATION_telling_an_agent_to_run_an_unvendored_script_is_r
     )
 
     assert unvendored_executions(root) == {"scripts/guard_proof.py": {"AGENTS.md"}}
+
+
+def test_the_plugin_root_and_SD_spellings_are_seen_too(tmp_path: Path) -> None:
+    """The bare `scripts/x.py` form is one of three, and it was the only one this could see.
+
+    A shipped skill, agent or hook script names a sibling script through `${CLAUDE_PLUGIN_ROOT}/` or
+    `$SD/`, so a check that knew only the bare form reported clean about the spellings the rest of
+    the shipped surface actually writes - the same blind spot one layer in.
+    """
+    root = toy_surface(tmp_path, "        entry: bash scripts/gate_ci.sh\n")
+    Path(root / "scripts" / "install.sh").write_text(
+        'SRC_SETS="scripts/gate_ci.sh .pre-commit-config.yaml AGENTS.md hooks"\n',
+        encoding="utf-8",
+    )
+    (root / "AGENTS.md").write_text(
+        'Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_proof.py" check` to prove the guards.\n',
+        encoding="utf-8",
+    )
+    (root / "hooks").mkdir()
+    (root / "hooks" / "run.sh").write_text(
+        'bash "$SD/gate_runner_guard.sh"\n', encoding="utf-8"
+    )
+
+    assert unvendored_executions(root) == {
+        "scripts/guard_proof.py": {"AGENTS.md"},
+        "scripts/gate_runner_guard.sh": {"hooks/run.sh"},
+    }
 
 
 def test_shipped_documentation_may_NAME_an_unvendored_path_without_running_it(

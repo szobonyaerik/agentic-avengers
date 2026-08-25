@@ -153,20 +153,6 @@ def _bounded(monkeypatch):
     monkeypatch.setenv("GUARD_PROOF_BUDGET_S", "60")
 
 
-def prove(root: Path, path: Path, *args: str) -> tuple[int, list]:
-    """Run the harness over one toy tree and return (exit code, its proofs)."""
-    code = main(
-        ["prove", "--root", str(root), "--inventory", str(path), "--jobs", "2", *args]
-    )
-    report = guard_proof.sweep(
-        root,
-        load(path),
-        scope=guard_proof.Scope("all", frozenset()),
-        parallel=2,
-    )
-    return code, list(report.proofs)
-
-
 def status_of(root: Path, path: Path) -> dict[str, str]:
     report = guard_proof.sweep(
         root, load(path), scope=guard_proof.Scope("all", frozenset()), parallel=2
@@ -464,6 +450,43 @@ def test_an_exemption_nothing_invokes_any_more_is_a_finding(tmp_path: Path) -> N
 
     assert report.stale_exemptions == ("scripts/long_gone.py",)
     assert guard_proof.verdict(report) == FINDINGS
+
+
+def test_an_exemption_reachable_only_from_a_NON_HOOK_surface_is_not_stale(
+    tmp_path: Path,
+) -> None:
+    """A stale-exemption finding is not diff-scoped, so it must be judged against the whole set.
+
+    `guard_universe` walks the gate floor and the hook scripts; the config and workflow members of
+    the closed surface set reach a script through no shell line it reads. Judged against that
+    narrower universe, an exemption for a file only they invoke reads as stale on every unrelated
+    diff, forever, with no way for any of those diffs to clear it - the hostage failure again.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    (root / "scripts" / "helper.py").write_text(GUARD, encoding="utf-8")
+    (root / ".pre-commit-config.yaml").write_text(
+        "        entry: python3 scripts/helper.py\n", encoding="utf-8"
+    )
+    path = inventory(
+        root,
+        entry("floor.latency", "floor")
+        + '\n[[exempt]]\nfile = "scripts/helper.py"\nreason = "reads, never decides"\n',
+    )
+    git_repo(root)
+    (root / "tests" / "test_floor.py").write_text(
+        GUARDED_TEST.format(module="floor") + "\n\n# touched\n", encoding="utf-8"
+    )
+
+    report = guard_proof.sweep(
+        root,
+        load(path),
+        scope=guard_proof.resolve_scope(root, changed_only=True, base=None),
+        parallel=2,
+    )
+
+    assert report.stale_exemptions == ()
+    assert guard_proof.verdict(report) == OK
 
 
 def test_an_inventory_naming_a_file_that_is_not_there_is_a_finding(

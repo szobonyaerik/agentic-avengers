@@ -744,7 +744,10 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
     without this it answers to nothing, because the file it names was never edited.
 
     ADDED is the whole predicate, and it is measured rather than assumed: a token in the surface's
-    current content and absent from its content at `base` (or `HEAD`). "A touched surface invokes
+    current content and absent from its content at the MERGE-BASE with `base` (or at `HEAD`). The
+    merge-base is not a detail - `applicability.changed_paths` scopes with `base...HEAD`, and asking
+    the pre-image at the base TIP instead would answer about a tree neither branch has: a line the
+    base branch deleted after the fork reads as one this change added. "A touched surface invokes
     it" is a different and much wider question - it hands every pre-existing undeclared script the
     surface calls to whoever edits an unrelated line of it, which is the hostage failure the
     applicability boundary exists to remove. A surface the diff created has no pre-image, so
@@ -762,16 +765,16 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
         return {}
     audit = scope.mode == "all"
     ref = scope.base or "HEAD"
-    if not audit and (
-        _git_lines(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-        is None
-    ):
+    forked = _git_lines(root, "merge-base", ref, "HEAD") if not audit else ["HEAD"]
+    if not forked:
         print(
-            f"[guard-proof] git cannot resolve {ref!r}, so whether this change ADDS an invocation "
-            f"to an enforcement surface is unknowable; nothing was enforced on that basis.",
+            f"[guard-proof] git cannot resolve a merge-base with {ref!r}, so whether this change "
+            f"ADDS an invocation to an enforcement surface is unknowable; nothing was enforced on "
+            f"that basis.",
             file=sys.stderr,
         )
         return {}
+    base_commit = forked[0]
 
     wired: dict[str, str] = {}
     for surface in (*ENFORCEMENT_SURFACES, *_hook_scripts(root)):
@@ -786,7 +789,7 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
         added = (
             invoked
             if audit
-            else invoked - set(_script_tokens(_pre_image(root, ref, surface)))
+            else invoked - set(_script_tokens(_pre_image(root, base_commit, surface)))
         )
         for token in sorted(added):
             if token != surface and (root / token).is_file():
@@ -904,8 +907,9 @@ def sweep(
         else:
             undeclared_unenforced.append(name)
 
+    audited = set(universe) | set(newly_wired(root, Scope("all", frozenset())))
     stale = tuple(
-        sorted(entry.file for entry in inventory.exempt if entry.file not in universe)
+        sorted(entry.file for entry in inventory.exempt if entry.file not in audited)
     )
     return Report(
         scope=scope.mode,

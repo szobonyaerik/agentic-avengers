@@ -750,7 +750,12 @@ tests = ["tests/test_install_manifest.py"]
 [[guard.mutation]]
 file = "tests/test_install_manifest.py"
 find = '''
-EXECUTION = re.compile(r"(?:python3?|bash|sh)\s+(scripts/[A-Za-z0-9_.-]+\.(?:py|sh))")'''
+EXECUTION = re.compile(
+    r"(?:python3?|bash|sh)\s+\"?(?:"
+    + "|".join((*_SCRIPT_PREFIXES, "scripts/"))
+    + ")"
+    + _SCRIPT_NAME
+)'''
 replace = '''
 EXECUTION = re.compile(r"(?!x)x")'''
 
@@ -762,7 +767,7 @@ tests = ["tests/test_guard_proof.py"]
 [[guard.mutation]]
 file = "scripts/guard_proof.py"
 find = '''
-            else invoked - set(_script_tokens(_pre_image(root, ref, surface)))'''
+            else invoked - set(_script_tokens(_pre_image(root, base_commit, surface)))'''
 replace = '''
             else invoked'''
 

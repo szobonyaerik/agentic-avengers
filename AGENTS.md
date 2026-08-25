@@ -477,6 +477,23 @@ fail-closed rule in `scripts/` and both runtimes get it; the plugin does not nee
 grow logic of its own. (It used to reimplement every gate in TypeScript, and the two copies drifted —
 the TS side kept a zero-survivor mutation gate and an unscoped verifier after the bash side moved on.)
 
+## Every guard is proven by going RED (issue #69)
+
+A green suite proves the tests pass, not that any of them would notice the defect its guard exists
+for. A guard whose test asserts a shape the guard no longer produces goes on passing after the guard
+stops guarding — the same "reports success while doing nothing" class, one level up.
+
+**So each guard declares how to break it, and something breaks it — in the agentic-avengers
+repository itself.** A guard inventory names the file that decides, the defect it catches, the tests
+that must go red and the exact edit that reintroduces it, and a harness applies each mutation to a
+throwaway copy of that tree, runs the named tests and asserts they FAIL. It is deliberately **not**
+part of the vendored surface: the inventory names that repository's own scripts and the tests that
+must go red for them, so a consumer repo has nothing for it to check and receives the guards rather
+than the proof of them.
+
+**The rule that travels is about your own checks:** a check whose test only exercises its happy path
+is decoration. Write the test that goes red when the defect it guards against comes back.
+
 ## Environment
 | var | default | effect |
 |---|---|---|
