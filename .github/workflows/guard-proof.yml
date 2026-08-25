@@ -38,8 +38,14 @@ jobs:
         run: |
           set -uo pipefail
           if [ "${{ inputs.audit }}" = "true" ]; then VERB=report; else VERB=prove; fi
-          python3 scripts/guard_proof.py "$VERB" --jobs 4 --json > guard-proof.json
-          FAILED=$?
+          # The step runs as `bash -e {0}`, which `set -uo pipefail` does not clear, so a bare call
+          # would abort here on a non-zero sweep - and that is the one run whose summary matters,
+          # since it is where the unproven guards are named. `if` is -e safe.
+          if python3 scripts/guard_proof.py "$VERB" --jobs 4 --json > guard-proof.json; then
+            FAILED=0
+          else
+            FAILED=$?
+          fi
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           report = json.load(open("guard-proof.json"))

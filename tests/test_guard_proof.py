@@ -566,6 +566,60 @@ def test_a_script_this_change_newly_WIRES_IN_is_enforced_though_it_was_not_edite
     )
 
 
+def test_an_invocation_that_was_ALREADY_THERE_is_counted_though_the_surface_is_touched(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The mirror of the case above, and the whole difference between ADDED and INVOKED.
+
+    `gate_ci.sh` has always invoked `helper.py`; this change edits an unrelated line of it. Read as
+    "a touched surface invokes it", every pre-existing undeclared script the surface calls becomes
+    this diff's problem - which is a rule added later binding what the change is not responsible
+    for, the hostage failure the applicability boundary exists to remove.
+    """
+    root = tree(tmp_path, "floor", "helper")
+    with_test(root, "floor")
+    path = inventory(root, entry("floor.latency", "floor"))
+    git_repo(root)
+    surface = root / "scripts" / "gate_ci.sh"
+    surface.write_text(
+        surface.read_text(encoding="utf-8") + "# an unrelated line\n", encoding="utf-8"
+    )
+
+    code = main(["check", "--root", str(root), "--inventory", str(path)])
+    said = capsys.readouterr()
+
+    assert code == OK, "the pre-existing invocation is not this change's responsibility"
+    assert "scripts/helper.py" in said.err, (
+        "what was not enforced is named, never silent"
+    )
+
+
+def test_newness_git_cannot_answer_enforces_nothing_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A base git cannot resolve makes newness unknowable, and unknowable enforces nothing.
+
+    Falling back to "every invocation the surface makes" is the wide predicate being removed here;
+    falling back QUIETLY is the silent pass this harness refuses everywhere else.
+    """
+    root = tree(tmp_path, "floor", "helper")
+    with_test(root, "floor")
+    git_repo(root)
+    surface = root / "scripts" / "gate_ci.sh"
+    surface.write_text(
+        surface.read_text(encoding="utf-8") + "# an unrelated line\n", encoding="utf-8"
+    )
+
+    scope = guard_proof.Scope(
+        "changed", frozenset([root / "scripts" / "gate_ci.sh"]), "no-such-ref"
+    )
+    wired = guard_proof.newly_wired(root, scope)
+    said = capsys.readouterr()
+
+    assert wired == {}
+    assert "no-such-ref" in said.err
+
+
 def test_a_script_an_UNTOUCHED_surface_invokes_is_still_only_counted(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

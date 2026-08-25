@@ -743,6 +743,20 @@ replace = '''
         if scope.covers(root / name):'''
 
 [[guard]]
+id = "guard-proof.newly-wired-means-ADDED"
+defect = "Read as 'a touched surface invokes it' rather than 'the diff ADDED the invocation', the scope hands every pre-existing undeclared script a surface calls to whoever edits an unrelated line of that surface. A rule added later then binds what the change is not responsible for - the hostage failure the applicability boundary exists to remove, reintroduced by the check built to honour it."
+implements = "scripts/guard_proof.py"
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        added = set(_script_tokens(text)) - set(
+            _script_tokens(_pre_image(root, ref, surface))
+        )'''
+replace = '''
+        added = set(_script_tokens(text))'''
+
+[[guard]]
 id = "guard-proof.unknown-guard-id-refused"
 implements = "scripts/guard_proof.py"
 defect = "`prove --guard <id>` naming an id the inventory does not hold proved nothing. Reported as a clean pass, a typo or an id renamed in guards.toml while a caller still names the old one goes on 'passing' forever - the silent yes of issue #69, inside the harness built to remove it."

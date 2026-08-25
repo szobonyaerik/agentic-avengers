@@ -134,8 +134,9 @@ HOOKS_JSON = "hooks/hooks.json"
 #: The CLOSED set of files that can put a script on the enforcement path. A change can wire a guard
 #: in without editing the guard at all - one line in `gate_ci.sh`, one entry in `hooks.json` - and a
 #: scope decided on the guard's own file lets exactly that diff pass clean, which is how the
-#: pipeline gains a check nothing proves. Editing one of these files, in a diff that also invokes an
-#: undeclared script from it, puts that script in scope.
+#: pipeline gains a check nothing proves. A diff that ADDS an invocation of an undeclared script to
+#: one of these files puts that script in scope; an invocation that was already there is not this
+#: change's doing, and binding it would hold the diff hostage to the whole pre-existing set.
 #:
 #: It is closed and named rather than derived, the same discipline `spec_gate_triage.BLOCKING` and
 #: `applicability.RULES` follow: "enforcement surface" is a decision about where this pipeline wires
@@ -700,6 +701,7 @@ class Scope:
 
     mode: str
     paths: frozenset[Path]
+    base: str | None = None
 
     def covers(self, path: Path) -> bool:
         if self.mode == "all":
@@ -713,15 +715,52 @@ class Scope:
         return any(self.covers(root / name) for name in guard.files)
 
 
+def _pre_image(root: Path, ref: str, name: str) -> str:
+    """`name` as it stood at `ref`, or empty when it was not there - a surface the diff CREATED."""
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{ref}:{name}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return ""
+    return proc.stdout if proc.returncode == 0 else ""
+
+
 def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
-    """Scripts this change puts on the enforcement path, mapped to the surface that put them there.
+    """Scripts this change ADDS to the enforcement path, mapped to the surface that added them.
 
     The second way a guard lands in scope. `covers_guard` asks whether the diff touched the guard's
-    own files; this asks whether the diff touched an `ENFORCEMENT_SURFACES` file that invokes it. A
-    diff adding `python3 "$SCRIPT_DIR/new_check.py"` to `gate_ci.sh`, or a `hooks.json` entry
-    pointing at a script that was already sitting in the tree, is a guard newly wired in - and
+    own files; this asks whether the diff ADDED an invocation of it to an `ENFORCEMENT_SURFACES`
+    file. A diff adding `python3 "$SCRIPT_DIR/new_check.py"` to `gate_ci.sh`, or a `hooks.json`
+    entry pointing at a script that was already sitting in the tree, is a guard newly wired in - and
     without this it answers to nothing, because the file it names was never edited.
+
+    ADDED is the whole predicate, and it is measured rather than assumed: a token in the surface's
+    current content and absent from its content at `base` (or `HEAD`). "A touched surface invokes
+    it" is a different and much wider question - it hands every pre-existing undeclared script the
+    surface calls to whoever edits an unrelated line of it, which is the hostage failure the
+    applicability boundary exists to remove. A surface the diff created has no pre-image, so
+    everything in it is added; a `base` git cannot resolve makes newness unknowable, which enforces
+    nothing and says so.
     """
+    if scope.mode != "changed":
+        return {}
+    ref = scope.base or "HEAD"
+    if (
+        _git_lines(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        is None
+    ):
+        print(
+            f"[guard-proof] git cannot resolve {ref!r}, so whether this change ADDS an invocation "
+            f"to an enforcement surface is unknowable; nothing was enforced on that basis.",
+            file=sys.stderr,
+        )
+        return {}
+
     wired: dict[str, str] = {}
     for surface in (*ENFORCEMENT_SURFACES, *_hook_scripts(root)):
         target = root / surface
@@ -731,7 +770,10 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
             text = target.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for token in _script_tokens(text):
+        added = set(_script_tokens(text)) - set(
+            _script_tokens(_pre_image(root, ref, surface))
+        )
+        for token in sorted(added):
             if token != surface and (root / token).is_file():
                 wired.setdefault(token, surface)
     return wired
@@ -743,7 +785,7 @@ def resolve_scope(root: Path, *, changed_only: bool, base: str | None) -> Scope:
     paths = applicability.changed_paths(root, base)
     if paths is None:
         return Scope("unknowable", frozenset())
-    return Scope("changed", frozenset(paths))
+    return Scope("changed", frozenset(paths), base)
 
 
 # --- the report -----------------------------------------------------------------------------------
