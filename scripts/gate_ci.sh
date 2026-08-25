@@ -319,6 +319,44 @@ if ! python3 "$SCRIPT_DIR/doc_read_path.py" $READ_PATH_ARGS "$ROOT"; then
   record_fail "read-path"
 fi
 
+# 1bba) The frontmatter contract, in BOTH directions. `--sources` above catches a removed read
+#       coming back; it cannot see a document class nobody ever decided about. Four of them sat in
+#       exactly that state until issue #29 - named by stage instructions, absent from the table, one
+#       of them keying the Stop-hook artifact sweep while nothing was instructed to write it - and
+#       the recurring shape behind that issue is documentation making a claim nothing enforces.
+#       So this asks the general question: every documented claim about an artifact's frontmatter
+#       has a writer instructed to produce it.
+#       CANONICAL REPOSITORY ONLY, both directions. Every source it reads lives upstream, so a repo
+#       that merely installed the pipeline has no remedy for anything it could find, and a rule
+#       whose remedy is unavailable is a wedge. There it runs NOT diff-scoped, for the same reason
+#       `--sources` and `stage_effort.py check` are not: the table and the canonical stage
+#       instructions are always open, never shipped artifacts a later rule would hold hostage.
+#       The step announces which of the two it is, so a skipped check never reads as a passed one.
+#       Which tree this is is ASKED of the module that decides it, never restated here: a second
+#       copy of the marker rule in shell is the copy that drifts.
+#       The canonical bullet names its SUBJECT, never a verdict, because it prints BEFORE the check
+#       runs: worded as an outcome it announced that the table and the writer instructions agree and
+#       then failed two lines later, which is a failed step reading as a pass. The vendored branch
+#       below reports a STATE rather than an outcome, which is why it may say what it says.
+#       The not-canonical branch is keyed on exit 1 SPECIFICALLY, which is the probe's verdict.
+#       Any other non-zero is the probe failing to answer - 2 is a usage error, 127 is a missing
+#       python3, and a traceback out of a module doc_read_path imports exits 1's neighbourhood too -
+#       and reading those as "not the canonical repository" announced a vendored install with an
+#       upstream remedy inside the pipeline's own repo. Naming a cause nobody verified is the same
+#       defect as claiming an outcome nobody earned.
+contract_step_announce () {
+  python3 "$SCRIPT_DIR/doc_read_path.py" canonical "$ROOT" >/dev/null 2>&1
+  case $? in
+    0) echo "• frontmatter contract: the table, the templates and the writer instructions" ;;
+    1) echo "• frontmatter contract: NOT CHECKED — not the canonical pipeline repository, remedy upstream" ;;
+    *) echo "• frontmatter contract: the canonical-repository probe COULD NOT ANSWER; which tree this is was not determined, and the step below reports the outcome" ;;
+  esac
+}
+contract_step_announce
+if ! python3 "$SCRIPT_DIR/doc_read_path.py" check --contract-only "$ROOT"; then
+  record_fail "frontmatter-contract"
+fi
+
 # 1bcx) Every overview.md carries the `## Contracts and Decisions` heading the spec gate's CONTEXT
 #       block reads (scripts/spec_gate_context.py). Without it, `contradiction` — one of the four
 #       things that block a spec — can only ever be checked against the prior phase's card, never

@@ -199,7 +199,9 @@ def attempts(phase_dir: Path) -> list[Attempt]:
     live_path = Path(phase_dir) / "verdict.json"
     live = _read(live_path)
     if live is None and live_path.exists():
-        raise UnreadableVerdict(live_path, "the file is not readable JSON describing an object")
+        raise UnreadableVerdict(
+            live_path, "the file is not readable JSON describing an object"
+        )
     if live is not None:
         number = _numbered(live, live_path, max(seen) + 1 if seen else 1)
         seen[number] = _attempt(number, live)
@@ -249,7 +251,10 @@ def _check(argv: list[str] | None) -> int:
     args = parser.parse_args(argv)
 
     if not args.phase_dir.is_dir():
-        print(f"[verifier_attempts] no such phase directory: {args.phase_dir}", file=sys.stderr)
+        print(
+            f"[verifier_attempts] no such phase directory: {args.phase_dir}",
+            file=sys.stderr,
+        )
         return ERROR
 
     records = attempts(args.phase_dir)

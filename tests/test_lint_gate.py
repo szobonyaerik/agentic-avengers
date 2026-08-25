@@ -24,6 +24,7 @@ named. `--all` is the audit somebody runs deliberately.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -163,3 +164,107 @@ def test_ruff_is_what_this_gate_runs() -> None:
     assert shutil.which("ruff"), (
         "the gate shells out to ruff; without it there is no gate"
     )
+
+
+# --- ruff's output is a version-dependent contract -------------------------------------------------
+
+
+def _stub_ruff(tmp_path: Path, format_stdout: str, format_exit: int) -> Path:
+    """A `ruff` on PATH whose FORMAT answer is fixed.
+
+    The real ruff on this machine is one version, and the thing under test is what this gate does
+    with the OTHER version's output shape - so the contract has to be supplied rather than
+    installed. Nothing here asserts anything about formatting: only about the gate reading, or
+    failing to read, an answer it is handed.
+    """
+    bindir = tmp_path / "stub-bin"
+    bindir.mkdir()
+    stub = bindir / "ruff"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "format" ]; then\n'
+        f"  cat <<'OUT'\n{format_stdout}\nOUT\n"
+        f"  exit {format_exit}\n"
+        "fi\n"
+        "echo 'All checks passed!'\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return bindir
+
+
+def _gate_with(bindir: Path, repo: Path, *args: str) -> subprocess.CompletedProcess:
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}")
+    return subprocess.run(
+        [*CLI, *args], cwd=repo, capture_output=True, text=True, check=False, env=env
+    )
+
+
+#: ruff >= 0.16 stopped emitting `Would reformat: <path>` and names the file in a diagnostic
+#: instead. Read for the old shape alone, the drift arrived here as an empty list - i.e. as clean.
+NEW_SHAPE = """unformatted: File would be reformatted
+ --> drifted.py:1:10
+  |
+  - x = {'a':1,   'b':2}
+1 + x = {"a": 1, "b": 2}
+  |
+
+1 file would be reformatted"""
+
+
+def test_drift_named_in_the_newer_ruff_shape_still_fails_the_gate(
+    repo: Path, tmp_path: Path
+) -> None:
+    (repo / "drifted.py").write_text(DRIFTED, encoding="utf-8")
+    proc = _gate_with(_stub_ruff(tmp_path, NEW_SHAPE, 1), repo)
+    assert proc.returncode == lint_gate.FOUND, proc.stdout + proc.stderr
+    assert "drifted.py is not formatted" in proc.stdout + proc.stderr
+
+
+def test_an_unreadable_ruff_answer_is_an_error_never_a_clean_pass(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Drift ruff reports in a shape this gate cannot parse must not arrive as `no drift`."""
+    unreadable = _stub_ruff(tmp_path, "1 file would be reformatted", 1)
+    proc = _gate_with(unreadable, repo)
+    assert proc.returncode == lint_gate.ERROR, proc.stdout + proc.stderr
+    said = proc.stdout + proc.stderr
+    assert "verified NOTHING" in said
+    assert "clean (rules + format)" not in said
+
+
+def test_ruff_failing_to_run_at_all_is_an_error(repo: Path, tmp_path: Path) -> None:
+    proc = _gate_with(_stub_ruff(tmp_path, "ruff failed: bad config", 2), repo)
+    assert proc.returncode == lint_gate.ERROR, proc.stdout + proc.stderr
+    assert "clean (rules + format)" not in proc.stdout + proc.stderr
+
+
+# --- the rule set is this repository's, not the installed ruff's -----------------------------------
+
+
+def test_the_rule_set_is_declared_rather_than_inherited_from_ruff_defaults() -> None:
+    """Run through ruff itself, at this repository's root, so the assertion is about the config
+    that is IN FORCE rather than about the text of a file. Unsorted imports (I001) are outside the
+    declared set and must stay outside it whatever the installed ruff defaults to; the unused
+    import (F401) proves the same invocation does still lint."""
+    proc = subprocess.run(
+        [
+            "ruff",
+            "check",
+            "--no-cache",
+            "--output-format",
+            "concise",
+            "--stdin-filename",
+            str(ROOT / "declared_rule_set_probe.py"),
+            "-",
+        ],
+        input="import os\nimport abc\n",
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    said = proc.stdout + proc.stderr
+    assert "F401" in said, said
+    assert "I001" not in said, said

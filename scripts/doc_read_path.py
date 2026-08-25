@@ -32,6 +32,20 @@ than wrong, which is harder to notice. The human spec-review survived exactly th
 reading `overview.md`'s header and the prior phase's card per spec, on nobody's `readers:` line.
 Adding a reader here is how that is fixed; bending the prose to match a silent table is not.
 
+  check --contract - the third check, and the general form of a defect this repository keeps
+                   producing one instance at a time: **documentation making claims nothing
+                   enforces.** It asks that every documented claim about an artifact's frontmatter
+                   has a writer instructed to produce it, in both directions - the table's declared
+                   `emitted_by` exists and really instructs `readers:`, AND every artifact class a
+                   canonical source names is one this table governs. The second half is what
+                   `--sources` structurally cannot see, and it is issue #29: four classes named by
+                   stage instructions with no read-path decision recorded either way, one of them
+                   (`implementation-report.md`) keying a Stop hook while nothing was told to write
+                   it. **It runs in the canonical repository ONLY** - every source it reads lives
+                   upstream, so downstream none of the remedies it prescribes exists; elsewhere it
+                   says on stderr that neither direction ran. See `is_canonical_repo`. Its limits
+                   are stated at `check_contract` rather than implied.
+
 The artifact check is **diff-scoped**: an artifact the current diff touches is held to the table, and
 one it does not is *counted on stderr and never blocked*. The rule is **you are responsible for what
 you change** - it is the applicability boundary (`scripts/applicability.py`, which owns the
@@ -52,6 +66,7 @@ Every entry carries `emitted_by`: the canonical source that tells the writer to 
 Declaring a reader in this table is not the same as instructing anyone to write it down, and three
 document classes shipped with the first because nothing owned the second.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -88,7 +103,15 @@ from verifier_evidence import READERS as EVIDENCE_READERS  # noqa: E402
 # extent: whole | header | table | card | none. `none` means the document is written but no stage is
 # instructed to read it - it is an archive, kept on disk, off the read path.
 
-HANDOVER_MAX_BYTES = 6144       # the contract card's hard cap (F1). Enforced, not requested.
+CLEAN = 0
+VIOLATIONS = (
+    1  # an artifact or an instruction really breaks the table. The remedy is to fix it.
+)
+UNDECIDABLE = (
+    2  # the check could not answer. §6: every stop names which of the two it is.
+)
+
+HANDOVER_MAX_BYTES = 6144  # the contract card's hard cap (F1). Enforced, not requested.
 VERDICT_REPORT_MAX_CHARS = 1500  # the verdict's free-prose `report` cap (F5).
 
 READ_PATH: dict[str, dict] = {
@@ -119,7 +142,10 @@ READ_PATH: dict[str, dict] = {
     "plan.md": {
         "written_by": "avenger-implementation-planner",
         "emitted_by": "docs/templates/plan.template.md",
-        "readers": ["avenger-spec-writer @ per spec", "phase-handover @ per phase (next phase only)"],
+        "readers": [
+            "avenger-spec-writer @ per spec",
+            "phase-handover @ per phase (next phase only)",
+        ],
         "extent": "whole",
     },
     "spec.md": {
@@ -219,7 +245,10 @@ READ_PATH: dict[str, dict] = {
     "test-evidence.md": {
         "written_by": "implementer",
         "emitted_by": "docs/templates/test-evidence.template.md",
-        "readers": ["implementer @ on route-back only", "avenger-verifier @ on route-back only"],
+        "readers": [
+            "implementer @ on route-back only",
+            "avenger-verifier @ on route-back only",
+        ],
         "extent": "whole",
         "named_only_by": {
             "agents/avenger-backend-architect.md",
@@ -230,7 +259,7 @@ READ_PATH: dict[str, dict] = {
             "skills/tdd/SKILL.md",
             "skills/verifier-triage/SKILL.md",
             "skills/pipeline-conventions/SKILL.md",
-            "skills/ponytail/SKILL.md",     # forbids minimising it away — the opposite of a read
+            "skills/ponytail/SKILL.md",  # forbids minimising it away — the opposite of a read
         },
     },
     "verdict.json": {
@@ -250,7 +279,9 @@ READ_PATH: dict[str, dict] = {
         # findings on attempt 1 and passed on attempt 2 closed reporting none. The read is `id` and
         # `kind` per finding, once per phase close, by a script; no stage reads the prose, and
         # nothing here relocates any.
-        "readers": ["pipeline_metrics.py + emission_gate.py @ per phase close (finding ids only)"],
+        "readers": [
+            "pipeline_metrics.py + emission_gate.py @ per phase close (finding ids only)"
+        ],
         "extent": "finding ids",
         "archive_of": "verdict.json",
         "needle": "verdict-attempt-",
@@ -291,7 +322,10 @@ READ_PATH: dict[str, dict] = {
     "pipeline-observations.md": {
         "written_by": "orchestrator",
         "emitted_by": "scripts/pipeline_observations.py",
-        "readers": ["retrospective triage @ once, at feature close", "preflight sweep @ frontmatter only"],
+        "readers": [
+            "retrospective triage @ once, at feature close",
+            "preflight sweep @ frontmatter only",
+        ],
         "extent": "whole",
     },
     "e2e-mapping.md": {
@@ -299,6 +333,25 @@ READ_PATH: dict[str, dict] = {
         "emitted_by": "skills/e2e-author/SKILL.md",
         "readers": ["feature close @ once"],
         "extent": "whole",
+    },
+    "review-<slice>.md": {
+        "written_by": "spec-isolation-review",
+        "emitted_by": "skills/spec-isolation-review/SKILL.md",
+        # One reviewer's verdict on ONE slice of one spec, written by a fork that is forbidden to
+        # read any other reviewer's output - that isolation is the whole value, and it is also why
+        # the only possible reader is whoever invoked the fan-out. Same shape as
+        # `pipeline-observations.md`, which is written as the run goes and read once at the triage.
+        # This is an ON-DEMAND stage: nothing in the phase loop invokes it, so nothing SCHEDULES the
+        # read either. Its output is small by construction - a verdict and a list of findings - and
+        # it is read once, by the review that asked for it, and never by a later phase.
+        #
+        # The skill used to say the findings were for "the gate". That gate was the automated half
+        # of spec-review, deleted in the one-gate collapse (SKILL § Output now names the real
+        # reader). A document whose only stated consumer no longer exists is exactly the state
+        # issue #29 found this class in.
+        "readers": ["the invoking spec review @ once, at the end of the fan-out"],
+        "extent": "whole",
+        "needle": "review-",
     },
 }
 
@@ -313,11 +366,26 @@ READERS_RE = re.compile(r"^readers:[ \t]*(.*)$", re.MULTILINE)
 
 
 def _read(path: Path) -> str:
-    """Read a file, or fail closed. A file we cannot read is not a file we can clear."""
+    """Read a file, or fail closed. A file we cannot read is not a file we can clear.
+
+    `ValueError` is caught beside `OSError` because `UnicodeDecodeError` is a `ValueError`, and a
+    single non-UTF-8 file anywhere under the scanned directories would otherwise turn the CI gate
+    into a stack trace instead of a named finding. Same failure shape either way: unreadable is
+    unreadable.
+
+    It exits `UNDECIDABLE`, never `VIOLATIONS`. The module said "exit 2" for as long as it has
+    existed and produced 1, because `SystemExit("<message>")` prints the message and exits 1 - so an
+    unreadable file arrived at every caller wearing the code that means "an artifact is owed", and
+    `hook_artifact_check.sh` turned that into "create them before stopping", which is not a remedy
+    for a file nothing can decode.
+    """
     try:
         return path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise SystemExit(f"[doc_read_path] cannot read {path}: {exc} — fail closed")
+    except (OSError, ValueError) as exc:
+        print(
+            f"[doc_read_path] cannot read {path}: {exc} - fail closed", file=sys.stderr
+        )
+        raise SystemExit(UNDECIDABLE) from exc
 
 
 def frontmatter(text: str) -> str | None:
@@ -343,7 +411,11 @@ def spec_for(filename: str) -> dict | None:
         return entry
     for name, candidate in READ_PATH.items():
         needle = candidate.get("needle")
-        if needle and filename.startswith(needle) and filename.endswith(name.rsplit(".", 1)[-1]):
+        if (
+            needle
+            and filename.startswith(needle)
+            and filename.endswith(name.rsplit(".", 1)[-1])
+        ):
             return candidate
     return None
 
@@ -367,12 +439,14 @@ def _artifact_problems(path: Path, spec: dict) -> list[tuple[str, str]]:
     if cap is not None:
         size = path.stat().st_size
         if size > cap:
-            problems.append((
-                "cap",
-                f"{path}: {size} bytes over the {cap}-byte cap. This is a contract card, not a "
-                f"record — move the narrative to handover-archive.md beside it, which no stage "
-                f"is instructed to read.",
-            ))
+            problems.append(
+                (
+                    "cap",
+                    f"{path}: {size} bytes over the {cap}-byte cap. This is a contract card, not a "
+                    f"record — move the narrative to handover-archive.md beside it, which no stage "
+                    f"is instructed to read.",
+                )
+            )
 
     expected = spec["readers"] or [f"none (archive of {spec.get('archive_of')})"]
     missing_readers = (
@@ -391,19 +465,23 @@ def _artifact_problems(path: Path, spec: dict) -> list[tuple[str, str]]:
         try:
             payload = json.loads(_read(path))
         except json.JSONDecodeError as exc:
-            problems.append(("unparseable", f"{path}: not parseable JSON ({exc}) — fail closed"))
+            problems.append(
+                ("unparseable", f"{path}: not parseable JSON ({exc}) — fail closed")
+            )
             return problems
         if not isinstance(payload, dict) or "readers" not in payload:
             problems.append(missing_readers)
         report = payload.get("report") if isinstance(payload, dict) else None
         cap_chars = spec.get("report_max_chars")
         if cap_chars and isinstance(report, str) and len(report) > cap_chars:
-            problems.append((
-                "report",
-                f"{path}: `report` is {len(report)} chars, over the {cap_chars}-char cap. It "
-                f"carries the headline judgement and what the structured fields cannot say — "
-                f"not a prose retelling of tests, coverage and findings.",
-            ))
+            problems.append(
+                (
+                    "report",
+                    f"{path}: `report` is {len(report)} chars, over the {cap_chars}-char cap. It "
+                    f"carries the headline judgement and what the structured fields cannot say — "
+                    f"not a prose retelling of tests, coverage and findings.",
+                )
+            )
     return problems
 
 
@@ -469,6 +547,7 @@ def check_artifacts(root: Path, *, enforce_all: bool = False) -> list[str]:
 
 # --- check --sources: the stage instructions -----------------------------------------------------
 
+
 def check_sources(root: Path) -> list[str]:
     problems: list[str] = []
     for name, spec in GUARDED.items():
@@ -496,13 +575,336 @@ def check_sources(root: Path) -> list[str]:
     return problems
 
 
+# --- check --contract: the claims about an artifact's frontmatter ---------------------------------
+#
+# `check --sources` guards ONE direction: a read this table removed cannot come back. This guards
+# the other two, and it is the general form of the defect issue #29 was filed for - documentation
+# making a claim nothing enforces. Three claims, all mechanical:
+#
+#   C1  every entry's `emitted_by` names a file that EXISTS. A declared writer instruction that is
+#       not on disk is fiction, and nothing else would ever notice.
+#   C2  that file actually INSTRUCTS the `readers:` line. Declaring a reader in this table is not
+#       the same as telling anyone to write it down: three document classes shipped with the first
+#       and not the second, which is what put `emitted_by` in the table in the first place. A
+#       markdown template must carry the line in its own frontmatter, not merely mention it in
+#       prose - a template that only talks about `readers:` teaches a document that fails
+#       `check_artifacts`. Any OTHER markdown emitter - an agent definition, a skill - must show it
+#       inside a fenced block, the shape it tells its writer to produce (`instructs_readers`).
+#       **What C2 does not decide, said rather than implied**: for a NON-markdown emitter, a `.py`
+#       or a `.sh` that writes the key in code, it confirms the key appears somewhere in the file
+#       and NOT where, because there is no shipped shape to point at and locating a dict key by
+#       parsing arbitrary code buys less than it costs.
+#   C3  the INVERSE, which nothing checked before: an artifact class a canonical source names is
+#       one this table governs. A stage told to write, link or read a document the read path has no
+#       entry for is a class with no decision recorded either way - `fidelity-report.md`,
+#       `implementation-report.md`, `test-execution-report.md` and `scoped/review-<slice>.md` sat in
+#       exactly that state, one of them (`implementation-report.md`) load-bearing for a Stop hook.
+#
+# All three are asked in the CANONICAL REPOSITORY ONLY (`is_canonical_repo`), and there they are NOT
+# diff-scoped, for the same reason `--sources` and `stage_effort.py check` are not: canonical stage
+# instructions and the table itself are always open to change, never shipped artifacts a later rule
+# would hold hostage.
+#
+# What C3 does NOT see, said rather than implied. It reads two inventories - artifact PATH literals
+# under `docs/features/`, and the canonical layout block in `skills/pipeline-conventions`. So a class
+# named only as a bare filename in prose is invisible to it: `fidelity-report.md` was named exactly
+# that way, in two artifact lists and nowhere else, so this check would not have caught it; it was
+# caught by reading. Generalising to bare filenames means guessing which backticked `*.md` in a
+# sentence is a pipeline artifact, which needs a denylist of everything else in the repository - a
+# list that rots, which is worse than a stated limit. And a class named only OUTSIDE the directories
+# in `CONTRACT_SOURCE_DIRS` is invisible too. Both are the same trade, a stated limit over a guess.
+
+#: Where a stage instruction or a template may name an artifact path. These are read only in the
+#: canonical repository (`is_canonical_repo`), where every one of them is the pipeline's own file
+#: and always open to change - which is what keeps this check honestly non-diff-scoped. `scripts/`,
+#: `README.md` and `CLAUDE.md` are deliberately absent even there: they are the CONSUMER's code,
+#: readme and instructions in a vendored tree, and a boundary that holds in only one of the two
+#: trees is the boundary that keeps being defeated.
+CONTRACT_SOURCE_DIRS = SOURCE_DIRS + ("docs/templates",)
+CONTRACT_SOURCE_FILES = ("AGENTS.md",)
+CONTRACT_SOURCE_SUFFIXES = (".md", ".json", ".py", ".sh")
+
+#: A path literal pointing into the artifact tree. `<feature>`, `<n>-<slug>` and `*` are template
+#: placeholders the sources write literally, so they are part of the character class.
+ARTIFACT_PATH_RE = re.compile(r"docs/features/[A-Za-z0-9_<>*./-]+")
+
+#: A `<...>` placeholder segment, stripped before deciding whether a filename names anything real.
+PLACEHOLDER_RE = re.compile(r"<[^>]*>|\*")
+
+#: The file that says this tree is the pipeline's own repository. Chosen because `scripts/install.sh`
+#: SRC_SETS does not vendor it, so no consumer repo acquires it by installing the pipeline.
+CANONICAL_MARKER = "scripts/sync_opencode.py"
+
+#: What a non-canonical tree is told instead of a verdict. One line, both directions, naming where
+#: the remedy lives, because an absent dimension that reports nothing reads exactly like a pass.
+NOT_CHECKED = (
+    "[doc_read_path] frontmatter contract: NOT CHECKED under {root} - neither the `emitted_by` "
+    "direction nor the artifact-class direction ran, because this tree is not the canonical "
+    "pipeline repository ({marker} is absent, and `scripts/install.sh` does not vendor it). Every "
+    "source this check reads lives upstream, so the remedy for anything it could find lives in "
+    "agentic-avengers and not here. This is not a pass."
+)
+
+#: The other inventory: the fenced tree under `- **Layout:**` in the canonical rulebook.
+LAYOUT_SOURCE = "skills/pipeline-conventions/SKILL.md"
+LAYOUT_HEADING = "**Layout:**"
+LAYOUT_NAME_RE = re.compile(r"[A-Za-z0-9_<>*.-]+\.(?:md|json)")
+
+#: Tokens that mean a source instructs the declaration. JSON and Python write the key; markdown and
+#: YAML frontmatter write the line.
+READERS_TOKENS = ("readers:", '"readers"', "'readers'")
+
+#: A markdown fence, opening or closing. A stage that instructs a writer to produce a document ships
+#: that document's SHAPE inside one - YAML frontmatter for a markdown artifact, a JSON object for a
+#: JSON one - so a fence is where C2 looks in a markdown emitter, and prose outside every fence does
+#: not count. See `instructs_readers`.
+FENCE_RE = re.compile(r"^[ \t]*(?:```|~~~)")
+
+
+def _contract_sources(root: Path) -> list[Path]:
+    """Every canonical file that may name an artifact, in a stable order."""
+    found: list[Path] = []
+    for name in CONTRACT_SOURCE_FILES:
+        path = root / name
+        if path.is_file():
+            found.append(path)
+    for source_dir in CONTRACT_SOURCE_DIRS:
+        base = root / source_dir
+        if not base.is_dir():
+            continue
+        found += [
+            path
+            for path in sorted(base.rglob("*"))
+            if path.is_file() and path.suffix in CONTRACT_SOURCE_SUFFIXES
+        ]
+    return found
+
+
+def is_canonical_repo(root: Path) -> bool:
+    """Whether this tree is the pipeline's OWN repository rather than a repo that installed it.
+
+    **`check --contract` runs here and nowhere else, in BOTH directions.** Every source it reads
+    lives upstream: `READ_PATH` itself, the templates it names, and the canonical stage instructions
+    it scans. So downstream there is no remedy for anything it could find - not one of the three
+    outcomes it prescribes is available to a repository that merely installed the pipeline - and a
+    rule whose remedy is unavailable is a wedge rather than a gate.
+
+    Narrowing it once per direction was tried and is what this ends. `scripts/install.sh` SRC_SETS
+    vendors `skills/`, `prompts/`, `docs/templates/`, `AGENTS.md` and part of `scripts/`, and
+    neither `agents/` nor `commands/`, so in a consumer repo those two hold that project's own files
+    and `skills/` holds theirs beside the vendored ones. Asked there, C1 reports every agent-emitted
+    entry as a broken declaration and C3 reports the consumer's own documents as undecided classes,
+    and `gate_ci.sh` runs this with no diff scope, no `--all` escape and no exception ledger, so
+    that repository fails every commit and every CI run from installation onwards. **A half-running
+    check is worse than an honestly absent one**, because a result that means one thing here and
+    another there cannot be read as meaning anything.
+
+    The marker is a file `install.sh` deliberately does not vendor, NOT the presence of a directory
+    named `agents/`. Keying on the name was the first attempt and it is defeated by any consumer
+    that owns a top-level `agents/` of its own, which is ordinary in this kind of project.
+    `scripts/sync_opencode.py` is the canonical-source tooling of §7, it exists only where canonical
+    sources are edited, and `tests/test_frontmatter_contract.py` pins it as absent from SRC_SETS so
+    a future vendoring change cannot turn this marker into a silent no-op.
+
+    What this does NOT decide: it says nothing about `check` or `check --sources`, which read
+    artifacts and stage instructions this repository is responsible for wherever it runs.
+    """
+    return (root / CANONICAL_MARKER).is_file()
+
+
+def fenced_blocks(text: str) -> list[str]:
+    """The body of every fenced code block, which is where a stage ships a document's shape.
+
+    Unclosed fences are tolerated: the last block simply runs to the end of the file. The fence's
+    info string (` ```markdown `, ` ```json `) is deliberately not read - what matters is that the
+    declaration sits in the shipped shape rather than in a sentence about it.
+    """
+    blocks: list[str] = []
+    current: list[str] | None = None
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            if current is None:
+                current = []
+            else:
+                blocks.append("\n".join(current))
+                current = None
+            continue
+        if current is not None:
+            current.append(line)
+    if current is not None:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def instructs_readers(text: str) -> bool:
+    """Whether a markdown emitter really INSTRUCTS `readers:`, rather than talking about it.
+
+    C2's whole claim is that the declared writer instruction produces the line, and for a markdown
+    emitter that is only true when the declaration is in the shape the writer is told to copy. A
+    bare substring test over the file is satisfied by any nearby sentence, which is how the
+    `review-<slice>.md` instruction this table added could be deleted from its own output block with
+    the check that exists to catch that removal staying green: two lines below it a sentence reads
+    "`readers:` is not decoration", and the token is in it.
+    """
+    return any(
+        token in block for block in fenced_blocks(text) for token in READERS_TOKENS
+    )
+
+
+def _emitter_problems(root: Path) -> list[str]:
+    """C1 and C2: the table's declared writer instruction exists, and it instructs the line."""
+    problems: list[str] = []
+    for name, spec in READ_PATH.items():
+        emitter = spec.get("emitted_by")
+        if not emitter:
+            problems.append(
+                f"`{name}` declares its readers in READ_PATH and names no `emitted_by` - a "
+                f"declared reader nobody is instructed to write down is a promise with no "
+                f"mechanism, which is the gap `emitted_by` exists to close."
+            )
+            continue
+        path = root / emitter
+        if not path.is_file():
+            problems.append(
+                f"`{name}` names `{emitter}` as the source that makes its writer declare "
+                f"`readers:`, and that file does not exist."
+            )
+            continue
+        text = _read(path)
+        if emitter.startswith("docs/templates/") and emitter.endswith(".md"):
+            if declared_readers(text) is None:
+                problems.append(
+                    f"{emitter} is the template for `{name}` and carries no `readers:` in its own "
+                    f"frontmatter. A template that mentions the line only in prose teaches a "
+                    f"document that fails `check` - authored exactly as instructed."
+                )
+            continue
+        if emitter.endswith(".md"):
+            if not instructs_readers(text):
+                problems.append(
+                    f"{emitter} is where `{name}`'s writer is told to declare `readers:`, and no "
+                    f"fenced block in it shows the line. Prose ABOUT `readers:` is not an "
+                    f"instruction to write it: put the declaration inside the block that ships the "
+                    f"document's shape, or stop declaring readers for `{name}` in READ_PATH."
+                )
+            continue
+        if not any(token in text for token in READERS_TOKENS):
+            problems.append(
+                f"{emitter} is where `{name}`'s writer is told to declare `readers:`, and it "
+                f"never says so. Either instruct it there, or stop declaring readers for "
+                f"`{name}` in READ_PATH."
+            )
+    return problems
+
+
+def layout_inventory(root: Path) -> set[str]:
+    """The artifact filenames listed in the canonical layout block, or an empty set if absent.
+
+    The second inventory, and a deliberately different KIND of one: the path scan below reads what
+    stages are told to write, this reads what the rulebook says the tree contains. A class can be
+    listed in the layout and instructed nowhere - `scoped/review-<slice>.md` was - so neither
+    inventory subsumes the other.
+    """
+    path = root / LAYOUT_SOURCE
+    if not path.is_file():
+        return set()
+    lines = _read(path).splitlines()
+    heading = next((i for i, line in enumerate(lines) if LAYOUT_HEADING in line), None)
+    if heading is None:
+        return set()
+    fence = next(
+        (
+            i
+            for i in range(heading + 1, len(lines))
+            if lines[i].strip().startswith("```")
+        ),
+        None,
+    )
+    if fence is None:
+        return set()
+    names: set[str] = set()
+    for line in lines[fence + 1 :]:
+        if line.strip().startswith("```"):
+            break
+        names.update(LAYOUT_NAME_RE.findall(line))
+    return names
+
+
+def names_a_class(base: str) -> bool:
+    """Whether a filename names an artifact CLASS at all, rather than matching a set of them.
+
+    `ARTIFACT_PATH_RE` admits `*` and `<...>` because the sources write those placeholders
+    literally, and a class like `scoped/review-<slice>.md` is only nameable with one. But a base
+    whose whole stem is placeholder - `*.md` out of `docs/features/**/*.md` - is a glob, and a glob
+    is not a class: reported as one it prescribes three remedies for a document that does not exist.
+    A placeholder is tolerated only where a real stem resolves it.
+    """
+    stem = base.rsplit(".", 1)[0]
+    return bool(PLACEHOLDER_RE.sub("", stem).strip(" -_."))
+
+
+def _named_artifacts(root: Path) -> dict[str, list[str]]:
+    """Every artifact filename a canonical source names, mapped to where it named it."""
+    named: dict[str, list[str]] = {}
+    for path in _contract_sources(root):
+        rel = path.relative_to(root).as_posix()
+        for lineno, line in enumerate(_read(path).splitlines(), 1):
+            for match in ARTIFACT_PATH_RE.finditer(line):
+                base = match.group(0).rstrip("./").split("/")[-1]
+                if not base.endswith((".md", ".json")) or not names_a_class(base):
+                    continue
+                named.setdefault(base, []).append(f"{rel}:{lineno}")
+    for base in sorted(layout_inventory(root)):
+        if names_a_class(base):
+            named.setdefault(base, []).append(LAYOUT_SOURCE)
+    return named
+
+
+def _governed_problems(root: Path) -> list[str]:
+    """C3: an artifact class a canonical source names is one this table governs."""
+    problems: list[str] = []
+    for base, sites in sorted(_named_artifacts(root).items()):
+        if spec_for(base) is not None:
+            continue
+        where = ", ".join(sites[:4]) + (
+            f" (+{len(sites) - 4} more)" if len(sites) > 4 else ""
+        )
+        problems.append(
+            f"`{base}` is named by a canonical source and READ_PATH has no entry for it, so no "
+            f"stage is declared to read it and nothing makes its writer say who does. Named at: "
+            f"{where}. It has exactly three honest outcomes: give it a READ_PATH entry with real "
+            f"readers, declare `readers: none (<why it still exists>)` the way an archive does, or "
+            f"stop writing it and remove what names it. Guessing is what issue #29 exists to stop."
+        )
+    return problems
+
+
+def check_contract(root: Path) -> list[str]:
+    """Every documented claim about an artifact's frontmatter has a writer instructed to make it.
+
+    Asked only in the canonical repository (`is_canonical_repo`, where the reason is stated).
+    Elsewhere NEITHER direction runs and that is said out loud rather than returning an empty list
+    a caller would read as a pass.
+    """
+    if not is_canonical_repo(root):
+        print(NOT_CHECKED.format(root=root, marker=CANONICAL_MARKER), file=sys.stderr)
+        return []
+    return _emitter_problems(root) + _governed_problems(root)
+
+
 # --- table ---------------------------------------------------------------------------------------
+
 
 def render_table() -> str:
     lines = ["| document | written by | read by | extent |", "|---|---|---|---|"]
     for name, spec in READ_PATH.items():
-        readers = "<br>".join(spec["readers"]) or f"**nobody** (archive of `{spec.get('archive_of')}`)"
-        lines.append(f"| `{name}` | {spec['written_by']} | {readers} | {spec['extent']} |")
+        readers = (
+            "<br>".join(spec["readers"])
+            or f"**nobody** (archive of `{spec.get('archive_of')}`)"
+        )
+        lines.append(
+            f"| `{name}` | {spec['written_by']} | {readers} | {spec['extent']} |"
+        )
     return "\n".join(lines)
 
 
@@ -510,10 +912,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
-    check = sub.add_parser("check", help="validate artifacts on disk (and, with --sources, the stage instructions)")
-    check.add_argument("root", nargs="?", default=".", help="repository root (default: .)")
-    check.add_argument("--sources", action="store_true", help="also check the canonical stage instructions")
-    check.add_argument("--sources-only", action="store_true", help="check only the stage instructions")
+    check = sub.add_parser(
+        "check",
+        help="validate artifacts on disk (and, with --sources, the stage instructions)",
+    )
+    check.add_argument(
+        "root", nargs="?", default=".", help="repository root (default: .)"
+    )
+    check.add_argument(
+        "--sources",
+        action="store_true",
+        help="also check the canonical stage instructions",
+    )
+    check.add_argument(
+        "--sources-only", action="store_true", help="check only the stage instructions"
+    )
+    check.add_argument(
+        "--contract",
+        action="store_true",
+        help="also check that every documented claim about an artifact's frontmatter has a writer "
+        "instructed to produce it, and that every artifact class a canonical source names is "
+        "one this table governs",
+    )
+    check.add_argument(
+        "--contract-only",
+        action="store_true",
+        help="check only the frontmatter contract",
+    )
     check.add_argument(
         "--all",
         action="store_true",
@@ -523,25 +948,38 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("table", help="print the read path as a markdown table")
 
+    canonical = sub.add_parser(
+        "canonical",
+        help="exit 0 when this tree is the canonical pipeline repository, 1 when it is not",
+    )
+    canonical.add_argument(
+        "root", nargs="?", default=".", help="repository root (default: .)"
+    )
+
     args = parser.parse_args(argv)
     if args.command == "table":
         print(render_table())
         return 0
+    if args.command == "canonical":
+        return 0 if is_canonical_repo(Path(args.root).resolve()) else 1
 
     root = Path(args.root).resolve()
+    only = args.sources_only or args.contract_only
     problems: list[str] = []
-    if not args.sources_only:
+    if not only:
         problems += check_artifacts(root, enforce_all=args.enforce_all)
     if args.sources or args.sources_only:
         problems += check_sources(root)
+    if args.contract or args.contract_only:
+        problems += check_contract(root)
 
     if problems:
         print("read-path violations:", file=sys.stderr)
         for problem in problems:
             print(f"  ✗ {problem}", file=sys.stderr)
-        return 1
+        return VIOLATIONS
     print("[doc_read_path] clean")
-    return 0
+    return CLEAN
 
 
 if __name__ == "__main__":
