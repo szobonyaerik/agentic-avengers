@@ -641,6 +641,68 @@ def test_a_COMMENT_naming_an_undeclared_script_does_not_put_it_in_scope(
     assert "scripts/helper.py" not in said.out
 
 
+def test_the_spellings_this_repository_ACTUALLY_writes_invocations_in_are_seen(
+    tmp_path: Path,
+) -> None:
+    """Measured against the real surfaces, not against the one spelling a toy tree happens to use.
+
+    An allow-list of interpreter prefixes read ZERO invocations out of `hooks/hooks.json` - all
+    sixteen hook scripts, whose JSON-escaped quotes made the preceding token a lone backslash - and
+    lost `OUT=$(python3 …)` in `gate_ci.sh` besides. A shrunken universe is the defect this whole
+    module exists to remove, so the question is asked the only way that stays decidable: what is
+    NOT a comment.
+    """
+    surface = "\n".join(
+        [
+            '{"command": "bash \\"${CLAUDE_PLUGIN_ROOT}/scripts/hook_x.sh\\""}',
+            'OUT=$(python3 "$SD/queued.py" run)',
+            'GATE_STATE="$(python3 "$SCRIPT_DIR/state.py" status)"',
+            '. "$SCRIPT_DIR/load_env.sh"',
+            'if ! "$SD/probe.sh"; then exit 1; fi',
+            "        entry: python3 scripts/entrypoint.py",
+            "          run: bash scripts/workflow.sh",
+            "# see scripts/only_mentioned.py for the floor",
+        ]
+    )
+
+    seen = set(guard_proof._uncommented_tokens(surface))
+
+    assert seen == {
+        "scripts/hook_x.sh",
+        "scripts/queued.py",
+        "scripts/state.py",
+        "scripts/load_env.sh",
+        "scripts/probe.sh",
+        "scripts/entrypoint.py",
+        "scripts/workflow.sh",
+    }
+    assert "scripts/only_mentioned.py" not in seen
+
+
+def test_a_script_reached_only_through_a_NON_HOOK_surface_brings_its_imports(
+    tmp_path: Path,
+) -> None:
+    """The import closure has to see everything the universe holds, not only what it seeded itself.
+
+    `guard_universe` walks the gate floor and the hook scripts; a file reached through the config or
+    workflow members of the closed set arrives from elsewhere. Merged in after the closure ran, it
+    contributed itself and none of its imports - so a module it alone imports was absent from the
+    report entirely: not declared, not exempt, not undeclared, with the count claiming coverage.
+    """
+    root = tree(tmp_path, "floor")
+    (root / "scripts" / "wired_only.py").write_text(
+        "import reached_by_import\n" + GUARD, encoding="utf-8"
+    )
+    (root / "scripts" / "reached_by_import.py").write_text(GUARD, encoding="utf-8")
+
+    universe = guard_proof.guard_universe(
+        root, {"scripts/wired_only.py": ".github/workflows/guard-proof.yml"}
+    )
+
+    assert "scripts/wired_only.py" in universe
+    assert "scripts/reached_by_import.py" in universe
+
+
 def test_an_invocation_that_was_ALREADY_THERE_is_counted_though_the_surface_is_touched(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

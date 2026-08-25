@@ -433,54 +433,32 @@ def _script_tokens(text: str) -> list[str]:
     return found
 
 
-#: The words that put a path in command position. `.` and `source` are how a shell file pulls in a
-#: sibling; the rest run one.
-_INVOCATION_WORDS = frozenset(
-    {"python", "python3", "bash", "sh", "exec", "source", "."}
-)
+#: How a comment opens, in the syntaxes the enforcement surfaces are written in: `#` for shell,
+#: YAML, TOML and the pre-commit config, `//` for a JSON-with-comments hook config.
+_COMMENT_OPENERS = ("#", "//")
 
 
-def _is_invocation(before: str) -> bool:
-    """Whether the text preceding a path on its line makes that path something being RUN."""
-    head = before.rstrip().rstrip("\"'").rstrip()
-    if not head:
-        return True
-    if head[-1] in ":;|&({":
-        return True
-    return head.split()[-1].strip("\"'") in _INVOCATION_WORDS
+def _uncommented_tokens(text: str) -> list[str]:
+    """`_script_tokens`, minus the lines that are ONLY a comment.
 
+    A DENY-LIST of the one shape that is clearly not an invocation, rather than an allow-list of
+    the shapes that are. In a polyglot tree the second is not decidable and each attempt to complete
+    it silently drops whatever it forgot: an earlier allow-list of interpreter prefixes read ZERO
+    invocations out of `hooks/hooks.json` - all sixteen hook scripts, whose JSON-escaped quotes made
+    the token before the path a lone backslash - and lost every command substitution in
+    `gate_ci.sh` besides, so the half that must refuse a newly wired guard passed silently in
+    exactly the case it exists for.
 
-def _invoked_tokens(text: str) -> list[str]:
-    """`_script_tokens`, narrowed to the paths this text actually RUNS.
-
-    A comment naming a path is not an invocation. The distinction matters wherever the answer
-    BLOCKS: adding `# see scripts/x.py` to a surface a diff already touches must not put an
-    undeclared script in that diff's scope, which is the hostage failure this change has had to
-    remove twice already. It is the same line `tests/test_install_manifest.py` draws over the
-    shipped surface - a path in command position is being run, a path in a sentence is being named.
+    A line that is only a comment is the one thing a scanner can say is not running anything, and
+    it is the false block this narrowing was asked for: a comment naming a script, added to a
+    surface a diff already touches, must not put an undeclared script in that diff's scope.
     """
-    found: list[str] = []
-    for line in text.splitlines():
-        if line.strip().startswith("#"):
-            continue
-        for prefix in _REFERENCE_PREFIXES:
-            start = 0
-            while True:
-                at = line.find(prefix, start)
-                if at < 0:
-                    break
-                start = at + len(prefix)
-                name = ""
-                for char in line[start:]:
-                    if char.isalnum() or char in "_.-":
-                        name += char
-                    else:
-                        break
-                if (name.endswith(".py") or name.endswith(".sh")) and _is_invocation(
-                    line[:at]
-                ):
-                    found.append(f"scripts/{name}")
-    return found
+    kept = [
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith(_COMMENT_OPENERS)
+    ]
+    return _script_tokens("\n".join(kept))
 
 
 def _module_imports(root: Path, name: str) -> list[str]:
@@ -504,7 +482,9 @@ def _module_imports(root: Path, name: str) -> list[str]:
     return found
 
 
-def guard_universe(root: Path) -> dict[str, set[str]]:
+def guard_universe(
+    root: Path, extra: dict[str, str] | None = None
+) -> dict[str, set[str]]:
     """Every file that must be declared or exempt, mapped to what puts it on the enforcement path.
 
     The surfaces are `scripts/gate_ci.sh` and every hook script `hooks/hooks.json` runs; the universe
@@ -516,9 +496,17 @@ def guard_universe(root: Path) -> dict[str, set[str]]:
     instance produced - is reached by no shell line at all: `gate_runner.py` imports it. A universe
     built from shell references alone would have declared the pipeline fully covered while the
     newest guard in it had no proof of any kind.
+
+    `extra` seeds the files a caller reached through a surface this does not walk - the config and
+    workflow members of the closed set - BEFORE the closure runs, so their imports are followed
+    too. Merged afterwards instead, such a file contributed itself and none of its imports, which
+    is the same failure one level down: `guard_proof.py` is wired in from `guard-proof.yml`, and
+    everything it imports was absent from the report entirely.
     """
     surfaces = [GATE_CI, *_hook_scripts(root)]
     universe: dict[str, set[str]] = {}
+    for name, caller in (extra or {}).items():
+        universe.setdefault(name, set()).add(caller)
     for surface in surfaces:
         if not (root / surface).is_file():
             continue
@@ -809,11 +797,12 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
     everything in it is added; a `base` git cannot resolve makes newness unknowable, which enforces
     nothing and says so.
 
-    This half BLOCKS, so it reads the surface for what it RUNS (`_invoked_tokens`), not for every
-    path it mentions: a comment naming an undeclared script is not a wiring change, and failing a
-    pull request over one would be the hostage failure again. `guard_universe` keeps the permissive
-    scan, because there the cost of over-including is one inventory line and the cost of
-    under-including is a guard nobody can see.
+    This half BLOCKS, so it drops COMMENT-ONLY lines (`_uncommented_tokens`) before comparing:
+    a comment naming an undeclared script is not a wiring change, and failing a pull request over
+    one would be the hostage failure again. It drops nothing else - deciding which spellings count
+    as running something is not decidable in a polyglot tree, and the attempt read zero invocations
+    out of `hooks.json`. `guard_universe` keeps the fully permissive scan, a deliberate asymmetry:
+    there the cost of over-including is one inventory line, here the answer refuses a pull request.
 
     ADDED narrows what a CHANGE is answerable for; it is not what a full audit can SEE. Under `all`
     there is no diff, so every invocation counts and the surfaces `guard_universe` does not walk -
@@ -846,7 +835,7 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
             text = target.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        scan = _script_tokens if audit else _invoked_tokens
+        scan = _script_tokens if audit else _uncommented_tokens
         invoked = set(scan(text))
         added = (
             invoked
@@ -953,10 +942,8 @@ def sweep(
                 )
             )
 
-    universe = guard_universe(root)
     wired = newly_wired(root, scope)
-    for name, surface in wired.items():
-        universe.setdefault(name, set()).add(surface)
+    universe = guard_universe(root, wired)
     declared = inventory.declared_files()
     exempt = inventory.exempt_files()
     undeclared: list[tuple[str, tuple[str, ...]]] = []
@@ -1164,10 +1151,8 @@ def _do_list(inventory: Inventory) -> int:
 
 def _do_discover(root: Path, inventory: Inventory, args: argparse.Namespace) -> int:
     scope = resolve_scope(root, changed_only=not args.all, base=args.base)
-    universe = guard_universe(root)
     wired = newly_wired(root, scope)
-    for name, surface in wired.items():
-        universe.setdefault(name, set()).add(surface)
+    universe = guard_universe(root, wired)
     declared = inventory.declared_files()
     exempt = inventory.exempt_files()
     findings = 0

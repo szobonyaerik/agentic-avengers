@@ -761,13 +761,13 @@ EXECUTION = re.compile(r"(?!x)x")'''
 
 [[guard]]
 id = "guard-proof.newly-wired-means-INVOKED"
-defect = "Read as an invocation, a prose comment naming a script wires it in. One documentation line added to a surface a diff already touches then fails CI over a script nothing runs - a rule binding what the change is not responsible for, which is the hostage failure this mechanism has had to remove twice already."
+defect = "Read as an invocation, a prose comment naming a script wires it in. One documentation line added to a surface a diff already touches then fails CI over a script nothing runs - a rule binding what the change is not responsible for, which is the hostage failure this mechanism has had to remove twice already. Read the other way round - an allow-list of the spellings that ARE invocations - the scan went blind to hooks.json entirely, so the half that must refuse a newly wired guard passed silently in the case it exists for."
 implements = "scripts/guard_proof.py"
 tests = ["tests/test_guard_proof.py"]
 [[guard.mutation]]
 file = "scripts/guard_proof.py"
 find = '''
-        scan = _script_tokens if audit else _invoked_tokens'''
+        scan = _script_tokens if audit else _uncommented_tokens'''
 replace = '''
         scan = _script_tokens'''
 
