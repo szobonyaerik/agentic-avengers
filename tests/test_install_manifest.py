@@ -32,10 +32,20 @@ So `EXECUTION` asks the question from the other end: it walks the SHIPPED files 
 SRC_SETS entries, which is exactly what reaches a consumer — and every script they RUN must ship
 too. Scanning the shipped set rather than the whole repository is what keeps a repo-local file
 calling a repo-local script (`.github/workflows/guard-proof.yml`, which does not ship) from being
-flagged. `NOT_VENDORED` is deliberately NOT honoured there: an exclusion records that a POINTER may
-dangle in a consumer repo, and an execution cannot dangle — it fails the commit. Prose is not
-execution, so markdown is out; a shipped `.md` that names a script by path is the pointer case the
-`REFERENCE` scan above already covers.
+flagged.
+
+That check shipped skipping markdown, on the claim that a shipped `.md` naming a script is the
+pointer case `REFERENCE` already covers. It is not: `SCANNED` never opens repo-root `AGENTS.md`, and
+`REFERENCE` does not know the bare `scripts/x.py` spelling either — so the exemption was a third
+blind spot, and the very next round shipped `python3 scripts/guard_proof.py check` into `AGENTS.md`
+with the suite green. A vendored agent reading that runs a command that is not there. Markdown is
+therefore scanned like everything else, and the line between naming and running is drawn where a
+machine can see it: an interpreter in front of the path. `scripts/x.py` in a sentence is a name;
+`python3 scripts/x.py` is an instruction to run it, wherever it appears.
+
+`NOT_VENDORED` is the escape hatch here too, with its existing property that an exclusion nothing
+references any more is itself a finding — an entry is a decision on the record, which is what the
+guard-proof wiring never had.
 """
 
 import re
@@ -72,15 +82,12 @@ PY_IMPORT = re.compile(
     re.M,
 )
 
-# A shipped file RUNNING a sibling script, in the spelling a pre-commit `entry:` and a workflow
-# `run:` line use and the three above cannot see:
-#   entry: python3 scripts/x.py      /      run: bash scripts/x.sh
+# A shipped file RUNNING a sibling script, in the spelling a pre-commit `entry:`, a workflow `run:`
+# line and a documented command all use, and the three above cannot see:
+#   entry: python3 scripts/x.py   /   run: bash scripts/x.sh   /   `python3 scripts/x.py check`
+# The interpreter is the whole distinction: it is what separates naming a path from telling somebody
+# to run it, and it is a distinction a machine can draw without guessing at intent.
 EXECUTION = re.compile(r"(?:python3?|bash|sh)\s+(scripts/[A-Za-z0-9_.-]+\.(?:py|sh))")
-
-# Prose names a script; a machine-read file runs one. A shipped `.md` pointing at a script is the
-# case `REFERENCE` already covers, and reading its sentences as invocations would flag every command
-# this repo's own documentation quotes.
-PROSE_SUFFIXES = {".md"}
 
 # A template a shipped file sends its writer to, by path:
 #   docs/templates/test-mapping.template.md   /   docs/templates/verdict.template.json
@@ -129,14 +136,12 @@ def unvendored_executions(root: Path = REPO) -> dict[str, set[str]]:
     sets = src_sets(root)
     found: dict[str, set[str]] = {}
     for path in shipped_files(root):
-        if path.suffix in PROSE_SUFFIXES:
-            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
         for target in EXECUTION.findall(text):
-            if not covered_by(sets, target):
+            if target not in NOT_VENDORED and not covered_by(sets, target):
                 found.setdefault(target, set()).add(str(path.relative_to(root)))
     return found
 
@@ -217,6 +222,53 @@ def test_a_shipped_file_running_an_unvendored_script_is_reported(
     assert unvendored_executions(root) == {
         "scripts/guard_proof.py": {".pre-commit-config.yaml"}
     }
+
+
+def test_shipped_DOCUMENTATION_telling_an_agent_to_run_an_unvendored_script_is_reported(
+    tmp_path: Path,
+) -> None:
+    """The instance that got past this check while it skipped markdown.
+
+    `AGENTS.md` is an SRC_SETS entry, and it acquired a `python3 scripts/guard_proof.py check` line
+    for a script deliberately kept out of the surface. Nothing fails loudly over there - the agent
+    reading it simply runs a command that is not there, and is handed a rule about an inventory file
+    it does not have.
+    """
+    root = toy_surface(tmp_path, "        entry: bash scripts/gate_ci.sh\n")
+    Path(root / "scripts" / "install.sh").write_text(
+        'SRC_SETS="scripts/gate_ci.sh .pre-commit-config.yaml AGENTS.md"\n',
+        encoding="utf-8",
+    )
+    (root / "AGENTS.md").write_text(
+        "## Every guard is proven by going RED\n\n"
+        "    python3 scripts/guard_proof.py check   # diff-scoped\n",
+        encoding="utf-8",
+    )
+
+    assert unvendored_executions(root) == {"scripts/guard_proof.py": {"AGENTS.md"}}
+
+
+def test_shipped_documentation_may_NAME_an_unvendored_path_without_running_it(
+    tmp_path: Path,
+) -> None:
+    """The line is the interpreter, and it is where the canonical skill now stands.
+
+    A sentence saying the harness lives in the pipeline repository and is not part of the vendored
+    surface is accurate and costs a consumer nothing. Reading every path a document mentions as an
+    invocation would flag it, and the remedy would be to stop saying a true thing.
+    """
+    root = toy_surface(tmp_path, "        entry: bash scripts/gate_ci.sh\n")
+    Path(root / "scripts" / "install.sh").write_text(
+        'SRC_SETS="scripts/gate_ci.sh .pre-commit-config.yaml AGENTS.md"\n',
+        encoding="utf-8",
+    )
+    (root / "AGENTS.md").write_text(
+        "`scripts/guard_proof.py` proves that repository's own guards and is deliberately not "
+        "part of the vendored surface.\n",
+        encoding="utf-8",
+    )
+
+    assert unvendored_executions(root) == {}
 
 
 def test_a_repo_local_file_running_a_repo_local_script_is_not_reported(

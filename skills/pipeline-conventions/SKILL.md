@@ -1340,45 +1340,17 @@ suite being green proves the tests pass. It says nothing about whether any of th
 defect its guard exists for, and a guard whose test asserts a shape the guard no longer produces
 goes on passing after the guard stops guarding.
 
-**So each guard declares how to break it, and something breaks it.** `scripts/guards.toml` is the
-inventory: per guard, the file that decides, the defect it exists to catch, the tests that must go
-red, and the exact edit that reintroduces the defect. `scripts/guard_proof.py` applies each mutation
-to a **throwaway copy** of the tree, runs the named tests, and asserts they FAIL - it never writes
-inside the working tree, so a killed sweep cannot leave a neutered guard behind. Five outcomes and
-only the first is a pass: **proven** · **unproven** (the defect is back and the suite does not care -
-the guard is decoration) · **unanchored** (the mutation's anchor is no longer in the file, so the
-declaration drifted from the code and nothing was proved - a finding, never a skip) ·
-**baseline-red** (the tests fail before the mutation, so their going red afterwards says nothing) ·
-**errored**.
+**So each guard declares how to break it, and something breaks it - in the agentic-avengers
+repository itself.** A guard inventory names the file that decides, the defect it catches, the tests
+that must go red and the exact edit that reintroduces it, and a harness applies each mutation to a
+throwaway copy of that tree, runs the named tests and asserts they FAIL. It is deliberately **not**
+part of the vendored surface: the inventory names that repository's own scripts and the tests that
+must go red for them, so a consumer repo has nothing for it to check and receives the guards rather
+than the proof of them. Nothing here is a command to run in a vendored install.
 
-**The interesting number is the UNDECLARED count**, because those guards have no evidence of any
-kind. It is derived, not listed: the enforcement surfaces are `scripts/gate_ci.sh` and every hook
-script `hooks/hooks.json` runs, and the universe is those plus every sibling script they invoke and
-every sibling module those import, to a fixed point. The import half is not decoration -
-`gate_plausibility.py`, the guard issue #69's own last instance produced, is reached by no shell
-line at all. Each file in that universe is declared by an inventory entry or carries an `[[exempt]]`
-one saying why it decides nothing; there is no third state, and an exemption nothing invokes any
-more is a finding, exactly as a stale guard is.
-
-**Diff-scoped on the applicability boundary**, like every other check here. `check` binds what the
-change touches - the guards whose implementation, mutation target or tests it edits, and any guard
-it newly puts on the enforcement path with no entry - and counts the rest by name;
-`prove` proves every declared guard and prints the undeclared count without failing on it; `report`
-is the full audit that enforces both, run deliberately rather than as a condition on somebody's
-unrelated PR. When git cannot say what changed the scope is unknowable, so nothing is enforced and
-it says so.
-
-**The harness is declared in its own inventory and proved by its own mechanism**
-(`tests/test_guard_proof.py`): a guard deliberately built to be worthless - a real check with a test
-that only exercises its happy path - must come back `unproven` and must fail the run. A harness that
-could not tell a red run from a green one would report every guard proven and be the exact defect it
-exists to find, one level up.
-
-**What it does not claim, said rather than implied.** It proves a named test set NOTICES a named
-defect. It does not prove the guard is correct, that the mutation is the only way to reintroduce the
-defect, or that a guard has no other holes - a mutation is one hole, closed. And a check that is
-neither declared nor invoked from an enforcement surface is invisible to it: discovery finds guards
-by what the pipeline runs.
+**The rule that travels is the one this section is for**, and it is about your own checks: a check
+whose test only exercises its happy path is decoration, and it stays green after the check stops
+checking. Write the test that goes red when the defect it guards against comes back.
 
 ## Agent tooling
 
