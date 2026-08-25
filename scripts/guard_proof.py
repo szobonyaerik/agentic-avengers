@@ -433,6 +433,56 @@ def _script_tokens(text: str) -> list[str]:
     return found
 
 
+#: The words that put a path in command position. `.` and `source` are how a shell file pulls in a
+#: sibling; the rest run one.
+_INVOCATION_WORDS = frozenset(
+    {"python", "python3", "bash", "sh", "exec", "source", "."}
+)
+
+
+def _is_invocation(before: str) -> bool:
+    """Whether the text preceding a path on its line makes that path something being RUN."""
+    head = before.rstrip().rstrip("\"'").rstrip()
+    if not head:
+        return True
+    if head[-1] in ":;|&({":
+        return True
+    return head.split()[-1].strip("\"'") in _INVOCATION_WORDS
+
+
+def _invoked_tokens(text: str) -> list[str]:
+    """`_script_tokens`, narrowed to the paths this text actually RUNS.
+
+    A comment naming a path is not an invocation. The distinction matters wherever the answer
+    BLOCKS: adding `# see scripts/x.py` to a surface a diff already touches must not put an
+    undeclared script in that diff's scope, which is the hostage failure this change has had to
+    remove twice already. It is the same line `tests/test_install_manifest.py` draws over the
+    shipped surface - a path in command position is being run, a path in a sentence is being named.
+    """
+    found: list[str] = []
+    for line in text.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        for prefix in _REFERENCE_PREFIXES:
+            start = 0
+            while True:
+                at = line.find(prefix, start)
+                if at < 0:
+                    break
+                start = at + len(prefix)
+                name = ""
+                for char in line[start:]:
+                    if char.isalnum() or char in "_.-":
+                        name += char
+                    else:
+                        break
+                if (name.endswith(".py") or name.endswith(".sh")) and _is_invocation(
+                    line[:at]
+                ):
+                    found.append(f"scripts/{name}")
+    return found
+
+
 def _module_imports(root: Path, name: str) -> list[str]:
     """Sibling `scripts/*.py` modules that `name` imports, flat - the same shape install.sh needs."""
     try:
@@ -441,13 +491,13 @@ def _module_imports(root: Path, name: str) -> list[str]:
         return []
     found: list[str] = []
     for line in text.splitlines():
-        stripped = line.strip()
+        stripped = line.split("#", 1)[0].strip()
         module = ""
         if stripped.startswith("from ") and " import " in stripped:
             module = stripped[5:].split(" import ", 1)[0].strip()
         elif stripped.startswith("import "):
             module = stripped[7:].split(" as ", 1)[0].strip()
-        if not module or "." in module or " " in module:
+        if not module or "." in module or " " in module or "," in module:
             continue
         if (root / "scripts" / f"{module}.py").is_file():
             found.append(f"scripts/{module}.py")
@@ -479,6 +529,11 @@ def guard_universe(root: Path) -> dict[str, set[str]]:
             text = (root / surface).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        # Deliberately the PERMISSIVE scan, unlike `newly_wired`'s. The universe only creates an
+        # obligation to declare or exempt a file: over-including costs one inventory line and is
+        # visible in the undeclared count, while under-including hides a guard from the report
+        # entirely, which is the failure this whole module exists to remove. `newly_wired` BLOCKS,
+        # so it asks the narrower question.
         for token in _script_tokens(text):
             if (root / token).is_file():
                 universe.setdefault(token, set()).add(surface)
@@ -754,6 +809,12 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
     everything in it is added; a `base` git cannot resolve makes newness unknowable, which enforces
     nothing and says so.
 
+    This half BLOCKS, so it reads the surface for what it RUNS (`_invoked_tokens`), not for every
+    path it mentions: a comment naming an undeclared script is not a wiring change, and failing a
+    pull request over one would be the hostage failure again. `guard_universe` keeps the permissive
+    scan, because there the cost of over-including is one inventory line and the cost of
+    under-including is a guard nobody can see.
+
     ADDED narrows what a CHANGE is answerable for; it is not what a full audit can SEE. Under `all`
     there is no diff, so every invocation counts and the surfaces `guard_universe` does not walk -
     the config and workflow members, which reach a script through no shell line it reads - stay in
@@ -785,11 +846,12 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
             text = target.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        invoked = set(_script_tokens(text))
+        scan = _script_tokens if audit else _invoked_tokens
+        invoked = set(scan(text))
         added = (
             invoked
             if audit
-            else invoked - set(_script_tokens(_pre_image(root, base_commit, surface)))
+            else invoked - set(scan(_pre_image(root, base_commit, surface)))
         )
         for token in sorted(added):
             if token != surface and (root / token).is_file():
@@ -958,8 +1020,9 @@ def render(report: Report, inventory: Inventory) -> str:
     )
     if report.scope == "unknowable":
         lines.append(
-            "  scope UNKNOWABLE - git cannot say what this change touches, so nothing was "
-            "enforced. Run `guard_proof.py report` to audit the whole tree."
+            "  scope UNKNOWABLE - git cannot say what this change touches, so no guard and no "
+            "undeclared file was enforced. Anything reported below is an INVENTORY defect, which "
+            "is not diff-scoped and still counts. Run `guard_proof.py report` to audit the tree."
         )
     for proof in report.proofs:
         mark = "✓" if proof.status == PROVEN else "✗"
@@ -1084,7 +1147,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
                 help="prove only this id (repeatable)",
             )
             parser_.add_argument(
-                "--changed", action="store_true", help="only guards this change touches"
+                "--changed",
+                action="store_true",
+                help="only guards this change touches (implied by --base)",
             )
     return parser.parse_args(argv)
 
@@ -1139,7 +1204,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "discover":
             return _do_discover(root, inventory, args)
 
-        changed_only = args.action == "check" or bool(getattr(args, "changed", False))
+        changed_only = (
+            args.action == "check"
+            or bool(getattr(args, "changed", False))
+            or bool(getattr(args, "base", None))
+        )
         scope = resolve_scope(
             root, changed_only=changed_only, base=getattr(args, "base", None)
         )

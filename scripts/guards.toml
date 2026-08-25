@@ -760,6 +760,30 @@ replace = '''
 EXECUTION = re.compile(r"(?!x)x")'''
 
 [[guard]]
+id = "guard-proof.newly-wired-means-INVOKED"
+defect = "Read as an invocation, a prose comment naming a script wires it in. One documentation line added to a surface a diff already touches then fails CI over a script nothing runs - a rule binding what the change is not responsible for, which is the hostage failure this mechanism has had to remove twice already."
+implements = "scripts/guard_proof.py"
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        scan = _script_tokens if audit else _invoked_tokens'''
+replace = '''
+        scan = _script_tokens'''
+
+[[guard]]
+id = "guard-proof.import-closure-follows-noqa"
+defect = "A sibling import carrying a trailing `# noqa` comment is dropped from the import closure. Since every script here opens with a sys.path.insert preamble, that suffix is the prevailing style, and the deciders reached only that way leave the universe entirely - neither declared, exempt, nor undeclared, with the report claiming full coverage over a guard nobody has ever broken on purpose."
+implements = "scripts/guard_proof.py"
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        stripped = line.split("#", 1)[0].strip()'''
+replace = '''
+        stripped = line.strip()'''
+
+[[guard]]
 id = "guard-proof.newly-wired-means-ADDED"
 defect = "Read as 'a touched surface invokes it' rather than 'the diff ADDED the invocation', the scope hands every pre-existing undeclared script a surface calls to whoever edits an unrelated line of that surface. A rule added later then binds what the change is not responsible for - the hostage failure the applicability boundary exists to remove, reintroduced by the check built to honour it."
 implements = "scripts/guard_proof.py"
@@ -767,7 +791,7 @@ tests = ["tests/test_guard_proof.py"]
 [[guard.mutation]]
 file = "scripts/guard_proof.py"
 find = '''
-            else invoked - set(_script_tokens(_pre_image(root, base_commit, surface)))'''
+            else invoked - set(scan(_pre_image(root, base_commit, surface)))'''
 replace = '''
             else invoked'''
 

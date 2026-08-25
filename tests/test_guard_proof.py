@@ -416,6 +416,31 @@ def test_prove_prints_the_undeclared_count_without_failing_on_it(
     assert main(["report", "--root", str(root), "--inventory", str(path)]) == FINDINGS
 
 
+def test_an_import_carrying_a_noqa_comment_is_still_followed(tmp_path: Path) -> None:
+    """`import x  # noqa: E402` is this repository's prevailing style, not an edge case.
+
+    Every script here opens with a `sys.path.insert` preamble, so every sibling import after it
+    carries that suffix. A closure that drops them leaves real deciders - `evidence_redaction.py`
+    among them - outside the universe entirely: not declared, not exempt, not undeclared, with the
+    report claiming full coverage over a file nobody has ever broken on purpose.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    (root / "scripts" / "reached_by_import.py").write_text(GUARD, encoding="utf-8")
+    (root / "scripts" / "floor.py").write_text(
+        "import reached_by_import  # noqa: E402\n" + GUARD, encoding="utf-8"
+    )
+    path = inventory(root, entry("floor.latency", "floor"))
+
+    universe = guard_proof.guard_universe(root)
+
+    assert "scripts/reached_by_import.py" in universe
+    report = guard_proof.sweep(
+        root, load(path), scope=guard_proof.Scope("all", frozenset()), parallel=2
+    )
+    assert "scripts/reached_by_import.py" in [name for name, _ in report.undeclared]
+
+
 def test_an_exempt_file_is_not_undeclared(tmp_path: Path) -> None:
     root = tree(tmp_path, "floor", "helper")
     with_test(root, "floor")
@@ -589,6 +614,33 @@ def test_a_script_this_change_newly_WIRES_IN_is_enforced_though_it_was_not_edite
     )
 
 
+def test_a_COMMENT_naming_an_undeclared_script_does_not_put_it_in_scope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Naming a path is not wiring it in, and this half BLOCKS.
+
+    Read as an invocation, one documentation line added to a surface the diff already touches fails
+    CI over a script nothing runs - a rule binding what the change is not responsible for, which is
+    the hostage failure removed twice already in this same mechanism.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    (root / "scripts" / "helper.py").write_text(GUARD, encoding="utf-8")
+    path = inventory(root, entry("floor.latency", "floor"))
+    git_repo(root)
+    surface = root / "scripts" / "gate_ci.sh"
+    surface.write_text(
+        surface.read_text(encoding="utf-8") + "# see scripts/helper.py for the floor\n",
+        encoding="utf-8",
+    )
+
+    code = main(["check", "--root", str(root), "--inventory", str(path)])
+    said = capsys.readouterr()
+
+    assert code == OK
+    assert "scripts/helper.py" not in said.out
+
+
 def test_an_invocation_that_was_ALREADY_THERE_is_counted_though_the_surface_is_touched(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -682,6 +734,60 @@ def test_when_git_cannot_say_what_changed_nothing_is_enforced_and_it_says_so(
 
     assert code == OK
     assert "UNKNOWABLE" in said.out
+
+
+def test_an_unknowable_scope_that_exits_nonzero_names_what_failed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The banner and the exit code have to describe the same run.
+
+    A stale exemption is an INVENTORY defect, not a diff-scoped one, so it survives an unknowable
+    scope and should - but a run that printed "nothing was enforced" and exited 1 left an operator
+    with no way to see what actually failed.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    path = inventory(
+        root,
+        entry("floor.latency", "floor")
+        + '\n[[exempt]]\nfile = "scripts/long_gone.py"\nreason = "deleted two releases ago"\n',
+    )
+
+    code = main(["check", "--root", str(root), "--inventory", str(path)])
+    said = capsys.readouterr()
+
+    assert code == FINDINGS
+    assert "INVENTORY defect" in said.out
+    assert "scripts/long_gone.py" in said.out
+
+
+def test_prove_with_a_base_scopes_instead_of_silently_sweeping_everything(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An accepted-and-ignored argument is this module's own thesis, one layer up.
+
+    `--base` without `--changed` used to resolve the full-tree scope and report a whole sweep as
+    though the requested branch scope had been applied.
+    """
+    root = tree(tmp_path, "floor", "unwatched")
+    with_test(root, "floor")
+    with_test(root, "unwatched", UNGUARDED_TEST)
+    path = inventory(
+        root, entry("floor.latency", "floor") + entry("unwatched.latency", "unwatched")
+    )
+    git_repo(root)
+    (root / "scripts" / "floor.py").write_text(GUARD + "# touched\n", encoding="utf-8")
+
+    code = main(
+        ["prove", "--root", str(root), "--inventory", str(path), "--base", "HEAD"]
+    )
+    said = capsys.readouterr()
+
+    assert code == OK
+    assert "unwatched.latency" in said.err, (
+        "the unproven guard is outside the requested base scope, counted and named"
+    )
+    assert "unwatched.latency" not in said.out
 
 
 # ── the inventory is validated, never read loosely ──────────────────────────
