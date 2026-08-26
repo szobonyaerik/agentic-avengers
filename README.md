@@ -311,6 +311,16 @@ agentic-avengers/
 │   ├── plugin_release.py      the executing plugin copy vs. the merged repository: `check` (STALE
 │   │                          stops a run, UNKNOWN is unenforced) and `cut`, the one release step
 │   ├── hook_plugin_release.sh PreToolUse: refuses to spawn an avenger stage on a STALE copy
+│   ├── guards.toml            the guard inventory: per guard, the file that decides, the defect it
+│   │                          catches, the tests that must go red and the exact edit that
+│   │                          reintroduces the defect (plus `[[exempt]]`, for a file the
+│   │                          enforcement surfaces invoke that decides nothing)
+│   ├── guard_proof.py         applies each mutation to a throwaway copy, runs the named tests and
+│   │                          asserts they FAIL: proven | unproven | unanchored | baseline-red |
+│   │                          errored, and the count of guards the pipeline runs that nobody
+│   │                          declared. `check` is diff-scoped, `prove` proves every declared
+│   │                          guard, `report` is the full audit. Deliberately NOT vendored - a
+│   │                          consumer repo gets the guards, not the proof of them
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
@@ -323,7 +333,11 @@ agentic-avengers/
 │   ├── agents/            generated
 │   ├── skills/            symlink -> ../skills
 │   └── plugin/pipeline-gates.ts   in-session gates for opencode
-├── .github/workflows/pipeline-gates.yml   CI floor
+├── .github/workflows/pipeline-gates.yml   CI floor (vendored)
+├── .github/workflows/guard-proof.yml      the guard sweep (this repo only, not vendored): `prove`
+│                                          on every PR, push to main and nightly, plus the
+│                                          diff-scoped `check` on PRs; `audit: true` on a manual
+│                                          run switches to the full `report`
 ├── .no-mistakes.yaml      feature-close ship gate config (see skills/pipeline-conventions)
 ├── AGENTS.md              opencode conventions
 ├── .pre-commit-config.yaml
