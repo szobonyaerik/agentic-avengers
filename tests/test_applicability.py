@@ -44,7 +44,9 @@ def git_repo(root: Path) -> Path:
         ("config", "user.name", "pipeline"),
         ("commit", "-q", "--allow-empty", "-m", "root"),
     ):
-        subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", *args], cwd=str(root), check=True, capture_output=True, text=True
+        )
     return root
 
 
@@ -54,7 +56,9 @@ def phase(root: Path, name: str = "8-clickup-client-and-onboarding") -> Path:
     return path
 
 
-def reason_file(root: Path, text: str = "captain-ordered cap; the gate provider was out of credit") -> Path:
+def reason_file(
+    root: Path, text: str = "captain-ordered cap; the gate provider was out of credit"
+) -> Path:
     path = root / "reason.txt"
     path.write_text(text, encoding="utf-8")
     return path
@@ -72,8 +76,15 @@ class TestUntouched:
         target = tmp_path / "tests" / "test_old.py"
         target.parent.mkdir()
         target.write_text("x = 1\n")
-        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-qm", "old"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-qm", "old"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
         assert not touched(target, changed_paths(tmp_path))
 
     def test_an_untracked_file_is_in_scope_before_any_commit(self, tmp_path):
@@ -87,6 +98,64 @@ class TestUntouched:
     def test_outside_a_repository_the_scope_is_unknowable(self, tmp_path):
         """None is not "nothing changed" — the caller must be able to tell them apart."""
         assert changed_paths(tmp_path) is None
+
+    def test_one_git_command_with_no_answer_makes_the_WHOLE_scope_unknowable(
+        self, tmp_path, monkeypatch
+    ):
+        """A partial answer is not a scope. `changed_paths` unions three git commands, and if any
+        one of them has no answer the union is not what changed — it is what changed minus whatever
+        that command would have said. Assembling it out of the commands that did answer is how every
+        diff-scoped check in this pipeline stops checking at once, quietly, over a git that answered
+        two questions out of three.
+        """
+        git_repo(tmp_path)
+        target = tmp_path / "tests" / "test_new.py"
+        target.parent.mkdir()
+        target.write_text("x = 1\n")
+        real = applicability._git
+
+        def one_command_has_no_answer(root, *args):
+            return None if args[0] == "ls-files" else real(root, *args)
+
+        monkeypatch.setattr(applicability, "_git", one_command_has_no_answer)
+
+        assert changed_paths(tmp_path) is None
+
+    def test_a_base_adds_what_the_branch_changed_against_it(self, tmp_path):
+        """In a CI checkout nothing is uncommitted, so the working-tree question answers "nothing
+        changed" over a pull request that changed a great deal. Naming the base is what makes a
+        diff-scoped check on a PR real rather than a formality."""
+        git_repo(tmp_path)
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        target = tmp_path / "scripts" / "new_guard.py"
+        target.parent.mkdir()
+        target.write_text("x = 1\n")
+        subprocess.run(
+            ["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-qm", "landed"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        assert not touched(target, changed_paths(tmp_path))
+        assert touched(target, changed_paths(tmp_path, base))
+
+    def test_a_base_git_cannot_resolve_is_unknowable_not_empty(self, tmp_path):
+        """A caller that asked for a branch scope and silently got the working-tree one would be
+        enforcing nothing while reporting a clean pass."""
+        git_repo(tmp_path)
+
+        assert changed_paths(tmp_path, "no-such-ref-anywhere") is None
+        assert changed_paths(tmp_path, "   ") is None
 
 
 class TestShipped:
@@ -122,7 +191,11 @@ class TestRecording:
     def test_recording_names_the_rule_the_subject_and_the_reason(self, tmp_path):
         target = phase(tmp_path)
         record = record_exception(
-            target, "spec-review", "8.1-clickup-client", "captain-ordered cap", "captain"
+            target,
+            "spec-review",
+            "8.1-clickup-client",
+            "captain-ordered cap",
+            "captain",
         )
         assert record.id == "X1"
         stored = json.loads((target / "exceptions.json").read_text())["exceptions"][0]
@@ -133,16 +206,24 @@ class TestRecording:
 
     def test_it_is_audited_to_gate_overrides_log(self, tmp_path):
         """An exception that is not logged is a silent bypass, whatever the ledger says."""
-        record_exception(phase(tmp_path), "verdict", "8-x", "captain-ordered cap", "captain")
+        record_exception(
+            phase(tmp_path), "verdict", "8-x", "captain-ordered cap", "captain"
+        )
         log = (tmp_path / "gate-overrides.log").read_text()
         assert "exception:verdict" in log and "captain-ordered cap" in log
 
     def test_a_multi_line_reason_stays_one_record(self, tmp_path):
         """gate-overrides.log is one tab-separated record per line; a reason cannot split it."""
         record_exception(
-            phase(tmp_path), "verdict", "8-x", "first line\nsecond line\tthird", "captain"
+            phase(tmp_path),
+            "verdict",
+            "8-x",
+            "first line\nsecond line\tthird",
+            "captain",
         )
-        assert len((tmp_path / "gate-overrides.log").read_text().strip().splitlines()) == 1
+        assert (
+            len((tmp_path / "gate-overrides.log").read_text().strip().splitlines()) == 1
+        )
 
     def test_an_unknown_rule_is_refused_and_names_what_was_invented(self, tmp_path):
         with pytest.raises(ApplicabilityError) as caught:
@@ -152,22 +233,30 @@ class TestRecording:
     def test_an_exception_with_no_subject_is_refused(self, tmp_path):
         """An exception with no subject is a rule switched off for everything."""
         with pytest.raises(ApplicabilityError):
-            record_exception(phase(tmp_path), "spec-review", "   ", "because", "captain")
+            record_exception(
+                phase(tmp_path), "spec-review", "   ", "because", "captain"
+            )
 
     def test_an_exception_with_no_reason_is_refused(self, tmp_path):
         """The reason is the whole disclosure."""
         with pytest.raises(ApplicabilityError):
             record_exception(phase(tmp_path), "spec-review", "8.1", "  ", "captain")
 
-    def test_nothing_is_recorded_when_the_audit_writer_is_missing(self, tmp_path, monkeypatch):
+    def test_nothing_is_recorded_when_the_audit_writer_is_missing(
+        self, tmp_path, monkeypatch
+    ):
         """Fail closed: no log, no ledger entry."""
         target = phase(tmp_path)
-        monkeypatch.setattr(applicability, "__file__", str(tmp_path / "elsewhere" / "x.py"))
+        monkeypatch.setattr(
+            applicability, "__file__", str(tmp_path / "elsewhere" / "x.py")
+        )
         with pytest.raises(ApplicabilityError):
             record_exception(target, "spec-review", "8.1", "because", "captain")
         assert not (target / "exceptions.json").exists()
 
-    def test_nothing_is_recorded_when_the_audit_APPEND_fails(self, tmp_path, monkeypatch):
+    def test_nothing_is_recorded_when_the_audit_APPEND_fails(
+        self, tmp_path, monkeypatch
+    ):
         """The writer running is not the guarantee — the record landing is.
 
         A present writer whose append cannot land (an unwritable root, a read-only mount, a full
@@ -190,7 +279,9 @@ class TestRecording:
 class TestReading:
     def test_an_exception_covers_only_its_own_subject(self, tmp_path):
         target = phase(tmp_path)
-        record_exception(target, "spec-review", "8.1-clickup-client", "because", "captain")
+        record_exception(
+            target, "spec-review", "8.1-clickup-client", "because", "captain"
+        )
         assert excepted(target, "spec-review", "8.1-clickup-client") is not None
         assert excepted(target, "spec-review", "8.2-credentials") is None
 
@@ -202,7 +293,10 @@ class TestReading:
     def test_an_exception_covers_only_its_own_phase(self, tmp_path):
         target = phase(tmp_path)
         record_exception(target, "spec-review", "8.1", "because", "captain")
-        assert excepted(phase(tmp_path, "9-create-task-flow"), "spec-review", "8.1") is None
+        assert (
+            excepted(phase(tmp_path, "9-create-task-flow"), "spec-review", "8.1")
+            is None
+        )
 
     def test_no_ledger_is_no_exceptions(self, tmp_path):
         assert exceptions(phase(tmp_path)) == []
@@ -217,12 +311,16 @@ class TestReading:
         """A ledger entry nothing reads is an exception that does not exist."""
         target = phase(tmp_path)
         (target / "exceptions.json").write_text(
-            json.dumps({"exceptions": [{"id": "X1", "rule": "vibes", "subject": "8.1"}]})
+            json.dumps(
+                {"exceptions": [{"id": "X1", "rule": "vibes", "subject": "8.1"}]}
+            )
         )
         with pytest.raises(ApplicabilityError):
             exceptions(target)
 
-    def test_asking_about_an_unknown_rule_raises_rather_than_answering_no(self, tmp_path):
+    def test_asking_about_an_unknown_rule_raises_rather_than_answering_no(
+        self, tmp_path
+    ):
         with pytest.raises(ApplicabilityError):
             excepted(phase(tmp_path), "spec-vibes", "8.1")
 
@@ -247,21 +345,67 @@ class TestReporting:
 class TestCli:
     def test_record_prints_the_id_and_check_finds_it(self, tmp_path, capsys):
         target = phase(tmp_path)
-        assert main(["record", str(target), "--rule", "spec-review", "--subject", "8.1",
-                     "--reason-file", str(reason_file(tmp_path)), "--recorded-by", "captain"]) == 0
+        assert (
+            main(
+                [
+                    "record",
+                    str(target),
+                    "--rule",
+                    "spec-review",
+                    "--subject",
+                    "8.1",
+                    "--reason-file",
+                    str(reason_file(tmp_path)),
+                    "--recorded-by",
+                    "captain",
+                ]
+            )
+            == 0
+        )
         assert capsys.readouterr().out.strip() == "X1"
-        assert main(["check", str(target), "--rule", "spec-review", "--subject", "8.1"]) == 0
+        assert (
+            main(["check", str(target), "--rule", "spec-review", "--subject", "8.1"])
+            == 0
+        )
 
     def test_check_exits_one_when_nothing_covers_it(self, tmp_path):
-        assert main(["check", str(phase(tmp_path)), "--rule", "spec-review", "--subject", "8.1"]) == 1
+        assert (
+            main(
+                [
+                    "check",
+                    str(phase(tmp_path)),
+                    "--rule",
+                    "spec-review",
+                    "--subject",
+                    "8.1",
+                ]
+            )
+            == 1
+        )
 
     def test_check_on_an_unknown_rule_is_an_error_not_a_no(self, tmp_path):
-        assert main(["check", str(phase(tmp_path)), "--rule", "vibes", "--subject", "8.1"]) == 2
+        assert (
+            main(["check", str(phase(tmp_path)), "--rule", "vibes", "--subject", "8.1"])
+            == 2
+        )
 
     def test_an_unreadable_reason_file_records_nothing(self, tmp_path):
         target = phase(tmp_path)
-        assert main(["record", str(target), "--rule", "verdict", "--subject", "8-x",
-                     "--reason-file", str(tmp_path / "missing.txt")]) == 2
+        assert (
+            main(
+                [
+                    "record",
+                    str(target),
+                    "--rule",
+                    "verdict",
+                    "--subject",
+                    "8-x",
+                    "--reason-file",
+                    str(tmp_path / "missing.txt"),
+                ]
+            )
+            == 2
+        )
         assert not (target / "exceptions.json").exists()
 
     def test_rules_prints_the_closed_set(self, capsys):
@@ -311,8 +455,14 @@ def test_every_script_that_reads_the_ledger_is_declared_a_reader():
 def test_the_template_declares_the_same_readers_the_writer_emits():
     """The template is what a reader opens to learn the record's shape; a stale copy there teaches
     a set of readers no ledger on disk has carried since."""
-    template = Path(applicability.__file__).parents[1] / "docs/templates/exceptions.template.json"
-    assert json.loads(template.read_text(encoding="utf-8"))["readers"] == applicability.READERS
+    template = (
+        Path(applicability.__file__).parents[1]
+        / "docs/templates/exceptions.template.json"
+    )
+    assert (
+        json.loads(template.read_text(encoding="utf-8"))["readers"]
+        == applicability.READERS
+    )
 
 
 def test_load_of_a_ledger_that_is_not_a_ledger(tmp_path):

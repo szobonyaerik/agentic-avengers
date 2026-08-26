@@ -25,7 +25,8 @@ def open_findings(findings: list[dict]) -> list[dict]:
     been, and defaulting the other way would resolve a finding by omitting a field.
     """
     return [
-        f for f in findings
+        f
+        for f in findings
         if isinstance(f, dict)
         and str(f.get("status") or "open").lower() == "open"
         and not f.get("break_glass")

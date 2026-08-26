@@ -7,7 +7,7 @@ for Claude Code sessions. Runtimes: **Claude Code + opencode**.
 
 ### 1. Artifact Documentation
 Every stage writes a markdown artifact with YAML frontmatter:
-- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `fidelity-report.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
+- Feature-level → `docs/features/<feature>/` (`task-analysis.md`, `overview.md`, `plan.md`, `scoped/review-<slice>.md`, `e2e-mapping.md`, `pipeline-observations.md`)
 - Phase-level → `docs/features/<feature>/phases/<n>-<slug>/` (`verdict.json`, `verdict-attempt-<n>.json`, `verification-evidence.json` + its `evidence/` logs, `breaker.json`, `handover.md`, `handover-archive.md`)
 - Spec-level → `docs/features/<feature>/phases/<n>-<slug>/specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`)
 - Tests → `tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`; feature e2e → `tests/e2e/<feature>/`
@@ -48,15 +48,80 @@ deleted; the read directives changed.**
   and caps `report` at 1500 chars. The schema is frozen — a bespoke top-level key is a finding.
 - **A locked phase leaves the read path.** Later phases read its contract card, not its specs.
 - **Every document the read-path table governs declares `readers:`. A document no stage reads does
-  not get written.** Four classes are deliberately outside that table today — `fidelity-report.md`,
-  `scoped/review-*.md`, `implementation-report.md`, `test-execution-report.md` — and are not claimed
-  to carry the line; whether they belong on the read path is issue #29. This is
+  not get written.** Four classes had no decision recorded either way (issue #29); each now has one,
+  taken from what actually reads them rather than from preference. **`scoped/review-<slice>.md` is
+  on the table**: `skills/spec-isolation-review` is a real writer instruction naming the path it
+  writes, and the fan-out has exactly one possible reader, because every other reviewer is forbidden
+  to open it - the review that asked for it. Its skill used to say the findings were for *"the
+  gate"*, which was the automated half of spec-review, deleted in the one-gate collapse; a document
+  whose only stated consumer no longer exists is the state this issue found the class in. The other
+  three are **removed, not declared**, because none had a writer at all: `fidelity-report.md` is
+  residue of the deleted Fidelity Gate and was named only in two artifact lists;
+  `test-execution-report.md` is residue of the deleted Test-Author and existed only as a link line
+  in the card template telling the writer to point at a file nothing produces; and
+  `implementation-report.md` was the same link line plus a mention in `skills/ponytail`'s list of
+  artifacts to write *"to their template every time"* - a template that does not exist, delivered
+  only to the two implementers and not at all under `PONYTAIL_OFF=1`. **That one was load-bearing
+  and is the reason it is worth stating**: `hook_artifact_check.sh` keyed its whole Stop-hook
+  artifact sweep to that file's presence, so what it swept was the set of phases where an
+  implementer happened to invent an undocumented file, and a gate keyed to that mostly does not run.
+  Its replacement key is `scripts/phase_artifacts.py` - **a phase whose every spec is stamped
+  `status: done`** - the pipeline's own completion stamp, written by the implementer, fired on by
+  `hook_verifier.sh` and reverted by `spec_done_guard.py` when it is not backed by evidence. Nothing
+  new is written to make the sweep possible, which is the point. **What it asks for is ONE artifact**:
+  `test-mapping.md` beside each spec, owed at that spec's own `status: done` stamp, which is exactly
+  what `spec_done_guard.py` already enforces at the stamp. **It does NOT ask for `handover.md`, and
+  that is a decision rather than an omission**: `hook_verifier.sh` owns that write and refuses it on
+  a passing verdict PLUS `verifier_precheck.py`, `required_skills.py audit`,
+  `verifier_evidence.py check`, `breaker_gate.py due`, the carried-items gate and
+  `emission_gate.py defects`. Any condition the sweep could ask is strictly WEAKER than that set, so
+  a phase always exists where the Stop hook says "create handover.md before stopping" and the
+  handover trigger then refuses to let anyone write it - a required skill with no observed load, a
+  critical phase whose Breaker never ran - with the prescribed remedy unavailable to a stage that
+  has ended and only `GATE_BYPASS` left. Duplicating the six checks here was considered and rejected
+  for the reason this repository rejects it everywhere: **a second, weaker copy of a rule is not
+  extra safety, it is the drift defect.** `doc_read_path.py check`, two lines later in the same
+  hook, holds the card's cap and its `readers:` line once it exists. It is **diff-scoped** on the same boundary as every
+  other check here (§3a) - a phase this change did not touch is counted and named, never blocked,
+  which is what stops a consumer repo full of pre-rule phases failing every Stop it ever runs;
+  `check --all` is the deliberate audit. The sweep's other half was
+  corrected in the same pass: it looked for `test-mapping.md` in the PHASE directory, which has not
+  been its home since specs became `<n>.<k>` directories. This is
   the rule that stops the recurrence, and `doc_read_path.py check --sources` is its teeth: it scans
   `agents/`, `skills/`, `commands/`, `prompts/` and fails when a stage instruction re-acquires a
   removed read. **That check is one-directional** — it catches a removed read coming back, never a
   stage instructed to read something the table does not declare, so the table is not self-verifying
   and an undeclared reader leaves it incomplete rather than wrong (which is how the human
-  spec-review's two reads went undeclared). **Change the directive at the table, never one caller at
+  spec-review's two reads went undeclared). **`check --contract` is the other direction, and the
+  general form of what keeps producing these**: documentation making a claim nothing enforces. It
+  asks that every documented claim about an artifact's frontmatter has a writer instructed to
+  produce it - the table's `emitted_by` exists and really instructs `readers:`, AND every artifact
+  class a canonical source names is one the table governs. It reads two inventories, artifact PATH
+  literals under `docs/features/` and the canonical layout block in `skills/pipeline-conventions`,
+  and it reads them in `agents/`, `skills/`, `commands/`, `prompts/`,
+  `docs/templates/` and `AGENTS.md` - never `scripts/`, `README.md` or `CLAUDE.md`. **The whole
+  check, both directions, runs in the pipeline's OWN repository and nowhere else**, decided by
+  `scripts/sync_opencode.py`, a marker `install.sh` deliberately does not vendor and a test pins as
+  unvendored. The reason is that **every source it reads lives upstream** - the table itself, the
+  templates it names, the stage instructions it scans - so a repository that merely installed the
+  pipeline has no remedy for anything it could find, and a rule whose remedy is unavailable is a
+  wedge rather than a gate. It was narrowed twice before that: keying on the presence of a DIRECTORY
+  named `agents/` is defeated by any consumer owning one, and `install.sh` vendors neither `agents/`
+  nor `commands/`, so downstream both hold only that project's own files and the artifact-class
+  direction reported the consumer's own documents as undecided classes. **A half-running check,
+  where one direction fires downstream and the other does not, is worse than an honestly absent
+  one**, because its result cannot be read as meaning anything. In the canonical repository it is
+  **not diff-scoped**, for the same reason `--sources` is not. Elsewhere it says on stderr that
+  neither direction ran and that the remedy lives upstream, never a silent pass, and `gate_ci.sh`
+  announces the step as NOT CHECKED rather than as one that passed - a check that cannot run where
+  it ships is the defect, not the finding. **What it does not see is
+  stated rather than implied**: a class named only as a bare filename in prose is invisible to it -
+  `fidelity-report.md` was named exactly that way and this check would not have caught it - because
+  generalising to bare filenames means guessing which backticked `*.md` in a sentence is a pipeline
+  artifact, which needs a denylist of everything else in the repository, and a list that rots is
+  worse than a stated limit; a class named only outside canonical stage instruction is invisible for
+  the boundary reason above; and a glob literal names no class at all, since `*.md` out of
+  `docs/features/**/*.md` is a match rule with no honest outcome to choose between. **Change the directive at the table, never one caller at
   a time.** Every entry also
   names the template or stage instruction that makes its writer emit the line: declaring a reader is
   not the same as instructing anyone to write it down, and three artifact classes shipped with the
@@ -849,7 +914,12 @@ phases reported "ruff clean" and **neither statement was evidence about formatti
 nothing in the gate could have failed on it. `scripts/lint_gate.py` runs both and is what
 `.no-mistakes.yaml` and `gate_ci.sh` now call, so a future edit back to a bare `ruff check`
 reintroduces the gap at the one place a test pins. Rules stay unscoped — the tree is clean and stays
-clean. **Format is diff-scoped** on the applicability boundary (§3a): 93 files predate the rule and a
+clean. **Both dimensions answer to a declared contract rather than to whichever ruff is installed**: with
+no config in the repository the verdict was a property of the toolchain, and ruff 0.16's wider
+defaults reported 504 findings on a tree nobody had changed, so `ruff.toml` names the rule set; and
+the format half parses **both** shapes ruff has used to name a drifted file, failing with an ERROR
+on drift it cannot read instead of letting an empty list read as clean. **Format is diff-scoped** on
+the applicability boundary (§3a): 93 files predate the rule and a
 gate that failed the build over them would be a wedge, so what the change touches is enforced and
 the rest is counted and named. `--all` audits the tree. When git cannot state what changed the format
 half enforces **nothing** and says so, rather than falling back to enforcing everything; a missing
@@ -1181,3 +1251,41 @@ the current project into the live cache and registry (`AVENGER_PLUGIN_CACHE_ROOT
 *other* caller off a real installation is that the `cut()` function has no default `cache_root` or
 `pin_path`, and `check` writes nowhere. `tests/test_plugin_release.py` proves every guard here red
 before green.
+
+### 10. Every guard is proven by going RED (issue #69)
+Issue #69 is one class with many symptoms: **a component reports success while doing nothing, and
+nothing notices.** Its instance list closed one at a time, but the issue names the only test that
+says the class is fixed, and it is not the list emptying: **pick any check in the pipeline, break the
+thing it guards, and confirm it goes red.** A green suite proves the tests pass; it says nothing
+about whether any of them would notice the defect its guard exists for.
+
+**So each guard declares how to break it, and something breaks it.** `scripts/guards.toml` is the
+inventory - per guard: the file that decides, the defect it catches, the tests that must go red, and
+the exact edit that reintroduces the defect. `scripts/guard_proof.py` applies each mutation to a
+**throwaway copy**, runs the named tests and asserts they FAIL; it never writes inside the working
+tree, so a killed sweep cannot leave a neutered guard behind. Five outcomes, one of them a pass:
+**proven** · **unproven** (the defect is back and the suite does not care - the guard is decoration)
+· **unanchored** (the anchor is no longer in the file, so the declaration drifted from the code and
+nothing was proved - a finding, never a skip) · **baseline-red** · **errored**.
+
+**The UNDECLARED count is the interesting number**, because those guards have no evidence at all. It
+is derived, never listed: the enforcement surfaces are one closed set - `scripts/gate_ci.sh`,
+`hooks/hooks.json` and every hook script it names, `.pre-commit-config.yaml` and the two CI
+workflows - and the universe is every sibling script they invoke **and every sibling module those
+import**, to a fixed point - `gate_plausibility.py`, the guard issue #69's own
+last instance produced, is reached by no shell line at all. Each file is declared or carries an
+`[[exempt]]` entry saying why it decides nothing; there is no third state, and an exemption nothing
+invokes any more is a finding exactly as a stale guard is.
+
+**Diff-scoped on the applicability boundary** (§3a): `check` binds what the change touches - the
+guards whose implementation, mutation target or tests it edits, plus any guard it newly puts on the
+enforcement path with no entry - and counts the rest by name; `prove` proves every declared guard
+and prints the undeclared count without failing on it; `report` is the deliberate full audit, never
+what CI runs unconditionally. Unknowable scope enforces nothing and says so.
+
+**The harness is in its own inventory and proved by its own mechanism**: a guard deliberately built
+to be worthless - a real check whose test only exercises the happy path - must come back `unproven`
+and fail the run (`tests/test_guard_proof.py`). **What it does not claim** is stated at the module: it
+proves a named test set NOTICES a named defect, not that the guard is correct, not that the mutation
+is the only way back to the defect, and it cannot see a check that is neither declared nor invoked
+from an enforcement surface.

@@ -50,8 +50,6 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 - verdict:        docs/features/<feature>/phases/<n>-<slug>/verdict.json
 - specs:          docs/features/<feature>/phases/<n>-<slug>/specs/
 - tests:          tests/<feature>/<n>-<slug>/
-- implementation: docs/features/<feature>/phases/<n>-<slug>/implementation-report.md
-- test-execution: docs/features/<feature>/phases/<n>-<slug>/test-execution-report.md
 - archive:        docs/features/<feature>/phases/<n>-<slug>/handover-archive.md   <!-- not on the read path -->
 
 ## Open items

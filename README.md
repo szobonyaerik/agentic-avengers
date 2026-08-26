@@ -247,7 +247,8 @@ agentic-avengers/
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
-│   │                          + read path + overview contracts heading + stage effort
+│   │                          + read path + frontmatter contract + overview contracts heading
+│   │                          + stage effort
 │   │                          + verifier pre-check + amendments + carried items + breaker record
 │   │                          + cosmic-ray + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
@@ -284,8 +285,15 @@ agentic-avengers/
 │   │                          evidence is per-phase, so phase 1 cannot block phase 8
 │   │                          (`--all` sweeps every phase, under `gate_ci.sh --full`)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
-│   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
-│   │                          diff-scoped; and `--sources`, so a removed read cannot come back)
+│   ├── doc_read_path.py       the read-path table + its three checks (artifact caps/`readers:`,
+│   │                          diff-scoped; `--sources`, so a removed read cannot come back; and
+│   │                          `--contract`, which asks that every table entry's `emitted_by` really
+│   │                          instructs `readers:` and that every artifact class a canonical source
+│   │                          names is one the table governs. Canonical repository ONLY - elsewhere
+│   │                          it says NOT CHECKED and names the remedy upstream, never a pass)
+│   ├── phase_artifacts.py     the Stop-hook artifact sweep's key: a phase whose every spec is
+│   │                          stamped `status: done` owes each spec's `test-mapping.md`, and
+│   │                          nothing else. Diff-scoped (`check --all` audits)
 │   ├── stage_effort.py        each stage's reasoning effort, read out of the `effort:` key in its
 │   │                          own `agents/<stage>.md` - the key the harness applies at spawn, never
 │   │                          a value a caller passes. `check` (every commit, NOT diff-scoped)
@@ -311,6 +319,16 @@ agentic-avengers/
 │   ├── plugin_release.py      the executing plugin copy vs. the merged repository: `check` (STALE
 │   │                          stops a run, UNKNOWN is unenforced) and `cut`, the one release step
 │   ├── hook_plugin_release.sh PreToolUse: refuses to spawn an avenger stage on a STALE copy
+│   ├── guards.toml            the guard inventory: per guard, the file that decides, the defect it
+│   │                          catches, the tests that must go red and the exact edit that
+│   │                          reintroduces the defect (plus `[[exempt]]`, for a file the
+│   │                          enforcement surfaces invoke that decides nothing)
+│   ├── guard_proof.py         applies each mutation to a throwaway copy, runs the named tests and
+│   │                          asserts they FAIL: proven | unproven | unanchored | baseline-red |
+│   │                          errored, and the count of guards the pipeline runs that nobody
+│   │                          declared. `check` is diff-scoped, `prove` proves every declared
+│   │                          guard, `report` is the full audit. Deliberately NOT vendored - a
+│   │                          consumer repo gets the guards, not the proof of them
 │   ├── bypass_log.sh          break-glass logger for hooks
 │   ├── hook_*.sh              Claude Code hook wrappers
 │   ├── codemap.py             tree-sitter codebase map -> codebase/MOC.md
@@ -323,7 +341,11 @@ agentic-avengers/
 │   ├── agents/            generated
 │   ├── skills/            symlink -> ../skills
 │   └── plugin/pipeline-gates.ts   in-session gates for opencode
-├── .github/workflows/pipeline-gates.yml   CI floor
+├── .github/workflows/pipeline-gates.yml   CI floor (vendored)
+├── .github/workflows/guard-proof.yml      the guard sweep (this repo only, not vendored): `prove`
+│                                          on every PR, push to main and nightly, plus the
+│                                          diff-scoped `check` on PRs; `audit: true` on a manual
+│                                          run switches to the full `report`
 ├── .no-mistakes.yaml      feature-close ship gate config (see skills/pipeline-conventions)
 ├── AGENTS.md              opencode conventions
 ├── .pre-commit-config.yaml

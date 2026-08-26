@@ -48,7 +48,10 @@ def run_hook(project, policy: str = "advisory") -> subprocess.CompletedProcess:
     payload = json.dumps({"tool_input": {"file_path": str(phase / "handover.md")}})
     return subprocess.run(
         ["bash", str(HOOK)],
-        input=payload, capture_output=True, text=True, check=False,
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
         env={
             "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin",
             "HOME": str(tmp),
@@ -95,3 +98,19 @@ def test_a_run_that_records_nothing_leaves_no_row(project) -> None:
 
     assert result.returncode == 0
     assert recorded(project[2]) == []
+
+
+def test_a_policy_nobody_recognises_fails_closed(project) -> None:
+    """A MUTATION_POLICY the hook does not know must STOP it, never select a default.
+
+    The three values mean different things and one of them switches the gate off entirely, so a
+    typo that resolves to `off` is a mutation gate nobody turned off and nobody notices is gone -
+    the same silent yes as a gate that never ran, chosen by a slip of the keyboard rather than a
+    missing config.
+    """
+    result = run_hook(project, policy="advisroy")
+
+    assert result.returncode == 2, "an unrecognised policy is a stop, not a default"
+    assert "enforce|advisory|off" in result.stderr, (
+        "the stop names what the valid values are"
+    )

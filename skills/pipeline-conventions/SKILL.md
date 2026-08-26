@@ -91,8 +91,9 @@ deleted to fix this; the read directives changed.
 | `handover-archive.md` | **nobody** — archive | — |
 | `pipeline-observations.md` | the retrospective triage, once at feature close; the preflight sweep, frontmatter only | whole |
 | `e2e-mapping.md` | feature close, once | whole |
+| `scoped/review-<slice>.md` | the review that invoked the fan-out, once — **no other reviewer may open it**, which is what makes the isolation real | whole |
 
-Four rules follow from it, and each one is enforced rather than requested:
+Five rules follow from it, and each one is enforced rather than requested:
 
 - **Every pipeline document declares `readers:` in its own frontmatter** — who reads it and when.
   **A document no stage reads does not get written**, and an archive says so explicitly
@@ -116,12 +117,78 @@ Four rules follow from it, and each one is enforced rather than requested:
   `doc_read_path.py check --sources` scans `agents/`, `skills/`, `commands/` and `prompts/` and
   fails when a stage instruction names a document that left the read path. A guard bolted onto one
   command is a guard the next command does not have.
-  **That guard is one-directional**: it catches a removed read coming back, and nothing catches the
+  **That guard is one-directional**: it catches a removed read coming back, and it cannot catch the
   inverse — a stage instructed to read something the table never declares. So the table is not
   self-verifying; a reader that is instructed but undeclared leaves it *incomplete* rather than
   wrong, which is harder to spot. The human spec-review reached this list that way. When a stage
   genuinely needs a read, add the reader to the table; never bend the instruction to match a silent
   one.
+- **Every documented claim about an artifact's frontmatter has a writer instructed to produce it.**
+  `doc_read_path.py check --contract` is the inverse direction, and the general form of the defect
+  that keeps producing these one instance at a time: documentation making a claim nothing enforces.
+  It asks two things. The table's `emitted_by` must exist and must really instruct the `readers:`
+  line — a template that mentions it only in prose teaches a document that fails `check`. And every
+  artifact class a canonical source names must be one the table governs: a stage told to write, link
+  or read a document with no `READ_PATH` entry is a class with **no decision recorded either way**,
+  which is the state four classes sat in until issue #29 — one of them,
+  `implementation-report.md`, keying the Stop-hook artifact sweep while nothing was instructed to
+  write it. It is **not diff-scoped**, for the same reason `--sources` is not: the table and the
+  canonical stage instructions are always open, never shipped artifacts a later rule holds hostage.
+  That holds because **the whole check, both directions, runs in the pipeline's OWN repository and
+  nowhere else** - decided by `scripts/sync_opencode.py`, a marker `install.sh` does not vendor.
+  Every source it reads lives upstream: the table, the templates it names, and the stage
+  instructions it scans (`agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/`,
+  `AGENTS.md`; never `scripts/`, `README.md` or `CLAUDE.md`). So a repository that merely installed
+  the pipeline has no remedy for anything it could find, and a rule whose remedy is unavailable is a
+  wedge rather than a gate. It was narrowed twice first: keying on a DIRECTORY named `agents/` is
+  defeated by any consumer owning one, and `install.sh` vendors neither `agents/` nor `commands/`,
+  so downstream both hold only that project's files and the artifact-class direction reported the
+  consumer's own documents as undecided classes. **A half-running check is worse than an honestly
+  absent one**, because a result that means one thing here and another there cannot be read as
+  meaning anything. Elsewhere it says on stderr that neither direction ran and that the remedy lives
+  upstream, and `gate_ci.sh` announces the step as NOT CHECKED - never a silent clean pass, and
+  never a check that cannot run where it ships.
+  **What it does not see**: it reads two inventories — artifact PATH literals under `docs/features/`
+  and the layout block above — so a class named only as a bare filename in prose is invisible to it.
+  `fidelity-report.md` was named exactly that way, in two artifact lists and nowhere else; it was
+  caught by reading, not by this. Generalising to bare filenames means guessing which backticked
+  `*.md` in a sentence is a pipeline artifact, which needs a denylist of everything else in the
+  repository — a list that rots, which is worse than a stated limit. A class named only outside
+  canonical stage instruction is invisible for the boundary reason above, and a glob literal names
+  no class at all: `*.md` out of `docs/features/**/*.md` is a match rule with no honest outcome to
+  choose between.
+
+**The Stop-hook artifact sweep is keyed to the pipeline's own completion stamp**
+(`scripts/phase_artifacts.py`): a phase has finished implementing when **every spec it holds is
+stamped `status: done`**. It used to be keyed to the presence of `implementation-report.md`, a file
+no template, agent, skill, command or script instructed anyone to write, so the set of phases it
+swept was the set where an implementer happened to invent an undocumented file.
+
+**It asks for ONE artifact: `test-mapping.md` beside each spec, at that spec's own `status: done`
+stamp** - the implementer owes a row the instant it stamps, which is what `spec_done_guard.py`
+enforces at the stamp itself, and the old sweep looked in the phase directory, which has not been
+that file's home since specs became `<n>.<k>` directories.
+
+**It does NOT ask for `handover.md`, and that is a decision rather than an omission.**
+`hook_verifier.sh` owns that write and refuses it on a passing verdict PLUS six further checks -
+`verifier_precheck.py`, `required_skills.py audit`, `verifier_evidence.py check`,
+`breaker_gate.py due`, the carried-items gate and `emission_gate.py defects`. Any condition this
+sweep could ask is strictly WEAKER than that set, so a phase always exists where the Stop hook says
+"create handover.md before stopping" and the handover trigger then refuses to let anyone write it: a
+required skill with no observed load, a critical phase whose Breaker never ran, a verdict with no
+execution transcript. In each case the prescribed remedy is unavailable to a stage that has ended
+and only `GATE_BYPASS` is left. Duplicating the six checks here was considered and rejected for the
+reason this repository rejects it everywhere - **a second, weaker copy of a rule is not extra
+safety, it is the drift defect.** `doc_read_path.py check`, two lines later in the same hook, holds
+the card's byte cap and its `readers:` line once it exists.
+
+A spec whose every requirement is `binding: none` owes no row by construction
+and is exempt; a spec that declares no requirement at all, or whose requirements cannot be read, is
+reported rather than skipped. The sweep is **diff-scoped** on the applicability boundary (§3a): a
+phase this change did not touch is counted and named on stderr in the boundary's one spelling,
+never blocked, so a repository full of phases built under the older layout can adopt it;
+`check --all` is the full audit. When git cannot say what changed, nothing is enforced and it says
+so out loud.
 
 ## Tiered requirement binding — what decides suite size
 
@@ -1325,6 +1392,32 @@ one of these guards both ways — a stale cache against a fixed repo reads `STAL
 target whose own manifest does not match the claimed version raises before reporting success, both
 brought into agreement read clean — per issue #69's rule that a guard is proven by going red before
 it is proven by going green.
+
+## Every guard is proven by going RED (issue #69)
+
+Issue #69 names one class behind every pipeline defect of phases 10 and 11: **a component reports
+success while doing nothing, and nothing notices.** A stale spec stamp, a context block whose
+heading never matched for eleven phases, a metrics recorder that dropped every write, a mutation
+gate that had never once executed, a carried-items checker that read an unparseable section as
+"nothing carried" - all deterministic scripts, all answering yes for months.
+
+The issue also names the only test that says the class is fixed, and it is not the instance list
+emptying: **pick any check in the pipeline, break the thing it guards, and confirm it goes red.** A
+suite being green proves the tests pass. It says nothing about whether any of them would notice the
+defect its guard exists for, and a guard whose test asserts a shape the guard no longer produces
+goes on passing after the guard stops guarding.
+
+**So each guard declares how to break it, and something breaks it - in the agentic-avengers
+repository itself.** A guard inventory names the file that decides, the defect it catches, the tests
+that must go red and the exact edit that reintroduces it, and a harness applies each mutation to a
+throwaway copy of that tree, runs the named tests and asserts they FAIL. It is deliberately **not**
+part of the vendored surface: the inventory names that repository's own scripts and the tests that
+must go red for them, so a consumer repo has nothing for it to check and receives the guards rather
+than the proof of them. Nothing here is a command to run in a vendored install.
+
+**The rule that travels is the one this section is for**, and it is about your own checks: a check
+whose test only exercises its happy path is decoration, and it stays green after the check stops
+checking. Write the test that goes red when the defect it guards against comes back.
 
 ## Agent tooling
 

@@ -45,6 +45,7 @@ stage: spec-review
 model: sonnet
 created: <date>
 verdict: clean | concerns
+readers: the invoking spec review @ once, at the end of the fan-out
 ---
 ## Slice: <slice>
 
@@ -54,8 +55,12 @@ verdict: clean | concerns
 - [TESTABILITY] "<requirement>" has no measurable criterion → make it <…>
 ```
 
-If the slice is genuinely sound, set `verdict: clean` and list what you checked (so the gate can
-see the slice was actually examined, not skipped).
+`readers:` is not decoration. Every document on the read path states who opens it and when
+(`scripts/doc_read_path.py`), and this one has exactly one reader by construction: every other
+reviewer is forbidden to read it, so the only consumer is the review that asked for the fan-out.
+
+If the slice is genuinely sound, set `verdict: clean` and list what you checked, so the review that
+invoked you can see the slice was actually examined and not skipped.
 
 ### Example (slice = idempotency)
 ```markdown

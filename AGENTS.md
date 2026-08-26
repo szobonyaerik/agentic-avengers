@@ -13,16 +13,19 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
 
 ## Conventions (always apply)
 1. **Artifacts** under `docs/features/<feature>/` (feature-level: `task-analysis.md`, `overview.md`,
-   `plan.md`, `fidelity-report.md`, `scoped/review-*.md`), `docs/features/<feature>/phases/<n>-<slug>/`
-   (`test-mapping.md`, `test-evidence.md`, `implementation-report.md`, `test-execution-report.md`,
-   `handover.md`, `handover-archive.md`), and spec-level
-   `.../phases/<n>-<slug>/specs/<n>.<k>-<subslug>/spec.md`. YAML frontmatter on each. The classes
-   `scripts/doc_read_path.py`'s `READ_PATH` governs additionally carry a **`readers:` line** — see 1a.
-   `fidelity-report.md`, `scoped/review-*.md`, `implementation-report.md` and
-   `test-execution-report.md` are **not** in that table and are not claimed to carry one; whether
-   they belong on the read path is [#29](https://github.com/szobonyaerik/agentic-avengers/issues/29),
-   open. Promising the line for a class nothing instructs and nothing checks is the gap this rule
-   exists to close, so the promise is scoped to what is enforced.
+   `plan.md`, `scoped/review-*.md`), `docs/features/<feature>/phases/<n>-<slug>/`
+   (`verdict.json`, `handover.md`, `handover-archive.md`), spec-level
+   `.../specs/<n>.<k>-<subslug>/` (`spec.md`, `test-mapping.md`, `test-evidence.md`). YAML
+   frontmatter on each. Every class `scripts/doc_read_path.py`'s `READ_PATH` governs carries a
+   **`readers:` line** — see 1a — and that is now every artifact class the pipeline names.
+   Issue [#29](https://github.com/szobonyaerik/agentic-avengers/issues/29) closed the four that had
+   no decision either way: `scoped/review-*.md` joined the table (a real writer instruction, and one
+   possible reader — the review that asked for the fan-out), and `fidelity-report.md`,
+   `implementation-report.md` and `test-execution-report.md` were **removed**, having no writer
+   instruction at all. `implementation-report.md` keyed the Stop-hook artifact sweep; that key is
+   now `scripts/phase_artifacts.py` — a phase whose every spec is `status: done` owes each spec's
+   `test-mapping.md`, and that is the whole of what the sweep asks: it never asks for `handover.md`,
+   which `hook_verifier.sh` alone owns. Diff-scoped (§3a); `check --all` audits.
 1a. **The read path.** Documentation cost is `size x reads x turns resident`, not size:
    `task-analysis.md` cost ~465k tokens being opened 60 times for one frontmatter field, and
    `handover.md` cost 485k-1,475k being re-read per spec of every later phase. So `handover.md` is a
@@ -33,7 +36,20 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    favour of its card. `scripts/doc_read_path.py` is the table and the check; `check --sources` is
    what stops a removed read coming back one caller at a time, and the artifact half is **diff-scoped**
    (it enforces what you changed and only counts the rest, `--all` for a full audit).
-   `docs/lessons/` is untouched.
+   `docs/lessons/` is untouched. `check --contract` is the other direction — every documented claim
+   about an artifact's frontmatter has a writer instructed to produce it, and every artifact class a
+   canonical source names is one the table governs. That is the general form of the defect behind
+   #29: documentation making a claim nothing enforces. It reads **canonical stage instruction only**
+   (`agents/`, `skills/`, `commands/`, `prompts/`, `docs/templates/`, `AGENTS.md`), never `scripts/`,
+   `README.md` or `CLAUDE.md`. **Both directions run in the pipeline's OWN repository and nowhere
+   else**, decided by a marker `install.sh` does not vendor: every source the check reads lives
+   upstream, so downstream not one of the remedies it prescribes exists, and a half-running check is
+   worse than an honestly absent one. Elsewhere it says on stderr that neither direction ran and
+   where the remedy lives, and `gate_ci.sh` announces the step as NOT CHECKED rather than passed. The Stop-hook artifact sweep
+   (`scripts/phase_artifacts.py`) asks for **one** artifact, `test-mapping.md` beside each spec at
+   that spec's own `status: done` stamp; it never asks for `handover.md`, because `hook_verifier.sh`
+   gates that write on a passing verdict plus six further checks and a weaker second copy of a rule
+   only produces phases told to create a document nothing will let them write.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
    `<n>.<k>`; requirement ids `R<n>.<k>.<m>`. The Verifier runs **once per phase**, after every spec is green.
 3. **The quality wall (per spec): ONE machine gate, then one human.** The spec gate fires on spec
@@ -291,7 +307,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `scripts/lint_gate.py` runs `ruff check` (whole tree) *and* `ruff format --check` (diff-scoped on
    the applicability boundary, so a tree written before the rule is counted rather than held
    hostage); a bare `ruff check` says nothing about formatting and two phases reported "ruff clean"
-   about a dimension nothing could have failed on. **A verdict names what produced it** —
+   about a dimension nothing could have failed on. **Both dimensions answer to a declared contract,
+   never to whichever ruff is installed** — `ruff.toml` names the rule set, because with no config
+   the gate's verdict was a property of the toolchain (ruff 0.16 widened its defaults and reported
+   504 findings on a tree nobody had changed), and the format half parses **both** shapes ruff has
+   used to name a drifted file, refusing as an ERROR any drift it could not read rather than
+   reporting the empty list as clean — reading one shape made a newer ruff's drift arrive as a
+   silent pass, which is the exact defect this gate exists to remove. **A verdict names what produced it** —
    `gate_runner.py` announces model, family and transport for every reached verdict, and the spec
    gate stamps them onto the spec as `<gate>_gated_by` beside the hash and the verdict; no
    attribution is recorded as `unrecorded`, a named state rather than an absent key.
@@ -476,6 +498,23 @@ a thin adapter: it turns an opencode tool event into the same PostToolUse payloa
 fail-closed rule in `scripts/` and both runtimes get it; the plugin does not need editing and must not
 grow logic of its own. (It used to reimplement every gate in TypeScript, and the two copies drifted —
 the TS side kept a zero-survivor mutation gate and an unscoped verifier after the bash side moved on.)
+
+## Every guard is proven by going RED (issue #69)
+
+A green suite proves the tests pass, not that any of them would notice the defect its guard exists
+for. A guard whose test asserts a shape the guard no longer produces goes on passing after the guard
+stops guarding — the same "reports success while doing nothing" class, one level up.
+
+**So each guard declares how to break it, and something breaks it — in the agentic-avengers
+repository itself.** A guard inventory names the file that decides, the defect it catches, the tests
+that must go red and the exact edit that reintroduces it, and a harness applies each mutation to a
+throwaway copy of that tree, runs the named tests and asserts they FAIL. It is deliberately **not**
+part of the vendored surface: the inventory names that repository's own scripts and the tests that
+must go red for them, so a consumer repo has nothing for it to check and receives the guards rather
+than the proof of them.
+
+**The rule that travels is about your own checks:** a check whose test only exercises its happy path
+is decoration. Write the test that goes red when the defect it guards against comes back.
 
 ## Environment
 | var | default | effect |

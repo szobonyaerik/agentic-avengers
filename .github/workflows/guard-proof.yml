@@ -1,0 +1,146 @@
+# The guard-proof sweep. Every check must prove it ran (issue #69).
+#
+# This workflow is where ALL of the harness's CI wiring lives, and that is not a filing decision:
+# `.pre-commit-config.yaml` and `pipeline-gates.yml` are copied verbatim into every consumer repo by
+# install.sh (SRC_SETS) and by vendor_runtime.sh, while guard_proof.py and guards.toml are
+# deliberately NOT vendored - a consumer repo vendors the guards, not the proof of them, and
+# tests/test_install_manifest.py now refuses that combination. A shipped file running an absent
+# script fails every
+# commit and every build over there. This file does not ship, so it is where the harness may run.
+#
+# On a pull request both halves run: `prove` breaks each declared guard in a throwaway copy and
+# asserts its named tests go red, and `check` adds the diff-scoped half - a guard this PR ADDS to the
+# enforcement path with no inventory entry is a finding, while the guards it does not touch are
+# counted and named rather than blocking (the applicability boundary, CLAUDE.md 3a).
+#
+# The nightly run exists for the drift a PR cannot show: a dependency, a runner or a toolchain change
+# that quietly makes a guard's test stop noticing its defect, with nobody's diff to attach it to.
+#
+# `audit: true` on a manual run switches to the full audit, which additionally enforces the
+# UNDECLARED count over the whole tree - the guards nobody has ever broken on purpose. That is the
+# number issue #69 is really about, and it is deliberately something somebody runs rather than a
+# condition on every build: a rule added after the tree it runs on binds what a change touches.
+name: guard-proof
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      audit:
+        description: "Enforce the undeclared count over the whole tree, not only the declared guards"
+        type: boolean
+        default: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — the diff-scoped half resolves the pull request's base sha, which a shallow
+      # clone does not have. A base git cannot resolve makes the scope unknowable, so the check
+      # would enforce nothing and say so: green, and meaningless.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test tooling
+        # The same tool set the gates workflow installs, pinned the same way and for the same
+        # reason. It has to be: this job RUNS the guards' own tests, so a distribution missing here
+        # is a guard that cannot be proved. `pytest ruff` alone made every test that imports
+        # scripts/mutation_score.py uncollectable - that module exits at import when cosmic_ray is
+        # absent - and the mutation-score guard came back `baseline-red`, which reports the guard as
+        # unproven while saying nothing about the guard.
+        run: pip install pytest cosmic-ray "ruff==0.15.5"
+
+      - name: Sweep
+        id: sweep
+        run: |
+          set -uo pipefail
+          if [ "${{ inputs.audit }}" = "true" ]; then VERB=report; else VERB=prove; fi
+          # The step runs as `bash -e {0}`, which `set -uo pipefail` does not clear, so a bare call
+          # would abort here on a non-zero sweep - and that is the one run whose summary matters,
+          # since it is where the unproven guards are named. `if` is -e safe.
+          if python3 scripts/guard_proof.py "$VERB" --jobs 4 --json > guard-proof.json 2> guard-proof.err; then
+            FAILED=0
+          else
+            FAILED=$?
+          fi
+          # The sweep's own cause line goes to stderr, and it is the thing an operator needs when
+          # there is no report to summarise - so it is kept AND echoed back into the step log.
+          cat guard-proof.err >&2 || :
+          # The summary must survive a report that was never written: a GuardProofError (a malformed
+          # inventory, an unreadable hooks.json, a bad GUARD_PROOF_JOBS) returns before anything is
+          # printed, so `>` leaves a zero-byte file. An unguarded json.load there aborts this step
+          # under `bash -e` before `exit "$FAILED"` runs, and the operator gets a JSONDecodeError
+          # traceback instead of the cause the sweep wrote on purpose. A check whose failure hides
+          # its own reason is the shape this whole workflow exists to remove.
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+
+          def cause():
+              try:
+                  with open("guard-proof.err", encoding="utf-8") as handle:
+                      return handle.read().strip()
+              except OSError:
+                  return ""
+
+
+          try:
+              with open("guard-proof.json", encoding="utf-8") as handle:
+                  report = json.load(handle)
+          except (OSError, ValueError):
+              print("## guard-proof (no report)\n")
+              print("The sweep produced no readable report, so there is nothing to summarise.")
+              print("It exited before writing one. Its own words:\n")
+              print("```")
+              print(cause() or "(the sweep printed nothing)")
+              print("```")
+          else:
+              print(f"## guard-proof ({report['scope']})\n")
+              print(f"- **{report['declared']}** guards declared")
+              print(f"- **{report['proved']}** proved")
+              print(f"- **{report['undeclared']}** invoked by the pipeline with no inventory entry\n")
+              for proof in report["proofs"]:
+                  if proof["status"] != "proven":
+                      print(f"- `{proof['guard']}` — **{proof['status']}**")
+          PY
+          # The step's status stays the sweep's, never the summary's.
+          exit "$FAILED"
+
+      - name: Guard proof (diff-scoped)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          # The base has to be the one this checkout was actually merged onto. `base.sha` is the
+          # base branch as it stood when the pull request was opened or last synchronised, while
+          # actions/checkout leaves HEAD on `refs/pull/N/merge` - the base branch's CURRENT tip
+          # merged with this branch. Every commit the base branch gained in between therefore sits
+          # inside `base.sha...HEAD` and reads as a change this pull request made, so the
+          # diff-scoped half would hold it answerable for guards somebody else wired in - the
+          # hostage failure the applicability boundary exists to remove, reintroduced by the
+          # reference rather than by the check. That merge commit's FIRST parent is the base tip,
+          # so it is the base that answers "what did THIS change do". `HEAD^2` exists only on that
+          # merge commit; without it this is not a merge checkout and the event's base sha is the
+          # only answer available.
+          if git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
+            BASE="$(git rev-parse 'HEAD^1')"
+          else
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
+          python3 scripts/guard_proof.py check --base "$BASE" --jobs 4
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: guard-proof
+          path: |
+            guard-proof.json
+            guard-proof.err
