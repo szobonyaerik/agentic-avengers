@@ -378,9 +378,9 @@ tests = ["tests/test_lint_gate.py"]
 [[guard.mutation]]
 file = "scripts/lint_gate.py"
 find = '''
-    files, said = drifted(paths, cwd)'''
+    files, said, code = drifted(paths, cwd)'''
 replace = '''
-    files, said = [], ""'''
+    files, said, code = [], "", _FORMAT_OK'''
 
 # --- stage effort ----------------------------------------------------------------------------------------------------------
 

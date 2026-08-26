@@ -119,7 +119,23 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
-          python3 scripts/guard_proof.py check --base "${{ github.event.pull_request.base.sha }}" --jobs 4
+          # The base has to be the one this checkout was actually merged onto. `base.sha` is the
+          # base branch as it stood when the pull request was opened or last synchronised, while
+          # actions/checkout leaves HEAD on `refs/pull/N/merge` - the base branch's CURRENT tip
+          # merged with this branch. Every commit the base branch gained in between therefore sits
+          # inside `base.sha...HEAD` and reads as a change this pull request made, so the
+          # diff-scoped half would hold it answerable for guards somebody else wired in - the
+          # hostage failure the applicability boundary exists to remove, reintroduced by the
+          # reference rather than by the check. That merge commit's FIRST parent is the base tip,
+          # so it is the base that answers "what did THIS change do". `HEAD^2` exists only on that
+          # merge commit; without it this is not a merge checkout and the event's base sha is the
+          # only answer available.
+          if git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
+            BASE="$(git rev-parse 'HEAD^1')"
+          else
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
+          python3 scripts/guard_proof.py check --base "$BASE" --jobs 4
 
       - uses: actions/upload-artifact@v4
         if: always()
