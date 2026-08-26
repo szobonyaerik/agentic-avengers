@@ -42,9 +42,10 @@ Five outcomes, and only the first is a pass:
 The interesting number is not how many declared guards passed. It is how many guards the pipeline
 runs that nobody declared, because those are the ones with no evidence at all.
 
-A guard here is mechanical, not a judgement: **the enforcement surfaces are `scripts/gate_ci.sh` and
-every hook script `hooks/hooks.json` runs, and the guard universe is those surfaces plus every
-`scripts/*.py` and `scripts/*.sh` they invoke.** Each file in that universe is either declared by at
+A guard here is mechanical, not a judgement: **the enforcement surfaces are the closed
+`ENFORCEMENT_SURFACES` set - `scripts/gate_ci.sh`, `hooks/hooks.json` and every hook script it names,
+`.pre-commit-config.yaml` and the two CI workflows - and the guard universe is every `scripts/*.py`
+and `scripts/*.sh` they invoke, plus every sibling module those import.** Each file in it is declared by at
 least one inventory entry or carries an `[[exempt]]` entry saying why it decides nothing. There is no
 third state, and an exemption that nothing references any more is itself a finding - a stale
 exemption outlives its reason exactly the way a stale guard outlives its test.
@@ -137,6 +138,13 @@ HOOKS_JSON = "hooks/hooks.json"
 #: pipeline gains a check nothing proves. A diff that ADDS an invocation of an undeclared script to
 #: one of these files puts that script in scope; an invocation that was already there is not this
 #: change's doing, and binding it would hold the diff hostage to the whole pre-existing set.
+#:
+#: `enforcement_surfaces()` is the one place that answers which files these are for a given tree -
+#: this set, plus the hook scripts `hooks.json` names dynamically - and BOTH callers read it: the
+#: universe and the ADDS predicate. A second statement of this fact is exactly what drifted, and it
+#: drifted the way a second statement always does: the universe carried its own `gate_ci.sh` + hook
+#: scripts list, never saw the three config and workflow members, and so reported full coverage over
+#: every script only they invoke.
 #:
 #: It is closed and named rather than derived, the same discipline `spec_gate_triage.BLOCKING` and
 #: `applicability.RULES` follow: "enforcement surface" is a decision about where this pipeline wires
@@ -401,6 +409,16 @@ def _hook_scripts(root: Path) -> list[str]:
     return sorted(dict.fromkeys(found))
 
 
+def enforcement_surfaces(root: Path) -> list[str]:
+    """Every file that can put a script on the enforcement path in `root`.
+
+    The closed set, with `hooks.json`'s dynamically named hook scripts folded in - the expansion
+    FEEDS the set rather than standing beside it, so there is exactly one answer to "what enforces
+    here" and both callers ask it.
+    """
+    return [*ENFORCEMENT_SURFACES, *_hook_scripts(root)]
+
+
 def _strings(node: object) -> list[str]:
     """Every string anywhere in a decoded JSON document."""
     if isinstance(node, str):
@@ -482,37 +500,38 @@ def _module_imports(root: Path, name: str) -> list[str]:
     return found
 
 
-def guard_universe(
-    root: Path, extra: dict[str, str] | None = None
-) -> dict[str, set[str]]:
+def guard_universe(root: Path) -> dict[str, set[str]]:
     """Every file that must be declared or exempt, mapped to what puts it on the enforcement path.
 
-    The surfaces are `scripts/gate_ci.sh` and every hook script `hooks/hooks.json` runs; the universe
-    is those plus every sibling script they invoke, **and every sibling module those import**, to a
-    fixed point. Derived rather than listed, so adding a check and wiring it in is enough to move
-    this - which is the whole point of the undeclared count.
+    The surfaces are `enforcement_surfaces()` - the whole closed set, the gate floor and the hook
+    configuration and the hook scripts it names and the CI entry points; the universe is every
+    sibling script they invoke, **and every sibling module those import**, to a fixed point. Derived
+    rather than listed, so adding a check and wiring it in is enough to move this - which is the
+    whole point of the undeclared count.
 
-    The import half is not decoration. `gate_plausibility.py` - the guard issue #69's own last
-    instance produced - is reached by no shell line at all: `gate_runner.py` imports it. A universe
-    built from shell references alone would have declared the pipeline fully covered while the
-    newest guard in it had no proof of any kind.
+    It reads EVERY member, including the three that reach a script through no shell line -
+    `.pre-commit-config.yaml`, `pipeline-gates.yml`, `guard-proof.yml`. Walking only the gate floor
+    and the hook scripts left a script wired in from one of those outside the universe entirely:
+    not declared, not exempt, not undeclared, absent from the report while the count claimed
+    coverage. `guard_proof.py` itself was in that hole, and so was everything it alone imports.
+    The scan is content-based, so no per-format handling is needed for YAML or the hook JSON.
 
-    `extra` seeds the files a caller reached through a surface this does not walk - the config and
-    workflow members of the closed set - BEFORE the closure runs, so their imports are followed
-    too. Merged afterwards instead, such a file contributed itself and none of its imports, which
-    is the same failure one level down: `guard_proof.py` is wired in from `guard-proof.yml`, and
-    everything it imports was absent from the report entirely.
+    The import half is not decoration either. `gate_plausibility.py` - the guard issue #69's own
+    last instance produced - is reached by no shell line at all: `gate_runner.py` imports it. A
+    universe built from shell references alone would have declared the pipeline fully covered while
+    the newest guard in it had no proof of any kind.
+
+    It takes no scope and no seed: the obligation to declare or exempt a file does not depend on
+    what a diff touched, and the callers decide separately which of these they ENFORCE.
     """
-    surfaces = [GATE_CI, *_hook_scripts(root)]
     universe: dict[str, set[str]] = {}
-    for name, caller in (extra or {}).items():
-        universe.setdefault(name, set()).add(caller)
-    for surface in surfaces:
+    for surface in enforcement_surfaces(root):
         if not (root / surface).is_file():
             continue
-        universe.setdefault(surface, set()).add(
-            HOOKS_JSON if surface != GATE_CI else "the pre-commit and CI gate floor"
-        )
+        if surface == GATE_CI:
+            universe.setdefault(surface, set()).add("the pre-commit and CI gate floor")
+        elif surface.startswith("scripts/"):
+            universe.setdefault(surface, set()).add(HOOKS_JSON)
         try:
             text = (root / surface).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -805,11 +824,9 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
     there the cost of over-including is one inventory line, here the answer refuses a pull request.
 
     ADDED narrows what a CHANGE is answerable for; it is not what a full audit can SEE. Under `all`
-    there is no diff, so every invocation counts and the surfaces `guard_universe` does not walk -
-    the config and workflow members, which reach a script through no shell line it reads - stay in
-    the audit's universe. Without that, a script wired only from one of them would leave the report
-    entirely: neither declared, nor exempt, nor undeclared, which is full coverage claimed over a
-    check nobody has ever broken on purpose.
+    there is no diff, so every invocation counts. That answer is no longer load-bearing for the
+    universe - `guard_universe` walks the same closed set itself - and this returns only what the
+    change is answerable for.
     """
     if scope.mode == "unknowable":
         return {}
@@ -827,7 +844,7 @@ def newly_wired(root: Path, scope: Scope) -> dict[str, str]:
     base_commit = forked[0]
 
     wired: dict[str, str] = {}
-    for surface in (*ENFORCEMENT_SURFACES, *_hook_scripts(root)):
+    for surface in enforcement_surfaces(root):
         target = root / surface
         if not target.is_file() or not scope.covers(target):
             continue
@@ -943,7 +960,7 @@ def sweep(
             )
 
     wired = newly_wired(root, scope)
-    universe = guard_universe(root, wired)
+    universe = guard_universe(root)
     declared = inventory.declared_files()
     exempt = inventory.exempt_files()
     undeclared: list[tuple[str, tuple[str, ...]]] = []
@@ -956,7 +973,10 @@ def sweep(
         else:
             undeclared_unenforced.append(name)
 
-    audited = set(universe) | set(newly_wired(root, Scope("all", frozenset())))
+    # The universe IS the audited set: it is scope-free and walks every enforcement surface, so
+    # `check` and `report` cannot disagree about whether an exemption is stale - and a stale
+    # finding is not diff-scoped, so a disagreement here would block every unrelated pull request.
+    audited = set(universe)
     stale = tuple(
         sorted(entry.file for entry in inventory.exempt if entry.file not in audited)
     )
@@ -1152,7 +1172,7 @@ def _do_list(inventory: Inventory) -> int:
 def _do_discover(root: Path, inventory: Inventory, args: argparse.Namespace) -> int:
     scope = resolve_scope(root, changed_only=not args.all, base=args.base)
     wired = newly_wired(root, scope)
-    universe = guard_universe(root, wired)
+    universe = guard_universe(root)
     declared = inventory.declared_files()
     exempt = inventory.exempt_files()
     findings = 0

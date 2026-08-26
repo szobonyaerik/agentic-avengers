@@ -796,6 +796,18 @@ replace = '''
             else invoked'''
 
 [[guard]]
+id = "guard-proof.universe-walks-every-enforcement-surface"
+implements = "scripts/guard_proof.py"
+defect = "The universe answered from its own list of surfaces instead of the closed set, so the three members that reach a script through no shell line - the pre-commit config and the two CI workflows - put nothing in it. A decider wired in from one of them was neither declared, exempt, nor undeclared: absent from the report while the undeclared count claimed coverage over it, and `check` exited clean. `guard_proof.py` itself sat in that hole, with everything it alone imports."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+    return [*ENFORCEMENT_SURFACES, *_hook_scripts(root)]'''
+replace = '''
+    return [GATE_CI, *_hook_scripts(root)]'''
+
+[[guard]]
 id = "guard-proof.unknown-guard-id-refused"
 implements = "scripts/guard_proof.py"
 defect = "`prove --guard <id>` naming an id the inventory does not hold proved nothing. Reported as a clean pass, a typo or an id renamed in guards.toml while a caller still names the old one goes on 'passing' forever - the silent yes of issue #69, inside the harness built to remove it."

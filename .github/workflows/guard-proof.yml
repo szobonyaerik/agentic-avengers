@@ -61,22 +61,52 @@ jobs:
           # The step runs as `bash -e {0}`, which `set -uo pipefail` does not clear, so a bare call
           # would abort here on a non-zero sweep - and that is the one run whose summary matters,
           # since it is where the unproven guards are named. `if` is -e safe.
-          if python3 scripts/guard_proof.py "$VERB" --jobs 4 --json > guard-proof.json; then
+          if python3 scripts/guard_proof.py "$VERB" --jobs 4 --json > guard-proof.json 2> guard-proof.err; then
             FAILED=0
           else
             FAILED=$?
           fi
+          # The sweep's own cause line goes to stderr, and it is the thing an operator needs when
+          # there is no report to summarise - so it is kept AND echoed back into the step log.
+          cat guard-proof.err >&2 || :
+          # The summary must survive a report that was never written: a GuardProofError (a malformed
+          # inventory, an unreadable hooks.json, a bad GUARD_PROOF_JOBS) returns before anything is
+          # printed, so `>` leaves a zero-byte file. An unguarded json.load there aborts this step
+          # under `bash -e` before `exit "$FAILED"` runs, and the operator gets a JSONDecodeError
+          # traceback instead of the cause the sweep wrote on purpose. A check whose failure hides
+          # its own reason is the shape this whole workflow exists to remove.
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
-          report = json.load(open("guard-proof.json"))
-          print(f"## guard-proof ({report['scope']})\n")
-          print(f"- **{report['declared']}** guards declared")
-          print(f"- **{report['proved']}** proved")
-          print(f"- **{report['undeclared']}** invoked by the pipeline with no inventory entry\n")
-          for proof in report["proofs"]:
-              if proof["status"] != "proven":
-                  print(f"- `{proof['guard']}` — **{proof['status']}**")
+
+
+          def cause():
+              try:
+                  with open("guard-proof.err", encoding="utf-8") as handle:
+                      return handle.read().strip()
+              except OSError:
+                  return ""
+
+
+          try:
+              with open("guard-proof.json", encoding="utf-8") as handle:
+                  report = json.load(handle)
+          except (OSError, ValueError):
+              print("## guard-proof (no report)\n")
+              print("The sweep produced no readable report, so there is nothing to summarise.")
+              print("It exited before writing one. Its own words:\n")
+              print("```")
+              print(cause() or "(the sweep printed nothing)")
+              print("```")
+          else:
+              print(f"## guard-proof ({report['scope']})\n")
+              print(f"- **{report['declared']}** guards declared")
+              print(f"- **{report['proved']}** proved")
+              print(f"- **{report['undeclared']}** invoked by the pipeline with no inventory entry\n")
+              for proof in report["proofs"]:
+                  if proof["status"] != "proven":
+                      print(f"- `{proof['guard']}` — **{proof['status']}**")
           PY
+          # The step's status stays the sweep's, never the summary's.
           exit "$FAILED"
 
       - name: Guard proof (diff-scoped)
@@ -89,4 +119,6 @@ jobs:
         if: always()
         with:
           name: guard-proof
-          path: guard-proof.json
+          path: |
+            guard-proof.json
+            guard-proof.err

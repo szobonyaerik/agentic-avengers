@@ -1199,9 +1199,10 @@ tree, so a killed sweep cannot leave a neutered guard behind. Five outcomes, one
 nothing was proved - a finding, never a skip) · **baseline-red** · **errored**.
 
 **The UNDECLARED count is the interesting number**, because those guards have no evidence at all. It
-is derived, never listed: the enforcement surfaces are `scripts/gate_ci.sh` and every hook script
-`hooks/hooks.json` runs, and the universe is those plus every sibling script they invoke **and every
-sibling module those import**, to a fixed point - `gate_plausibility.py`, the guard issue #69's own
+is derived, never listed: the enforcement surfaces are one closed set - `scripts/gate_ci.sh`,
+`hooks/hooks.json` and every hook script it names, `.pre-commit-config.yaml` and the two CI
+workflows - and the universe is every sibling script they invoke **and every sibling module those
+import**, to a fixed point - `gate_plausibility.py`, the guard issue #69's own
 last instance produced, is reached by no shell line at all. Each file is declared or carries an
 `[[exempt]]` entry saying why it decides nothing; there is no third state, and an exemption nothing
 invokes any more is a finding exactly as a stale guard is.

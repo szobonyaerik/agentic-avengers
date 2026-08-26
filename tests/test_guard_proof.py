@@ -482,10 +482,10 @@ def test_an_exemption_reachable_only_from_a_NON_HOOK_surface_is_not_stale(
 ) -> None:
     """A stale-exemption finding is not diff-scoped, so it must be judged against the whole set.
 
-    `guard_universe` walks the gate floor and the hook scripts; the config and workflow members of
-    the closed surface set reach a script through no shell line it reads. Judged against that
-    narrower universe, an exemption for a file only they invoke reads as stale on every unrelated
-    diff, forever, with no way for any of those diffs to clear it - the hostage failure again.
+    An exemption for a file only the config or workflow members of the closed surface set invoke
+    must be judged against the same universe a full audit sees. Judged against a narrower one it
+    reads as stale on every unrelated diff, forever, with no way for any of those diffs to clear
+    it - the hostage failure again.
     """
     root = tree(tmp_path, "floor")
     with_test(root, "floor")
@@ -679,28 +679,65 @@ def test_the_spellings_this_repository_ACTUALLY_writes_invocations_in_are_seen(
     assert "scripts/only_mentioned.py" not in seen
 
 
-def test_a_script_reached_only_through_a_NON_HOOK_surface_brings_its_imports(
+def test_a_script_invoked_only_from_a_WORKFLOW_is_in_the_universe_and_brings_its_imports(
     tmp_path: Path,
 ) -> None:
-    """The import closure has to see everything the universe holds, not only what it seeded itself.
+    """A workflow wires a check in through no shell line the gate floor or a hook script contains.
 
-    `guard_universe` walks the gate floor and the hook scripts; a file reached through the config or
-    workflow members of the closed set arrives from elsewhere. Merged in after the closure ran, it
-    contributed itself and none of its imports - so a module it alone imports was absent from the
-    report entirely: not declared, not exempt, not undeclared, with the count claiming coverage.
+    Walking only the gate floor and the hook scripts left such a script - and every module it alone
+    imports - out of the universe entirely: not declared, not exempt, not undeclared, absent from
+    the report while the count claimed coverage. No diff scope and no seed here: the obligation to
+    declare it does not depend on anything a caller passes in.
     """
     root = tree(tmp_path, "floor")
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "guard-proof.yml").write_text(
+        "        run: python3 scripts/wired_only.py\n", encoding="utf-8"
+    )
     (root / "scripts" / "wired_only.py").write_text(
-        "import reached_by_import\n" + GUARD, encoding="utf-8"
+        "import reached_by_import  # noqa: E402\n" + GUARD, encoding="utf-8"
     )
     (root / "scripts" / "reached_by_import.py").write_text(GUARD, encoding="utf-8")
 
-    universe = guard_proof.guard_universe(
-        root, {"scripts/wired_only.py": ".github/workflows/guard-proof.yml"}
-    )
+    universe = guard_proof.guard_universe(root)
 
     assert "scripts/wired_only.py" in universe
     assert "scripts/reached_by_import.py" in universe
+
+
+def test_the_DIFF_SCOPED_half_sees_a_script_wired_only_from_the_PRE_COMMIT_config(
+    tmp_path: Path,
+) -> None:
+    """The same hole, seen where it actually reported success while doing nothing.
+
+    Under a full audit the ADDS predicate counts every invocation, so a config-wired script arrived
+    anyway. Under `check` it does not: the invocation is not ADDED by this diff, so a universe that
+    walked only the gate floor and the hook scripts never held the script at all - and an
+    undeclared decider the diff DOES touch was neither declared, nor exempt, nor undeclared. It was
+    absent from the report and `check` exited clean, which is the diff-scoped half claiming a
+    coverage it never had.
+    """
+    root = tree(tmp_path, "floor")
+    with_test(root, "floor")
+    (root / ".pre-commit-config.yaml").write_text(
+        "        entry: python3 scripts/wired_only.py\n", encoding="utf-8"
+    )
+    (root / "scripts" / "wired_only.py").write_text(GUARD, encoding="utf-8")
+    path = inventory(root, entry("floor.latency", "floor"))
+    git_repo(root)
+    (root / "scripts" / "wired_only.py").write_text(
+        GUARD + "\n# this change touches the undeclared decider\n", encoding="utf-8"
+    )
+
+    report = guard_proof.sweep(
+        root,
+        load(path),
+        scope=guard_proof.resolve_scope(root, changed_only=True, base=None),
+        parallel=2,
+    )
+
+    assert "scripts/wired_only.py" in [name for name, _ in report.undeclared]
+    assert guard_proof.verdict(report) == FINDINGS
 
 
 def test_an_invocation_that_was_ALREADY_THERE_is_counted_though_the_surface_is_touched(
