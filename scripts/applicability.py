@@ -142,7 +142,7 @@ def _git(root: Path, *args: str) -> list[str] | None:
     return [line for line in proc.stdout.splitlines() if line.strip()]
 
 
-def changed_paths(root: Path) -> set[Path] | None:
+def changed_paths(root: Path, base: str | None = None) -> set[Path] | None:
     """Absolute paths the current change touches, or None when the scope is unknowable.
 
     The union of what is modified against HEAD, what is staged, and what is untracked - so an
@@ -154,23 +154,36 @@ def changed_paths(root: Path) -> set[Path] | None:
     untracked artifact resolve to a path that matches nothing whenever `root` is below the git root -
     and the guard then stops guarding without saying anything, which is worse than not having it.
 
+    `base` widens the same question to a branch. In a CI checkout there is nothing uncommitted, so
+    the three commands above answer "nothing changed" - which a diff-scoped check would read as a
+    clean pass over a pull request that changed a great deal. Naming the base commit adds what this
+    branch changed against its merge-base with it, which is the scope a reviewer means by "this
+    change". A base git cannot resolve makes the scope **unknowable**, exactly like the others: it
+    is never quietly dropped back to the working-tree answer, because a caller that asked for a
+    branch scope and silently got an empty one is the silent stop-checking failure again.
+
     **None is not "nothing changed" and must never be read as one.** The caller enforces nothing and
     says so.
     """
     toplevel = _git(root, "rev-parse", "--show-toplevel")
     if not toplevel:
         return None
-    base = Path(toplevel[0]).resolve()
+    top = Path(toplevel[0]).resolve()
     changed: set[Path] = set()
-    for args in (
+    commands: list[tuple[str, ...]] = [
         ("diff", "--name-only", "--no-relative", "HEAD"),
         ("diff", "--cached", "--name-only", "--no-relative", "--diff-filter=ACM"),
         ("ls-files", "--others", "--exclude-standard", "--full-name"),
-    ):
+    ]
+    if base is not None:
+        if not (base or "").strip():
+            return None
+        commands.append(("diff", "--name-only", "--no-relative", f"{base}...HEAD"))
+    for args in commands:
         lines = _git(root, *args)
         if lines is None:
             return None
-        changed.update((base / line).resolve() for line in lines)
+        changed.update((top / line).resolve() for line in lines)
     return changed
 
 

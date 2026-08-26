@@ -1393,6 +1393,32 @@ target whose own manifest does not match the claimed version raises before repor
 brought into agreement read clean — per issue #69's rule that a guard is proven by going red before
 it is proven by going green.
 
+## Every guard is proven by going RED (issue #69)
+
+Issue #69 names one class behind every pipeline defect of phases 10 and 11: **a component reports
+success while doing nothing, and nothing notices.** A stale spec stamp, a context block whose
+heading never matched for eleven phases, a metrics recorder that dropped every write, a mutation
+gate that had never once executed, a carried-items checker that read an unparseable section as
+"nothing carried" - all deterministic scripts, all answering yes for months.
+
+The issue also names the only test that says the class is fixed, and it is not the instance list
+emptying: **pick any check in the pipeline, break the thing it guards, and confirm it goes red.** A
+suite being green proves the tests pass. It says nothing about whether any of them would notice the
+defect its guard exists for, and a guard whose test asserts a shape the guard no longer produces
+goes on passing after the guard stops guarding.
+
+**So each guard declares how to break it, and something breaks it - in the agentic-avengers
+repository itself.** A guard inventory names the file that decides, the defect it catches, the tests
+that must go red and the exact edit that reintroduces it, and a harness applies each mutation to a
+throwaway copy of that tree, runs the named tests and asserts they FAIL. It is deliberately **not**
+part of the vendored surface: the inventory names that repository's own scripts and the tests that
+must go red for them, so a consumer repo has nothing for it to check and receives the guards rather
+than the proof of them. Nothing here is a command to run in a vendored install.
+
+**The rule that travels is the one this section is for**, and it is about your own checks: a check
+whose test only exercises its happy path is decoration, and it stays green after the check stops
+checking. Write the test that goes red when the defect it guards against comes back.
+
 ## Agent tooling
 
 Every canonical agent declares an explicit `tools:` allowlist (`Read, Write, Glob, Grep, Bash`, plus

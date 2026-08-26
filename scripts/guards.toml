@@ -1,0 +1,872 @@
+# The pipeline's guard inventory - what each guard exists to catch, and how to break it.
+#
+# Issue #69 names the only test that says its class is fixed: pick any check in the pipeline, break
+# the thing it guards, and confirm it goes red. A guard is not proven by passing. `tests/` being
+# green proves the tests pass; it says nothing about whether any of them would notice the defect its
+# guard was written for.
+#
+# So every guard here declares, in one place:
+#   id          - how it is addressed on the command line and in the report
+#   implements  - the file that decides. Also what diff-scoping asks about (CLAUDE.md 3a)
+#   defect      - what it exists to catch, in one sentence, in the past tense where it really happened
+#   tests       - the test(s) that MUST go red once the defect is back
+#   [[guard.mutation]] - file / find / replace / count: the exact edit that reintroduces it
+#
+# `scripts/guard_proof.py` applies each mutation to a THROWAWAY COPY of the tree, runs the named
+# tests and asserts they fail. It never writes inside this working tree. A mutation that leaves the
+# tests green is reported `unproven` - a guard that does not guard. A mutation whose anchor is no
+# longer in the file is reported `unanchored`, which is a finding too: the declaration drifted from
+# the code and nothing was proved.
+#
+# The anchors are exact source text. When you change a guarded line, this file moves with it - that
+# is the point. It is the one place where "this check works" is a claim something executes.
+#
+# [[exempt]] is the other half of the closed set: a file the enforcement surfaces invoke that decides
+# nothing. Every entry needs a reason, and an exemption nothing invokes any more is itself a finding.
+
+# --- carried items: a handover's forward-looking claims -------------------------------------------
+
+[[guard]]
+id = "carried-items.undecidable-section"
+implements = "scripts/carried_items.py"
+defect = "Phase 9's card wrote its `Open items` section as bullet rows; the table parser found no rows and no explicit `none`, and the next phase read that silence as nothing carried. OBS-1 through OBS-4 were never answered - not discharged, unread."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    if present and not items and not says_none:'''
+replace = '''
+    if False:'''
+
+# --- the `status: done` stamp ---------------------------------------------------------------------
+
+[[guard]]
+id = "spec-done.placeholder-row"
+implements = "scripts/spec_done_guard.py"
+defect = "A spec stamped `status: done` beside a `test-mapping.md` still holding the template's own `R<n>.<k>.<m>` placeholder rows recorded nothing, and counting rows rather than reading the requirement-id cell passed exactly that state."
+tests = ["tests/test_spec_done_guard.py"]
+[[guard.mutation]]
+file = "scripts/spec_done_guard.py"
+find = '''
+        if not PLACEHOLDER_CELL.search(_requirement_cell(stripped)):'''
+replace = '''
+        if True:'''
+
+[[guard]]
+id = "spec-done.revert"
+implements = "scripts/spec_done_guard.py"
+defect = "A `status: done` stamp is written by its own implementer, who then keeps working; issue #68's fix is that the stamp CORRECTS ITSELF when the mapping or the suite says it cannot be true. A revert that quietly does nothing leaves the false stamp on disk."
+tests = ["tests/test_spec_done_guard.py"]
+[[guard.mutation]]
+file = "scripts/spec_done_guard.py"
+find = '''
+    text = spec_path.read_text(encoding="utf-8")
+    match = FRONTMATTER.match(text)'''
+replace = '''
+    return False
+    text = spec_path.read_text(encoding="utf-8")
+    match = FRONTMATTER.match(text)'''
+
+# --- metrics emission -----------------------------------------------------------------------------
+
+[[guard]]
+id = "metrics-emission.defect-floor"
+implements = "scripts/emission_gate.py"
+defect = "Phase 12 recorded 1 defect against at least 5 it produced and phase 13 recorded 0 against at least 2. Measurement is fail-open by design, so a writer that refused every entry looked exactly like a phase that found nothing."
+tests = ["tests/test_emission_gate.py"]
+[[guard.mutation]]
+file = "scripts/emission_gate.py"
+find = '''
+    if len(recorded) >= len(described):'''
+replace = '''
+    if True:'''
+
+[[guard]]
+id = "metrics-emission.close-stamp"
+implements = "scripts/emission_gate.py"
+defect = "Issue #46 moved the `closed` stamp from implementation-finish to landing and nothing emitted it there, so a premature stamp became NO stamp. The hypothesis watching it counted overrides CORRECTING a close stamp and reported zero - a check that only looks for a wrong value can never see an absent one."
+tests = ["tests/test_emission_gate.py"]
+[[guard.mutation]]
+file = "scripts/emission_gate.py"
+find = '''
+        if record.get("closed") is None:'''
+replace = '''
+        if False:'''
+
+# --- gate plausibility ----------------------------------------------------------------------------
+
+[[guard]]
+id = "gate-plausibility.latency-floor"
+implements = "scripts/gate_plausibility.py"
+defect = "Phase 10 recorded a 4 ms GO from a model gate and it was consumed as a pass. No model call returns in 4 ms; a sweep of all 178 gate calls across phases 08-11 found it the only implausible latency attached to a passing verdict - the exact shape of a gate that never ran."
+tests = ["tests/test_gate_plausibility.py"]
+[[guard.mutation]]
+file = "scripts/gate_plausibility.py"
+find = '''
+    if measured >= floor:'''
+replace = '''
+    if True:'''
+
+# --- the mutation gate's own availability ----------------------------------------------------------
+
+[[guard]]
+id = "mutation-gate.unavailable-record"
+implements = "scripts/hook_mutation.sh"
+defect = "MUTATION_POLICY=advisory was set for two whole phases while the gate never once ran - no cosmic-ray.toml, the tool absent. Advisory correctly never blocks, but nothing DURABLE told `the gate did not run` from `the gate ran and found nothing`, and a settled hypothesis read the policy as its changed variable."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = '''
+  python3 "$SD/pipeline_metrics.py" mutation-unavailable "$FILE" "$1" >/dev/null 2>&1 || true'''
+replace = '''
+  :'''
+
+[[guard]]
+id = "mutation-gate.policy-fail-closed"
+implements = "scripts/hook_mutation.sh"
+defect = "A MUTATION_POLICY nobody recognises must stop the gate, not select a default. A typo that silently reads as `off` is a mutation gate switched off by accident and reported as a clean run."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+  *)
+    echo "mutation: MUTATION_POLICY='$MUTATION_POLICY' is not one of enforce|advisory|off (fail closed)" >&2
+    exit 2 ;;"""
+replace = """
+  *)
+    exit 0 ;;"""
+
+# --- the requirement cap ---------------------------------------------------------------------------
+
+[[guard]]
+id = "requirement-cap.split-trigger"
+implements = "scripts/requirement_cap.py"
+defect = "The cap is a SPLIT trigger counted before any paid call, and it is the only counterweight to a gate rubric whose sole answer to a rejected spec is more text - spec 8.0 grew 25k to 51k characters across four rejected rounds."
+tests = ["tests/test_requirement_cap.py"]
+[[guard.mutation]]
+file = "scripts/requirement_cap.py"
+find = '''
+    if len(ids) > limit:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "requirement-cap.unreadable-layout"
+implements = "scripts/requirement_cap.py"
+defect = "A requirements section this cannot parse must be an ERROR. Read as zero declared requirements it passes the cap silently, which is the same silent yes one layer up: the count that decides is a count of nothing."
+tests = ["tests/test_requirement_cap.py"]
+[[guard.mutation]]
+file = "scripts/requirement_cap.py"
+find = '''
+    blind = unreadable_layout(text)
+    if blind is not None:'''
+replace = '''
+    blind = unreadable_layout(text)
+    if False:'''
+
+# --- suite outcome ----------------------------------------------------------------------------------
+
+[[guard]]
+id = "suite-outcome.no-summary"
+implements = "scripts/suite_outcome.py"
+defect = "clickup-agents phase 12 shipped a defect that made the suite hang to its watchdog on one run and fail intermittently on the next. A run whose output carries no test-runner summary never reached the end of its own work, whatever it exited with."
+tests = ["tests/test_suite_outcome.py"]
+[[guard.mutation]]
+file = "scripts/suite_outcome.py"
+find = '''
+    if summary_line(output) is None:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "suite-outcome.watchdog"
+implements = "scripts/suite_outcome.py"
+defect = "`verifier_evidence.record` stored `timed_out` on every entry since it was written and nothing read it - a measurement that describes the right thing and decides nothing. A watchdog kill reports whatever the corpse reported."
+tests = ["tests/test_suite_outcome.py"]
+[[guard.mutation]]
+file = "scripts/suite_outcome.py"
+find = '''
+    if timed_out:'''
+replace = '''
+    if False:'''
+
+# --- verifier execution evidence ---------------------------------------------------------------------
+
+[[guard]]
+id = "verifier-evidence.log-digest"
+implements = "scripts/verifier_evidence.py"
+defect = "A verdict used to record `test_quality.reviewed: true` - a boolean the verifying agent wrote about itself. The replacement is a hash chain over what actually ran, and a log that no longer hashes to its recorded digest means the log or the record was edited after the run."
+tests = ["tests/test_verifier_evidence.py"]
+[[guard.mutation]]
+file = "scripts/verifier_evidence.py"
+find = '''
+                if actual != entry.get("output_sha256"):'''
+replace = '''
+                if False:'''
+
+[[guard]]
+id = "verifier-evidence.chain"
+implements = "scripts/verifier_evidence.py"
+defect = "The verdict carries the head of the hash chain over its recorded runs. A verdict whose chain does not match the record on disk is a verdict standing on a transcript that has since changed."
+tests = ["tests/test_verifier_evidence.py"]
+[[guard.mutation]]
+file = "scripts/verifier_evidence.py"
+find = '''
+    if stored != head:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "verifier-evidence.process-floor"
+implements = "scripts/verifier_evidence.py"
+defect = "A recorded run faster than it takes to start a process at all is presumed not to have happened - the same physics floor `gate_plausibility` applies to a model call, applied to a local command."
+tests = ["tests/test_verifier_evidence.py"]
+[[guard.mutation]]
+file = "scripts/verifier_evidence.py"
+find = '''
+    if not isinstance(elapsed, int) or elapsed < PROCESS_FLOOR_MS:'''
+replace = '''
+    if False:'''
+
+# --- the document read path ---------------------------------------------------------------------------
+
+[[guard]]
+id = "read-path.byte-cap"
+implements = "scripts/doc_read_path.py"
+defect = "`handover.md` held 272 KB and cost 485k-1,475k tokens, because every spec write and every spec review re-read every prior phase's handover. The cap is what makes it a contract card rather than a record; the 5-line summary was always in the template and writers produced 37 KB averages."
+tests = ["tests/test_doc_read_path.py"]
+[[guard.mutation]]
+file = "scripts/doc_read_path.py"
+find = '''
+        if size > cap:'''
+replace = '''
+        if False:'''
+
+[[guard]]
+id = "read-path.readers-declaration"
+implements = "scripts/doc_read_path.py"
+defect = "Every document the read-path table governs declares who reads it, in the document. A document no stage reads does not get written - and three artifact classes shipped with a declared reader and nothing instructing anyone to write the line down."
+tests = ["tests/test_doc_read_path.py"]
+[[guard.mutation]]
+file = "scripts/doc_read_path.py"
+find = '''
+        if declared_readers(_read(path)) is None:'''
+replace = '''
+        if False:'''
+
+[[guard]]
+id = "read-path.source-reacquisition"
+implements = "scripts/doc_read_path.py"
+defect = "The read path is changed at the table, never one caller at a time. This is the half that catches a removed read coming back - a stage instruction under `agents/`, `skills/`, `commands/` or `prompts/` quietly re-acquiring a document the table took off the path."
+tests = ["tests/test_doc_read_path.py"]
+[[guard.mutation]]
+file = "scripts/doc_read_path.py"
+find = '''
+                    if needle in line:'''
+replace = '''
+                    if False:'''
+
+# --- the spec gate's CONTEXT block -----------------------------------------------------------------------
+
+[[guard]]
+id = "spec-gate-context.degraded-heading"
+implements = "scripts/spec_gate_context.py"
+defect = "Issue #57: clickup-agents ran eleven phases with an overview whose heading is `## Interfaces & contracts`, so the CONTEXT block carried none of the feature's own contracts, while the gate reported success. Absent is not the same as DEGRADED."
+tests = ["tests/test_spec_gate_context.py"]
+[[guard.mutation]]
+file = "scripts/spec_gate_context.py"
+find = '''
+    elif not state.heading:
+        degraded = True'''
+replace = '''
+    elif not state.heading:
+        degraded = False'''
+
+[[guard]]
+id = "spec-gate-context.degraded-notice"
+implements = "scripts/spec_gate_context.py"
+defect = "Fixing the WRITER side does not prove the READER ever sees it. A degraded build with a prior card to carry produced a non-empty block headed `these are the binding contracts` and read as a COMPLETE set; the notice has to be inside the block the reviewer actually reads."
+tests = ["tests/test_spec_gate_context.py"]
+[[guard.mutation]]
+file = "scripts/spec_gate_context.py"
+find = '''
+    if degraded:
+        sections.append(degraded_notice(notes))'''
+replace = '''
+    if False:
+        sections.append(degraded_notice(notes))'''
+
+# --- the spec gate's closed blocking set -------------------------------------------------------------------
+
+[[guard]]
+id = "spec-gate-triage.closed-set"
+implements = "scripts/spec_gate_triage.py"
+defect = "The blocking set is closed MECHANICALLY: a category the table does not know is a hard failure naming what was invented. Guessing `blocking` reinstates the ratchet that grew spec 8.2 from 40k to 57k characters; guessing `note` deletes a finding."
+tests = ["tests/test_spec_gate_triage.py"]
+[[guard.mutation]]
+file = "scripts/spec_gate_triage.py"
+find = '''
+        if category not in CATEGORIES:'''
+replace = '''
+        if False:'''
+
+# --- the verification attempt cap ----------------------------------------------------------------------------
+
+[[guard]]
+id = "verifier-attempts.cap"
+implements = "scripts/verifier_attempts.py"
+defect = "16 of 20 re-attempts were the Verifier routing back to itself, and one phase's new-finding series ran 6, 2, 8, 4, 2, 1, 0, 6 - a gate disclosing a subset of what it could already see, one full re-verification at a time."
+tests = ["tests/test_verifier_attempts.py"]
+[[guard.mutation]]
+file = "scripts/verifier_attempts.py"
+find = '''
+    if latest.number < args.max:
+        return WITHIN'''
+replace = '''
+    if True:
+        return WITHIN'''
+
+# --- the Breaker obligation ------------------------------------------------------------------------------------
+
+[[guard]]
+id = "breaker.vacuous-clean"
+implements = "scripts/breaker_gate.py"
+defect = "Issue #45: every phase-8 and phase-9 spec of one measured feature declared `criticality: critical`, the Breaker was owed twice, ran neither time and left zero trace. A `clean` verdict naming nothing attacked is refused exactly like a missing record."
+tests = ["tests/test_breaker_gate.py"]
+[[guard.mutation]]
+file = "scripts/breaker_gate.py"
+find = '''
+        if not isinstance(attacked, list) or not attacked:'''
+replace = '''
+        if False:'''
+
+# --- interface drift ----------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "interface-drift.named-signature"
+implements = "scripts/interface_drift.py"
+defect = "One phase's `## Interfaces / contracts` described the reverse of what shipped, and the next phase produced a spec body over-claiming what its code did. Both were caught by an implementer choosing to look; nothing compared the two."
+tests = ["tests/test_interface_drift.py"]
+[[guard.mutation]]
+file = "scripts/interface_drift.py"
+find = '''
+        if not any(pattern.search(corpus) for pattern in _definition_patterns(name))'''
+replace = '''
+        if False'''
+
+# --- the Verifier's bookkeeping ------------------------------------------------------------------------------------
+
+[[guard]]
+id = "verifier-precheck.trace-claim"
+implements = "scripts/verifier_precheck.py"
+defect = "Issue #52: the precheck confirmed a requirement id appeared in SOME row and never that the row's claim matched the test it names, so a row was free to assert anything - one measured row asserted the exact opposite of its own test with every check green."
+tests = ["tests/test_verifier_precheck.py"]
+[[guard.mutation]]
+file = "scripts/verifier_precheck.py"
+find = '''
+        if name not in defined:'''
+replace = '''
+        if False:'''
+
+# --- the lint gate's second dimension ---------------------------------------------------------------------------------
+
+[[guard]]
+id = "lint-gate.format-dimension"
+implements = "scripts/lint_gate.py"
+defect = "The gate ran `ruff check .`, which judges rules and says nothing about formatting. Two consecutive measured phases reported `ruff clean` and neither statement was evidence about formatting, because nothing in the gate could have failed on it."
+tests = ["tests/test_lint_gate.py"]
+[[guard.mutation]]
+file = "scripts/lint_gate.py"
+find = '''
+    files, said, code = drifted(paths, cwd)'''
+replace = '''
+    files, said, code = [], "", _FORMAT_OK'''
+
+# --- stage effort ----------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "stage-effort.undeclared"
+implements = "scripts/stage_effort.py"
+defect = "`commands/avenger-run.md` told the orchestrator to hand each subagent its effort at spawn, naming a parameter that does not exist. Every stage of every phase ran at the session default for ten phases, so the largest cost lever the pipeline believed it had had never once been pulled."
+tests = ["tests/test_stage_effort.py"]
+[[guard.mutation]]
+file = "scripts/stage_effort.py"
+find = '''
+    for stage, level in declared(root).items():
+        if level is None:'''
+replace = '''
+    for stage, level in declared(root).items():
+        if False:'''
+
+# --- the cost gate ------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "subprocess-check.justification"
+implements = "scripts/subprocess_check.py"
+defect = "The marker alone is a rubber stamp; the sentence is what a reader can weigh. A bare `@pytest.mark.subprocess` with no reason declares nothing and would let the pipeline's only cost gate be satisfied by a decorator."
+tests = ["tests/test_subprocess_check.py"]
+[[guard.mutation]]
+file = "scripts/subprocess_check.py"
+find = '''
+    if call is None:
+        return False'''
+replace = '''
+    if call is None:
+        return True'''
+
+# --- skills are delivered, not requested ----------------------------------------------------------------------------------------
+
+[[guard]]
+id = "required-skills.unloaded-gap"
+implements = "scripts/required_skills.py"
+defect = "The pipeline delegated core behaviour to 13 skills by ASKING. `docs/lessons/` shipped with a complete written procedure and zero invocations for the same reason: an instruction to load is not a load, and nothing recorded whether one happened."
+tests = ["tests/test_required_skills.py"]
+[[guard.mutation]]
+file = "scripts/required_skills.py"
+find = '''
+        if not entry.get("required") or entry.get("loaded"):
+            continue'''
+replace = '''
+        if True:
+            continue'''
+
+# --- the vendor table ---------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "model-vendors.unknown-vendor"
+implements = "scripts/model_vendors.py"
+defect = "An unknown vendor must be a loud refusal: `glm-5.1` and `glm-5.2` used to read as different families, which is a cross-family gate satisfied by two models from one vendor."
+tests = ["tests/test_gate_runner_family.py"]
+[[guard.mutation]]
+file = "scripts/model_vendors.py"
+find = '''
+        if family:
+            return family
+    raise UnknownVendor(str(model))'''
+replace = '''
+        if family:
+            return family
+    return "unknown"'''
+
+# --- verdict currency ---------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "verdict-currency.amendment-owed"
+implements = "scripts/verdict_currency.py"
+defect = "Issue #51: the feature-close ship gate changed verified production code and touched no phase artifact, so `verdict.json` went on asserting a named source file was byte-identical, quoting a `git diff`, after the fix commit had changed it."
+tests = ["tests/test_verdict_currency.py"]
+[[guard.mutation]]
+file = "scripts/verdict_currency.py"
+find = '''
+    if not changed:
+        return None'''
+replace = '''
+    if True:
+        return None'''
+
+# --- the applicability boundary itself ---------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "applicability.unknowable-scope"
+implements = "scripts/applicability.py"
+defect = "None is not `nothing changed` and must never be read as one. Every diff-scoped check in this pipeline asks here; a git answer read as an empty scope makes all of them stop checking at once, silently."
+tests = ["tests/test_applicability.py"]
+[[guard.mutation]]
+file = "scripts/applicability.py"
+find = '''
+        lines = _git(root, *args)
+        if lines is None:
+            return None'''
+replace = '''
+        lines = _git(root, *args)
+        if lines is None:
+            continue'''
+
+[[guard]]
+id = "applicability.closed-rule-set"
+implements = "scripts/applicability.py"
+defect = "The exception rule set is CLOSED. A ledger entry nothing reads is an exception that does not exist, and it would be discovered as a phase wedged on a rule everybody believed was waived."
+tests = ["tests/test_applicability.py"]
+[[guard.mutation]]
+file = "scripts/applicability.py"
+find = '''
+    if rule not in RULES:'''
+replace = '''
+    if False:'''
+count = 3
+
+# --- the executing plugin vs the merged repository -----------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "plugin-release.stale"
+implements = "scripts/plugin_release.py"
+defect = "Issue #65: phases run from a cached release, not this repository, so a merged fix is inert for every running phase until someone cuts one. A STALE executing copy reading as fresh is a run building a phase with code the repository already replaced."
+tests = ["tests/test_plugin_release.py"]
+[[guard.mutation]]
+file = "scripts/plugin_release.py"
+find = '''
+    if exe_hash == src_hash:'''
+replace = '''
+    if True:'''
+
+# --- the implementer lock ---------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "implementer-lock.unreadable-log"
+implements = "scripts/implementer_liveness.py"
+defect = "A lock that reads `I cannot see` as `all clear` means nothing. Two implementers in one worktree against one database is what a premature `done` stamp nearly caused: a stash from one swallowed the other's uncommitted work."
+tests = ["tests/test_implementer_liveness.py"]
+[[guard.mutation]]
+file = "scripts/implementer_liveness.py"
+find = '''
+    except OSError as exc:
+        raise LivenessUnknown(f"{path} could not be read ({exc})") from exc'''
+replace = '''
+    except OSError:
+        return []'''
+
+# --- fixture realism ---------------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "fixture-shapes.minimum"
+implements = "scripts/fixture_shapes.py"
+defect = "Issue #33: one phase shipped a credential refusal that could never fire - 1,009 tests green against Telegram supergroup ids an order of magnitude too small for a real deployment, an int32 column, and a DataError before the control ran."
+tests = ["tests/test_fixture_shapes.py"]
+[[guard.mutation]]
+file = "scripts/fixture_shapes.py"
+find = '''
+            if self.minimum is not None and value < self.minimum:'''
+replace = '''
+            if False:'''
+
+# --- the spec re-gate cache ------------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "spec-gate-cache.rejection-is-not-approval"
+implements = "scripts/spec_gate_cache.py"
+defect = "A rejection records its hash and its verdict but must never replace the kept body: overwriting it labels rejected text as approved, and the author is shown changes-since-rejection while being told they are changes-since-approval."
+tests = ["tests/test_spec_gate_cache.py"]
+[[guard.mutation]]
+file = "scripts/spec_gate_cache.py"
+find = '''
+        if (verdict or LEGACY_VERDICT).strip().upper() in PASSING:'''
+replace = '''
+        if True:'''
+
+# --- the nested timeout relation ------------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "gate-timeouts.headroom"
+implements = "scripts/gate_timeouts.py"
+defect = "A 120s hook around a 300s call was killed before it could answer and read for a day as a model size ceiling. The hook's budget must exceed the calls it wraps plus what measurement spends inside it."
+tests = ["tests/test_gate_timeouts.py"]
+[[guard.mutation]]
+file = "scripts/gate_timeouts.py"
+find = '''
+    return max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S'''
+replace = '''
+    return call_timeout() if call_s is None else call_s'''
+
+# --- the process group ------------------------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "proc-group.kill-group"
+implements = "scripts/proc_group.py"
+defect = "Killing the direct child alone left workers billing for over an hour. A timeout has to kill the child's whole process group and report measured wall clock, or the CLI returns immediately and leaves its workers holding the pipe."
+tests = ["tests/test_proc_group.py"]
+[[guard.mutation]]
+file = "scripts/proc_group.py"
+find = '''
+            _kill_group(pgid, proc)'''
+replace = '''
+            proc.kill()'''
+
+# --- amendments ---------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "amendments.security-never-batched"
+implements = "scripts/amendments.py"
+defect = "Ordinary amendments batch and re-verify once at phase close; security is owed re-verification IMMEDIATELY. Phase 8's credential leak must not wait for a batch, and the cost argument behind batching does not apply to a secret already in a log."
+tests = ["tests/test_amendments.py"]
+[[guard.mutation]]
+file = "scripts/amendments.py"
+find = '''
+    return [a for a in open_records if a.get("security")]'''
+replace = '''
+    return []'''
+
+# --- what counts as a resolved finding ------------------------------------------------------------------------------------
+
+[[guard]]
+id = "verdict-findings.waiver-is-explicit"
+implements = "scripts/verdict_findings.py"
+defect = "A finding is resolved when it is fixed or explicitly waived with `break_glass`, and by nothing else. Read loosely, a waiver that was never recorded closes a finding by omission - which is how a verdict claims a resolution nobody made."
+tests = ["tests/test_verifier_attempts.py"]
+[[guard.mutation]]
+file = "scripts/verdict_findings.py"
+find = '''
+        and not f.get("break_glass")'''
+replace = '''
+        and True'''
+
+# --- the override log --------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "bypass-log.unwritable-is-not-an-override"
+implements = "scripts/bypass_log.sh"
+defect = "The append IS the whole guarantee. An unwritable log - a read-only mount, a missing CLAUDE_PROJECT_DIR, a full disk - used to reach exit 0 and read as a logged override, so the bypass went through and nothing recorded it."
+tests = ["tests/test_bypass_log.py"]
+[[guard.mutation]]
+file = "scripts/bypass_log.sh"
+find = '''
+  echo "  audited is not an override. Fix the log destination, then override again." >&2
+  exit 2'''
+replace = '''
+  echo "  audited is not an override. Fix the log destination, then override again." >&2
+  exit 0'''
+
+# --- the auto-approve deny list ---------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "autoapprove.hard-deny"
+implements = "scripts/hook_autoapprove.sh"
+defect = "While `--auto` is armed the orchestrator auto-approves tools, so the hard-deny list is the only thing standing between an unattended run and a push, a PR, an issue filed with no human selection, an rm or a sudo."
+tests = ["tests/test_hook_autoapprove.py"]
+[[guard.mutation]]
+file = "scripts/hook_autoapprove.sh"
+find = '''
+    if re.search(HARD_DENY, command, re.IGNORECASE | re.VERBOSE):'''
+replace = '''
+    if False:'''
+
+# --- the stale-plugin halt -----------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "plugin-release.stale-halt"
+implements = "scripts/hook_plugin_release.sh"
+defect = "The halt used to be a sentence in `/avenger-run` for an orchestrator to read and obey - issue #69's class exactly. Nothing in the shipped payload ran the check, so every phase built from a cached release went on building from it."
+tests = ["tests/test_hook_plugin_release.py"]
+[[guard.mutation]]
+file = "scripts/hook_plugin_release.sh"
+find = '''
+if [ "$RC" -eq 0 ]; then'''
+replace = '''
+if true; then'''
+
+# --- the implementer lock -----------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "implementer-lock.refuses-a-second-writer"
+implements = "scripts/hook_implementer_lock.sh"
+defect = "Two implementers in one worktree against one database: a git stash from one swallowed the other's uncommitted work, and the shared database produced foreign-key violations plus a spurious lint failure. The only tell was two suite totals one apart."
+tests = ["tests/test_hook_implementer_lock.py"]
+[[guard.mutation]]
+file = "scripts/hook_implementer_lock.sh"
+find = '''
+if [ "$RC" -eq 0 ]; then
+  exit 0
+fi'''
+replace = '''
+if true; then
+  exit 0
+fi'''
+
+# --- the cross-family rule ------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "gate-runner.cross-family"
+implements = "scripts/gate_runner.py"
+defect = "A gate must run on a different family than the work it judges. Same-family self-review wearing a gate's name is the failure the whole gate layer exists to avoid, and it is invisible at the verdict - the answer looks exactly like a real one."
+tests = ["tests/test_gate_runner_family.py"]
+[[guard.mutation]]
+file = "scripts/gate_runner.py"
+find = '''
+    if gate_family == author_family.strip().lower():'''
+replace = '''
+    if False:'''
+
+# --- the mutation threshold ----------------------------------------------------------------------------------------------------------------------------
+
+[[guard]]
+id = "mutation-score.threshold"
+implements = "scripts/mutation_score.py"
+defect = "The mutation verdict is deterministic and no model decides it: below the threshold the survivors go to the gate model to be named as missing cases and the phase routes back. A threshold that never fires makes every surviving mutant a pass."
+tests = ["tests/test_mutation_score.py"]
+[[guard.mutation]]
+file = "scripts/mutation_score.py"
+find = '''
+    if score.score < min_score:'''
+replace = '''
+    if False:'''
+
+
+# --- the harness itself -----------------------------------------------------------------------------------------------------------------------
+#
+# A harness that could not tell a red run from a green one would report every guard `proven` and be
+# the exact defect it exists to find, one level up. So it is declared here like everything else, and
+# its own tests have to go red when it is broken.
+
+[[guard]]
+id = "guard-proof.unproven-is-a-finding"
+implements = "scripts/guard_proof.py"
+defect = "A mutation that leaves the named tests green means the guard is decoration. Counted as a pass, the sweep reports full coverage over guards that guard nothing - which is the silent yes of issue #69 wearing the costume of the thing meant to find it."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+FINDING_STATUSES = (UNPROVEN, UNANCHORED, BASELINE_RED, ERRORED)'''
+replace = '''
+FINDING_STATUSES = (UNANCHORED, BASELINE_RED, ERRORED)'''
+
+[[guard]]
+id = "guard-proof.undeclared-is-a-finding"
+implements = "scripts/guard_proof.py"
+defect = "The undeclared count is the measure of how much of this pipeline is unproven. A sweep that stopped reporting it would say nothing about the guards nobody has ever broken on purpose, which is the only number that answers the issue."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+            undeclared.append((name, tuple(sorted(callers))))'''
+replace = '''
+            undeclared.extend([])'''
+
+[[guard]]
+id = "guard-proof.newly-wired-is-in-scope"
+implements = "scripts/guard_proof.py"
+defect = "A change can put a guard on the enforcement path without editing the guard - one line in gate_ci.sh, one entry in hooks.json. Scoped on the guard's own file alone, exactly that diff passes clean and the pipeline gains a check nothing proves, which is the undeclared count going quietly wrong at the one moment it could have been caught."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        if scope.covers(root / name) or name in wired:'''
+replace = '''
+        if scope.covers(root / name):'''
+
+[[guard]]
+id = "install-manifest.shipped-file-runs-unvendored-script"
+defect = "A file install.sh copies into every consumer repo runs a script install.sh does not copy. Over there the command is simply absent: the pre-commit hook fails and no commit can be made, and CI fails on every build. The manifest check knew only the ${CLAUDE_PLUGIN_ROOT}/, $SD/ and $SCRIPT_DIR/ spellings and never opened a repo-root or .github/ file, so the one spelling a pre-commit entry and a workflow run line actually use was invisible to it - and a human reading a diff was the only thing that caught it."
+implements = "tests/test_install_manifest.py"
+tests = ["tests/test_install_manifest.py"]
+[[guard.mutation]]
+file = "tests/test_install_manifest.py"
+find = '''
+EXECUTION = re.compile(
+    r"(?:python3?|bash|sh)\s+\"?(?:"
+    + "|".join((*_SCRIPT_PREFIXES, "scripts/"))
+    + ")"
+    + _SCRIPT_NAME
+)'''
+replace = '''
+EXECUTION = re.compile(r"(?!x)x")'''
+
+[[guard]]
+id = "guard-proof.newly-wired-means-INVOKED"
+defect = "Read as an invocation, a prose comment naming a script wires it in. One documentation line added to a surface a diff already touches then fails CI over a script nothing runs - a rule binding what the change is not responsible for, which is the hostage failure this mechanism has had to remove twice already. Read the other way round - an allow-list of the spellings that ARE invocations - the scan went blind to hooks.json entirely, so the half that must refuse a newly wired guard passed silently in the case it exists for."
+implements = "scripts/guard_proof.py"
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        scan = _script_tokens if audit else _uncommented_tokens'''
+replace = '''
+        scan = _script_tokens'''
+
+[[guard]]
+id = "guard-proof.import-closure-follows-noqa"
+defect = "A sibling import carrying a trailing `# noqa` comment is dropped from the import closure. Since every script here opens with a sys.path.insert preamble, that suffix is the prevailing style, and the deciders reached only that way leave the universe entirely - neither declared, exempt, nor undeclared, with the report claiming full coverage over a guard nobody has ever broken on purpose."
+implements = "scripts/guard_proof.py"
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        stripped = line.split("#", 1)[0].strip()'''
+replace = '''
+        stripped = line.strip()'''
+
+[[guard]]
+id = "guard-proof.newly-wired-means-ADDED"
+defect = "Read as 'a touched surface invokes it' rather than 'the diff ADDED the invocation', the scope hands every pre-existing undeclared script a surface calls to whoever edits an unrelated line of that surface. A rule added later then binds what the change is not responsible for - the hostage failure the applicability boundary exists to remove, reintroduced by the check built to honour it."
+implements = "scripts/guard_proof.py"
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+            else invoked - set(scan(_pre_image(root, base_commit, surface)))'''
+replace = '''
+            else invoked'''
+
+[[guard]]
+id = "guard-proof.universe-walks-every-enforcement-surface"
+implements = "scripts/guard_proof.py"
+defect = "The universe answered from its own list of surfaces instead of the closed set, so the three members that reach a script through no shell line - the pre-commit config and the two CI workflows - put nothing in it. A decider wired in from one of them was neither declared, exempt, nor undeclared: absent from the report while the undeclared count claimed coverage over it, and `check` exited clean. `guard_proof.py` itself sat in that hole, with everything it alone imports."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+    return [*ENFORCEMENT_SURFACES, *_hook_scripts(root)]'''
+replace = '''
+    return [GATE_CI, *_hook_scripts(root)]'''
+
+[[guard]]
+id = "guard-proof.unknown-guard-id-refused"
+implements = "scripts/guard_proof.py"
+defect = "`prove --guard <id>` naming an id the inventory does not hold proved nothing. Reported as a clean pass, a typo or an id renamed in guards.toml while a caller still names the old one goes on 'passing' forever - the silent yes of issue #69, inside the harness built to remove it."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+    unknown = sorted(set(only) - {guard.id for guard in inventory.guards})'''
+replace = '''
+    unknown: list[str] = []'''
+
+[[guard]]
+id = "guard-proof.throwaway-copy"
+implements = "scripts/guard_proof.py"
+defect = "Every mutation lands in a copy. Applied to the working tree, a crashed or killed sweep leaves a neutered guard on disk - a harness that manufactures the defect class it was built to detect."
+tests = ["tests/test_guard_proof.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        tree = work / "tree"
+        try:
+            materialize(root, tree)
+        except OSError as exc:
+            return Proof(guard.id, ERRORED, f"the tree could not be copied: {exc}")'''
+replace = '''
+        tree = Path(root)'''
+
+
+# --- exempt: on the enforcement path, but deciding nothing ------------------------------------------------------------
+#
+# The other half of the closed set. Each entry names one file the surfaces above invoke that reaches
+# no verdict of its own, and says why. An exemption is a decision on the record: `guard_proof.py`
+# fails when one names a file no enforcement surface invokes any more, so it cannot outlive its
+# reason the way a stale guard outlives its test.
+
+[[exempt]]
+file = "scripts/load_env.sh"
+reason = "Sources the project .env into the calling shell and returns. It reaches no verdict, refuses nothing and has no exit path of its own - what it loads is judged by the gate that loaded it."
+
+[[exempt]]
+file = "scripts/bypass_reason.sh"
+reason = "Owns the on-disk SHAPE of a break-glass reason (one tab-separated record per line, newlines normalised) for the one writer that appends to gate-overrides.log. It normalises text; the decision to allow a bypass is `bypass_log.sh`'s and its callers'."
+
+[[exempt]]
+file = "scripts/env_file.py"
+reason = "Parses a .env file into key/value pairs. A pure reader with no policy in it - every rule that acts on a value it returned is declared where that rule lives."
+
+[[exempt]]
+file = "scripts/md_section.py"
+reason = "Extracts one markdown section by heading. Five checks read documents through it and each judges what comes back; this returns text or nothing and blocks no one."
+
+[[exempt]]
+file = "scripts/gate_errors.py"
+reason = "The vocabulary of gate failure causes, plus the exception that carries one. It names a stop; the stops themselves are decided by `gate_runner.py` and `gate_timeouts.py`, which are declared."
+
+[[exempt]]
+file = "scripts/hook_activity.sh"
+reason = "Appends one line per subagent start/stop to .agent-activity.jsonl. A recorder, not a decider - the guard built on it is `implementer-lock.unreadable-log`, which is declared, and which is what refuses to read a missing log as all-clear."
+
+[[exempt]]
+file = "scripts/hook_auto_cleanup.sh"
+reason = "Removes the run's scratch state at session end. It has nothing to be wrong about: a cleanup that fails leaves files behind, which no gate depends on."
