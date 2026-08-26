@@ -20,8 +20,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install tools and project deps
+        # ruff is PINNED, and that is the gate's verdict being reproducible rather than a
+        # preference. An unpinned install put ruff 0.16.4 on this runner against 0.15.5 on the
+        # authors' machines: 0.16 both widened the default rule set (506 findings over a tree that
+        # is clean on 0.15) and dropped the `Would reformat:` line that lint_gate.py parses to name
+        # a drifted file - so the format dimension reported CLEAN while seeing nothing, which is the
+        # exact class issue #69 exists to remove. A bump is a deliberate edit here, and
+        # tests/test_lint_gate.py goes red on the day it stops being safe.
         run: |
-          pip install pytest cosmic-ray ruff
+          pip install pytest cosmic-ray "ruff==0.15.5"
           [ -f requirements.txt ] && pip install -r requirements.txt || true
           [ -f pyproject.toml ] && pip install -e . || true
 

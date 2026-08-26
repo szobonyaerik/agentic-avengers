@@ -51,7 +51,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install test tooling
-        run: pip install pytest ruff
+        # The same tool set the gates workflow installs, pinned the same way and for the same
+        # reason. It has to be: this job RUNS the guards' own tests, so a distribution missing here
+        # is a guard that cannot be proved. `pytest ruff` alone made every test that imports
+        # scripts/mutation_score.py uncollectable - that module exits at import when cosmic_ray is
+        # absent - and the mutation-score guard came back `baseline-red`, which reports the guard as
+        # unproven while saying nothing about the guard.
+        run: pip install pytest cosmic-ray "ruff==0.15.5"
 
       - name: Sweep
         id: sweep
