@@ -247,7 +247,8 @@ agentic-avengers/
 │   ├── model_vendors.py       the one vendor table; an unknown vendor is a loud refusal
 │   ├── proc_group.py          a child a timeout actually stops (own process group, no orphans)
 │   ├── gate_ci.sh             git/CI floor entry point (spec-gate stamps + requirement cap + tests
-│   │                          + read path + overview contracts heading + stage effort
+│   │                          + read path + frontmatter contract + overview contracts heading
+│   │                          + stage effort
 │   │                          + verifier pre-check + amendments + carried items + breaker record
 │   │                          + cosmic-ray + break-glass)
 │   ├── spec_gate_triage.py    the CLOSED blocking set, and the verdict derived from it (no model)
@@ -284,8 +285,15 @@ agentic-avengers/
 │   │                          evidence is per-phase, so phase 1 cannot block phase 8
 │   │                          (`--all` sweeps every phase, under `gate_ci.sh --full`)
 │   ├── subprocess_check.py    the cost gate: unjustified subprocess spawners in tests (no model)
-│   ├── doc_read_path.py       the read-path table + its two checks (artifact caps/`readers:`,
-│   │                          diff-scoped; and `--sources`, so a removed read cannot come back)
+│   ├── doc_read_path.py       the read-path table + its three checks (artifact caps/`readers:`,
+│   │                          diff-scoped; `--sources`, so a removed read cannot come back; and
+│   │                          `--contract`, which asks that every table entry's `emitted_by` really
+│   │                          instructs `readers:` and that every artifact class a canonical source
+│   │                          names is one the table governs. Canonical repository ONLY - elsewhere
+│   │                          it says NOT CHECKED and names the remedy upstream, never a pass)
+│   ├── phase_artifacts.py     the Stop-hook artifact sweep's key: a phase whose every spec is
+│   │                          stamped `status: done` owes each spec's `test-mapping.md`, and
+│   │                          nothing else. Diff-scoped (`check --all` audits)
 │   ├── stage_effort.py        each stage's reasoning effort, read out of the `effort:` key in its
 │   │                          own `agents/<stage>.md` - the key the harness applies at spawn, never
 │   │                          a value a caller passes. `check` (every commit, NOT diff-scoped)

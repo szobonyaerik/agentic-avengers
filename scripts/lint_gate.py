@@ -43,9 +43,17 @@ OK = 0
 FOUND = 1
 ERROR = 2
 
-#: The line `ruff format --check` emits per drifted file. Parsed rather than re-derived, so the
-#: scoping happens over ruff's own answer instead of over a second opinion about which files exist.
-DRIFT_PREFIX = "Would reformat:"
+#: What `ruff format --check` emits per drifted file. Parsed rather than re-derived, so the scoping
+#: happens over ruff's own answer instead of over a second opinion about which files exist - and
+#: parsed in BOTH shapes ruff has used, because this line is a version-dependent human output and
+#: reading only one of them made a newer ruff's drift arrive here as an empty list, i.e. as clean.
+DRIFT_PREFIX = "Would reformat:"  # ruff <= 0.15
+DRIFT_ARROW = "-->"  # ruff >= 0.16, the diagnostic form: `--> path:row:col`
+
+#: `ruff format --check` exits 1 for "some file would be reformatted" and 2 for "ruff itself could
+#: not run". Anything else is a contract this gate does not know.
+_FORMAT_OK = 0
+_FORMAT_DRIFT = 1
 
 
 def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -58,16 +66,31 @@ def rules(paths: list[str], cwd: Path) -> tuple[int, str]:
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
-def drifted(paths: list[str], cwd: Path) -> tuple[list[Path], str]:
-    """Every file `ruff format` would rewrite, absolute, plus whatever ruff said about it."""
+def _drift_path(line: str) -> str | None:
+    """The file named by one line of `ruff format --check` output, in either shape."""
+    line = line.strip()
+    if line.startswith(DRIFT_PREFIX):
+        return line[len(DRIFT_PREFIX) :].strip() or None
+    if line.startswith(DRIFT_ARROW):
+        # `--> path/to/file.py:1:10` - the trailing row:col is ruff's, never part of the path.
+        located = line[len(DRIFT_ARROW) :].strip()
+        return located.rsplit(":", 2)[0] or None
+    return None
+
+
+def drifted(paths: list[str], cwd: Path) -> tuple[list[Path], str, int]:
+    """Every file `ruff format` would rewrite, absolute, plus what ruff said and how it exited."""
     proc = _run(["ruff", "format", "--check", *paths], cwd)
     said = (proc.stdout or "") + (proc.stderr or "")
-    files = [
-        (cwd / line[len(DRIFT_PREFIX) :].strip()).resolve()
-        for line in said.splitlines()
-        if line.startswith(DRIFT_PREFIX)
-    ]
-    return files, said
+    named = [_drift_path(line) for line in said.splitlines()]
+    files: list[Path] = []
+    for name in named:
+        if name is None:
+            continue
+        resolved = (cwd / name).resolve()
+        if resolved not in files:
+            files.append(resolved)
+    return files, said, proc.returncode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,7 +126,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         verdict = FOUND
 
-    files, said = drifted(paths, cwd)
+    files, said, code = drifted(paths, cwd)
+    if code not in (_FORMAT_OK, _FORMAT_DRIFT) or (code == _FORMAT_DRIFT and not files):
+        # ruff answered in a shape this gate cannot read. Reporting the empty list as "no drift"
+        # is the silent pass this gate exists to remove, so it is named and the gate stops.
+        print(said.rstrip(), file=sys.stderr)
+        print(
+            "lint-gate: FORMAT — `ruff format --check` exited "
+            f"{code} and this gate could not read which files it named, so the format dimension "
+            "verified NOTHING. Check the installed ruff version against this gate's parser.",
+            file=sys.stderr,
+        )
+        return ERROR
+
     scope = None if args.all else applicability.changed_paths(cwd)
     if args.all:
         enforced, counted = files, []
