@@ -92,6 +92,45 @@ class TestNonGreenfield:
         )
 
 
+class TestTheAssembleCommandNamesFilesThatExist:
+    """The executed step used to hardcode `.env.pipeline.example`, which is not where the template
+    lands in a repository that has no `.env.example` of its own - the common shape, since `.env` is
+    gitignored and many projects commit no example. Both commands derive from `template_target`."""
+
+    def test_with_no_project_example_the_template_is_the_only_source(self, tmp_path):
+        found = survey(tmp_path)
+
+        assert found.assemble_sources == (PROJECT_EXAMPLE,)
+        assert f"--out .env {PROJECT_EXAMPLE}`" in "\n".join(report_lines(found))
+
+    def test_with_a_project_example_the_template_is_named_last(self, tmp_path):
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.assemble_sources == (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)
+        assert f"--out .env {PROJECT_EXAMPLE} {PIPELINE_EXAMPLE}`" in "\n".join(
+            report_lines(found)
+        )
+
+    def test_every_named_source_is_a_file_that_exists_after_init_copies_the_template(
+        self, tmp_path
+    ):
+        """The property the hardcoded path broke: what the report names must be readable."""
+        (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
+        found = survey(tmp_path)
+        (tmp_path / found.template_target).write_text(
+            "GATE_MODEL=x\n", encoding="utf-8"
+        )
+
+        merge = next(line for line in report_lines(found) if line.startswith(".env:"))
+        named = merge.split("--force")[0].split("--out .env ")[1].split()
+
+        assert named == [found.template_target, ".env"]
+        for path in named:
+            assert (tmp_path / path).is_file()
+
+
 class TestBothExampleFilesAreLeftAlone:
     """`commands/pipeline-init.md` promises never to overwrite EITHER example file. The survey has
     to carry the data that makes the promise keepable, or it is an instruction with no mechanism."""

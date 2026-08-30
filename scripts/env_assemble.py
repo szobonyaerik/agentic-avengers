@@ -121,10 +121,15 @@ def verify(assembled: str, expected: dict[str, str]) -> list[str]:
 
 
 def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, str]:
-    """Write `out` from `sources`, or raise and write nothing.
+    """Write `out` from `sources`, or raise an `AssemblyError` naming the cause.
 
     An existing `out` is never overwritten without `force`: a live `.env` holds the operator's real
     credentials, and the greenfield assumption that it does not is half of issue #108.
+
+    Every check runs BEFORE the write, so a refusal leaves `out` exactly as it was. The one thing
+    that guarantee does not cover is the write itself: a disk that fills part-way through leaves a
+    truncated file, because the read-back that would notice has already run. That failure names its
+    own cause rather than escaping as a traceback, which is the most this module can offer there.
     """
     out = Path(out)
     if out.exists() and not force:
@@ -144,7 +149,10 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
             + "\n  ".join(problems)
         )
 
-    out.write_text(assembled, encoding="utf-8")
+    try:
+        out.write_text(assembled, encoding="utf-8")
+    except OSError as exc:
+        raise AssemblyError(f"cannot write {out}: {exc}") from exc
     return expected
 
 

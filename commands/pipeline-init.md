@@ -38,21 +38,34 @@ write no production code.
 
 2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to the
    **target step 0 named** — `.env.example` in a repository that has none, `.env.pipeline.example`
-   in one that already has that file, whoever wrote it. **Never overwrite either file, and never
-   overwrite a live `.env`.**
-
-   Then assemble the run's `.env`, **never with `cat`**. Which form depends on what step 0 reported
-   about `.env` — **the last source to declare a key wins, and that is what decides the order**:
+   in one that already has that file, whoever wrote it. Copy it with a flag that **cannot** clobber,
+   so "never overwrite either file" is carried by the command rather than by this sentence:
 
    ```bash
-   # no .env yet — build it from every example the project now has, in that order
+   cp -n "${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example" <the target step 0 named>
+   ```
+
+   `-n` keeps an earlier init's copy. **Never overwrite a live `.env`** either; that half is already
+   mechanical, since `assemble` refuses an existing output without `--force`.
+
+   Then assemble the run's `.env`, **never with `cat`**. **Step 0 printed the exact command for this
+   repository — run the one it printed**, rather than a path written here. It names the example file
+   that actually exists: with a live `.env` and no `.env.example` of its own the template lands at
+   `.env.example`, and a fixed `.env.pipeline.example` in this document reads a file that is not
+   there. `Survey.template_target` is the one place that decides which example is the pipeline's.
+
+   Both shapes, so you can recognise what step 0 printed — **the last source to declare a key wins,
+   and that is what decides the order**:
+
+   ```bash
+   # no .env yet — every example the project now has, the pipeline's template LAST
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
-     --out .env .env.example .env.pipeline.example      # drop the second path when there is only one
+     --out .env <the project's own .env.example, when it has one> <the target step 0 named>
 
    # a live .env ALREADY exists — merge in place, naming it as its OWN LAST SOURCE so every value
    # the operator already chose beats the template's default, while missing pipeline keys are added
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
-     --out .env .env.pipeline.example .env --force
+     --out .env <the target step 0 named> .env --force
    ```
 
    **Never name the live `.env` first**: the template declares `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME`

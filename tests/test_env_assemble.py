@@ -106,6 +106,21 @@ class TestReadBackIsFatal:
         assert "absent.example" in str(exc.value)
         assert not out.exists()
 
+    def test_an_unwritable_output_names_its_cause_rather_than_raising_oserror(
+        self, tmp_path
+    ):
+        """Every other failure here is a named AssemblyError printed as `env-assemble: <cause>`.
+        An unguarded write made the one step whose purpose is a legible config failure the one
+        that answered with a Python stack trace."""
+        a, b = write_sources(tmp_path)
+        out = tmp_path / "absent-dir" / ".env"
+
+        with pytest.raises(AssemblyError) as exc:
+            assemble([a, b], out)
+
+        assert str(out) in str(exc.value)
+        assert not out.exists()
+
     def test_an_existing_output_is_never_overwritten_without_force(self, tmp_path):
         a, b = write_sources(tmp_path)
         out = tmp_path / ".env"
@@ -236,6 +251,22 @@ class TestCLI:
         )
         assert proc.returncode == 0, proc.stderr
         assert parse((tmp_path / ".env").read_text())["DRY_RUN"] == "true"
+
+    def test_assemble_into_an_unwritable_path_exits_one_without_a_traceback(
+        self, tmp_path
+    ):
+        write_sources(tmp_path)
+        proc = self.run(
+            "assemble",
+            "--out",
+            "absent-dir/.env",
+            ".env.example",
+            ".env.pipeline.example",
+            cwd=tmp_path,
+        )
+        assert proc.returncode == 1
+        assert proc.stderr.startswith("env-assemble:")
+        assert "Traceback" not in proc.stderr
 
     def test_check_refuses_a_placeholder_value(self, tmp_path):
         (tmp_path / ".env").write_text(

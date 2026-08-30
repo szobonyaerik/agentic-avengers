@@ -91,6 +91,17 @@ class Survey:
         return PIPELINE_EXAMPLE if self.env_example_exists else PROJECT_EXAMPLE
 
     @property
+    def assemble_sources(self) -> tuple[str, ...]:
+        """The example files a fresh `.env` is assembled from, in order, template LAST.
+
+        Derived from `template_target` rather than restated, so no caller can name an example file
+        this repository does not have: with no `.env.example` of its own the template takes that
+        name and is the only source, and a fixed second path would read a file that is not there.
+        """
+        own = (PROJECT_EXAMPLE,) if self.env_example_exists else ()
+        return own + (self.template_target,)
+
+    @property
     def cosmic_ray_required_by(self) -> tuple[str, ...]:
         return () if self.cosmic_ray_present else COSMIC_RAY_REQUIRED_BY
 
@@ -148,7 +159,9 @@ def report_lines(found: Survey) -> list[str]:
     else:
         lines.append(
             f"{ENV_FILE}: absent - assemble it: "
-            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} <examples...>`"
+            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
+            f"{' '.join(found.assemble_sources)}`. The pipeline's template is named LAST, so its "
+            f"defaults fill in whatever the project's own example does not declare."
         )
 
     lines.append(
