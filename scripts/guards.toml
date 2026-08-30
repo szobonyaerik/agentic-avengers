@@ -894,6 +894,49 @@ replace = '''
         tree = Path(root)'''
 
 
+# --- .env assembly: the join, the read-back, and the placeholder refusal (issue #108) -------------
+
+[[guard]]
+id = "env-assemble.explicit-separator"
+implements = "scripts/env_assemble.py"
+defect = "`cat .env.example .env.pipeline.example > .env` joins BYTES. The first file had no trailing newline, so its last key fused onto the first line of the second and the parser read the merged line as a different value: `DRY_RUN=true` was read as `DRY_RUN=false` on every worktree assembled that way, silently, for the life of the task, and was found only during live-fire checks."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = '''
+    return "".join(
+        text if text.endswith("\n") else text + "\n" for text in texts if text
+    )'''
+replace = '''
+    return "".join(texts)'''
+
+[[guard]]
+id = "env-assemble.read-back"
+implements = "scripts/env_assemble.py"
+defect = "The separator alone is a claim about bytes nobody re-reads. Without the read-back, an assembled `.env` that does not hold what its sources declared - a fused key, a key that vanished with it - is written anyway and discovered, if at all, by whatever the wrong value does next."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = """
+    problems = verify(assembled, expected)
+    if problems:"""
+replace = """
+    problems = verify(assembled, expected)
+    if False:"""
+
+[[guard]]
+id = "env-assemble.placeholder-refusal"
+implements = "scripts/env_assemble.py"
+defect = "The shipped templates put `REPLACE_ME` in every value the operator must fill in, and an unfilled `.env` became the run's configuration - reaching the provider as a credential, answered with an authentication error that says nothing about the file that caused it."
+tests = ["tests/test_env_assemble.py", "tests/test_gate_runner_failures.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = """
+    return sorted(key for key, value in values.items() if PLACEHOLDER_MARKER in value)"""
+replace = """
+    return []"""
+
+
 # --- exempt: on the enforcement path, but deciding nothing ------------------------------------------------------------
 #
 # The other half of the closed set. Each entry names one file the surfaces above invoke that reaches

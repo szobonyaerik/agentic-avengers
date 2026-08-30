@@ -8,6 +8,19 @@ Set up the plan-build-verify pipeline in the current repository. Parse `$ARGUMEN
 feature id and an optional `--runtime` (default: `claude`). Do each step, report a short summary, and
 write no production code.
 
+0. **Survey the repository first — it is not necessarily greenfield.** Every later step that writes
+   a file reads this report before it writes (issue #108):
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_init.py" survey
+   ```
+
+   It reports, and never blocks: whether the project already owns `.env.example` (then the pipeline's
+   template goes to `.env.pipeline.example`, never over the project's file), whether a live `.env` or
+   `.no-mistakes.yaml` is already there, and whether `cosmic-ray.toml` is missing — **named here
+   rather than at step 8, because two later steps require it and neither can create it.** Report
+   every line of it to the user; the steps below act on it.
+
 1. **Artifact tree.** Create `docs/features/`; if a feature id was given, also
    `docs/features/<id>/` and `docs/features/<id>/phases/`.
 
@@ -21,13 +34,35 @@ write no production code.
    live in firstmate's record, never here), and **`.env`** (it holds a live API key). None of these
    may ever be committed.
 
-2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to `.env.example`
-   in the project, then to `.env` **only if one does not already exist** — check first, never
-   overwrite a live `.env`. Tell the user what they must fill in: `OPENROUTER_API_KEY`, and
-   `GATE_PROVIDER=openrouter` (without it `gate_runner.py` defaults to the `opencode` CLI and the
-   key is ignored). Warn that `GATE_MODEL` (the spec gate's observe pass) and `GATE_TRIAGE_MODEL`
-   (its triage pass) must not share `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. Every gate loads this file via `scripts/load_env.sh`; the real environment always
-   wins over it.
+2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to the
+   **target step 0 named** — `.env.example` in a repository that has none, `.env.pipeline.example`
+   in one that already owns that filename. **Never overwrite either file, and never overwrite a live
+   `.env`.**
+
+   Then assemble the run's `.env` from every example the project now has, **in that order** — and
+   never with `cat`:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
+     --out .env .env.example .env.pipeline.example      # drop the second path when there is only one
+   ```
+
+   `cat` joins BYTES. A first file with no trailing newline fuses its last key onto the first line of
+   the second, and the parser reads the merged line as a different value: measured on
+   grid-bot-platform, `DRY_RUN=true` became `DRY_RUN=false` on every worktree assembled that way,
+   silently, for the life of the task — found only during live-fire checks, on an account that
+   happened to be a demo. `env_assemble.py` joins with an explicit separator **and reads the result
+   back**: every key each source declared must parse out of `.env` holding the value that source
+   declared, or nothing is written and the step stops naming the key. It refuses an existing `.env`
+   unless `--force`, so a live one is never replaced by accident.
+
+   Tell the user what they must fill in: `OPENROUTER_API_KEY`, and `GATE_PROVIDER=openrouter`
+   (without it `gate_runner.py` defaults to the `opencode` CLI and the key is ignored). Warn that
+   `GATE_MODEL` (the spec gate's observe pass) and `GATE_TRIAGE_MODEL` (its triage pass) must not
+   share `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. **A value left holding
+   `REPLACE_ME` stops the run, it does not become the config**: `gate_runner.py` refuses before any
+   provider call, naming the key, and `env_assemble.py check` asks the same question on demand.
+   Every gate loads this file via `scripts/load_env.sh`; the real environment always wins over it.
 
 2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to
    `.no-mistakes.yaml` in the project **only if one does not already exist** — check first, never
@@ -90,7 +125,9 @@ write no production code.
    `hook_verifier.sh`, `gate_ci.sh`, `.opencode/plugin/pipeline-gates.ts`, and `module-path` in
    `cosmic-ray.toml`.
 
-8. **Mutation baseline sanity check.** The gate requires a green suite before it will score anything
+8. **Mutation baseline sanity check.** Needs the `cosmic-ray.toml` step 0 reported on: with none at
+   the repo root there is nothing to baseline and the per-phase mutation gate records `did-not-run`.
+   Say so here rather than running the command and reading its failure. The gate requires a green suite before it will score anything
    (a mutant counts as killed whenever the test command fails, so a broken suite scores a perfect
    1.0). If a suite already exists, run `cosmic-ray baseline cosmic-ray.toml` once and report the
    result. Mention the tunables: `MUTATION_MIN_SCORE` (default `0.85`) and `MUTATION_BASE` (default:

@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Assemble a project `.env` from example files, and refuse a placeholder that reaches a run.
+
+The documented setup line used to be:
+
+    cat .env.example .env.pipeline.example > .env
+
+A `cat` joins BYTES. When the first file does not end in a newline, its last key fuses onto the
+first line of the second file and the parser reads the merged line as a different value. Measured
+(issue #108, grid-bot-platform, 27-29 Aug 2026): `DRY_RUN=true` was read as `DRY_RUN=false` on every
+worktree assembled that way, silently, for the life of the task. Nobody chose it, nothing reported
+it, and it was found only during live-fire checks. That account was a demo. The same instruction
+against a live-configured worktree places real orders with nobody aware.
+
+Two lines of defence, because the first one alone is a claim:
+
+* **Join with an explicit separator.** Every source contributes a text that ends in a newline, so
+  two keys can never share a line.
+* **Read the result back.** Every key each source declared must parse out of the assembled file
+  holding the value that source declared - the last source to declare a key wins, exactly as a
+  concatenation would. Anything else is an `AssemblyError` naming the key, and NOTHING is written:
+  a half-assembled `.env` is the state this module exists to prevent.
+
+The verification is deliberately not a list of safety-critical key names. `DRY_RUN` belongs to one
+project; the property that matters - a value survived the join unchanged - is the same for every key
+in every project, and a hardcoded list would be silent about the next one.
+
+A third refusal lives here because it is about the same file: a value still carrying the templates'
+`REPLACE_ME` marker must stop a run rather than become its configuration. `gate_runner.py` asks
+before any provider call, so the refusal lands at the first gate with the key named, instead of as
+an authentication error from a provider that was handed a placeholder.
+
+    python3 scripts/env_assemble.py assemble --out .env .env.example .env.pipeline.example
+    python3 scripts/env_assemble.py check [--root .]
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from env_file import ENV_FILENAME, parse  # noqa: E402
+from env_file import read as read_env  # noqa: E402
+
+#: The marker the shipped templates put in every value the operator must fill in.
+PLACEHOLDER_MARKER = "REPLACE_ME"
+
+
+class AssemblyError(Exception):
+    """A `.env` could not be assembled such that every declared value survived."""
+
+
+def _read(path: Path) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AssemblyError(f"cannot read {path}: {exc}") from exc
+
+
+def join_text(texts: list[str]) -> str:
+    """Join source texts so no source's last line can fuse onto the next source's first.
+
+    An empty source contributes nothing; every other one contributes exactly one trailing newline.
+    """
+    return "".join(
+        text if text.endswith("\n") else text + "\n" for text in texts if text
+    )
+
+
+def declared(sources: list[Path]) -> dict[str, str]:
+    """Every key the sources declare, with the value the LAST source to declare it gives it.
+
+    That is the resolution a concatenation has always had; what this module changes is that the
+    resolution is now stated and checked rather than being whatever the bytes produced.
+    """
+    values: dict[str, str] = {}
+    for source in sources:
+        values.update(parse(_read(source)))
+    return values
+
+
+def verify(assembled: str, expected: dict[str, str]) -> list[str]:
+    """Problems reading `expected` back out of the assembled text; empty when it all survived."""
+    got = parse(assembled)
+    problems = []
+    for key, value in expected.items():
+        if key not in got:
+            problems.append(
+                f"{key}: declared as {value!r}, absent from the assembled file"
+            )
+        elif got[key] != value:
+            problems.append(f"{key}: declared as {value!r}, assembled as {got[key]!r}")
+    return problems
+
+
+def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, str]:
+    """Write `out` from `sources`, or raise and write nothing.
+
+    An existing `out` is never overwritten without `force`: a live `.env` holds the operator's real
+    credentials, and the greenfield assumption that it does not is half of issue #108.
+    """
+    out = Path(out)
+    if out.exists() and not force:
+        raise AssemblyError(
+            f"{out} already exists - refusing to overwrite it. It may hold live credentials; "
+            f"pass --force only when you mean to replace it."
+        )
+
+    sources = [Path(source) for source in sources]
+    expected = declared(sources)
+    assembled = join_text([_read(source) for source in sources])
+
+    problems = verify(assembled, expected)
+    if problems:
+        raise AssemblyError(
+            "assembled .env does not hold what the sources declared - nothing was written:\n  "
+            + "\n  ".join(problems)
+        )
+
+    out.write_text(assembled, encoding="utf-8")
+    return expected
+
+
+def placeholder_keys(values: dict[str, str]) -> list[str]:
+    """The keys whose value still carries the templates' fill-me-in marker."""
+    return sorted(key for key, value in values.items() if PLACEHOLDER_MARKER in value)
+
+
+#: Variables the pipeline itself configures. A placeholder in one of these is always the pipeline's
+#: business, whether it came from the project `.env` or from the real environment.
+PIPELINE_KEY_PREFIXES = ("GATE_", "OPENROUTER_", "AUTHOR_FAMILY", "MUTATION_", "SPEC_")
+
+
+def run_placeholders(env: dict[str, str], root: Path | str = ".") -> list[str]:
+    """The keys a RUN must refuse to start on, with their EFFECTIVE values.
+
+    Scoped deliberately: the project `.env`'s own keys, plus the pipeline's own variables from the
+    real environment. Scanning the whole environment instead would let an unrelated tool's scaffold
+    variable wedge every gate with a remedy that is not the operator's to apply - a wedge, not a
+    gate. The values are read from `env`, never from the file, because the real environment wins
+    over the file and it is the effective value that reaches the provider.
+    """
+    keys = set(read_env(Path(root)))
+    keys |= {key for key in env if key.startswith(PIPELINE_KEY_PREFIXES)}
+    return placeholder_keys({key: env[key] for key in sorted(keys) if key in env})
+
+
+def _cmd_assemble(args: argparse.Namespace) -> int:
+    try:
+        values = assemble(args.sources, Path(args.out), force=args.force)
+    except AssemblyError as exc:
+        print(f"env-assemble: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"env-assemble: wrote {args.out} with {len(values)} keys from {len(args.sources)} sources"
+    )
+    left = placeholder_keys(values)
+    if left:
+        print(
+            "env-assemble: fill these in before the first gate call - a run is refused while they "
+            f"carry {PLACEHOLDER_MARKER}: {', '.join(left)}",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    path = Path(args.root) / ENV_FILENAME
+    if not path.is_file():
+        # Absent is not a violation: the real environment may carry everything. Said out loud
+        # rather than passing invisibly, the rule this repository applies to every unscoped check.
+        print(f"env-assemble: no {path} to check", file=sys.stderr)
+        return 0
+    left = placeholder_keys(parse(path.read_text(encoding="utf-8")))
+    if left:
+        print(
+            f"env-assemble: {path} still carries {PLACEHOLDER_MARKER} in: {', '.join(left)}. "
+            "A placeholder must not become a run's configuration - fill them in.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    build = sub.add_parser(
+        "assemble", help="join example files into a .env and verify the result"
+    )
+    build.add_argument(
+        "--out", default=ENV_FILENAME, help=f"file to write (default {ENV_FILENAME})"
+    )
+    build.add_argument(
+        "--force", action="store_true", help="replace an existing output file"
+    )
+    build.add_argument(
+        "sources", nargs="+", help="example files, in order; the last one wins"
+    )
+    build.set_defaults(func=_cmd_assemble)
+
+    look = sub.add_parser("check", help="refuse a placeholder value reaching a run")
+    look.add_argument(
+        "--root", default=".", help="project root holding the .env (default: cwd)"
+    )
+    look.set_defaults(func=_cmd_check)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

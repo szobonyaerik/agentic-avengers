@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""What `/pipeline-init` must know about a repository before it writes anything.
+
+The command assumed a greenfield repository (issue #108). Two of those assumptions cost something:
+
+* It copied its own `env.example` template to `.env.example`, claiming a filename a project that
+  already has its own tooling already owns. The operator's remedy - concatenating the two examples -
+  is what produced the fused key that silently inverted `DRY_RUN` (see `env_assemble.py`).
+* It assumed `cosmic-ray.toml` exists at the repo root, while two later steps require it. A repo
+  without one learned that at the mutation baseline check, or later still at the first phase's
+  mutation gate, which then records `did-not-run` and reports nothing else.
+
+So the state is READ first and the command adapts to it. This is a report, not a gate: it always
+exits 0, because a non-greenfield repository is a normal repository, not a defect. What it must not
+do is answer wrongly - a step that says a file is missing when the project has one is how the
+overwrite happened.
+
+    python3 scripts/pipeline_init.py survey [--root .]
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+
+#: Where the pipeline's own env template lands in a repository that has no `.env.example`...
+PROJECT_EXAMPLE = ".env.example"
+#: ...and where it lands in one that does. Never the project's own file.
+PIPELINE_EXAMPLE = ".env.pipeline.example"
+
+ENV_FILE = ".env"
+COSMIC_RAY = "cosmic-ray.toml"
+NO_MISTAKES = ".no-mistakes.yaml"
+
+#: The later steps that require `cosmic-ray.toml`, named at init time instead of failing at theirs.
+COSMIC_RAY_REQUIRED_BY = (
+    "/pipeline-init step 8 (the mutation baseline sanity check)",
+    "the per-phase mutation gate (scripts/hook_mutation.sh, scripts/gate_ci.sh)",
+)
+
+
+@dataclass(frozen=True)
+class Survey:
+    """What the repository already holds, and where the pipeline's own files may therefore go."""
+
+    root: Path
+    env_example_owned_by_project: bool
+    env_exists: bool
+    no_mistakes_exists: bool
+    cosmic_ray_present: bool
+
+    @property
+    def greenfield(self) -> bool:
+        return not (
+            self.env_example_owned_by_project
+            or self.env_exists
+            or self.no_mistakes_exists
+            or self.cosmic_ray_present
+        )
+
+    @property
+    def template_target(self) -> str:
+        """Where the pipeline's `env.example` may be written without taking a name it does not own."""
+        return (
+            PIPELINE_EXAMPLE if self.env_example_owned_by_project else PROJECT_EXAMPLE
+        )
+
+    @property
+    def cosmic_ray_required_by(self) -> tuple[str, ...]:
+        return () if self.cosmic_ray_present else COSMIC_RAY_REQUIRED_BY
+
+
+def survey(root: Path | str = ".") -> Survey:
+    root = Path(root)
+    return Survey(
+        root=root,
+        env_example_owned_by_project=(root / PROJECT_EXAMPLE).is_file(),
+        env_exists=(root / ENV_FILE).is_file(),
+        no_mistakes_exists=(root / NO_MISTAKES).is_file(),
+        cosmic_ray_present=(root / COSMIC_RAY).is_file(),
+    )
+
+
+def report_lines(found: Survey) -> list[str]:
+    lines = [f"greenfield: {'yes' if found.greenfield else 'no'}"]
+
+    if found.env_example_owned_by_project:
+        lines.append(
+            f"{PROJECT_EXAMPLE}: EXISTS and is the project's own - never overwrite it. "
+            f"The pipeline's template goes to {PIPELINE_EXAMPLE}, and the two are assembled with "
+            f"`env_assemble.py assemble`, never `cat` (issue #108)."
+        )
+    else:
+        lines.append(
+            f"{PROJECT_EXAMPLE}: absent - the pipeline's template may take that name."
+        )
+
+    if found.env_exists:
+        lines.append(
+            f"{ENV_FILE}: EXISTS - it holds live credentials, so never overwrite it. Assemble a new "
+            f"one only into a different path, or pass --force deliberately."
+        )
+    else:
+        lines.append(
+            f"{ENV_FILE}: absent - assemble it: "
+            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} <examples...>`"
+        )
+
+    lines.append(
+        f"{NO_MISTAKES}: {'EXISTS - never overwrite it.' if found.no_mistakes_exists else 'absent - copy the template.'}"
+    )
+
+    if found.cosmic_ray_present:
+        lines.append(f"{COSMIC_RAY}: present.")
+    else:
+        lines.append(
+            f"{COSMIC_RAY}: MISSING at the repo root, and required later by: "
+            + "; ".join(COSMIC_RAY_REQUIRED_BY)
+            + ". Create it now (template in AVENGERS.md section 9) or those steps cannot run - the "
+            "mutation gate records `did-not-run` and reports nothing else."
+        )
+
+    return lines
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    look = sub.add_parser("survey", help="report what this repository already holds")
+    look.add_argument("--root", default=".", help="project root (default: cwd)")
+    args = parser.parse_args(argv)
+
+    if args.command == "survey":
+        for line in report_lines(survey(args.root)):
+            print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from env_assemble import PLACEHOLDER_MARKER, run_placeholders  # noqa: E402
 from gate_errors import GateError, classify_provider_failure  # noqa: E402
 from gate_plausibility import FloorMisconfigured, implausible, provider_floor_ms  # noqa: E402
 from gate_timeouts import call_timeout  # noqa: E402
@@ -477,6 +478,21 @@ def main():
                 "config",
                 "no gate model: pass --model or set GATE_MODEL. This gate has no "
                 "default model — a gate must never run on one nobody chose.",
+            )
+
+        # A placeholder is not configuration. The shipped templates put `REPLACE_ME` in every value
+        # the operator must fill in, and an unfilled `.env` used to reach the provider as a
+        # credential — answered with an authentication error that says nothing about the file that
+        # caused it. Asked here, before any call: the run stops with the key named (issue #108).
+        unfilled = run_placeholders(
+            os.environ, os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()
+        )
+        if unfilled:
+            raise GateError(
+                "config",
+                f"these values still carry {PLACEHOLDER_MARKER}: {', '.join(unfilled)}. "
+                "A placeholder must never become a run's configuration — fill them in "
+                "(the project .env, or the real environment).",
             )
 
         # Cross-family invariant: a gate must not run on the author's family. An operator can

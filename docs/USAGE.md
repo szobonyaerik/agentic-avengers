@@ -90,7 +90,18 @@ pre-commit install
 # 4) point cosmic-ray at the package under test, and generate the codemap
 $EDITOR cosmic-ray.toml                       # module-path = "<your package dir>", test-command = "pytest -x -q"
 python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebase/MOC.md
+
+# 5) assemble .env — this repo already owns .env.example, so the pipeline's template lands beside it
+cp "$AV/docs/templates/env.example" .env.pipeline.example
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.example .env.pipeline.example
 ```
+
+**Never `cat` those two files together.** A source with no trailing newline fuses its last key onto
+the first line of the next, and the parser reads the merged line as a different value — on this very
+repository that turned `DRY_RUN=true` into `DRY_RUN=false` on every worktree, silently, for the life
+of a task (issue #108). `env_assemble.py` joins with an explicit separator and reads every declared
+key back out of the result; a key that did not survive stops the step and nothing is written. Fill in
+every `REPLACE_ME` before the first gate call — a run is refused while one is left, naming the key.
 
 Re-running `install.sh <target> --check` later classifies each file NEW / UPDATE / SAME / **DRIFT**
 (your local edits — skipped, never clobbered) / **GONE**. `--prune` removes upstream-deleted files you
