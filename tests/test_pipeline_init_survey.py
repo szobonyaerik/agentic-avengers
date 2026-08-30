@@ -67,11 +67,50 @@ class TestNonGreenfield:
         (tmp_path / "cosmic-ray.toml").write_text("[cosmic-ray]\n", encoding="utf-8")
         assert survey(tmp_path).cosmic_ray_present
 
-    def test_a_live_env_is_reported_and_never_a_target(self, tmp_path):
+    def test_a_live_env_is_reported_with_the_merge_in_place_remedy(self, tmp_path):
+        """The remedy used to offer `--force` (which destroys the credentials the same sentence
+        forbade destroying) or "a different path" (which no gate reads), so init on the exact repo
+        shape issue #108 is about finished with the pipeline's keys never reaching a run."""
         (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
+
         found = survey(tmp_path)
+        text = "\n".join(report_lines(found))
+
         assert found.env_exists
-        assert "never overwrite" in "\n".join(report_lines(found)).lower()
+        assert "--out .env .env .env.example --force" in text
+        assert "OWN FIRST SOURCE" in text
+
+    def test_the_merge_names_the_template_where_it_actually_landed(self, tmp_path):
+        (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert f"--out .env .env {PIPELINE_EXAMPLE} --force" in "\n".join(
+            report_lines(found)
+        )
+
+
+class TestBothExampleFilesAreLeftAlone:
+    """`commands/pipeline-init.md` promises never to overwrite EITHER example file. The survey has
+    to carry the data that makes the promise keepable, or it is an instruction with no mechanism."""
+
+    def test_an_existing_pipeline_example_is_reported_and_left_alone(self, tmp_path):
+        (tmp_path / PIPELINE_EXAMPLE).write_text("GATE_MODEL=x\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+        text = "\n".join(report_lines(found))
+
+        assert found.pipeline_example_exists
+        assert not found.greenfield
+        assert f"{PIPELINE_EXAMPLE}: EXISTS - leave it alone too" in text
+
+    def test_an_absent_pipeline_example_is_reported_too(self, tmp_path):
+        found = survey(tmp_path)
+
+        assert not found.pipeline_example_exists
+        assert f"{PIPELINE_EXAMPLE}: absent" in "\n".join(report_lines(found))
 
 
 class TestOneRuleForAnExistingExample:

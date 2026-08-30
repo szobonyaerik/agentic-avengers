@@ -92,9 +92,21 @@ $EDITOR cosmic-ray.toml                       # module-path = "<your package dir
 python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebase/MOC.md
 
 # 5) assemble .env — this repo already owns .env.example, so the pipeline's template lands beside it
-cp "$AV/docs/templates/env.example" .env.pipeline.example
+cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier init's copy is kept
+
+#    (a) no .env yet — build it from the two examples
 python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.example .env.pipeline.example
+
+#    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
+#        merge in place by naming it as its OWN FIRST SOURCE. (a) refuses here, by design.
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env .env.pipeline.example --force
 ```
+
+Form **(b)** is not the destructive `--force` it looks like: `assemble` reads every source before it
+writes anything, so the live `.env` is read first and the read-back then proves every credential it
+declared survived into the result. A key BOTH files declare takes the template's value — the last
+source to declare it — which is the one case where merging changes an existing value. Assembling
+anywhere else configures nothing: every gate reads `.env` and no other path.
 
 **Never `cat` those two files together.** A source with no trailing newline fuses its last key onto
 the first line of the next, and the parser reads the merged line as a different value — on this very

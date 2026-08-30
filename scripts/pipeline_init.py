@@ -64,6 +64,7 @@ class Survey:
 
     root: Path
     env_example_exists: bool
+    pipeline_example_exists: bool
     env_exists: bool
     no_mistakes_exists: bool
     cosmic_ray_present: bool
@@ -72,6 +73,7 @@ class Survey:
     def greenfield(self) -> bool:
         return not (
             self.env_example_exists
+            or self.pipeline_example_exists
             or self.env_exists
             or self.no_mistakes_exists
             or self.cosmic_ray_present
@@ -82,7 +84,9 @@ class Survey:
         """Where the pipeline's `env.example` may be written without taking a name it does not own.
 
         Never `.env.example` once that file exists, whoever wrote it: nothing is overwritten, so
-        the file's provenance decides nothing and is never asked.
+        the file's provenance decides nothing and is never asked. Never-overwrite is the rule for
+        BOTH example files - `pipeline_example_exists` is what lets the caller honour it for the
+        second one, which the report states outright.
         """
         return PIPELINE_EXAMPLE if self.env_example_exists else PROJECT_EXAMPLE
 
@@ -96,6 +100,7 @@ def survey(root: Path | str = ".") -> Survey:
     return Survey(
         root=root,
         env_example_exists=(root / PROJECT_EXAMPLE).is_file(),
+        pipeline_example_exists=(root / PIPELINE_EXAMPLE).is_file(),
         env_exists=(root / ENV_FILE).is_file(),
         no_mistakes_exists=(root / NO_MISTAKES).is_file(),
         cosmic_ray_present=(root / COSMIC_RAY).is_file(),
@@ -116,10 +121,26 @@ def report_lines(found: Survey) -> list[str]:
             f"{PROJECT_EXAMPLE}: absent - the pipeline's template may take that name."
         )
 
+    if found.pipeline_example_exists:
+        lines.append(
+            f"{PIPELINE_EXAMPLE}: EXISTS - leave it alone too. Never-overwrite is the rule for BOTH "
+            f"example files, so an earlier init's copy keeps whatever was edited into it; the only "
+            f"file ever written over is {ENV_FILE}, through the one merge below."
+        )
+    else:
+        lines.append(f"{PIPELINE_EXAMPLE}: absent.")
+
     if found.env_exists:
         lines.append(
-            f"{ENV_FILE}: EXISTS - it holds live credentials, so never overwrite it. Assemble a new "
-            f"one only into a different path, or pass --force deliberately."
+            f"{ENV_FILE}: EXISTS and holds live credentials, so merge IN PLACE rather than "
+            f"replacing it: "
+            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} {ENV_FILE} "
+            f"{found.template_target} --force`. The live file is named as its OWN FIRST SOURCE - "
+            f"`assemble` reads every source before it writes anything, and the read-back then "
+            f"proves every key it declared survived, which is what makes this safe where a bare "
+            f"--force is not. A key BOTH files declare takes the template's value, the last source "
+            f"to declare it. Assembling anywhere else configures nothing: every gate reads "
+            f"{ENV_FILE} and no other path."
         )
     else:
         lines.append(

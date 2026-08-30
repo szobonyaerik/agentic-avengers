@@ -113,6 +113,58 @@ class TestReadBackIsFatal:
         assert "sk-live" not in out.read_text()
 
 
+class TestMergingIntoALiveEnv:
+    """The non-greenfield path: a worktree that already has a `.env`.
+
+    `assemble` refuses an existing output without `--force`, so the only way the pipeline's keys
+    reach a configured worktree is to name the live file as its OWN FIRST SOURCE. That is safe
+    because every source is read before anything is written, and the read-back then proves the
+    live file's own keys survived - which is the property the whole module exists for.
+    """
+
+    def test_the_live_credentials_survive_and_the_pipeline_keys_arrive(self, tmp_path):
+        live = tmp_path / ".env"
+        live.write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-real\nDRY_RUN=true\n", encoding="utf-8"
+        )
+        template = tmp_path / ".env.pipeline.example"
+        template.write_text(PIPELINE_EXAMPLE, encoding="utf-8")
+
+        assemble([live, template], live, force=True)
+
+        merged = parse(live.read_text())
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+        assert merged["DRY_RUN"] == "true"
+        assert merged["GATE_PROVIDER"] == "openrouter"
+        assert merged["MUTATION_POLICY"] == "advisory"
+
+    def test_a_key_both_files_declare_takes_the_templates_value(self, tmp_path):
+        """The one case where merging changes an existing value - last source wins."""
+        live = tmp_path / ".env"
+        live.write_text("GATE_PROVIDER=opencode\nAPI_KEY=mine\n", encoding="utf-8")
+        template = tmp_path / ".env.pipeline.example"
+        template.write_text(PIPELINE_EXAMPLE, encoding="utf-8")
+
+        assemble([live, template], live, force=True)
+
+        merged = parse(live.read_text())
+        assert merged["GATE_PROVIDER"] == "openrouter"
+        assert merged["API_KEY"] == "mine"
+
+    def test_a_live_env_with_no_trailing_newline_still_merges_intact(self, tmp_path):
+        """The measured defect, on the path that reads the live file as a source."""
+        live = tmp_path / ".env"
+        live.write_text("API_KEY=abc\nDRY_RUN=true", encoding="utf-8")
+        template = tmp_path / ".env.pipeline.example"
+        template.write_text(PIPELINE_EXAMPLE, encoding="utf-8")
+
+        assemble([live, template], live, force=True)
+
+        merged = parse(live.read_text())
+        assert merged["DRY_RUN"] == "true"
+        assert merged["GATE_PROVIDER"] == "openrouter"
+
+
 class TestPlaceholders:
     def test_a_replace_me_value_is_named(self):
         values = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}", "OK": "fine"}
