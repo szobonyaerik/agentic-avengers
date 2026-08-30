@@ -100,6 +100,28 @@ class TestReadBackIsFatal:
         assert "DRY_RUN" in str(exc.value)
         assert not out.exists()  # nothing half-written is left behind
 
+    def test_the_failure_names_the_key_and_never_the_value(self, tmp_path, monkeypatch):
+        """On the merge-in-place path the live `.env` is one of its own sources, so the expectation
+        holds the operator's real credentials. This message is raised verbatim and printed to
+        stderr - and into the transcript of the agent that ran `/pipeline-init` - so a value
+        interpolated here is a credential leak on the one path this module documents."""
+        secret = "sk-or-v1-THE-OPERATORS-REAL-KEY"
+        live = tmp_path / ".env"
+        live.write_text(f"OPENROUTER_API_KEY={secret}\n", encoding="utf-8")
+        template = tmp_path / ".env.pipeline.example"
+        template.write_text("GATE_MODEL=x", encoding="utf-8")
+        monkeypatch.setattr("env_assemble.join_text", lambda texts: "".join(texts))
+
+        with pytest.raises(AssemblyError) as exc:
+            assemble([template, live], live, force=True)
+
+        message = str(exc.value)
+        assert "OPENROUTER_API_KEY" in message
+        assert secret not in message
+        for fragment in (secret[:12], secret[-12:], "THE-OPERATORS"):
+            assert fragment not in message
+        assert live.read_text(encoding="utf-8") == f"OPENROUTER_API_KEY={secret}\n"
+
     def test_a_missing_source_is_named_and_nothing_is_written(self, tmp_path):
         out = tmp_path / ".env"
         with pytest.raises(AssemblyError) as exc:

@@ -58,15 +58,23 @@ write no production code.
    and that is what decides the order**:
 
    ```bash
-   # no .env yet — every example the project now has, the pipeline's template LAST
+   # no .env yet — every example the project now has, the pipeline's template FIRST
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
-     --out .env <the project's own .env.example, when it has one> <the target step 0 named>
+     --out .env <the target step 0 named> <the project's own .env.example, when it has one>
 
    # a live .env ALREADY exists — merge in place, naming it as its OWN LAST SOURCE so every value
    # the operator already chose beats the template's default, while missing pipeline keys are added
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
      --out .env <the target step 0 named> .env --force
    ```
+
+   **Both forms name the pipeline's template FIRST — the more operator-owned file goes later.** The
+   template supplies only what this repository does not already declare. Named last on the create
+   form it did the opposite: a repository whose `.env.example` an earlier init wrote and the team
+   then filled in and committed gets `.env.pipeline.example` as its target, `cp -n` writes the
+   SHIPPED template there unmodified, and last-wins handed the assembled `.env` the shipped
+   `GATE_MODEL`, `GATE_PROVIDER` and `MUTATION_POLICY` instead of the team's choices — values that
+   parse, survive the read-back and carry no `REPLACE_ME`, so nothing reports them.
 
    **The merge form names the pipeline's example and the live file, and no other example.** That is
    not an omission: last-wins protects every key the live `.env` already declares, but a key it does

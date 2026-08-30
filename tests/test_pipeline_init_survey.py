@@ -119,13 +119,13 @@ class TestTheAssembleCommandNamesFilesThatExist:
         assert found.template_target == PROJECT_EXAMPLE
         assert found.assemble_sources == (PROJECT_EXAMPLE,)
 
-    def test_only_the_projects_own_example_puts_the_template_after_it(self, tmp_path):
+    def test_only_the_projects_own_example_puts_the_template_before_it(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
         assert found.template_target == PIPELINE_EXAMPLE
-        assert found.assemble_sources == (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)
+        assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
 
     def test_only_an_existing_pipeline_example_is_the_pipelines_example(self, tmp_path):
         """The reported defect: the target resolved to a FRESH `.env.example`, shadowing this
@@ -139,14 +139,53 @@ class TestTheAssembleCommandNamesFilesThatExist:
         assert found.template_target == PIPELINE_EXAMPLE
         assert found.assemble_sources == (PIPELINE_EXAMPLE,)
 
-    def test_both_examples_are_sources_template_last(self, tmp_path):
+    def test_both_examples_are_sources_template_first(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
         (tmp_path / PIPELINE_EXAMPLE).write_text("GATE_MODEL=x\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
         assert found.template_target == PIPELINE_EXAMPLE
-        assert found.assemble_sources == (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)
+        assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
+
+    def test_a_freshly_copied_template_never_beats_a_configured_example(self, tmp_path):
+        """The measured trace, end to end through the real assembler.
+
+        An earlier init wrote the pipeline template to `.env.example`; the team filled it in and
+        committed it. A new worktree has no `.env` (gitignored) and no `.env.pipeline.example`, so
+        step 2a's `cp -n` writes the SHIPPED template there unmodified. Named LAST it won, and the
+        assembled `.env` carried the shipped defaults instead of the team's choices - with nothing
+        reporting it, since the values parse, survive the read-back and carry no `REPLACE_ME`.
+        """
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME\n"
+            "GATE_MODEL=deepseek/deepseek-chat\n"
+            "GATE_PROVIDER=opencode\n"
+            "MUTATION_POLICY=enforce\n",
+            encoding="utf-8",
+        )
+
+        found = survey(tmp_path)
+        assert found.template_target == PIPELINE_EXAMPLE
+        # Step 2a: `cp -n` writes the shipped template, unmodified, to the target step 0 named.
+        (tmp_path / found.template_target).write_text(
+            SHIPPED_TEMPLATE, encoding="utf-8"
+        )
+
+        assemble(
+            [tmp_path / name for name in found.assemble_sources], tmp_path / ".env"
+        )
+
+        merged = parse((tmp_path / ".env").read_text())
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["GATE_PROVIDER"] == "opencode"
+        assert merged["MUTATION_POLICY"] == "enforce"
+        # ...and the template still fills in every pipeline key the repository does not declare.
+        shipped = parse(SHIPPED_TEMPLATE)
+        undeclared = set(shipped) - set(parse((tmp_path / PROJECT_EXAMPLE).read_text()))
+        assert undeclared, "the fixture must leave the template something to contribute"
+        for key in undeclared:
+            assert merged[key] == shipped[key]
 
     @pytest.mark.parametrize(
         "present",
@@ -221,6 +260,15 @@ class TestTheAssembleCommandNamesFilesThatExist:
 
         for path in self.command(found):
             assert (tmp_path / path).is_file()
+
+    def test_the_printed_create_command_names_the_sources_in_order(self, tmp_path):
+        """The report is what an operator runs, so it must not state a different order."""
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert self.command(found) == list(found.assemble_sources)
+        assert self.command(found)[0] == found.template_target
 
     def test_an_operators_filled_in_pipeline_example_survives_the_assembled_env(
         self, tmp_path

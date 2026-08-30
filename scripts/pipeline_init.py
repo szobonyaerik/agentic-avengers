@@ -112,20 +112,32 @@ class Survey:
         to another file's value - plus the target, when step 2a is about to create it.
 
         The order answers who wins a conflict, by the one rule this whole path obeys: **the LAST
-        source to declare a key wins**. So the pipeline's template is named after the project's own
-        example, its defaults filling in what that example does not declare; and in the merge form
-        the live `.env` is named after every example, so the operator's own values win outright.
+        source to declare a key wins**, and by the one principle both branches obey: **the more
+        operator-owned file goes later**. So the pipeline's template - the file step 2a writes, or
+        an earlier init already wrote - is named FIRST and supplies only what the repository does
+        not already declare; anything the repository has already configured wins.
+
+        Named last, it did the opposite. A repository whose `.env.example` an earlier init wrote and
+        the team then filled in and committed (`GATE_MODEL=deepseek/deepseek-chat`,
+        `GATE_PROVIDER=opencode`, `MUTATION_POLICY=enforce`) gets `.env.pipeline.example` as its
+        target; step 2a's `cp -n` writes the SHIPPED template there unmodified, and last-wins handed
+        the assembled `.env` the shipped defaults instead of the team's choices. Nothing errors: the
+        values are syntactically valid, the read-back passes because the template declared them and
+        they survived, and a default carries no `REPLACE_ME` for the run-time refusal to catch. That
+        is a value nobody chose arriving silently, which is the class this module exists to close.
         """
         existing = self.existing_examples
-        if self.template_target in existing:
-            return existing
-        return existing + (self.template_target,)
+        return (self.template_target,) + tuple(
+            name for name in existing if name != self.template_target
+        )
 
     @property
     def merge_sources(self) -> tuple[str, ...]:
         """The sources a merge into an EXISTING `.env` names: the PIPELINE's example, then the live
-        file. Deliberately NOT `assemble_sources` - the project's own `.env.example` is a source
-        when a `.env` is being CREATED and must not be one when it already exists.
+        file. Same principle as `assemble_sources` - the more operator-owned file goes later, so the
+        template is first here too. What differs is the SOURCE SET, not the order: the project's own
+        `.env.example` is a source when a `.env` is being CREATED and must not be one when it
+        already exists.
 
         Last-wins protects every key the live file declares. It does nothing for keys the live file
         OMITS, and an example's values are dummies and defaults by construction: a committed
@@ -199,8 +211,10 @@ def report_lines(found: Survey) -> list[str]:
         lines.append(
             f"{ENV_FILE}: absent - assemble it: "
             f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
-            f"{' '.join(found.assemble_sources)}`. The pipeline's template is named LAST, so its "
-            f"defaults fill in whatever the project's own example does not declare."
+            f"{' '.join(found.assemble_sources)}`. The pipeline's template is named FIRST, so its "
+            f"defaults fill in whatever the project's own example does not declare - the last "
+            f"source to declare a key wins, so anything this repository has already configured "
+            f"beats the template's default for that key."
         )
 
     lines.append(

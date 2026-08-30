@@ -942,6 +942,25 @@ replace = """
 
 
 [[guard]]
+id = "pipeline-init.template-first"
+implements = "scripts/pipeline_init.py"
+defect = "The create branch named the pipeline's template LAST, so a FRESHLY COPIED shipped template beat an example the operator had already configured. A repository whose `.env.example` an earlier init wrote and the team then filled in and committed got `.env.pipeline.example` as its target; step 2a's `cp -n` wrote the shipped template there unmodified, and last-wins handed the assembled `.env` the shipped `GATE_MODEL`, `GATE_PROVIDER` and `MUTATION_POLICY` instead of the team's choices - values that parse, survive the read-back and carry no `REPLACE_ME`, so nothing reported them."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        existing = self.existing_examples
+        return (self.template_target,) + tuple(
+            name for name in existing if name != self.template_target
+        )'''
+replace = '''
+        existing = self.existing_examples
+        if self.template_target in existing:
+            return existing
+        return existing + (self.template_target,)'''
+
+
+[[guard]]
 id = "env-assemble.atomic-write"
 implements = "scripts/env_assemble.py"
 defect = "On the merge-in-place path the destination IS the live `.env` - the operator's real credentials, gitignored, no backup - and it is also one of its own sources. `write_text` opens it in truncate mode, so a full disk or a signal between the truncate and the completed write leaves a partial file that can no longer be re-merged, because one of the sources WAS it."

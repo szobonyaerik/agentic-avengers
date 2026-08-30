@@ -44,15 +44,21 @@ source.** `assemble` reads every source before it writes anything, so `--out .en
 declares wins over the template's default for the same key, every pipeline key it does not have is
 added, and the read-back then proves every key it declared survived into the result. A `.env`
 written any other way is how the pipeline's keys end up somewhere no gate reads, since
-`env_file.find_env_file` looks for `.env` and nothing else. The greenfield form - a template into a
-`.env` that does not exist yet - has no such conflict and is unaffected.
+`env_file.find_env_file` looks for `.env` and nothing else.
+
+**The CREATE form obeys the same principle: the more operator-owned file goes later.** The
+pipeline's template is named FIRST there too, so it supplies only what the repository does not
+already declare and anything the repository has already configured wins. Named last it did the
+opposite - a freshly copied shipped template reverting a team's committed `GATE_MODEL`,
+`GATE_PROVIDER` and `MUTATION_POLICY` to its own defaults, with nothing anywhere reporting it.
+`pipeline_init.Survey` is the one place that decides both source lists; nothing else restates them.
 
 There is no prompt and no conflict-resolution mode; the order IS the resolution. Re-merging is not
 idempotent either: the template's text is appended again each time, which parses correctly because
 the last declaration still wins, and de-duplicating on write would break this module's contract that
 the bytes are its sources joined.
 
-    python3 scripts/env_assemble.py assemble --out .env .env.example .env.pipeline.example
+    python3 scripts/env_assemble.py assemble --out .env .env.pipeline.example .env.example
     python3 scripts/env_assemble.py assemble --out .env .env.pipeline.example .env --force
     python3 scripts/env_assemble.py check [--root .]
 """
@@ -102,7 +108,7 @@ def declared_in(texts: list[str]) -> dict[str, str]:
     resolution is now stated and checked rather than being whatever the bytes produced. It takes
     the texts rather than the paths so `assemble` can derive the expectation and the joined result
     from ONE read of each source: reading twice is a seam where a file edited in between makes the
-    read-back report "declared as X, assembled as Y" about a file that was simply rewritten - a
+    read-back report a mismatch about a key in a file that was simply rewritten - a
     misleading cause on the one step whose whole purpose is a legible config failure.
     """
     values: dict[str, str] = {}
@@ -117,16 +123,26 @@ def declared(sources: list[Path]) -> dict[str, str]:
 
 
 def verify(assembled: str, expected: dict[str, str]) -> list[str]:
-    """Problems reading `expected` back out of the assembled text; empty when it all survived."""
+    """Problems reading `expected` back out of the assembled text; empty when it all survived.
+
+    A problem names the KEY and the SHAPE of the mismatch, and NEITHER value - not the declared one,
+    not the assembled one, not a truncated or masked rendering of either. `assemble` raises these
+    verbatim and the CLI prints them to stderr, so on the merge-in-place path - where the live
+    `.env` is one of its own sources - an interpolated value is the operator's real credential
+    printed into their terminal and into the agent transcript that ran the step. The key plus the
+    mismatch kind is the whole diagnostic content: which key, and whether it vanished or changed.
+    """
     got = parse(assembled)
     problems = []
-    for key, value in expected.items():
+    for key in expected:
         if key not in got:
             problems.append(
-                f"{key}: declared as {value!r}, absent from the assembled file"
+                f"{key}: declared by a source, absent from the assembled file"
             )
-        elif got[key] != value:
-            problems.append(f"{key}: declared as {value!r}, assembled as {got[key]!r}")
+        elif got[key] != expected[key]:
+            problems.append(
+                f"{key}: declared by a source, assembled with a different value"
+            )
     return problems
 
 

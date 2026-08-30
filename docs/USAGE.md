@@ -98,8 +98,9 @@ python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebas
 python3 "$AV/scripts/pipeline_init.py" survey            # <- the authority for the two paths below
 cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier init's copy is kept
 
-#    (a) no .env yet — build it from the two examples
-python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.example .env.pipeline.example
+#    (a) no .env yet — build it from the two examples, the pipeline's template FIRST so it only
+#        fills in what this repository does not already declare
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env.example
 
 #    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
 #        merge in place by naming it as its OWN LAST SOURCE. (a) refuses here, by design.
@@ -116,9 +117,18 @@ that key, while every pipeline key you do not have yet is still added. Name it f
 template's `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME` and its default `GATE_MODEL`, `GATE_PROVIDER`,
 `AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours.
 
+**Both forms name the pipeline's template FIRST**, by the principle both obey — the more
+operator-owned file goes later, so the template supplies only what your repository does not already
+declare. Named last, form (a) did the opposite: if an earlier init wrote your `.env.example` and
+your team then filled it in and committed it, the target is `.env.pipeline.example`, `cp -n` writes
+the SHIPPED template there unmodified, and it would revert your committed `GATE_MODEL`,
+`GATE_PROVIDER` and `MUTATION_POLICY` to its defaults — values that parse, survive the read-back and
+carry no `REPLACE_ME`, so nothing reports them.
+
 **Form (b) names the pipeline's example and your live file, and no other example** — while form
 (a), which is CREATING the file, names every example that exists, because one left out there is one
-whose values revert to another file's. The asymmetry is deliberate. Last-wins protects every key
+whose values revert to another file's. That asymmetry is in the SOURCE SET, not the order, and it is
+deliberate. Last-wins protects every key
 your live `.env` already declares; it does nothing for a key your `.env` OMITS, and that key would
 arrive carrying the project example's value — and an example's values are dummies and defaults by
 construction (`your_api_key_here`, a `DRY_RUN=false` default). A committed `.env.example` that has
