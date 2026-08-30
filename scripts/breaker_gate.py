@@ -152,13 +152,15 @@ def satisfied(phase_dir: Path) -> str | None:
     return _validate(data, path)
 
 
-def due(phase_dir: Path) -> str | None:
+def due(
+    phase_dir: Path, resolved: criticality.PhaseCriticality | None = None
+) -> str | None:
     """The reason this phase does not close, or None when the Breaker obligation is clear.
 
     A phase that does not owe a Breaker run is clear by construction, before any exception is
     consulted - `excepted()` exists for a phase that DOES owe one and was deliberately not run.
     """
-    if not owed(phase_dir):
+    if not owed(phase_dir, resolved):
         return None
     reason = satisfied(phase_dir)
     if reason is None:
@@ -195,10 +197,10 @@ def skipped(
     if resolved is None:
         resolved = criticality.phase(Path(phase_dir))
     criticality.announce(Path(phase_dir), resolved)
-    if not resolved.critical:
-        return f"breaker: not run - {resolved.reason()}"
     if satisfied(phase_dir) is None:
         return None
+    if not resolved.critical:
+        return f"breaker: not run - {resolved.reason()}"
     exception = _excepted(phase_dir)
     if exception is not None:
         return f"breaker: not run - disclosed exception: {exception.describe()}"
@@ -242,14 +244,24 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     diff touches by construction - so nothing is lost by scoping the sweep; `--all` is the audit for
     anyone who wants it.
 
-    **A phase that has written its `handover.md` is SHIPPED, and is counted rather than blocked** -
-    §3a's applicability boundary, the same evidence `pipeline_state._phase_state` reads by asking
-    the Breaker question only before the card exists. Diff scoping alone does not cover this: issue
-    #101's default makes a phase whose specs omit `criticality` resolve to `critical`, so editing
-    any file under a phase directory that closed months ago - its card, its ledger - makes it
-    `touched` and newly owed, and the only remedy on closed work is a Breaker run over shipped code.
-    That is the wedge §3a exists to prevent. The OPEN moment still enforces: `hook_verifier.sh`
-    fires on the handover WRITE, before the card is on disk, and `due()` is unchanged.
+    **A phase that has written its `handover.md` is SHIPPED, and is counted rather than blocked -
+    but ONLY when its `critical` came from the DEFAULT.** §3a's applicability boundary, on the same
+    evidence `pipeline_state._phase_state` reads by asking the Breaker question only before the card
+    exists. Diff scoping alone does not cover it: issue #101's default makes a phase whose specs
+    omit `criticality` resolve to `critical`, so editing any file under a phase directory that
+    closed months ago - its card, its ledger - makes it `touched` and newly owed, and the wedge §3a
+    exists to prevent is a rule this change itself created over work that already landed.
+
+    **A phase whose spec literally declares `criticality: critical` is NOT exempt, closed or not.**
+    That is issue #45's own measured case - owed twice on one feature, run neither time, closed with
+    a card and no record - and it is what this sweep was built to catch. Nothing about it is newly
+    owed, the remedy is fully available (run the Breaker over the landed code, which is exactly what
+    #45 prescribes), and exempting it would leave the audit able to block only on phases with no
+    card at all, which the handover hook already holds. `criticality.PhaseCriticality` is asked
+    which it is rather than the question being re-derived here.
+
+    The OPEN moment is untouched either way: `hook_verifier.sh` fires on the handover WRITE, before
+    the card is on disk, and `due()` is unchanged.
     """
     phases = closed_phases(root)
     if not phases:
@@ -274,10 +286,11 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     unenforced = 0
     shipped: list[str] = []
     for phase in phases:
-        reason = due(phase)
+        resolved = criticality.phase(Path(phase))
+        reason = due(phase, resolved)
         if reason is None:
             continue
-        if (Path(phase) / "handover.md").is_file():
+        if (Path(phase) / "handover.md").is_file() and not resolved.declared_critical:
             shipped.append(str(phase))
             continue
         if enforce_all or applicability.touched(phase, scope):  # type: ignore[arg-type]
@@ -287,8 +300,10 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     applicability.report_unenforced(
         "breaker_gate",
         len(shipped),
-        "phase(s) already wrote handover.md and are CLOSED - a Breaker run over shipped code is a "
-        f"remedy that does not exist, so they are named rather than blocked: {', '.join(shipped)}",
+        "phase(s) reached `critical` only through issue #101's default AND already wrote "
+        "handover.md, so they are named rather than blocked - the obligation is one this change "
+        "created over work that already landed. A phase whose spec DECLARES `critical` is still "
+        f"reported: {', '.join(shipped)}",
     )
     applicability.report_unenforced(
         "breaker_gate",

@@ -205,3 +205,23 @@ def test_announce_does_not_repeat_for_one_phase(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
     criticality.announce(phase_dir(tmp_path), resolved)
     assert capsys.readouterr().err == ""
+
+
+def test_the_shipped_spec_template_resolves_to_critical() -> None:
+    """A spec authored from the template and never edited gets the STRONGER pipeline.
+
+    The template is this pipeline's own emitted interface for `spec.md` (`doc_read_path.READ_PATH`
+    names it as spec.md's `emitted_by`), so its frontmatter is parsed with the same reader a real
+    spec goes through and handed to the same resolver - never matched as text. Pre-filled
+    `standard`, the opt-out was the template's decision rather than an author's, which is the
+    practical shape of issue #101 even though no field is literally absent.
+    """
+    import spec_gate_state
+
+    template = Path(__file__).resolve().parents[1] / "docs/templates/spec.template.md"
+    fields = spec_gate_state.frontmatter(template.read_text(encoding="utf-8"))
+
+    resolved = criticality.resolve(fields)
+
+    assert resolved.value == criticality.CRITICAL
+    assert resolved.source == criticality.ABSENT

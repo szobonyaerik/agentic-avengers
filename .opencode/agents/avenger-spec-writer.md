@@ -56,7 +56,8 @@ phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 depends_on: [<prior spec ids, e.g. 1.1, 1.2>]
 work_kind: greenfield | migration | refactor   # the implementer's test mode — carried HERE
-criticality: standard | critical   # required — absent/unrecognised resolves to `critical` (issue #101)
+criticality: standard | critical   # required — absent/blank/unrecognised resolves to `critical`, announced
+                                   # as the default it is (issue #101). `standard` is a deliberate opt-out.
 status: draft
 spec_gate: pending            # set to approved|blocked by THE spec gate (scripts/hook_spec_gate.sh)
 review_status: pending        # flipped to `approved` only by /spec-review (human grill-me)

@@ -162,6 +162,34 @@ def test_skipped_is_none_when_the_breaker_actually_runs(tmp_path: Path) -> None:
     assert breaker_gate.skipped(phase_dir(tmp_path)) is None
 
 
+def test_skipped_is_none_on_a_standard_phase_that_has_a_valid_record(
+    tmp_path: Path,
+) -> None:
+    """A valid record on disk means the Breaker RAN, whatever the phase now resolves to.
+
+    Reachable when a spec is amended from `critical` down to `standard` after the Breaker ran, or
+    when an operator hands to `avenger-breaker` outside the resolver's routing. Reported as
+    "breaker: not run" the claim is simply false, and it would ride into `hook_verifier.sh`'s phase
+    close and into `State.skipped_stages` - inverting the one property this report exists to
+    establish, that a reader can tell a skipped Breaker from a clean one.
+    """
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": ["the credential path"]})
+
+    assert breaker_gate.skipped(phase_dir(tmp_path)) is None
+
+
+def test_skipped_still_names_a_standard_phase_whose_record_is_vacuous(
+    tmp_path: Path,
+) -> None:
+    """A record `satisfied()` refuses is not a Breaker run, so the skip is still reported."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": []})
+
+    reason = breaker_gate.skipped(phase_dir(tmp_path))
+    assert reason is not None and reason.startswith("breaker: not run")
+
+
 def test_skipped_accepts_an_already_resolved_phase_and_agrees_with_resolving_itself(
     tmp_path: Path,
 ) -> None:
@@ -478,22 +506,86 @@ def test_check_counts_a_shipped_phase_rather_than_blocking_on_it(
 
     Diff scoping alone does not cover this: issue #101's default makes a phase whose specs omit
     `criticality` newly owed, so editing anything under a phase directory that shipped months ago
-    makes it `touched` and demands a Breaker run over code that already landed - a remedy that does
-    not exist. `--all` must not block on it either, which is why this is not scoping.
+    makes it `touched` and demands a Breaker run over code that already landed - an obligation this
+    change itself created. `--all` must not block on it either, which is why this is not scoping.
     """
     root = git_repo(tmp_path)
     write_spec(root, "1-core", "1.1-a", criticality=None)
     (phase_dir(root) / "handover.md").write_text("# card\n")
 
     assert breaker_gate.check(root, enforce_all=True) == []
-    assert "CLOSED" in capsys.readouterr().err
+    assert "1-core" in capsys.readouterr().err
+
+
+def test_check_still_reports_a_shipped_phase_that_declared_critical(
+    tmp_path: Path,
+) -> None:
+    """Issue #45's own measured case, and the regression test for it.
+
+    The phase's spec LITERALLY declares `critical`, it closed with a card, and no `breaker.json` was
+    ever written - owed twice on one feature, run neither time. Nothing about that obligation is new,
+    the remedy is available (run the Breaker over the landed code, which is what #45 prescribes), and
+    the shipped exemption must not reach it. Exempting it would leave this sweep able to block only
+    on phases with no card, which the handover hook already holds.
+    """
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality="critical")
+    (phase_dir(root) / "handover.md").write_text("# card\n")
+
+    assert breaker_gate.check(root, enforce_all=True), (
+        "an explicitly-critical phase that shipped with no record is exactly what this audits"
+    )
+
+
+def test_check_reports_a_shipped_phase_that_declared_critical_beside_a_defaulted_one(
+    tmp_path: Path,
+) -> None:
+    """The exemption is per phase, and one spec declaring `critical` is what decides it - the same
+    OR the Breaker itself keys on."""
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality=None)
+    write_spec(root, "1-core", "1.2-b", criticality="critical")
+    (phase_dir(root) / "handover.md").write_text("# card\n")
+
+    assert breaker_gate.check(root, enforce_all=True)
+
+
+def test_check_still_reports_a_shipped_declared_critical_phase_with_a_vacuous_record(
+    tmp_path: Path,
+) -> None:
+    """A record refused by `satisfied()` is not a Breaker run, and the card does not make it one."""
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality="critical")
+    write_breaker(root, {"verdict": "clean", "attacked": []})
+    (phase_dir(root) / "handover.md").write_text("# card\n")
+
+    assert breaker_gate.check(root, enforce_all=True)
+
+
+def test_check_is_clear_on_a_shipped_declared_critical_phase_with_a_valid_record(
+    tmp_path: Path,
+) -> None:
+    """The audit asks for the record, not for the phase to be open: a real one clears it."""
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality="critical")
+    write_breaker(root, {"verdict": "clean", "attacked": ["the credential path"]})
+    (phase_dir(root) / "handover.md").write_text("# card\n")
+
+    assert breaker_gate.check(root, enforce_all=True) == []
 
 
 def test_check_still_holds_an_open_critical_phase(tmp_path: Path) -> None:
-    """The shipped exemption is the card's presence and nothing else: before it is written the
-    phase is OPEN, which is the moment hook_verifier.sh fires on."""
+    """Before the card is written the phase is OPEN, which is the moment hook_verifier.sh fires on -
+    so a defaulted-critical phase is held there, exemption or not."""
     root = git_repo(tmp_path)
     write_spec(root, "1-core", "1.1-a", criticality=None)
+
+    assert breaker_gate.check(root, enforce_all=True)
+
+
+def test_check_still_holds_an_open_declared_critical_phase(tmp_path: Path) -> None:
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality="critical")
 
     assert breaker_gate.check(root, enforce_all=True)
 

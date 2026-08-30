@@ -146,6 +146,21 @@ class PhaseCriticality:
         """The specs whose value came from the default rather than from the spec."""
         return tuple((name, r) for name, r in self.resolutions if r.defaulted)
 
+    @property
+    def declared_critical(self) -> tuple[tuple[str, Resolution], ...]:
+        """The specs whose author WROTE `critical` - never the ones the default put there.
+
+        The distinction between a phase that has been critical since it was written and one issue
+        #101's default newly made critical. Asked by `breaker_gate.check`, which may relax an
+        obligation for the second and must not for the first: a phase whose spec literally declares
+        `critical` and shipped with no record is issue #45's own measured case.
+        """
+        return tuple(
+            (name, r)
+            for name, r in self.resolutions
+            if r.value == CRITICAL and r.source == DECLARED
+        )
+
     def reason(self) -> str:
         """One line saying how this phase reached its value - what the reporting quotes."""
         if not self.resolutions:
