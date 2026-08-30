@@ -9,6 +9,7 @@ Two properties are pinned here, and the first one is checked against the OLD sha
 `cat` must fail the same test that `assemble` passes, or the test is not about the defect.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -123,12 +124,20 @@ class TestPlaceholders:
 
 @pytest.mark.subprocess("pins the CLI's exit codes, which only a process has")
 class TestCLI:
-    def run(self, *argv, cwd):
+    def run(self, *argv, cwd, **env_over):
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            # A pipeline variable inherited from the developer's own shell would decide these
+            # answers instead of the case under test.
+            if not key.startswith(("GATE_", "OPENROUTER_", "AUTHOR_FAMILY"))
+        }
         return subprocess.run(
             [sys.executable, str(SCRIPT), *argv],
             cwd=cwd,
             capture_output=True,
             text=True,
+            env={**env, **env_over},
         )
 
     def test_assemble_exits_zero_and_writes_the_file(self, tmp_path):
@@ -161,6 +170,48 @@ class TestCLI:
         assert proc.returncode == 0
         assert ".env" in proc.stderr
 
+    def test_check_asks_what_a_run_asks_of_the_real_environment(self, tmp_path):
+        """`check` parsed `<root>/.env` alone, so it disagreed with a run in both directions: it
+        refused a placeholder the real environment already overrode, and it passed a pipeline
+        variable exported as a placeholder with no file at all. One rule, one implementation."""
+        proc = self.run(
+            "check",
+            "--root",
+            ".",
+            cwd=tmp_path,
+            GATE_MODEL=f"vendor/{PLACEHOLDER_MARKER}",
+        )
+        assert proc.returncode == 1
+        assert "GATE_MODEL" in proc.stderr
+
+    def test_check_lets_the_real_environment_win_over_the_file(self, tmp_path):
+        (tmp_path / ".env").write_text(
+            f"GATE_MODEL={PLACEHOLDER_MARKER}\n", encoding="utf-8"
+        )
+        proc = self.run(
+            "check", "--root", ".", cwd=tmp_path, GATE_MODEL="google/gemini-3.1-pro"
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    def test_check_names_the_provider_it_assumed_when_none_was_given(self, tmp_path):
+        proc = self.run("check", "--root", ".", cwd=tmp_path)
+        assert proc.returncode == 0
+        assert "opencode" in proc.stderr
+
+    def test_check_scopes_the_openrouter_key_to_the_named_provider(self, tmp_path):
+        env = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}"}
+        assert (
+            self.run(
+                "check", "--root", ".", "--provider", "opencode", cwd=tmp_path, **env
+            ).returncode
+            == 0
+        )
+        refused = self.run(
+            "check", "--root", ".", "--provider", "openrouter", cwd=tmp_path, **env
+        )
+        assert refused.returncode == 1
+        assert "OPENROUTER_API_KEY" in refused.stderr
+
 
 class TestWhatARunRefuses:
     """`run_placeholders` is scoped: the project's own `.env` keys, plus the pipeline's variables."""
@@ -176,6 +227,43 @@ class TestWhatARunRefuses:
     def test_an_unrelated_tools_placeholder_never_wedges_the_gate(self, tmp_path):
         env = {"SOME_OTHER_TOOL_TOKEN": PLACEHOLDER_MARKER}
         assert run_placeholders(env, tmp_path) == []
+
+
+class TestScopedToTheResolvedProvider:
+    """A key the run's provider never reads cannot stop that run.
+
+    `OPENROUTER_API_KEY` is read by `gate_runner.call_openrouter` alone. Under `opencode` - the
+    runner's own default - an operator who correctly never obtained an OpenRouter key would
+    otherwise get `cause=config` on every gate call with a remedy that is not theirs to apply.
+    """
+
+    def test_openrouters_key_is_ignored_when_the_run_uses_opencode(self, tmp_path):
+        env = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}"}
+        assert run_placeholders(env, tmp_path, provider="opencode") == []
+
+    def test_openrouters_key_is_refused_when_the_run_uses_openrouter(self, tmp_path):
+        env = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}"}
+        assert run_placeholders(env, tmp_path, provider="openrouter") == [
+            "OPENROUTER_API_KEY"
+        ]
+
+    @pytest.mark.parametrize("provider", ["opencode", "openrouter"])
+    def test_a_provider_independent_variable_is_refused_under_both(
+        self, tmp_path, provider
+    ):
+        env = {"GATE_MODEL": f"vendor/{PLACEHOLDER_MARKER}"}
+        assert run_placeholders(env, tmp_path, provider=provider) == ["GATE_MODEL"]
+
+    @pytest.mark.parametrize("provider", ["opencode", "openrouter"])
+    def test_the_projects_own_env_is_in_scope_under_both(self, tmp_path, provider):
+        """The operator wrote that file; every key in it is theirs to fill in."""
+        (tmp_path / ".env").write_text(
+            f"OPENROUTER_API_KEY={PLACEHOLDER_MARKER}\n", encoding="utf-8"
+        )
+        env = {"OPENROUTER_API_KEY": PLACEHOLDER_MARKER}
+        assert run_placeholders(env, tmp_path, provider=provider) == [
+            "OPENROUTER_API_KEY"
+        ]
 
     def test_the_real_environment_wins_over_the_file(self, tmp_path):
         (tmp_path / ".env").write_text(

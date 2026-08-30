@@ -280,16 +280,34 @@ def test_a_lock_that_wedges_is_not_reported_as_a_bare_timeout(gate) -> None:
 # A placeholder value must stop a run rather than become its configuration (issue #108). The
 # templates ship `REPLACE_ME` in every value the operator must fill in, and an unfilled `.env` used
 # to reach the provider as a credential - answered with an authentication error that says nothing
-# about the file that caused it.
+# about the file that caused it. These run on the stubbed `opencode` provider, so the key they are
+# pinned on is one that provider actually reads.
 def test_a_replace_me_value_in_the_env_stops_the_run_before_any_call(gate) -> None:
+    (gate.tmp / ".env").write_text("GATE_MODEL=vendor/REPLACE_ME\n", encoding="utf-8")
+    result = gate("good")
+    assert result.returncode == 2
+    assert "cause=config" in result.stderr
+    assert "GATE_MODEL" in result.stderr
+    assert "REPLACE_ME" in result.stderr
+
+
+def test_a_key_the_resolved_provider_never_reads_does_not_stop_the_run(gate) -> None:
+    """`OPENROUTER_API_KEY` is read by `call_openrouter` alone. Under `opencode` - the runner's own
+    default - refusing on it hands the operator a remedy that is not theirs to apply: obtain an
+    OpenRouter key for a provider they correctly never configured. A wedge, not a gate."""
+    result = gate("good", OPENROUTER_API_KEY="sk-or-v1-REPLACE_ME")
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_projects_own_env_is_in_scope_whatever_the_provider(gate) -> None:
+    """The operator wrote that file, so every key in it is theirs to fill in - the scoping narrows
+    what is read out of the real ENVIRONMENT, never what the project itself declared."""
     (gate.tmp / ".env").write_text(
         "OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME\n", encoding="utf-8"
     )
     result = gate("good")
     assert result.returncode == 2
-    assert "cause=config" in result.stderr
     assert "OPENROUTER_API_KEY" in result.stderr
-    assert "REPLACE_ME" in result.stderr
 
 
 def test_a_filled_in_env_reaches_the_provider(gate) -> None:

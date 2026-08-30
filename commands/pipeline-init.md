@@ -16,10 +16,12 @@ write no production code.
    ```
 
    It reports, and never blocks: whether the project already owns `.env.example` (then the pipeline's
-   template goes to `.env.pipeline.example`, never over the project's file), whether a live `.env` or
-   `.no-mistakes.yaml` is already there, and whether `cosmic-ray.toml` is missing — **named here
-   rather than at step 8, because two later steps require it and neither can create it.** Report
-   every line of it to the user; the steps below act on it.
+   template goes to `.env.pipeline.example`, never over the project's file) or whether that file is
+   the **pipeline's own** from an earlier init (told apart by its content, and then refreshed in
+   place rather than copied a second time), whether a live `.env` or `.no-mistakes.yaml` is already
+   there, and whether `cosmic-ray.toml` is missing — **named here rather than at step 8, because two
+   later steps require it and neither can create it**, and the report carries the config to write
+   rather than a path to it. Report every line of it to the user; the steps below act on it.
 
 1. **Artifact tree.** Create `docs/features/`; if a feature id was given, also
    `docs/features/<id>/` and `docs/features/<id>/phases/`.
@@ -61,7 +63,11 @@ write no production code.
    `GATE_MODEL` (the spec gate's observe pass) and `GATE_TRIAGE_MODEL` (its triage pass) must not
    share `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. **A value left holding
    `REPLACE_ME` stops the run, it does not become the config**: `gate_runner.py` refuses before any
-   provider call, naming the key, and `env_assemble.py check` asks the same question on demand.
+   provider call, naming the key. The refusal is scoped to what the run reads — every key the
+   project's own `.env` declares, plus the pipeline variables the **resolved provider** uses, so
+   `OPENROUTER_API_KEY` from the environment never wedges an `opencode` run. `env_assemble.py check
+   --provider <opencode|openrouter>` asks that same question, through the same function, on demand;
+   with no provider named it assumes `opencode`, the runner's own default, and says so.
    Every gate loads this file via `scripts/load_env.sh`; the real environment always wins over it.
 
 2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to

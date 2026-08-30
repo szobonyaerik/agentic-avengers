@@ -19,12 +19,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from pipeline_init import (  # noqa: E402
     PIPELINE_EXAMPLE,
     PROJECT_EXAMPLE,
+    TEMPLATE_PATH,
     report_lines,
     survey,
 )
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "pipeline_init.py"
+
+#: The artifact this command writes. Reading it here is reading the survey's own input, not a
+#: source file used as a proxy: the question under test is what the survey answers ABOUT it.
+SHIPPED_TEMPLATE = TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
 class TestGreenfield:
@@ -66,6 +71,77 @@ class TestNonGreenfield:
         found = survey(tmp_path)
         assert found.env_exists
         assert "never overwrite" in "\n".join(report_lines(found)).lower()
+
+
+class TestTellingThePipelinesOwnTemplateApart:
+    """A second `/pipeline-init` must not report the file IT wrote as the project's own.
+
+    Reported as the project's, the pipeline writes a second copy of the same template to
+    `.env.pipeline.example` and leaves the older one first in the assemble order.
+    """
+
+    def test_an_env_example_that_is_the_shipped_template_is_reported_as_the_pipelines(
+        self, tmp_path
+    ):
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.env_example_written_by_pipeline
+        assert not found.env_example_owned_by_project
+        assert (
+            found.template_target == PROJECT_EXAMPLE
+        )  # refreshed in place, never a second copy
+        assert not found.greenfield  # an initialised repo is not a fresh one
+
+    def test_an_operator_filling_in_a_value_does_not_make_it_the_projects_own(
+        self, tmp_path
+    ):
+        edited = SHIPPED_TEMPLATE.replace("REPLACE_ME", "sk-or-v1-real") + "\n# mine\n"
+        (tmp_path / PROJECT_EXAMPLE).write_text(edited, encoding="utf-8")
+
+        assert survey(tmp_path).env_example_written_by_pipeline
+
+    def test_the_projects_own_file_is_still_the_projects_own(self, tmp_path):
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.env_example_owned_by_project
+        assert not found.env_example_written_by_pipeline
+        assert found.template_target == PIPELINE_EXAMPLE
+
+    def test_an_unreadable_template_falls_back_to_the_projects_own(
+        self, tmp_path, capsys
+    ):
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+
+        found = survey(tmp_path, template=tmp_path / "not-shipped" / "env.example")
+
+        assert found.env_example_owned_by_project  # conservative: never overwrite it
+        assert not found.env_example_written_by_pipeline
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert "cannot read the shipped template" in capsys.readouterr().err
+
+    def test_the_report_names_the_pipelines_own_file_as_such(self, tmp_path):
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+
+        text = "\n".join(report_lines(survey(tmp_path)))
+
+        assert "PIPELINE's own template" in text
+
+
+class TestTheCosmicRayRemedyTravels:
+    """The remedy pointed at `AVENGERS.md`, which `install.sh` does not vendor while it DOES vendor
+    this script - so a vendored consumer got a remedy naming a file it does not have."""
+
+    def test_the_report_carries_the_config_rather_than_a_path_to_it(self, tmp_path):
+        text = "\n".join(report_lines(survey(tmp_path)))
+
+        assert "AVENGERS.md" not in text
+        assert "[cosmic-ray]" in text
+        assert "module-path" in text
+        assert "test-command" in text
 
 
 class TestTheReportNamesBothHalves:

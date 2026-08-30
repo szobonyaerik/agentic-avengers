@@ -102,6 +102,10 @@ repository that turned `DRY_RUN=true` into `DRY_RUN=false` on every worktree, si
 of a task (issue #108). `env_assemble.py` joins with an explicit separator and reads every declared
 key back out of the result; a key that did not survive stops the step and nothing is written. Fill in
 every `REPLACE_ME` before the first gate call — a run is refused while one is left, naming the key.
+The refusal is scoped to what your run actually reads: every key your own `.env` declares, plus the
+pipeline variables the **resolved provider** uses, so a key that provider never sends anywhere
+(`OPENROUTER_API_KEY` under `GATE_PROVIDER=opencode`) can never wedge a gate. Ask on demand with
+`python3 "$AV/scripts/env_assemble.py" check --provider <opencode|openrouter>`.
 
 Re-running `install.sh <target> --check` later classifies each file NEW / UPDATE / SAME / **DRIFT**
 (your local edits — skipped, never clobbered) / **GONE**. `--prune` removes upstream-deleted files you

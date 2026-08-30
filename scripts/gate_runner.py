@@ -37,12 +37,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from env_assemble import PLACEHOLDER_MARKER, run_placeholders  # noqa: E402
 from gate_errors import GateError, classify_provider_failure  # noqa: E402
 from gate_plausibility import FloorMisconfigured, implausible, provider_floor_ms  # noqa: E402
 from gate_timeouts import call_timeout  # noqa: E402
 from model_vendors import UnknownVendor, model_family  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
+
+# The placeholder refusal, when the runtime has it. `env_assemble` imports `env_file` at its own
+# module top, so importing it unconditionally would defeat the vendored-without-env_file fail-open
+# path below by raising before it: every gate call would die at import with an uncaught traceback
+# and exit 1, which on this runner already means something else. A runtime that cannot import the
+# check does not silently stop refusing placeholders - it says so, once, at the point it would
+# have asked.
+try:
+    from env_assemble import PLACEHOLDER_MARKER, run_placeholders
+except (
+    ImportError
+):  # pragma: no cover - vendored without env_assemble.py or env_file.py
+    PLACEHOLDER_MARKER = "REPLACE_ME"
+    run_placeholders = None
 
 # Every gate call in the pipeline passes through this file, so this is where a gate call gets
 # recorded — once, rather than once per caller. Measurement, never a gate: `record_gate_call`
@@ -484,16 +497,29 @@ def main():
         # the operator must fill in, and an unfilled `.env` used to reach the provider as a
         # credential — answered with an authentication error that says nothing about the file that
         # caused it. Asked here, before any call: the run stops with the key named (issue #108).
-        unfilled = run_placeholders(
-            os.environ, os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()
-        )
-        if unfilled:
-            raise GateError(
-                "config",
-                f"these values still carry {PLACEHOLDER_MARKER}: {', '.join(unfilled)}. "
-                "A placeholder must never become a run's configuration — fill them in "
-                "(the project .env, or the real environment).",
+        # Scoped to the RESOLVED provider: `OPENROUTER_API_KEY` is read by `call_openrouter`
+        # alone, so under `opencode` a placeholder in it stops nothing — the remedy would be
+        # "obtain an OpenRouter key", which is not the operator's to apply.
+        if run_placeholders is None:
+            print(
+                "gate_runner: the placeholder check is unavailable (env_assemble.py could not be "
+                f"imported) — a value still carrying {PLACEHOLDER_MARKER} will NOT be refused "
+                "here. Vendor scripts/env_assemble.py and scripts/env_file.py to restore it.",
+                file=sys.stderr,
             )
+        else:
+            unfilled = run_placeholders(
+                os.environ,
+                os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd(),
+                provider=args.provider,
+            )
+            if unfilled:
+                raise GateError(
+                    "config",
+                    f"these values still carry {PLACEHOLDER_MARKER}: {', '.join(unfilled)}. "
+                    "A placeholder must never become a run's configuration — fill them in "
+                    "(the project .env, or the real environment).",
+                )
 
         # Cross-family invariant: a gate must not run on the author's family. An operator can
         # waive it explicitly (--same-family-waiver / GATE_SAME_FAMILY_WAIVER) when there is no
