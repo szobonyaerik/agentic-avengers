@@ -275,12 +275,48 @@ def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:
     return record.describe() if record else None
 
 
+def unreadable_artifacts(phase_dir: Path) -> list[str]:
+    """A finding per artifact this module reads for the phase but cannot decode.
+
+    The readers above skip what they cannot decode, which is right for THEM - a mapping that yields
+    no rows and one that could not be opened both contribute nothing to a set. It is wrong for the
+    phase's verdict: an unreadable `test-mapping.md` made `traced_ids` return nothing, so a spec
+    whose requirements are all `binding: none` produced a fully CLEAN precheck over an artifact
+    nothing could read, and a spec with owed ids produced the misattributed finding "appears in no
+    test-mapping.md row" whose remedy is to add a row that is already there. An undecodable test
+    file does the mirror, hiding real definitions so a live row reads as naming a missing test.
+
+    So the decision is made once, here, and named: an unreadable artifact is an UNDECIDABLE check,
+    never an absent obligation. Failing closed is the point - the same answer the reads gave before
+    the decode handlers were widened, minus the traceback.
+    """
+    out: list[str] = []
+    targets = sorted(phase_dir.glob("specs/*/test-mapping.md"))
+    tests = _test_root(phase_dir)
+    if tests is not None:
+        targets += [
+            p for p in sorted(tests.rglob("*.py")) if "__pycache__" not in p.parts
+        ]
+    for path in targets:
+        try:
+            path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            out.append(
+                f"{path}: unreadable ({exc}). Nothing this check derives from it can be trusted, "
+                f"so the phase is not clean - it is undecided."
+            )
+        except OSError:
+            continue
+    return out
+
+
 def check_phase(phase_dir: Path) -> list[str]:
     """Every mechanical finding for one phase, as lines. Empty means clean."""
     out: list[str] = []
     specs = sorted(phase_dir.glob("specs/*/spec.md"))
     if not specs:
         return out
+    out.extend(unreadable_artifacts(phase_dir))
     traced = traced_ids(phase_dir)
     out.extend(trace_claims(phase_dir))
 

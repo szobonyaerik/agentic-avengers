@@ -470,6 +470,43 @@ def test_check_only_counts_a_phase_the_diff_does_not_touch(tmp_path: Path) -> No
     )
 
 
+def test_check_counts_a_shipped_phase_rather_than_blocking_on_it(
+    tmp_path: Path, capsys
+) -> None:
+    """A phase that wrote its handover.md is CLOSED, and §3a says a closed phase is counted and
+    named, never blocked.
+
+    Diff scoping alone does not cover this: issue #101's default makes a phase whose specs omit
+    `criticality` newly owed, so editing anything under a phase directory that shipped months ago
+    makes it `touched` and demands a Breaker run over code that already landed - a remedy that does
+    not exist. `--all` must not block on it either, which is why this is not scoping.
+    """
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality=None)
+    (phase_dir(root) / "handover.md").write_text("# card\n")
+
+    assert breaker_gate.check(root, enforce_all=True) == []
+    assert "CLOSED" in capsys.readouterr().err
+
+
+def test_check_still_holds_an_open_critical_phase(tmp_path: Path) -> None:
+    """The shipped exemption is the card's presence and nothing else: before it is written the
+    phase is OPEN, which is the moment hook_verifier.sh fires on."""
+    root = git_repo(tmp_path)
+    write_spec(root, "1-core", "1.1-a", criticality=None)
+
+    assert breaker_gate.check(root, enforce_all=True)
+
+
+def test_due_is_unchanged_by_the_sweeps_shipped_boundary(tmp_path: Path) -> None:
+    """`due()` is what the handover hook asks, and the hook fires ON the write - so a card already
+    on disk must not make the obligation disappear there."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    (phase_dir(tmp_path) / "handover.md").write_text("# card\n")
+
+    assert breaker_gate.due(phase_dir(tmp_path)) is not None
+
+
 def test_check_enforces_nothing_when_git_cannot_say_what_changed(
     tmp_path: Path,
 ) -> None:

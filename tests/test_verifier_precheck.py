@@ -551,12 +551,52 @@ def test_an_undecodable_spec_is_reported_by_name_not_raised(phase: Path) -> None
     assert any(str(spec) in line for line in findings)
 
 
-def test_an_undecodable_test_mapping_does_not_raise(phase: Path) -> None:
-    """Same class, the sibling artifact this module also reads on the same call."""
+def test_an_undecodable_test_mapping_is_reported_by_name(phase: Path) -> None:
+    """Same class, the sibling artifact this module also reads on the same call.
+
+    "No exception escaped" is not evidence about what the check DECIDED: the readers skip what they
+    cannot decode, so without this the phase reported clean over an artifact nothing could read.
+    """
     spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
     stamp(spec)
-    (phase / "specs" / "1.1-a" / "test-mapping.md").write_bytes(
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.write_bytes(
         b"| requirement | test | level |\n|---|---|---|\n| R1.1.1 | caf\xe9 | integration |\n"
     )
 
-    assert isinstance(check_phase(phase), list)
+    findings = check_phase(phase)
+
+    assert any(str(mapping) in line and "unreadable" in line for line in findings)
+
+
+def test_an_undecodable_mapping_is_never_a_clean_pass(phase: Path) -> None:
+    """The silent-clean-pass shape exactly: every requirement is `binding: none`, so no id is owed
+    and nothing else can produce a finding. The unreadable artifact must still be reported."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
+    stamp(spec)
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.write_bytes(
+        b"| requirement | test | level |\n|---|---|---|\n| caf\xe9 | x | none |\n"
+    )
+
+    findings = check_phase(phase)
+
+    assert findings != []
+    assert any(str(mapping) in line for line in findings)
+
+
+def test_an_undecodable_phase_test_file_is_reported_rather_than_hiding_its_tests(
+    phase: Path,
+) -> None:
+    """The mirror direction: an undecodable test file makes its real definitions invisible, so a
+    live row reads as naming a missing test. The unreadable file is named instead."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_real | integration |\n")
+    write_phase_tests(phase, "def test_real():\n    assert True\n")
+    broken = phase.parents[3] / "tests" / "demo" / "1-core" / "test_broken.py"
+    broken.write_bytes(b"# caf\xe9\ndef test_other():\n    assert True\n")
+
+    findings = check_phase(phase)
+
+    assert any(str(broken) in line and "unreadable" in line for line in findings)

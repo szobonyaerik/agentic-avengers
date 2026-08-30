@@ -241,6 +241,15 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     this rule existed. `hook_verifier.sh` enforces it on the phase being closed - which is a phase the
     diff touches by construction - so nothing is lost by scoping the sweep; `--all` is the audit for
     anyone who wants it.
+
+    **A phase that has written its `handover.md` is SHIPPED, and is counted rather than blocked** -
+    §3a's applicability boundary, the same evidence `pipeline_state._phase_state` reads by asking
+    the Breaker question only before the card exists. Diff scoping alone does not cover this: issue
+    #101's default makes a phase whose specs omit `criticality` resolve to `critical`, so editing
+    any file under a phase directory that closed months ago - its card, its ledger - makes it
+    `touched` and newly owed, and the only remedy on closed work is a Breaker run over shipped code.
+    That is the wedge §3a exists to prevent. The OPEN moment still enforces: `hook_verifier.sh`
+    fires on the handover WRITE, before the card is on disk, and `due()` is unchanged.
     """
     phases = closed_phases(root)
     if not phases:
@@ -263,14 +272,24 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
 
     problems: list[str] = []
     unenforced = 0
+    shipped: list[str] = []
     for phase in phases:
         reason = due(phase)
         if reason is None:
+            continue
+        if (Path(phase) / "handover.md").is_file():
+            shipped.append(str(phase))
             continue
         if enforce_all or applicability.touched(phase, scope):  # type: ignore[arg-type]
             problems.append(reason)
         else:
             unenforced += 1
+    applicability.report_unenforced(
+        "breaker_gate",
+        len(shipped),
+        "phase(s) already wrote handover.md and are CLOSED - a Breaker run over shipped code is a "
+        f"remedy that does not exist, so they are named rather than blocked: {', '.join(shipped)}",
+    )
     applicability.report_unenforced(
         "breaker_gate",
         unenforced,
