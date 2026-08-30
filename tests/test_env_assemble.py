@@ -12,6 +12,7 @@ Two properties are pinned here, and the first one is checked against the OLD sha
 import os
 import subprocess
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -327,7 +328,7 @@ class TestTheWriteIsAtomic:
                 "not this repository's git work tree, so its ignore rules cannot be asked"
             )
 
-        leftover = f"{env_assemble.TEMP_PREFIX}probe{env_assemble.TEMP_SUFFIX}"
+        leftover = env_assemble.TEMP_GITIGNORE_PATTERN.replace("*", "probe")
 
         proc = subprocess.run(
             ["git", "-C", str(REPO), "check-ignore", "-q", leftover],
@@ -338,6 +339,82 @@ class TestTheWriteIsAtomic:
             f"{leftover} is not ignored - a leftover temp file holding live credentials would be "
             f"reported untracked and committed by `git add -A`"
         )
+
+    def test_the_declared_pattern_matches_the_name_the_writer_actually_produces(
+        self, tmp_path, monkeypatch
+    ):
+        """The other half: the gitignore test above asks git about the DECLARED pattern, so that
+        pattern has to be the one the writer's real temp names fall under. Otherwise the two copies
+        on disk could be held to a declaration the code had drifted away from."""
+        seen = []
+        real_mkstemp = env_assemble.tempfile.mkstemp
+
+        def record(*args, **kwargs):
+            handle, name = real_mkstemp(*args, **kwargs)
+            seen.append(Path(name).name)
+            return handle, name
+
+        monkeypatch.setattr(env_assemble.tempfile, "mkstemp", record)
+
+        assemble([self.template(tmp_path)], tmp_path / ".env")
+
+        assert seen
+        for name in seen:
+            assert fnmatch(name, env_assemble.TEMP_GITIGNORE_PATTERN)
+
+    def test_a_symlinked_destination_is_written_through_rather_than_replaced(
+        self, tmp_path
+    ):
+        """A worktree whose `.env` links to a shared canonical file - the pattern this repository's
+        own multi-worktree setup uses - must not be silently detached from it.
+
+        `os.replace` replaces the LINK where the `write_text` this took over from followed it, so
+        the documented merge reported success while turning the link into a private regular file:
+        the shared file kept its old contents, later edits there stopped applying, and the merged
+        credentials now lived in a second copy with nothing saying so.
+        """
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        canonical = shared / "env"
+        canonical.write_text("OPENROUTER_API_KEY=sk-or-v1-real\n", encoding="utf-8")
+
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        live = worktree / ".env"
+        live.symlink_to(Path("..") / "shared" / "env")
+        template = self.template(worktree)
+
+        assemble([template, live], live, force=True)
+
+        assert live.is_symlink()
+        assert live.resolve() == canonical.resolve()
+        merged = parse(canonical.read_text())
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+        assert merged["GATE_MODEL"] == parse(SHIPPED_TEMPLATE)["GATE_MODEL"]
+        assert sorted(q.name for q in worktree.iterdir()) == [
+            ".env",
+            ".env.pipeline.example",
+        ]
+
+    def test_a_symlinked_destinations_mode_is_taken_from_the_file_it_points_at(
+        self, tmp_path
+    ):
+        """`stat()` follows a link too, so the widening this guards against reappears one
+        indirection out unless the mode is read from and applied to the resolved file."""
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        canonical = shared / "env"
+        canonical.write_text("OPENROUTER_API_KEY=sk-or-v1-real\n", encoding="utf-8")
+        os.chmod(canonical, 0o600)
+
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        live = worktree / ".env"
+        live.symlink_to(canonical)
+
+        assemble([self.template(worktree), live], live, force=True)
+
+        assert canonical.stat().st_mode & 0o777 == 0o600
 
     def test_the_destination_is_replaced_rather_than_opened_for_truncation(
         self, tmp_path

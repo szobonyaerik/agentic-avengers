@@ -101,6 +101,114 @@ class TestNonGreenfield:
         assert f"--out .env {PROJECT_EXAMPLE}" not in text
 
 
+class TestTheMergeNamesTheOperatorsOwnPipelineConfig:
+    """The merge names exactly two files, so its one non-live source must be the file carrying the
+    operator's decisions - never whichever pristine copy happens to be on disk first.
+
+    Answering that with "which file holds the shipped template" dropped them: with a pristine
+    `.env.example` beside a filled-in `.env.pipeline.example`, the merge named the pristine one and
+    the assembled `.env` came back with shipped defaults for the operator's chosen model and
+    mutation policy. Nothing reported it - the values parse, the read-back passes because a source
+    declared them, and a default carries no `REPLACE_ME`. The CREATE branch got that state right, so
+    the two branches disagreed about one file in one repository, and this is the branch that writes
+    a live `.env`.
+    """
+
+    def live(self, tmp_path):
+        path = tmp_path / ".env"
+        path.write_text("OPENROUTER_API_KEY=sk-or-v1-real\n", encoding="utf-8")
+        return path
+
+    def merged(self, tmp_path, found):
+        assemble(
+            [tmp_path / name for name in found.merge_sources],
+            tmp_path / ".env",
+            force=True,
+        )
+        return parse((tmp_path / ".env").read_text())
+
+    def test_a_pristine_project_example_never_displaces_an_edited_pipeline_one(
+        self, tmp_path
+    ):
+        """The reported reproduction, end to end through the real assembler."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        (tmp_path / PIPELINE_EXAMPLE).write_text(
+            "GATE_MODEL=deepseek/deepseek-chat\nMUTATION_POLICY=enforce\n",
+            encoding="utf-8",
+        )
+        self.live(tmp_path)
+
+        found = survey(tmp_path)
+
+        assert found.merge_sources == (PIPELINE_EXAMPLE, ".env")
+        merged = self.merged(tmp_path, found)
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["MUTATION_POLICY"] == "enforce"
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+
+    def test_the_mirror_state_names_the_pipelines_file_too(self, tmp_path):
+        """Neither file is privileged by name: with the project's own example edited and the
+        pipeline's pristine, the merge still names the PIPELINE's, because an edited
+        `.env.example` is a file the project owns and its dummies must not reach a live `.env`."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "DRY_RUN=false\nBINANCE_API_KEY=your_api_key_here\n", encoding="utf-8"
+        )
+        (tmp_path / PIPELINE_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        self.live(tmp_path)
+
+        found = survey(tmp_path)
+
+        assert found.merge_sources == (PIPELINE_EXAMPLE, ".env")
+        merged = self.merged(tmp_path, found)
+        assert "DRY_RUN" not in merged
+        assert "BINANCE_API_KEY" not in merged
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+
+    def test_both_edited_names_the_pipelines_file_and_agrees_with_the_create_branch(
+        self, tmp_path
+    ):
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "GATE_MODEL=google/gemini-3.1-pro-preview\n", encoding="utf-8"
+        )
+        (tmp_path / PIPELINE_EXAMPLE).write_text(
+            "GATE_MODEL=deepseek/deepseek-chat\n", encoding="utf-8"
+        )
+        self.live(tmp_path)
+
+        found = survey(tmp_path)
+
+        assert found.merge_sources == (PIPELINE_EXAMPLE, ".env")
+        # The create branch names the same file LAST, so it wins there too: one answer, two shapes.
+        assert found.assemble_sources[-1] == PIPELINE_EXAMPLE
+        assert self.merged(tmp_path, found)["GATE_MODEL"] == "deepseek/deepseek-chat"
+
+    def test_a_greenfield_init_wrote_the_template_to_env_example_and_that_is_named(
+        self, tmp_path
+    ):
+        """A repository that had no examples gets the template at `.env.example`, so THERE that
+        file is the pipeline's own - and the merge names it rather than a `.env.pipeline.example`
+        nothing created."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        self.live(tmp_path)
+
+        found = survey(tmp_path)
+
+        assert found.merge_sources == (PROJECT_EXAMPLE, ".env")
+        assert (tmp_path / found.merge_sources[0]).is_file()
+
+    def test_an_edited_project_example_alone_still_waits_for_the_pipelines_own(
+        self, tmp_path
+    ):
+        """The project owns `.env.example` here, so it is never the merge's source; step 2a is
+        about to write the template to `.env.pipeline.example` and that is what is named."""
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=false\n", encoding="utf-8")
+        self.live(tmp_path)
+
+        found = survey(tmp_path)
+
+        assert found.merge_sources == (PIPELINE_EXAMPLE, ".env")
+
+
 class TestTheAssembleCommandNamesFilesThatExist:
     """Which example files exist decides the template's target AND the source list.
 

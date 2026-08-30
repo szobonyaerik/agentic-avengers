@@ -137,7 +137,18 @@ values parse, survive the read-back and carry no `REPLACE_ME`, so nothing report
 **Form (b) names the pipeline's example and your live file, and no other example** — while form
 (a), which is CREATING the file, names every example that exists, because one left out there is one
 whose values revert to another file's. That asymmetry is in the SOURCE SET, not the principle, and
-it is deliberate. Last-wins protects every key
+it is deliberate.
+
+The one example (b) names is **the file carrying YOUR pipeline configuration**: an edited
+`.env.pipeline.example` when you have one, otherwise whichever file holds the shipped template (a
+greenfield init writes it to `.env.example`, and there that file is the pipeline's own), otherwise
+the target step 0 named. Form (a) asks a different question of the same disk — which file HOLDS the
+template, since there it supplies only what nothing else declares. Answering both with that first
+question dropped your decisions: a pristine `.env.example` beside the `.env.pipeline.example` you
+filled in made the merge name the pristine one, and your live `.env` came back with the shipped
+`GATE_MODEL` and `MUTATION_POLICY`, parsing cleanly and carrying no `REPLACE_ME` to catch it.
+
+Last-wins protects every key
 your live `.env` already declares; it does nothing for a key your `.env` OMITS, and that key would
 arrive carrying the project example's value — and an example's values are dummies and defaults by
 construction (`your_api_key_here`, a `DRY_RUN=false` default). A committed `.env.example` that has

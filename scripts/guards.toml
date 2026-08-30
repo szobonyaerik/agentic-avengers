@@ -981,6 +981,34 @@ replace = '''
         return self.template_target'''
 
 [[guard]]
+id = "pipeline-init.merge-names-the-operators-config"
+implements = "scripts/pipeline_init.py"
+defect = "A merge names exactly two files, and its one non-live source was resolved with `which file HOLDS the shipped template` - the right question for the create branch and the wrong one here. With `.env.example` byte-identical to the shipped template and `.env.pipeline.example` the copy the operator had filled in, the merge named the PRISTINE one and the assembled live `.env` came back carrying `GATE_MODEL=google/gemini-3.1-pro-preview` and `MUTATION_POLICY=advisory` instead of the chosen `deepseek/deepseek-chat` and `enforce`. Nothing reported it: the values parse, the read-back passes because a source declared them, and a default carries no `REPLACE_ME`. The create branch got that state right, so the two branches disagreed about one file in one repository."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        if PIPELINE_EXAMPLE in self.existing_examples and not self.is_fresh_template(
+            PIPELINE_EXAMPLE
+        ):
+            return PIPELINE_EXAMPLE
+        return self.pipeline_example'''
+replace = '''
+        return self.pipeline_example'''
+
+[[guard]]
+id = "env-assemble.symlinked-destination"
+implements = "scripts/env_assemble.py"
+defect = "`os.replace` replaces the SYMLINK at the destination where the `write_text` it took over from followed it. A worktree whose `.env` links to a shared canonical file - the pattern this repository's own multi-worktree setup uses - was silently detached: the command reported success, the link became a private regular file holding the merged credentials, the shared file kept its old contents, and later edits there stopped applying. `stat()` follows a link too, so the mode carried onto the replacement was the target's rather than the link's."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = '''
+    target = Path(os.path.realpath(out)) if out.is_symlink() else out'''
+replace = '''
+    target = out'''
+
+[[guard]]
 id = "env-assemble.temp-file-cleanup"
 implements = "scripts/env_assemble.py"
 defect = "The temp file holding the FULLY MERGED result - on the merge-in-place path, the operator's real credentials - was unlinked only in `except OSError`. `KeyboardInterrupt` and `SystemExit` are `BaseException`, and a Ctrl-C or a hook-budget SIGTERM between `mkstemp` and `os.replace` is the exact scenario the atomic write exists for, so the fix traded a truncated `.env` for a credential file left in the working tree."

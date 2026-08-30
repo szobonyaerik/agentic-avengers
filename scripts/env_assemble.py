@@ -44,7 +44,9 @@ source.** `assemble` reads every source before it writes anything, so `--out .en
 declares wins over the template's default for the same key, every pipeline key it does not have is
 added, and the read-back then proves every key it declared survived into the result. A `.env`
 written any other way is how the pipeline's keys end up somewhere no gate reads, since
-`env_file.find_env_file` looks for `.env` and nothing else.
+`env_file.find_env_file` looks for `.env` and nothing else. **The one example it names is the file
+carrying the operator's PIPELINE configuration** (`pipeline_init.Survey.merge_example`), which is a
+different question from the create form's - see there.
 
 **The CREATE form obeys the same principle: the more operator-owned file goes later.** What decides
 which that is, is CONTENT. An example still byte-identical to the shipped `docs/templates/env.example`
@@ -55,8 +57,10 @@ last, a freshly copied template reverted a team's committed `GATE_MODEL`, `GATE_
 `.env.pipeline.example` lost every key it shares with `.env.example` - and the two derive from the
 same template, so they share all of them. Content and not PRESENCE, because `/pipeline-init` step
 2a's own `cp -n` changes presence, so a presence rule answered one way before that copy and the
-reverse after it. `pipeline_init.Survey` is the one place that decides both source lists; nothing
-else restates them.
+reverse after it. `pipeline_init.Survey` is the one place that decides both source lists - and it
+answers the two branches SEPARATELY (`pipeline_example` for this one, `merge_example` for the
+merge), because they ask different questions and one shared answer dropped the operator's config on
+the branch that writes a live `.env`. Nothing else restates them.
 
 There is no prompt and no conflict-resolution mode; the order IS the resolution. Re-merging is not
 idempotent either: the template's text is appended again each time, which parses correctly because
@@ -205,16 +209,27 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
 #: step-2 list `commands/pipeline-init.md` makes every project write - two places, and no more.
 TEMP_PREFIX = ".env-assemble."
 TEMP_SUFFIX = ".tmp"
-#: What those two places must carry. Stated here, beside the name it describes, so a test can ask
-#: git itself rather than a second copy of the literal.
+#: What those two places must carry, derived from the name above rather than restated. It is the
+#: thing under test: `tests/test_env_assemble.py` builds a probe out of THIS pattern, asks git
+#: whether it is ignored, and separately asserts a name the writer really produces matches it. So
+#: the two copies on disk are held to this one, and this one is held to the writer.
 TEMP_GITIGNORE_PATTERN = f"{TEMP_PREFIX}*{TEMP_SUFFIX}"
 
 
 def _write_atomically(out: Path, text: str) -> None:
-    """Write `text` to `out` without ever truncating it: temp file in the same directory, then
+    """Write `text` to `out` without ever truncating it: temp file beside the destination, then
     `os.replace`. Same directory so the replace is a rename within one filesystem, which is what
     makes it atomic. An existing file's mode is carried over - a `.env` is often chmod 600 and a
     fresh temp file is not.
+
+    A SYMLINKED destination is RESOLVED first, and the write lands on the file the link points at.
+    `os.replace` replaces the link itself where the `write_text` this took over from followed it, so
+    a worktree whose `.env` is symlinked to a shared canonical file - the pattern this repository's
+    own multi-worktree setup uses - reported success while detaching: the link became a private
+    regular file holding the merged credentials, the shared file kept its old contents, later edits
+    there stopped applying, and nothing said so. Resolving also fixes the mode, since `stat()`
+    follows a link too and the mode carried onto the replacement was the target's rather than the
+    link's.
 
     The temp file is removed whenever the `os.replace` did not happen, in a `finally` rather than an
     `except OSError`. `KeyboardInterrupt` and `SystemExit` are `BaseException`, and a Ctrl-C or a
@@ -223,20 +238,21 @@ def _write_atomically(out: Path, text: str) -> None:
     merged credentials left in the working tree. Cleanup alone is still not sufficient, since
     SIGKILL and power loss cannot be caught at all, which is why `TEMP_PREFIX` is also gitignored.
     """
+    target = Path(os.path.realpath(out)) if out.is_symlink() else out
     tmp: Path | None = None
     replaced = False
     try:
         handle, tmp_name = tempfile.mkstemp(
-            dir=str(out.parent), prefix=TEMP_PREFIX, suffix=TEMP_SUFFIX
+            dir=str(target.parent), prefix=TEMP_PREFIX, suffix=TEMP_SUFFIX
         )
         tmp = Path(tmp_name)
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        if out.exists():
-            os.chmod(tmp, out.stat().st_mode & 0o7777)
-        os.replace(tmp, out)
+        if target.exists():
+            os.chmod(tmp, target.stat().st_mode & 0o7777)
+        os.replace(tmp, target)
         replaced = True
     except OSError as exc:
         raise AssemblyError(f"cannot write {out}: {exc}") from exc

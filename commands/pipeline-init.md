@@ -101,6 +101,17 @@ write no production code.
    app's config should CONTAIN, which is exactly what the create form needs and exactly what a merge
    must not import.
 
+   **The one example it names is the file carrying the operator's PIPELINE configuration** — an
+   edited `.env.pipeline.example` when there is one, otherwise whichever file holds the shipped
+   template (a greenfield init writes it to `.env.example`, and there that file is the pipeline's
+   own), otherwise the target step 2a is about to create. The two branches ask different questions
+   of the same disk: the create form needs the file that HOLDS the template, since it supplies only
+   what nothing else declares; the merge needs the file carrying the operator's DECISIONS, since it
+   is the only example named. Answering both with the first question dropped them — a pristine
+   `.env.example` beside a filled-in `.env.pipeline.example` made the merge name the pristine one,
+   and the live `.env` came back with the shipped `GATE_MODEL` and `MUTATION_POLICY` instead of the
+   chosen ones, parsing cleanly, surviving the read-back and carrying no `REPLACE_ME`.
+
    **Never name the live `.env` first**: the template declares `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME`
    and default `GATE_MODEL`, `GATE_PROVIDER`, `AUTHOR_FAMILY` and `MUTATION_POLICY` uncommented, so a
    template read after the live file replaces the operator's real key and silently reverts their

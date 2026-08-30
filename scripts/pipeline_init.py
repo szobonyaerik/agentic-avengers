@@ -128,11 +128,16 @@ class Survey:
 
     @property
     def pipeline_example(self) -> str:
-        """The file that HOLDS the pipeline's shipped template - already, or once step 2a runs.
+        """WHICH FILE HOLDS THE SHIPPED TEMPLATE - already, or once step 2a runs.
 
-        An example on disk that is byte-identical to the shipped template already IS that template,
-        under whatever name it happens to carry, so nothing further needs creating or naming.
-        Only when no such file exists does step 2a have work to do, and then it is `template_target`.
+        That is the question `assemble_sources` needs, and only that one: there it names the source
+        that supplies whatever nothing else declares. An example on disk byte-identical to the
+        shipped template already IS that template, under whatever name it happens to carry, so
+        nothing further needs creating or naming. Only when no such file exists does step 2a have
+        work to do, and then it is `template_target`.
+
+        **It is the WRONG question for a merge**, and answering both with it was a defect: see
+        `merge_example`.
 
         Deciding this by CONTENT is what makes it stable, for the same reason the order is: step 2a's
         own `cp -n` changes presence, and `template_target` is decided purely by presence. In a
@@ -144,6 +149,46 @@ class Survey:
             if name in self.fresh_examples:
                 return name
         return self.template_target
+
+    @property
+    def merge_example(self) -> str:
+        """WHICH FILE CARRIES THE OPERATOR'S PIPELINE CONFIGURATION - the merge's one non-live source.
+
+        A merge names exactly two files, this and the live `.env`, so this one has to be the file
+        holding the operator's decisions, not whichever pristine copy happens to be on disk first.
+        Answering it with `pipeline_example` dropped them: with `.env.example` byte-identical to the
+        shipped template and `.env.pipeline.example` the copy the operator actually filled in, the
+        merge named the PRISTINE one and the assembled `.env` came back carrying
+        `GATE_MODEL=google/gemini-3.1-pro-preview` and `MUTATION_POLICY=advisory` instead of the
+        chosen `deepseek/deepseek-chat` and `enforce` - values that parse, survive the read-back
+        because a source declared them, and carry no `REPLACE_ME` for the run-time refusal. The
+        CREATE branch got that state right, so the two branches disagreed about one file in one
+        repository, and this is the branch that writes a live `.env`.
+
+        Three answers, in order, and each is the pipeline's own file rather than the project's:
+
+        1. An EDITED `.env.pipeline.example`. That name is the pipeline's by construction - it is
+           where the template goes once `.env.example` is taken - so edits to it are edits to the
+           pipeline's configuration, and they are what the merge exists to carry forward.
+        2. Otherwise any PRISTINE example, which is the shipped template verbatim under whatever
+           name it carries. A greenfield init writes it to `.env.example`, and there that file IS
+           the pipeline's example.
+        3. Otherwise `template_target` - nothing on disk holds the template yet and step 2a is about
+           to write it there.
+
+        An edited `.env.example` is never the answer, and that is the standing rule rather than an
+        oversight: a project that already had that file owns it, it describes what the app's config
+        should CONTAIN, and last-wins does nothing for a key the live `.env` omits - so its dummies
+        would arrive in a live file as values nobody chose.
+
+        Where both branches CAN name the same file they do: with `.env.pipeline.example` edited it
+        is the merge's source and also the last, winning source of `assemble_sources`.
+        """
+        if PIPELINE_EXAMPLE in self.existing_examples and not self.is_fresh_template(
+            PIPELINE_EXAMPLE
+        ):
+            return PIPELINE_EXAMPLE
+        return self.pipeline_example
 
     @property
     def assemble_sources(self) -> tuple[str, ...]:
@@ -206,9 +251,14 @@ class Survey:
         `.env.example` is a source when a `.env` is being CREATED and must not be one when it
         already exists.
 
-        `pipeline_example` and not `template_target`, so this answer does not move across step 2a's
-        `cp -n` either: in a repository with no examples the target was `.env.example` before the
-        copy and `.env.pipeline.example` after it, and the second one named a file nothing created.
+        `merge_example` and not `pipeline_example`, because the two branches ask different questions
+        of the same disk - which file HOLDS the shipped template, and which file carries the
+        OPERATOR'S decisions. They are the same file most of the time and sharing one answer looked
+        harmless, until a pristine `.env.example` beside a filled-in `.env.pipeline.example` made
+        the merge drop everything the operator had chosen. Neither is `template_target`, so no
+        answer here moves across step 2a's `cp -n`: in a repository with no examples the target was
+        `.env.example` before the copy and `.env.pipeline.example` after it, and the second one
+        named a file nothing created.
 
         Last-wins protects every key the live file declares. It does nothing for keys the live file
         OMITS, and an example's values are dummies and defaults by construction: a committed
@@ -221,7 +271,7 @@ class Survey:
         project's example describes what the app's config should CONTAIN, not what this operator
         chose.
         """
-        return (self.pipeline_example, ENV_FILE)
+        return (self.merge_example, ENV_FILE)
 
     @property
     def cosmic_ray_required_by(self) -> tuple[str, ...]:
@@ -309,8 +359,12 @@ def report_lines(found: Survey) -> list[str]:
             f"read-back then proves every key the live file declared survived, which is what makes "
             f"this safe where a bare --force is not. Name it FIRST instead and the template's "
             f"`REPLACE_ME` key and default GATE_MODEL/GATE_PROVIDER/AUTHOR_FAMILY/MUTATION_POLICY "
-            f"overwrite yours. Assembling anywhere else configures nothing: every gate reads "
-            f"{ENV_FILE} and no other path."
+            f"overwrite yours. The one example named is the file carrying YOUR pipeline "
+            f"configuration - an edited {PIPELINE_EXAMPLE} when there is one, otherwise the copy of "
+            f"the shipped template - and never a {PROJECT_EXAMPLE} the project already owned, whose "
+            f"dummies would arrive as values nobody chose for every key {ENV_FILE} omits. "
+            f"Assembling anywhere else configures nothing: every gate reads {ENV_FILE} and no other "
+            f"path."
         )
     else:
         lines.append(
