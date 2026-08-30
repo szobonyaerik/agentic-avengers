@@ -330,10 +330,13 @@ def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:
 def check_phase(phase_dir: Path) -> list[str]:
     """Every mechanical finding for one phase, as lines. Empty means clean.
 
-    Every artifact on this path is opened once: the mappings here, the phase's test files inside
-    `trace_claims`, each spec below. There is deliberately no preliminary sweep re-reading them to
-    discover unreadable ones — the reader that opens an artifact is the one that decides what its
-    unreadability means, which is also the only shape in which that decision cannot be forgotten.
+    The mappings here and the phase's test files inside `trace_claims` are opened once each: there
+    is deliberately no preliminary sweep re-reading them to discover unreadable ones — the reader
+    that opens an artifact is the one that decides what its unreadability means, which is also the
+    only shape in which that decision cannot be forgotten. A spec is opened **twice**, and that is
+    stated rather than rounded down: once below, and once inside `spec_gate_state.freshness`, which
+    owns the stamp question and reads the file itself. Threading a decoded body through that owner
+    is a larger change than this check warrants.
     """
     out: list[str] = []
     specs = sorted(phase_dir.glob("specs/*/spec.md"))

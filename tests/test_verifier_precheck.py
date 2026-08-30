@@ -636,11 +636,17 @@ def test_an_unopenable_test_mapping_is_reported_by_name_not_passed_clean(
     assert any(str(mapping) in line and "unreadable" in line for line in findings)
 
 
-def test_an_unopenable_mapping_never_misattributes_the_gap_to_the_spec(
+def test_an_unopenable_mapping_is_named_beside_the_untraced_id_it_explains(
     phase: Path,
 ) -> None:
-    """The misattribution this exists to remove: an owed id plus an unopenable mapping reported
-    "appears in no test-mapping.md row", whose remedy is to add a row that is already there."""
+    """An owed id plus an unopenable mapping emits BOTH findings, and that is the decided behaviour.
+
+    The untraced-id line on its own was the misattribution - its remedy is to add a row that may
+    already be there. It is not suppressed here, because this check cannot tell a mapping that was
+    missing the row from one that carried it; what it can do is name the unreadable artifact beside
+    it, so the reader is told the gap is UNDECIDED rather than established. This pins that pairing,
+    not the absence of the untraced line.
+    """
     spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
     stamp(spec)
     mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
@@ -649,6 +655,10 @@ def test_an_unopenable_mapping_never_misattributes_the_gap_to_the_spec(
     findings = check_phase(phase)
 
     assert any(str(mapping) in line and "unreadable" in line for line in findings)
+    assert any(
+        "R1.1.1" in line and "appear in no test-mapping.md row" in line
+        for line in findings
+    )
 
 
 @pytest.mark.skipif(

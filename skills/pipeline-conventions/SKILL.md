@@ -574,10 +574,16 @@ Three consequences worth stating outright:
     human remembering to; it is not the enforcement, which is what makes a caller ignoring it
     harmless.
   - **Asked only while the phase is still OPEN** (see *The applicability boundary*): before
-    `handover.md` exists. A phase that already handed over carries no record and is counted, never
-    re-opened — asked any earlier, the resolver parked on shipped phases and `--auto` could not
-    reach the phase in flight. Waivable only through the same disclosed-exception ledger as every
-    other rule here, `--rule breaker`.
+    `handover.md` exists — asked any earlier, the resolver parked on shipped phases and `--auto`
+    could not reach the phase in flight. In the CI sweep that closure is **scoped to the default**:
+    a phase that has written `handover.md` is counted and named rather than blocked only when its
+    `critical` came from issue #101's default, and that holds under `check --all` and
+    `gate_ci.sh --full` as well as diff-scoped, because the obligation is one that change created
+    over work that already landed. **A phase whose spec DECLARES `criticality: critical` is still
+    reported, closed or not** — that is issue #45's own case, running the Breaker over landed code
+    is exactly the remedy it prescribes, and exempting it would leave the audit able to block only
+    on phases with no card at all. Waivable only through the same disclosed-exception ledger as
+    every other rule here, `--rule breaker`.
 - **Feature-level e2e** — once, after the final phase is green (see below).
 - **Phase review gate (per phase, `no-mistakes`, review-only)** — after each handover,
   `no-mistakes axi run --skip=push,pr,ci`. The Verifier reads **tests**; this reads the rest of the

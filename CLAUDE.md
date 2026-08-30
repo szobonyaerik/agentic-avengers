@@ -520,8 +520,14 @@ a vacuous record is refused exactly like a missing one. **`hook_verifier.sh` is 
 point** (the handover write, unconditional); `gate_ci.sh` is a diff-scoped backstop and
 `pipeline_state.py` is routing, reporting `stage: breaker` so `/avenger-run` acts on the obligation
 rather than a human remembering it. Asked only while the phase is still OPEN (§3a), waivable only
-through the disclosed-exception ledger, `--rule breaker`. Full statement in
-`skills/pipeline-conventions`.
+through the disclosed-exception ledger, `--rule breaker`. **`check` has a second closure evidence,
+and its narrowness is the point**: a phase that has written `handover.md` is counted and named
+rather than blocked **only when its `critical` came from issue #101's default** — under `--all` and
+`gate_ci.sh --full` as well as diff-scoped, since the obligation is one that change created over
+work already landed. A phase whose spec **declares** `criticality: critical` keeps base behaviour
+and is still reported, closed or not: that is issue #45's own measured case, its remedy is fully
+available, and exempting it would leave the audit able to block only on phases with no card at all.
+Full statement in `skills/pipeline-conventions`.
 
 **And what routes it must not resolve to the weaker pipeline by omission** (issue #101). Criticality
 was read as `fields.get("criticality", "standard")` in both readers, so a spec that never wrote the
