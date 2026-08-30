@@ -944,38 +944,28 @@ replace = """
 [[guard]]
 id = "pipeline-init.created-template-first"
 implements = "scripts/pipeline_init.py"
-defect = "The create branch named the pipeline's template LAST, so a FRESHLY COPIED shipped template beat an example the operator had already configured. A repository whose `.env.example` an earlier init wrote and the team then filled in and committed got `.env.pipeline.example` as its target; step 2a's `cp -n` wrote the shipped template there unmodified, and last-wins handed the assembled `.env` the shipped `GATE_MODEL`, `GATE_PROVIDER` and `MUTATION_POLICY` instead of the team's choices - values that parse, survive the read-back and carry no `REPLACE_ME`, so nothing reported them."
+defect = "The create branch named an unedited shipped template LAST, so a FRESHLY COPIED template beat an example the operator had already configured. A repository whose `.env.example` an earlier init wrote and the team then filled in and committed got `.env.pipeline.example` as its target; step 2a's `cp -n` wrote the shipped template there unmodified, and last-wins handed the assembled `.env` the shipped `GATE_MODEL`, `GATE_PROVIDER` and `MUTATION_POLICY` instead of the team's choices - values that parse, survive the read-back and carry no `REPLACE_ME`, so nothing reported them."
 tests = ["tests/test_pipeline_init_survey.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_init.py"
 find = '''
-        existing = self.existing_examples
-        if self.template_target in existing:
-            return existing
-        return (self.template_target,) + existing'''
+        fresh = tuple(name for name in ordered if self.is_fresh_template(name))
+        return fresh + tuple(name for name in ordered if name not in fresh)'''
 replace = '''
-        existing = self.existing_examples
-        if self.template_target in existing:
-            return existing
-        return existing + (self.template_target,)'''
+        fresh = tuple(name for name in ordered if self.is_fresh_template(name))
+        return tuple(name for name in ordered if name not in fresh) + fresh'''
 
 [[guard]]
-id = "pipeline-init.existing-example-is-operator-owned"
+id = "pipeline-init.order-by-content-not-presence"
 implements = "scripts/pipeline_init.py"
-defect = "`template_target` carries two meanings, and naming it first UNCONDITIONALLY read the wrong one. An existing `.env.pipeline.example` is not the shipped template - it is a file the operator filled in, which the report itself promises `keeps whatever was edited into it`. Named ahead of `.env.example`, it lost every key the two share, and since both derive from the same shipped template that is EVERY pipeline key: `GATE_MODEL` reverted to the older committed copy's value and `MUTATION_POLICY` to `advisory`, parsing cleanly, surviving the read-back and carrying no `REPLACE_ME`."
+defect = "Ordering by PRESENCE let step 2a's own `cp -n` change the answer. `template_target` names the pipeline's example whether that file is about to be created or was filled in long ago, so the survey printed one order before the copy and the reverse after it - and the second answer let a freshly written, unmodified shipped template beat a team's committed `.env.example`, reverting `GATE_MODEL` and `MUTATION_POLICY` with nothing reporting it. Content is stable across the copy; presence is exactly what the copy changes."
 tests = ["tests/test_pipeline_init_survey.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_init.py"
 find = '''
-        existing = self.existing_examples
-        if self.template_target in existing:
-            return existing
-        return (self.template_target,) + existing'''
+        return name in self.fresh_examples or name not in self.existing_examples'''
 replace = '''
-        existing = self.existing_examples
-        return (self.template_target,) + tuple(
-            name for name in existing if name != self.template_target
-        )'''
+        return name not in self.existing_examples'''
 
 
 [[guard]]

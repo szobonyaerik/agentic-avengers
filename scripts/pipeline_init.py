@@ -27,12 +27,20 @@ from pathlib import Path
 #: Where the pipeline's own env template lands in a repository that has no `.env.example`...
 PROJECT_EXAMPLE = ".env.example"
 #: ...and where it lands in one that already has that file, WHOEVER wrote it. There is one rule and
-#: no third case: an existing `.env.example` is never overwritten. Telling a file an earlier init
-#: wrote from the project's own means reading its content, and any such classification is wrong in
-#: the case that costs something - a pipeline-written example the operator has since added their own
-#: keys to still looks like the template, and "refresh it in place" would destroy them, which is the
-#: ownership assumption issue #108 is about.
+#: no third case for WRITING: an existing example is never overwritten, so provenance decides nothing
+#: about what may be written and is never asked there. A pipeline-written example the operator has
+#: since added their own keys to still looks like the template, and "refresh it in place" would
+#: destroy them, which is the ownership assumption issue #108 is about. Content DOES decide source
+#: ORDER (`assemble_sources`) - a different question, and one where reading the file is safe because
+#: the answer only ever picks which source wins a key.
 PIPELINE_EXAMPLE = ".env.pipeline.example"
+
+#: The template this pipeline ships, and the one `/pipeline-init` step 2a copies. `install.sh`
+#: vendors `docs/templates/` beside `scripts/`, so this path resolves in the canonical repository
+#: and in a vendored consumer alike.
+SHIPPED_TEMPLATE = (
+    Path(__file__).resolve().parent.parent / "docs" / "templates" / "env.example"
+)
 
 ENV_FILE = ".env"
 COSMIC_RAY = "cosmic-ray.toml"
@@ -68,6 +76,11 @@ class Survey:
     env_exists: bool
     no_mistakes_exists: bool
     cosmic_ray_present: bool
+    #: Every example on disk whose bytes are IDENTICAL to the shipped template, so it carries no
+    #: operator decision. An unreadable example, or a shipped template that cannot be located, is
+    #: absent from this set: an unanswerable comparison resolves to EDITED, which is the safe
+    #: direction - it can only make an operator's file win a key, never lose one.
+    fresh_examples: frozenset[str] = frozenset()
 
     @property
     def greenfield(self) -> bool:
@@ -96,13 +109,22 @@ class Survey:
         """Where the pipeline's `env.example` may be written without taking a name it does not own.
 
         ANY existing example makes it `.env.pipeline.example`. `.env.example` is off limits once it
-        exists, whoever wrote it - nothing is overwritten, so provenance decides nothing and is
+        exists, whoever wrote it - nothing is overwritten, so provenance decides nothing HERE and is
         never asked. And an existing `.env.pipeline.example` IS the pipeline's example: writing a
         fresh copy of the same template to `.env.example` instead would shadow the operator's
         filled-in one under another name, so a chosen model or provider would quietly revert to a
         template default with nothing anywhere reporting it.
         """
         return PROJECT_EXAMPLE if not self.existing_examples else PIPELINE_EXAMPLE
+
+    def is_fresh_template(self, name: str) -> bool:
+        """Whether `name` carries no operator decision - the shipped template's bytes, unedited.
+
+        A target step 2a has yet to create counts as fresh: `cp -n` writes the shipped template
+        byte for byte, so the answer is the same before and after the copy. That is the whole
+        point - see `assemble_sources`.
+        """
+        return name in self.fresh_examples or name not in self.existing_examples
 
     @property
     def assemble_sources(self) -> tuple[str, ...]:
@@ -113,39 +135,46 @@ class Survey:
 
         The order answers who wins a conflict, by the one rule this whole path obeys: **the LAST
         source to declare a key wins**, and by the one principle both branches obey: **the more
-        operator-owned file goes later**. Only a file step 2a is about to CREATE is the shipped
-        template: it is named FIRST and supplies only what the repository does not already declare.
-        **Every example already on disk is operator-owned, whoever originally wrote it**, and is
-        named after it, in `existing_examples` order.
+        operator-owned file goes later**. What decides which that is, is **CONTENT**: an example
+        whose bytes are IDENTICAL to the shipped template is a FRESH template, carries no operator
+        decision, and is named FIRST, supplying only what nothing else declares. An example that
+        DIFFERS from the shipped template was edited by someone, so it is operator-owned and is
+        named after every fresh one. Within a class, `existing_examples` order is kept.
 
-        `template_target` alone cannot answer this, because it carries both meanings. Named first
-        unconditionally, an existing `.env.pipeline.example` - the file the report itself promises
-        "keeps whatever was edited into it" - lost every key it shares with `.env.example`. Both
-        derive from the same shipped template, so they share EVERY pipeline key: the assembled
-        `.env` took the older, less-edited copy and discarded the operator's filled-in
-        `GATE_MODEL=deepseek/deepseek-chat` and `MUTATION_POLICY=enforce`.
+        **PRESENCE cannot decide this, because step 2a's own `cp -n` is what changes presence.**
+        Asked before the copy the survey said `(.env.pipeline.example, .env.example)` and asked
+        after it said the reverse, so the single authority gave one repository two contradictory
+        answers - and the second one let a freshly written, unmodified shipped template beat a
+        team's committed, filled-in `.env.example`. Content is stable across the copy, so the answer
+        is the same before step 2a, after step 2a, and on a second `/pipeline-init` of an
+        already-initialised repository.
 
-        Named last, it failed the mirror case. A repository whose `.env.example` an earlier init
-        wrote and the team then filled in and committed gets `.env.pipeline.example` as its target;
-        step 2a's `cp -n` writes the SHIPPED template there unmodified, and last-wins handed the
-        assembled `.env` the shipped defaults instead of the team's choices.
+        Both directions were wrong once and both are pinned. Named last, a fresh copy beat a
+        configured example: a repository whose `.env.example` an earlier init wrote and the team
+        filled in and committed gets `.env.pipeline.example` as its target, `cp -n` writes the
+        SHIPPED template there, and last-wins handed the assembled `.env` the shipped defaults.
+        Named first unconditionally, an operator's filled-in `.env.pipeline.example` lost every key
+        it shares with `.env.example` - and since both derive from the same template, that is all of
+        them.
 
         Neither errors: the values are syntactically valid, the read-back passes because a source
         declared them and they survived, and a default carries no `REPLACE_ME` for the run-time
         refusal to catch. That is a value nobody chose arriving silently, which is the class this
         module exists to close.
         """
-        existing = self.existing_examples
-        if self.template_target in existing:
-            return existing
-        return (self.template_target,) + existing
+        named = set(self.existing_examples) | {self.template_target}
+        ordered = tuple(
+            name for name in (PROJECT_EXAMPLE, PIPELINE_EXAMPLE) if name in named
+        )
+        fresh = tuple(name for name in ordered if self.is_fresh_template(name))
+        return fresh + tuple(name for name in ordered if name not in fresh)
 
     @property
     def merge_sources(self) -> tuple[str, ...]:
         """The sources a merge into an EXISTING `.env` names: the PIPELINE's example, then the live
         file. Same principle as `assemble_sources` - the more operator-owned file goes later, and
-        nothing the operator owns more than a live `.env` - so the example is first here whether
-        step 2a is about to create it or an earlier init already did. What differs is the SOURCE
+        nothing is more operator-owned than a live `.env` - so the example is first here whatever
+        its content, and no content comparison is needed to decide it. What differs is the SOURCE
         SET, not the principle: the project's own `.env.example` is a source when a `.env` is being
         CREATED and must not be one when it already exists.
 
@@ -167,6 +196,39 @@ class Survey:
         return () if self.cosmic_ray_present else COSMIC_RAY_REQUIRED_BY
 
 
+def _shipped_bytes() -> bytes | None:
+    """The shipped template's bytes, or None when it cannot be located or read.
+
+    None is not an error: this survey never blocks. It means no example can be shown to be a fresh
+    template, so every one of them is treated as EDITED - the safe direction, since it can only make
+    an operator's file win a key, never lose one.
+    """
+    try:
+        return SHIPPED_TEMPLATE.read_bytes()
+    except OSError:
+        return None
+
+
+def _fresh_examples(root: Path) -> frozenset[str]:
+    """The examples on disk that are byte-identical to the shipped template.
+
+    An example that cannot be read is absent from the set for the same reason a missing shipped
+    template empties it: an unanswerable comparison resolves to EDITED, never to fresh.
+    """
+    shipped = _shipped_bytes()
+    if shipped is None:
+        return frozenset()
+
+    fresh = set()
+    for name in (PROJECT_EXAMPLE, PIPELINE_EXAMPLE):
+        try:
+            if (root / name).read_bytes() == shipped:
+                fresh.add(name)
+        except OSError:
+            continue
+    return frozenset(fresh)
+
+
 def survey(root: Path | str = ".") -> Survey:
     root = Path(root)
     return Survey(
@@ -176,6 +238,7 @@ def survey(root: Path | str = ".") -> Survey:
         env_exists=(root / ENV_FILE).is_file(),
         no_mistakes_exists=(root / NO_MISTAKES).is_file(),
         cosmic_ray_present=(root / COSMIC_RAY).is_file(),
+        fresh_examples=_fresh_examples(root),
     )
 
 
@@ -221,10 +284,13 @@ def report_lines(found: Survey) -> list[str]:
         lines.append(
             f"{ENV_FILE}: absent - assemble it: "
             f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
-            f"{' '.join(found.assemble_sources)}`. The last source to declare a key wins, so the "
-            f"file step 2a is about to CREATE is named first and only fills in what this repository "
-            f"does not already declare, and every example already on disk is named after it - "
-            f"anything you have already configured beats a template default for that key."
+            f"{' '.join(found.assemble_sources)}`. The last source to declare a key wins, and what "
+            f"decides the order is CONTENT: an example still byte-identical to the shipped template "
+            f"carries nobody's decision, so it is named first and only fills in what nothing else "
+            f"declares; one that has been edited is named after it, so anything you have already "
+            f"configured beats a template default for that key. Content rather than presence, "
+            f"because step 2a's own `cp -n` changes presence - this command prints the same order "
+            f"before that copy and after it."
         )
 
     lines.append(

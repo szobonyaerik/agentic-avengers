@@ -59,9 +59,9 @@ write no production code.
    and that is what decides the order**:
 
    ```bash
-   # no .env yet — every example the project now has, the file `cp -n` just CREATED named first
+   # no .env yet — every example the project has, unedited copies of the shipped template first
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
-     --out .env <the file step 2a created, if it created one> <every example already on disk>
+     --out .env <every example still identical to the template> <every example someone edited>
 
    # a live .env ALREADY exists — merge in place, naming it as its OWN LAST SOURCE so every value
    # the operator already chose beats the template's default, while missing pipeline keys are added
@@ -69,17 +69,24 @@ write no production code.
      --out .env <the target step 0 named> .env --force
    ```
 
-   **The more operator-owned file goes later, and only a file `cp -n` actually CREATED is the
-   shipped template.** It is named first and supplies only what this repository does not already
-   declare; every example that was already on disk is operator-owned, whoever originally wrote it,
-   and is named after it. Both halves are load-bearing, and each was wrong on its own once. Named
-   last, a repository whose `.env.example` an earlier init wrote and the team then filled in and
-   committed got `.env.pipeline.example` as its target, `cp -n` wrote the SHIPPED template there
-   unmodified, and last-wins handed the assembled `.env` the shipped `GATE_MODEL`, `GATE_PROVIDER`
-   and `MUTATION_POLICY` instead of the team's choices. Named first unconditionally, an operator's
-   already filled-in `.env.pipeline.example` lost every key it shares with `.env.example` — and
-   since both derive from the same template, that is all of them. Either way the values parse,
-   survive the read-back and carry no `REPLACE_ME`, so nothing reports them.
+   **The more operator-owned file goes later, and CONTENT is what decides which that is.** An
+   example still byte-identical to `docs/templates/env.example` carries nobody's decision: it is
+   named first and supplies only what nothing else declares. One that has been edited is
+   operator-owned and is named after it. Both halves are load-bearing, and each was wrong on its own
+   once. Named last, a repository whose `.env.example` an earlier init wrote and the team then
+   filled in and committed got `.env.pipeline.example` as its target, `cp -n` wrote the SHIPPED
+   template there unmodified, and last-wins handed the assembled `.env` the shipped `GATE_MODEL`,
+   `GATE_PROVIDER` and `MUTATION_POLICY` instead of the team's choices. Named first
+   unconditionally, an operator's already filled-in `.env.pipeline.example` lost every key it shares
+   with `.env.example` — and since both derive from the same template, that is all of them. Either
+   way the values parse, survive the read-back and carry no `REPLACE_ME`, so nothing reports them.
+
+   **Content and not presence, because the `cp -n` above is what changes presence.** A presence rule
+   printed one order when step 0 ran before the copy and the reverse when anything asked again after
+   it — a single authority giving one repository two answers. Content is stable across the copy, so
+   step 0 prints the same command before it, after it, and on a second `/pipeline-init` of an
+   already-initialised repository. This decides only which source wins a key; **never-overwrite is
+   untouched and never asks who wrote a file.**
 
    **The merge form names the pipeline's example and the live file, and no other example.** That is
    not an omission: last-wins protects every key the live `.env` already declares, but a key it does

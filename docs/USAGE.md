@@ -98,9 +98,9 @@ python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebas
 python3 "$AV/scripts/pipeline_init.py" survey            # <- the authority for the two paths below
 cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier init's copy is kept
 
-#    (a) no .env yet — build it from the two examples. The file the `cp -n` above CREATED is named
-#        first, so it only fills in what this repository does not already declare. Had that file
-#        already existed, it would be operator-owned and would go LAST — run what survey printed.
+#    (a) no .env yet — build it from the two examples. An example still byte-identical to the
+#        shipped template is named first and only fills in what nothing else declares; an edited
+#        one is operator-owned and goes after it. Run what survey printed — it knows which is which.
 python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env.example
 
 #    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
@@ -118,12 +118,15 @@ that key, while every pipeline key you do not have yet is still added. Name it f
 template's `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME` and its default `GATE_MODEL`, `GATE_PROVIDER`,
 `AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours.
 
-**The more operator-owned file goes later, and only a file `cp -n` actually CREATED is the shipped
-template** — that is the principle both forms obey. A created file is named first and supplies only
-what your repository does not already declare; every example that was already on disk is
-operator-owned, whoever originally wrote it, and goes after it. Both halves are load-bearing.
+**The more operator-owned file goes later, and CONTENT is what decides which that is** — that is the
+principle both forms obey. An example still byte-identical to `docs/templates/env.example` carries
+nobody's decision: it is named first and supplies only what nothing else declares. One that has been
+edited is operator-owned and goes after it. Content and not presence, because the `cp -n` above is
+what changes presence — a presence rule printed one order before that copy and the reverse after it,
+so the survey gave one repository two answers. Content is stable across the copy. It decides only
+which source wins a key; never-overwrite is untouched and never asks who wrote a file.
 
-Named last, form (a) did the opposite: if an earlier init wrote your `.env.example` and
+Both halves are load-bearing. Named last, form (a) did the opposite: if an earlier init wrote your `.env.example` and
 your team then filled it in and committed it, the target is `.env.pipeline.example`, `cp -n` writes
 the SHIPPED template there unmodified, and it would revert your committed `GATE_MODEL`,
 `GATE_PROVIDER` and `MUTATION_POLICY` to its defaults. Named first unconditionally it failed the

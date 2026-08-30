@@ -375,6 +375,30 @@ class TestCLI:
         assert proc.stderr.startswith("env-assemble:")
         assert "Traceback" not in proc.stderr
 
+    def test_a_non_utf8_source_exits_one_without_a_traceback(self, tmp_path):
+        """The merge-in-place form names the live `.env` as a source, and a live `.env` is
+        hand-edited - one cp1252/latin-1 byte pasted into a comment or a password used to answer
+        with a stack trace instead of a named cause."""
+        write_sources(tmp_path)
+        (tmp_path / ".env.pipeline.example").write_bytes(
+            b"# caf\xe9 - a latin-1 byte\nGATE_MODEL=x\n"
+        )
+
+        proc = self.run(
+            "assemble",
+            "--out",
+            ".env",
+            ".env.example",
+            ".env.pipeline.example",
+            cwd=tmp_path,
+        )
+
+        assert proc.returncode == 1
+        assert proc.stderr.startswith("env-assemble:")
+        assert ".env.pipeline.example" in proc.stderr
+        assert "Traceback" not in proc.stderr
+        assert not (tmp_path / ".env").exists()
+
     def test_check_refuses_a_placeholder_value(self, tmp_path):
         (tmp_path / ".env").write_text(
             f"OPENROUTER_API_KEY=sk-or-v1-{PLACEHOLDER_MARKER}\n", encoding="utf-8"

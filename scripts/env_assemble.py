@@ -46,15 +46,17 @@ added, and the read-back then proves every key it declared survived into the res
 written any other way is how the pipeline's keys end up somewhere no gate reads, since
 `env_file.find_env_file` looks for `.env` and nothing else.
 
-**The CREATE form obeys the same principle: the more operator-owned file goes later.** Only the file
-`/pipeline-init` is about to CREATE is the shipped template, and it is named FIRST, so it supplies
-only what the repository does not already declare. Every example ALREADY ON DISK is operator-owned,
-whoever originally wrote it, and is named after it. Both halves are load-bearing: named last, a
-freshly copied template reverted a team's committed `GATE_MODEL`, `GATE_PROVIDER` and
+**The CREATE form obeys the same principle: the more operator-owned file goes later.** What decides
+which that is, is CONTENT. An example still byte-identical to the shipped `docs/templates/env.example`
+carries nobody's decision, so it is named FIRST and supplies only what nothing else declares; one
+that has been edited is operator-owned and is named after it. Both halves are load-bearing: named
+last, a freshly copied template reverted a team's committed `GATE_MODEL`, `GATE_PROVIDER` and
 `MUTATION_POLICY` to its own defaults; named first unconditionally, an operator's filled-in
 `.env.pipeline.example` lost every key it shares with `.env.example` - and the two derive from the
-same template, so they share all of them. `pipeline_init.Survey` is the one place that decides both
-source lists; nothing else restates them.
+same template, so they share all of them. Content and not PRESENCE, because `/pipeline-init` step
+2a's own `cp -n` changes presence, so a presence rule answered one way before that copy and the
+reverse after it. `pipeline_init.Survey` is the one place that decides both source lists; nothing
+else restates them.
 
 There is no prompt and no conflict-resolution mode; the order IS the resolution. Re-merging is not
 idempotent either: the template's text is appended again each time, which parses correctly because
@@ -88,9 +90,16 @@ class AssemblyError(Exception):
 
 
 def _read(path: Path) -> str:
+    """A source's text, or an `AssemblyError` naming the path and the cause.
+
+    `UnicodeDecodeError` is caught beside `OSError` because the merge-in-place form names the live
+    `.env` as a source, and a live `.env` is hand-edited - one cp1252 or latin-1 byte pasted into a
+    comment or a password makes the operator's own remedy answer with a stack trace instead of a
+    named cause, on the one step whose whole purpose is a legible config failure.
+    """
     try:
         return Path(path).read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise AssemblyError(f"cannot read {path}: {exc}") from exc
 
 

@@ -139,12 +139,42 @@ class TestTheAssembleCommandNamesFilesThatExist:
         assert found.template_target == PIPELINE_EXAMPLE
         assert found.assemble_sources == (PIPELINE_EXAMPLE,)
 
-    def test_both_examples_on_disk_keep_existing_order_and_the_pipelines_wins(
+    def test_a_fresh_copy_of_the_shipped_template_loses_to_a_configured_example(
         self, tmp_path
     ):
-        """Nothing is CREATED here, so neither file is the shipped template: both are
-        operator-owned, and they keep `existing_examples` order. The fixture OVERLAPS on
-        `GATE_MODEL` so the assertion is about who won, not about order alone."""
+        """Both files are on disk, so PRESENCE cannot tell them apart - content can.
+
+        `.env.pipeline.example` here is exactly what step 2a's `cp -n` writes: the shipped
+        template, unedited. `.env.example` is the team's, filled in and committed. They OVERLAP on
+        every pipeline key, so the assertion is about who won rather than about order alone.
+        """
+        (tmp_path / PIPELINE_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME\n"
+            "GATE_MODEL=deepseek/deepseek-chat\n"
+            "GATE_PROVIDER=opencode\n"
+            "MUTATION_POLICY=enforce\n",
+            encoding="utf-8",
+        )
+
+        found = survey(tmp_path)
+
+        assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
+
+        assemble(
+            [tmp_path / name for name in found.assemble_sources], tmp_path / ".env"
+        )
+        merged = parse((tmp_path / ".env").read_text())
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["GATE_PROVIDER"] == "opencode"
+        assert merged["MUTATION_POLICY"] == "enforce"
+
+    def test_both_examples_edited_keep_existing_order_and_the_pipelines_wins(
+        self, tmp_path
+    ):
+        """Neither file matches the shipped template, so both are operator-owned and they keep
+        `existing_examples` order. The fixture OVERLAPS on `GATE_MODEL` so the assertion is about
+        who won, not about order alone."""
         (tmp_path / PROJECT_EXAMPLE).write_text(
             "DRY_RUN=true\nGATE_MODEL=google/gemini-3.1-pro-preview\n", encoding="utf-8"
         )
@@ -333,8 +363,9 @@ class TestTheAssembleCommandNamesFilesThatExist:
     ):
         """The report is what an operator runs, so it must not state a different order.
 
-        All four example-presence states at once: a file step 2a is about to CREATE is named
-        first, and every example already on disk follows in `existing_examples` order.
+        All four example-presence states at once, every example EDITED (none matches the shipped
+        template): an unedited copy of the template is named first, and everything an operator has
+        touched follows in `existing_examples` order.
         """
         for name in present:
             (tmp_path / name).write_text("DRY_RUN=true\n", encoding="utf-8")
@@ -343,6 +374,80 @@ class TestTheAssembleCommandNamesFilesThatExist:
 
         assert found.assemble_sources == expected
         assert self.command(found) == list(expected)
+
+    @pytest.mark.parametrize(
+        "project_example",
+        [
+            pytest.param("GATE_MODEL=deepseek/deepseek-chat\n", id="edited"),
+            pytest.param(SHIPPED_TEMPLATE, id="untouched-copy-of-the-template"),
+        ],
+    )
+    def test_step_2as_own_copy_never_changes_the_printed_order(
+        self, tmp_path, project_example
+    ):
+        """The command step 0 prints is IDENTICAL before and after step 2a's `cp -n`.
+
+        This is the property the content rule exists to provide, and the one a presence rule could
+        not: `existing_examples` is read off disk and the copy is what changes that disk state, so
+        the survey answered one way before it and the reverse after it - two contradictory answers
+        for one repository from the single authority. `commands/pipeline-init.md` tells every later
+        writing step to read this report, and a second `/pipeline-init` on an already-initialised
+        repository reaches the after state with no copy of its own at all.
+        """
+        (tmp_path / PROJECT_EXAMPLE).write_text(project_example, encoding="utf-8")
+
+        before = survey(tmp_path)
+        assert not (tmp_path / before.template_target).exists()
+        # Step 2a, verbatim: `cp -n <shipped template> <the target step 0 named>`.
+        (tmp_path / before.template_target).write_text(
+            SHIPPED_TEMPLATE, encoding="utf-8"
+        )
+        after = survey(tmp_path)
+
+        assert self.command(after) == self.command(before)
+        assert after.assemble_sources == before.assemble_sources
+
+    def test_the_reported_trace_end_to_end_across_step_2a(self, tmp_path):
+        """The measured sequence, run the way an operator runs it.
+
+        A committed, filled-in `.env.example`, no `.env.pipeline.example`, no `.env`. Step 2a
+        copies the shipped template; assembling with what the survey prints AFTER that copy must
+        keep the team's three values and must not hand the run a shipped default.
+        """
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "GATE_MODEL=deepseek/deepseek-chat\n"
+            "GATE_PROVIDER=opencode\n"
+            "MUTATION_POLICY=enforce\n",
+            encoding="utf-8",
+        )
+
+        found = survey(tmp_path)
+        (tmp_path / found.template_target).write_text(
+            SHIPPED_TEMPLATE, encoding="utf-8"
+        )
+        found = survey(tmp_path)
+
+        assemble([tmp_path / name for name in self.command(found)], tmp_path / ".env")
+
+        merged = parse((tmp_path / ".env").read_text())
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["GATE_PROVIDER"] == "opencode"
+        assert merged["MUTATION_POLICY"] == "enforce"
+        # ...while the template still contributes every key the team's file does not declare.
+        shipped = parse(SHIPPED_TEMPLATE)
+        assert merged["AUTHOR_FAMILY"] == shipped["AUTHOR_FAMILY"]
+
+    def test_an_unreadable_example_is_treated_as_edited_never_as_a_fresh_template(
+        self, tmp_path
+    ):
+        """An unanswerable comparison resolves to operator-owned, the safe direction: it can only
+        make an operator's file win a key, never lose one."""
+        (tmp_path / PROJECT_EXAMPLE).write_bytes(SHIPPED_TEMPLATE.encode() + b"\xff")
+
+        found = survey(tmp_path)
+
+        assert PROJECT_EXAMPLE not in found.fresh_examples
+        assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
 
     def test_an_operators_filled_in_pipeline_example_survives_the_assembled_env(
         self, tmp_path
