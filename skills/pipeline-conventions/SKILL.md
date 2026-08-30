@@ -48,7 +48,7 @@ The implementer authors **both tests and code** test-first (there is no separate
       verdict-attempt-<n>.json    # a superseded attempt, archived out of verdict.json
       verification-evidence.json  # the Verifier's transcript: every command it ran, recorded
       evidence/                   # one redacted, capped log per recorded command (committed)
-      breaker.json                # the Breaker's record — only on a phase declaring criticality: critical
+      breaker.json                # the Breaker's record — only on a phase resolving to criticality: critical
       handover.md                 # the phase's CONTRACT CARD, written after the Verifier passes
       handover-archive.md         # everything the card does not carry
   tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/...
@@ -530,12 +530,33 @@ Three consequences worth stating outright:
   about non-discriminating tests — still advisory, still not a wall, and named as partial cover
   rather than a replacement (see *The Verifier* below).
 - **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
-  spec in the phase declares `criticality: critical`). Not optional in practice: it was owed on
+  spec in the phase **resolves to** `criticality: critical`). Not optional in practice: it was owed on
   every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that
   feature's docs or tests, because nothing checked for it (issue #45). It now persists `breaker.json`
   beside `verdict.json`, and a critical phase does not close without a valid one
   (`scripts/breaker_gate.py`). **A stage that emits nothing is indistinguishable from a stage that
   never ran**, which is why the record — not the run — is what is checked.
+  - **An absent `criticality` resolves to `critical`, and a skipped stage is named** (issue #101).
+    The field was read as `fields.get("criticality", "standard")` in both readers, so a spec that
+    never wrote the line resolved to the WEAKER pipeline and this stage was deleted from the phase
+    with no author involved — caught by hand in grid-bot-platform phase 4, that feature's
+    highest-risk phase, and nothing in the pipeline would have flagged it. `scripts/criticality.py`
+    is the one resolver both `pipeline_state.py` and `breaker_gate.py` read, and an absent, blank,
+    unrecognised or unreadable value resolves to `critical` there. The taxonomy does **not** grow:
+    the resolved value is still `standard` or `critical`, and what is new is that the resolution
+    carries WHY — so a defaulted `critical` is announced as the default it is rather than passing
+    for something somebody wrote. The direction was chosen against failing at spec-gate time for
+    §3a's reason: a gate binds only a spec still going through it, a `status: done` spec has
+    shipped and cannot be re-gated, so that direction leaves the hole open on exactly the specs
+    nobody is looking at any more — and the default's own cost, a Breaker run on a phase that never
+    asked for one, has a remedy that already exists and is audited (`applicability.py record --rule
+    breaker`).
+  - **A skipped stage is stated, not inferred from an absence.** A phase whose Breaker never ran and
+    one whose Breaker ran clean produce the same passing verdict. `breaker_gate.py skipped`
+    (reporting only, always exit 0) names why the stage does not run — non-critical phase, or a
+    disclosed exception — `pipeline_state` carries it on `State.skipped_stages`, and
+    `hook_verifier.sh` prints it at the close. **This half holds whichever way the default is later
+    decided**, which is why it is stated separately from it.
   - **Valid means non-vacuous.** A `clean` verdict must name what it **attacked**; a `found` verdict
     must name its **counterexample**. Either one empty is refused exactly like a missing record,
     because *"a clean report with no attempts described is not acceptable"* was already the agent's
@@ -553,10 +574,16 @@ Three consequences worth stating outright:
     human remembering to; it is not the enforcement, which is what makes a caller ignoring it
     harmless.
   - **Asked only while the phase is still OPEN** (see *The applicability boundary*): before
-    `handover.md` exists. A phase that already handed over carries no record and is counted, never
-    re-opened — asked any earlier, the resolver parked on shipped phases and `--auto` could not
-    reach the phase in flight. Waivable only through the same disclosed-exception ledger as every
-    other rule here, `--rule breaker`.
+    `handover.md` exists — asked any earlier, the resolver parked on shipped phases and `--auto`
+    could not reach the phase in flight. In the CI sweep that closure is **scoped to the default**:
+    a phase that has written `handover.md` is counted and named rather than blocked only when its
+    `critical` came from issue #101's default, and that holds under `check --all` and
+    `gate_ci.sh --full` as well as diff-scoped, because the obligation is one that change created
+    over work that already landed. **A phase whose spec DECLARES `criticality: critical` is still
+    reported, closed or not** — that is issue #45's own case, running the Breaker over landed code
+    is exactly the remedy it prescribes, and exempting it would leave the audit able to block only
+    on phases with no card at all. Waivable only through the same disclosed-exception ledger as
+    every other rule here, `--rule breaker`.
 - **Feature-level e2e** — once, after the final phase is green (see below).
 - **Phase review gate (per phase, `no-mistakes`, review-only)** — after each handover,
   `no-mistakes axi run --skip=push,pr,ci`. The Verifier reads **tests**; this reads the rest of the
@@ -1561,7 +1588,8 @@ only the main thread can). Position comes from `scripts/pipeline_state.py`, whic
 on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`, `exceptions.json`,
 `breaker.json`) and returns the single stage the feature owes next — so a run resumes after a
 `/clear`, a compaction, or a new session. It stops for `plan.md` approval and each spec-review unless
-`--auto`, retries a stage twice before halting, routes to the Breaker on `criticality: critical` and
+`--auto`, retries a stage twice before halting, routes to the Breaker on a phase **resolving to**
+`criticality: critical` (`scripts/criticality.py`) and
 does not walk past a critical phase that has no record of one, obeys `MUTATION_POLICY`, and commits
 per verified phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose
 precondition is a clean tree already carrying `tests/e2e/<feature>/`) and the retrospective artifacts

@@ -100,7 +100,7 @@ RULES: dict[str, str] = {
     "spec-review": "the human spec-review sign-off on a spec",
     "verdict": "the Verifier's passing verdict for a phase",
     "requirement-cap": "the requirement cap's split trigger on a spec",
-    "breaker": "a Breaker record owed by a phase that declares criticality: critical",
+    "breaker": "a Breaker record owed by a phase that resolves to criticality: critical",
     "execution-evidence": "the recorded transcript proving a phase's verification actually ran",
 }
 

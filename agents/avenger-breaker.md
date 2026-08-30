@@ -47,7 +47,9 @@ job of finding them.
   locked, and your counterexample is an addition to it, not an edit of it.
 
 ## Leave a record — every run, clean or not
-A phase that declares `criticality: critical` does not close without your record: `scripts/pipeline_state.py`,
+A phase that **resolves to** `criticality: critical` (`scripts/criticality.py` — an absent, blank,
+unrecognised or unreadable field resolves to `critical`, issue #101) does not close without your
+record: `scripts/pipeline_state.py`,
 `scripts/hook_verifier.sh` and `scripts/gate_ci.sh` all refuse to let such a phase reach handover
 without one (`scripts/breaker_gate.py`), because a stage that emits nothing is indistinguishable from
 a stage that never ran — that gap was owed twice on one feature and shipped both times before anything

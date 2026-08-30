@@ -15,9 +15,17 @@ spec_gate: pending       # <!-- pending | approved | blocked — THE machine gat
 review_status: pending   # <!-- only the human reviewer sets this to 'approved', after grill-me.
                          #      Under SPEC_REVIEW_MODE=auto the gate carries it, because in an
                          #      unattended run the machine gate is the whole wall. -->
-criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase,
+criticality:             # <!-- standard | critical — 'critical' runs the Breaker on this phase,
                          #      and the phase then does NOT close without the Breaker's
-                         #      breaker.json record beside verdict.json. -->
+                         #      breaker.json record beside verdict.json.
+                         #      REQUIRED, and shipped BLANK on purpose: a blank value resolves to
+                         #      `critical` and is announced on stderr as the default it is
+                         #      (scripts/criticality.py, issue #101), so a spec nobody edited gets
+                         #      the STRONGER pipeline. It used to resolve to `standard`, so a spec
+                         #      that never wrote this line silently lost its adversarial stage —
+                         #      and a template that pre-filled `standard` made that opt-out the
+                         #      template's decision rather than an author's.
+                         #      Writing `standard` deliberately is how a phase opts out. -->
 readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
 ---
 

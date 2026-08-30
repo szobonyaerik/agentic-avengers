@@ -153,8 +153,18 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    phase owing a Breaker run does not close without a valid `breaker.json` beside `verdict.json` (a
    `clean` verdict naming what it attacked, or a `found` verdict naming its counterexample — a vacuous
    record is refused the same as a missing one). Enforced by `hook_verifier.sh` and `gate_ci.sh`
-   (diff-scoped, `check --all` audits) and reported by `pipeline_state.py` as `stage: breaker`, and
+   (diff-scoped, `check --all` audits - the CI sweep counts rather than blocks a phase that already
+   wrote `handover.md` when its `critical` came only from the issue #101 default below; a spec that
+   DECLARES `critical` is still reported, closed or not) and reported by `pipeline_state.py` as
+   `stage: breaker`, and
    waivable only through the same disclosed-exception ledger as every other rule here.
+   **What routes it is resolved in one place, and an omission does not weaken it** (issue #101):
+   `scripts/criticality.py` resolves an absent, blank, unrecognised or unreadable `criticality` to
+   `critical` — it used to resolve to `standard` in both readers, so a spec that never wrote the line
+   silently lost this stage on a phase whose verdict then passed. The taxonomy is unchanged
+   (`standard | critical`); the resolution just also carries why it has its value. And a skipped
+   stage is named with its reason — `breaker_gate.py skipped`, `State.skipped_stages`, and the
+   handover hook's own output — so a Breaker that never ran is distinguishable from a clean one.
 3c. **Amendments — change a verified phase without re-verifying all of it.**
    `scripts/amendments.py` records the requirement ids a post-verification change touched; **only
    those re-verify**, and the verdict reads *verified at attempt N, plus amendments A1..An*
@@ -454,7 +464,9 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 @avenger-verifier         <phase>         # suite + R-trace per `binding:` + ADVERSARIAL EXECUTION,
                                           # both recorded through verifier_evidence.py
                                           # -> writes verdict.json; on pass the phase's tests LOCK
-@avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
+@avenger-breaker          <phase>         # ONLY when a spec RESOLVES TO criticality: critical
+                                          # (criticality.py; absent/blank/unknown -> critical, #101)
+                                          # and
                                           # then NOT optional: -> writes breaker.json, without which
                                           # the handover below is refused (see 3h)
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md

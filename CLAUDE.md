@@ -479,8 +479,14 @@ with every check green. `trace_claims` now holds the minimum - the named test **
 phase's own test tree and is **not skipped**. **What it does not do is stated rather than implied**:
 it does not read a row's prose against a test's assertions, so a row whose words contradict its
 existing, running test still passes; generating the claim from the test is the better fix and this
-is not it. Test definition and skip detection are Python-specific, so a tree yielding no readable
-definitions is **not held at all** - an unreadable scope, not a violated one. A full audit on every commit would hard-fail a consumer
+is not it. Test definition and skip detection are Python-specific, so a tree that yields no test
+definitions at all is **not held** - an unreadable scope, not a violated one. **An artifact that
+exists and cannot be OPENED is the other case, and it is a FINDING** (`read_artifact`): a
+`test-mapping.md`, a test file or a spec whose read is refused - a dangling symlink, a mode-000
+file, undecodable bytes - is named as an UNDECIDABLE check rather than skipped, because a mapping
+nothing could read used to leave the phase either fully clean or holding the misattributed "appears
+in no test-mapping.md row", whose remedy is to add a row that is already there. Absent keeps its own
+meaning: a phase that legitimately owes no mapping is still clean. A full audit on every commit would hard-fail a consumer
 repo's CI over locked phases nobody touched, which is the hostage failure the scoping removes; when
 git cannot say what changed, nothing is enforced and the check says so out loud.
 
@@ -520,8 +526,34 @@ a vacuous record is refused exactly like a missing one. **`hook_verifier.sh` is 
 point** (the handover write, unconditional); `gate_ci.sh` is a diff-scoped backstop and
 `pipeline_state.py` is routing, reporting `stage: breaker` so `/avenger-run` acts on the obligation
 rather than a human remembering it. Asked only while the phase is still OPEN (§3a), waivable only
-through the disclosed-exception ledger, `--rule breaker`. Full statement in
-`skills/pipeline-conventions`.
+through the disclosed-exception ledger, `--rule breaker`. **`check` has a second closure evidence,
+and its narrowness is the point**: a phase that has written `handover.md` is counted and named
+rather than blocked **only when its `critical` came from issue #101's default** — under `--all` and
+`gate_ci.sh --full` as well as diff-scoped, since the obligation is one that change created over
+work already landed. A phase whose spec **declares** `criticality: critical` keeps base behaviour
+and is still reported, closed or not: that is issue #45's own measured case, its remedy is fully
+available, and exempting it would leave the audit able to block only on phases with no card at all.
+Full statement in `skills/pipeline-conventions`.
+
+**And what routes it must not resolve to the weaker pipeline by omission** (issue #101). Criticality
+was read as `fields.get("criticality", "standard")` in both readers, so a spec that never wrote the
+line resolved to non-critical and the Breaker was deleted from that phase with no author involved -
+the phase completed normally and its verdict passed, so the absence was indistinguishable from a
+Breaker that ran and found nothing. It was caught **by hand** in grid-bot-platform phase 4, that
+feature's highest-risk phase, before dispatch. `scripts/criticality.py` is now the one resolver both
+`pipeline_state.py` and `breaker_gate.py` read, and an absent, blank, unrecognised or unreadable
+value resolves to **`critical`**. **The taxonomy does not grow** - the value is still `standard` or
+`critical` - what is new is that the resolution carries WHY it has that value, so a defaulted
+`critical` is announced as the default it is rather than passing for an author's decision. The other
+direction on offer, failing at spec-gate time, was rejected on §3a: a gate binds only a spec still
+going THROUGH it, a `status: done` spec has shipped and cannot be re-gated, so that direction leaves
+the hole open on exactly the specs nobody looks at any more, while the default's own cost - a Breaker
+run on a phase that never asked for one - already has an audited remedy in the exception ledger.
+**Independently of the default, a skipped stage is stated rather than inferred from an absence**:
+`breaker_gate.py skipped` (reporting only, always exit 0) names why the stage does not run - a
+non-critical phase, or a disclosed exception - `pipeline_state` carries it on `State.skipped_stages`,
+and `hook_verifier.sh` prints it at the close. That half holds whichever way the default is later
+decided, which is why it is built and stated separately from it.
 
 ### 4d. Amendments — change a verified phase without re-verifying all of it
 The pipeline had no concept of a correction, so any change to a verified phase re-opened the whole
