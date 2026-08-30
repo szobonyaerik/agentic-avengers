@@ -357,10 +357,21 @@ def _dispatch(args: argparse.Namespace) -> int:
         resolved = criticality.phase(args.phase_dir)
         reason = skipped(args.phase_dir, resolved)
         if reason is None:
-            print(
-                f"[breaker_gate] {args.phase_dir} - the Breaker is owed and runs on this phase: "
-                f"{resolved.reason()}"
-            )
+            # `skipped()` answers None for TWO states, and one sentence for both asserted an
+            # obligation a phase amended down to `standard` does not have while quoting, in its own
+            # second clause, the reason it does not have it. The record is what tells them apart -
+            # not `resolved.critical`, since a critical phase with a valid record has also already
+            # run and is not owed anything either.
+            if satisfied(args.phase_dir) is None:
+                print(
+                    f"[breaker_gate] {args.phase_dir} - the Breaker already ran and left a valid "
+                    f"{FILENAME}; nothing is skipped here"
+                )
+            else:
+                print(
+                    f"[breaker_gate] {args.phase_dir} - the Breaker is owed and runs on this "
+                    f"phase: {resolved.reason()}"
+                )
         else:
             print(
                 f"[breaker_gate] {args.phase_dir} - criticality-gated stage skipped:\n  - {reason}",

@@ -318,6 +318,68 @@ def test_skipped_cli_says_why_the_breaker_runs_when_it_is_not_skipped(
     assert "1.1-a" in result.stdout
 
 
+def _skipped_cli(phase: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "breaker_gate.py"),
+            "skipped",
+            str(phase),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_skipped_cli_says_the_breaker_already_ran_on_a_standard_phase_with_a_record(
+    tmp_path: Path,
+) -> None:
+    """`skipped()` answers None for two states, and the CLI must not describe both the same way.
+
+    A spec amended from `critical` down to `standard` after the Breaker ran leaves a valid record on
+    a non-critical phase. Reported as "owed and runs", the sentence asserts an obligation this phase
+    does not have and then quotes, in its own second clause, the reason it does not have it -
+    printed at every phase close by `hook_verifier.sh`. Truthful reporting of what did and did not
+    run is the whole point of this half of the change.
+    """
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": ["the credential path"]})
+
+    result = _skipped_cli(phase_dir(tmp_path))
+
+    assert result.returncode == 0
+    assert "already ran and left a valid breaker.json" in result.stdout
+    assert "owed" not in result.stdout
+    assert "not run" not in result.stdout
+
+
+def test_skipped_cli_says_already_ran_for_a_critical_phase_with_a_record(
+    tmp_path: Path,
+) -> None:
+    """The record is what distinguishes the two, not the criticality: a critical phase whose Breaker
+    already ran is not owed anything either, so it must not be told it is."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": ["the credential path"]})
+
+    result = _skipped_cli(phase_dir(tmp_path))
+
+    assert result.returncode == 0
+    assert "already ran and left a valid breaker.json" in result.stdout
+
+
+def test_skipped_cli_still_says_owed_for_a_critical_phase_with_a_vacuous_record(
+    tmp_path: Path,
+) -> None:
+    """A record `satisfied()` refuses is not a Breaker run, so the obligation is still reported."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": []})
+
+    result = _skipped_cli(phase_dir(tmp_path))
+
+    assert result.returncode == 0
+    assert "the Breaker is owed and runs on this phase" in result.stdout
+
+
 # --- due(): reproduce the gap, then close it -----------------------------------------------------
 
 
