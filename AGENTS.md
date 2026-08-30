@@ -461,7 +461,9 @@ Plan once per feature, then loop per phase. Invoke agents with `@name`:
 @avenger-verifier         <phase>         # suite + R-trace per `binding:` + ADVERSARIAL EXECUTION,
                                           # both recorded through verifier_evidence.py
                                           # -> writes verdict.json; on pass the phase's tests LOCK
-@avenger-breaker          <phase>         # ONLY when a spec declares criticality: critical, and
+@avenger-breaker          <phase>         # ONLY when a spec RESOLVES TO criticality: critical
+                                          # (criticality.py; absent/blank/unknown -> critical, #101)
+                                          # and
                                           # then NOT optional: -> writes breaker.json, without which
                                           # the handover below is refused (see 3h)
 @avenger-handover         <phase>         # mirrors the verdict + any waivers into handover.md

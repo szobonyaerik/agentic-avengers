@@ -86,9 +86,14 @@ class State:
     spec_path: Path | None = None
     criticality: str = criticality_mod.STANDARD
     #: Criticality-gated stages that do NOT run on this phase, each with its reason (issue #101).
-    #: Empty is a claim - "every criticality-gated stage runs here" - and is why this is a list of
-    #: sentences rather than a boolean: a reader has to be able to tell a skipped Breaker from a
-    #: clean one, and the verdict reads identically in both cases.
+    #: A list of sentences rather than a boolean because a reader has to be able to tell a skipped
+    #: Breaker from a clean one, and the verdict reads identically in both cases.
+    #:
+    #: **Populated only on a phase-level state** - one whose specs are all written, gated and
+    #: implemented, which is the first moment the phase's criticality is settled. On a state returned
+    #: while the phase is still writing specs, empty means NOT YET DETERMINED, never "nothing is
+    #: skipped": a phase whose specs are still being written has no final criticality, so a skip
+    #: claim there would assert something the pipeline cannot know.
     skipped_stages: tuple[str, ...] = ()
 
     def as_json(self) -> str:
@@ -330,7 +335,7 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         )
 
     if not (phase / "handover.md").is_file():
-        # A phase that declares `criticality: critical` routes the Breaker (commands/avenger-run.md
+        # A phase that RESOLVES TO `criticality: critical` routes the Breaker (commands/avenger-run.md
         # §4), and "the resolver reports criticality: critical" used to be the only signal anyone
         # acted on — nothing enforced it, and it was owed twice on one feature and ran neither time
         # (issue #45). A stage that emits nothing is indistinguishable from a stage that never ran,

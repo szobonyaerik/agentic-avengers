@@ -278,8 +278,10 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 
 ## 4. After the Verifier passes a phase
 
-1. **Breaker** — when the resolver reports `stage: breaker` (any spec in the phase declares
-   `criticality: critical` and no valid `breaker.json` exists yet — `scripts/breaker_gate.py`).
+1. **Breaker** — when the resolver reports `stage: breaker` (any spec in the phase **resolves to**
+   `criticality: critical` — `scripts/criticality.py`, where an absent, blank, unrecognised or
+   unreadable field resolves to `critical` (issue #101) — and no valid `breaker.json` exists yet,
+   `scripts/breaker_gate.py`).
    Invoke `plan-build-verify:avenger-breaker` — it runs at the effort its own definition declares,
    which you neither pass nor override. It persists `breaker.json` beside `verdict.json`, naming its
    verdict and what it actually attacked; **this is not optional documentation, it is what the

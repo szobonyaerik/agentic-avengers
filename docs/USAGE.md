@@ -167,7 +167,9 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • The loop is CAPPED at 3 attempts (scripts/verifier_attempts.py). At the cap: carry the
         remainder as known-open in handover.md, waive it, or escalate.
 
-7b. @avenger-breaker 1-endpoint   (ONLY when a spec in the phase declares criticality: critical)
+7b. @avenger-breaker 1-endpoint   (ONLY when a spec in the phase RESOLVES TO criticality: critical -
+                                   scripts/criticality.py, where an absent, blank, unrecognised or
+                                   unreadable field resolves to critical, issue #101)
       • Then it is not optional: it writes breaker.json beside verdict.json - a `clean` verdict
         naming what it attacked, or a `found` one naming its counterexample. A vacuous record is
         refused like a missing one, and step 8 below is REFUSED without it

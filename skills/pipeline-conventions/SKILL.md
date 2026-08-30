@@ -48,7 +48,7 @@ The implementer authors **both tests and code** test-first (there is no separate
       verdict-attempt-<n>.json    # a superseded attempt, archived out of verdict.json
       verification-evidence.json  # the Verifier's transcript: every command it ran, recorded
       evidence/                   # one redacted, capped log per recorded command (committed)
-      breaker.json                # the Breaker's record — only on a phase declaring criticality: critical
+      breaker.json                # the Breaker's record — only on a phase resolving to criticality: critical
       handover.md                 # the phase's CONTRACT CARD, written after the Verifier passes
       handover-archive.md         # everything the card does not carry
   tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/...
@@ -1582,7 +1582,8 @@ only the main thread can). Position comes from `scripts/pipeline_state.py`, whic
 on disk (`spec_gate`, `review_status`, `status`, `verdict.json`, `amendments.json`, `exceptions.json`,
 `breaker.json`) and returns the single stage the feature owes next — so a run resumes after a
 `/clear`, a compaction, or a new session. It stops for `plan.md` approval and each spec-review unless
-`--auto`, retries a stage twice before halting, routes to the Breaker on `criticality: critical` and
+`--auto`, retries a stage twice before halting, routes to the Breaker on a phase **resolving to**
+`criticality: critical` (`scripts/criticality.py`) and
 does not walk past a critical phase that has no record of one, obeys `MUTATION_POLICY`, and commits
 per verified phase, then twice more at feature close — the e2e stage's output *before* the ship gate (whose
 precondition is a clean tree already carrying `tests/e2e/<feature>/`) and the retrospective artifacts

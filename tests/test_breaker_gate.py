@@ -58,7 +58,7 @@ def write_spec(
     path = spec_dir / "spec.md"
     body = SPEC.format(phase=phase, spec=spec, criticality=criticality)
     if criticality is None:
-        body = "\n".join(
+        body = "".join(
             line
             for line in body.splitlines(keepends=True)
             if not line.startswith("criticality:")
@@ -153,6 +153,47 @@ def test_skipped_names_a_disclosed_exception_as_the_reason(tmp_path: Path) -> No
         "no reachable critical path",
         "captain",
     )
+    reason = breaker_gate.skipped(phase_dir(tmp_path))
+    assert reason is not None
+    assert "disclosed exception" in reason and "no reachable critical path" in reason
+
+
+def test_skipped_is_none_when_an_excepted_phase_ran_the_breaker_anyway(
+    tmp_path: Path,
+) -> None:
+    """A record on disk means the Breaker RAN, whatever the ledger also says about this phase.
+
+    An exception recorded while a run looked impossible does not retroactively unrun a Breaker that
+    went ahead: reporting one as skipped is this report's own defect, a reader unable to tell a
+    skipped Breaker from a clean one in the direction it exists to settle.
+    """
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    applicability.record_exception(
+        phase_dir(tmp_path),
+        "breaker",
+        "1-core",
+        "provider unreachable at close",
+        "captain",
+    )
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": ["credential path"]})
+
+    assert breaker_gate.skipped(phase_dir(tmp_path)) is None
+    assert breaker_gate.due(phase_dir(tmp_path)) is None
+
+
+def test_skipped_names_the_exception_when_the_record_is_vacuous(tmp_path: Path) -> None:
+    """The exception branch stays reachable for the case it exists for: owed, no VALID record,
+    waived. A record refused by `satisfied()` is not a Breaker run."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    applicability.record_exception(
+        phase_dir(tmp_path),
+        "breaker",
+        "1-core",
+        "no reachable critical path",
+        "captain",
+    )
+    write_breaker(tmp_path, {"verdict": "clean", "attacked": []})
+
     reason = breaker_gate.skipped(phase_dir(tmp_path))
     assert reason is not None
     assert "disclosed exception" in reason and "no reachable critical path" in reason

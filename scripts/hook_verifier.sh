@@ -449,7 +449,9 @@ case "$V" in
         "above) — this is not missing evidence, and recording a run will not repair it. A check" \
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
-    # A phase that declares criticality: critical routes the Breaker (commands/avenger-run.md §4) —
+    # A phase that RESOLVES TO criticality: critical routes the Breaker (commands/avenger-run.md §4;
+    # scripts/criticality.py resolves an absent, blank, unrecognised or unreadable field to critical,
+    # issue #101) —
     # and on one measured feature it was owed twice and ran neither time, with zero trace anywhere in
     # the feature's docs or tests (issue #45). A stage that emits nothing is indistinguishable from a
     # stage that never ran, so this checks for its RECORD (breaker.json), the same way the handover

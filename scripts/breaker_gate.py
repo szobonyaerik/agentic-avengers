@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Breaker gate - a phase that declares `criticality: critical` does not close without a record.
+"""The Breaker gate - a phase resolving to `criticality: critical` does not close without a record.
 
 ## The defect (issue #45)
 
@@ -17,8 +17,9 @@ a stage that emits nothing is indistinguishable from a stage that never ran.
 
 Documentation already said the Breaker should run; that sentence enforced nothing, which is the exact
 defect shape this fixes. The Breaker now persists a **record** (`breaker.json`, beside `verdict.json`)
-naming its verdict and what it actually attacked, and a phase that OWES one - any spec in it declares
-`criticality: critical` - does not close without a valid one on disk. Same shape as
+naming its verdict and what it actually attacked, and a phase that OWES one - any spec in it
+resolves to `criticality: critical` (`scripts/criticality.py`, where an absent, blank, unrecognised
+or unreadable field resolves to `critical` - issue #101) - does not close without a valid one on disk. Same shape as
 `carried_items.py`: a mechanical, diff-scoped check run from `hook_verifier.sh` on every handover and
 from `gate_ci.sh` in CI, plus a state the resolver (`pipeline_state.py`) reports so `/avenger-run`
 routes to the Breaker itself rather than a human remembering to.
@@ -135,7 +136,7 @@ def satisfied(phase_dir: Path) -> str | None:
     path = record_path(phase_dir)
     if not path.is_file():
         return (
-            f"{phase_dir} declares criticality: critical and has no {FILENAME} - the Breaker is "
+            f"{phase_dir} resolves to criticality: critical and has no {FILENAME} - the Breaker is "
             f"owed and has left no record it ran"
         )
     try:
@@ -170,11 +171,19 @@ def skipped(phase_dir: Path) -> str | None:
     either way - so the reason is reported rather than left to be inferred from an absence. This
     holds whichever way the default in `criticality.py` is later decided, which is the point of
     stating it here rather than only defaulting harder.
+
+    The two questions are asked in the same order `due()` asks them: a valid record on disk means the
+    Breaker RAN, whatever the exception ledger also says about this phase. An exception recorded while
+    a run looked impossible does not retroactively unrun a Breaker that went ahead anyway, and
+    reporting one as skipped would be this report's own defect - a reader unable to tell a skipped
+    Breaker from a clean one, in the direction it exists to settle.
     """
     resolved = criticality.phase(Path(phase_dir))
     criticality.announce(Path(phase_dir), resolved)
     if not resolved.critical:
         return f"breaker: not run - {resolved.reason()}"
+    if satisfied(phase_dir) is None:
+        return None
     exception = _excepted(phase_dir)
     if exception is not None:
         return f"breaker: not run - disclosed exception: {exception.describe()}"
@@ -314,7 +323,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             print(f"[breaker_gate] {args.phase_dir} - Breaker obligation clear")
             return OK
         print(
-            "breaker: this phase declares criticality: critical, which is what routes the Breaker "
+            "breaker: this phase resolves to criticality: critical, which is what routes the Breaker "
             "(commands/avenger-run.md §4) - and it has no valid record that it ran:",
             file=sys.stderr,
         )
@@ -332,7 +341,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if not problems:
         return OK
     print(
-        "breaker: a phase that declares criticality: critical does not close without a Breaker "
+        "breaker: a phase that resolves to criticality: critical does not close without a Breaker "
         "record - the Breaker found real defects nothing else caught, and a phase with no record is "
         "indistinguishable from one nobody ever ran:",
         file=sys.stderr,
