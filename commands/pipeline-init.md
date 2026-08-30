@@ -15,13 +15,13 @@ write no production code.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_init.py" survey
    ```
 
-   It reports, and never blocks: whether the project already owns `.env.example` (then the pipeline's
-   template goes to `.env.pipeline.example`, never over the project's file) or whether that file is
-   the **pipeline's own** from an earlier init (told apart by its content, and then refreshed in
-   place rather than copied a second time), whether a live `.env` or `.no-mistakes.yaml` is already
-   there, and whether `cosmic-ray.toml` is missing — **named here rather than at step 8, because two
-   later steps require it and neither can create it**, and the report carries the config to write
-   rather than a path to it. Report every line of it to the user; the steps below act on it.
+   It reports, and never blocks: whether `.env.example` already exists (then the pipeline's template
+   goes to `.env.pipeline.example` — **an existing `.env.example` is never overwritten, whoever
+   wrote it**, so its provenance is never asked and there is no third case), whether a live `.env`
+   or `.no-mistakes.yaml` is already there, and whether `cosmic-ray.toml` is missing — **named here
+   rather than at step 8, because two later steps require it and neither can create it**, and the
+   report carries the config to write rather than a path to it. Report every line of it to the user;
+   the steps below act on it.
 
 1. **Artifact tree.** Create `docs/features/`; if a feature id was given, also
    `docs/features/<id>/` and `docs/features/<id>/phases/`.
@@ -38,8 +38,8 @@ write no production code.
 
 2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to the
    **target step 0 named** — `.env.example` in a repository that has none, `.env.pipeline.example`
-   in one that already owns that filename. **Never overwrite either file, and never overwrite a live
-   `.env`.**
+   in one that already has that file, whoever wrote it. **Never overwrite either file, and never
+   overwrite a live `.env`.**
 
    Then assemble the run's `.env` from every example the project now has, **in that order** — and
    never with `cat`:
@@ -64,10 +64,11 @@ write no production code.
    share `AUTHOR_FAMILY` — a same-family gate exits 2, fail-closed. **A value left holding
    `REPLACE_ME` stops the run, it does not become the config**: `gate_runner.py` refuses before any
    provider call, naming the key. The refusal is scoped to what the run reads — every key the
-   project's own `.env` declares, plus the pipeline variables the **resolved provider** uses, so
-   `OPENROUTER_API_KEY` from the environment never wedges an `opencode` run. `env_assemble.py check
-   --provider <opencode|openrouter>` asks that same question, through the same function, on demand;
-   with no provider named it assumes `opencode`, the runner's own default, and says so.
+   project's own `.env` declares, plus the pipeline's own variables (`GATE_*`, `OPENROUTER_*`,
+   `AUTHOR_FAMILY`, `MUTATION_*`, `SPEC_*`) from the real environment, so an unrelated tool's
+   scaffold variable can never wedge a gate. `OPENROUTER_API_KEY` is in scope under **both**
+   providers: `opencode` inherits it from the environment and is documented as authenticating that
+   way. `env_assemble.py check` asks that same question, through the same function, on demand.
    Every gate loads this file via `scripts/load_env.sh`; the real environment always wins over it.
 
 2b. **Ship gate config.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/no-mistakes.example.yaml` to

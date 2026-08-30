@@ -291,15 +291,18 @@ def test_a_replace_me_value_in_the_env_stops_the_run_before_any_call(gate) -> No
     assert "REPLACE_ME" in result.stderr
 
 
-def test_a_key_the_resolved_provider_never_reads_does_not_stop_the_run(gate) -> None:
-    """`OPENROUTER_API_KEY` is read by `call_openrouter` alone. Under `opencode` - the runner's own
-    default - refusing on it hands the operator a remedy that is not theirs to apply: obtain an
-    OpenRouter key for a provider they correctly never configured. A wedge, not a gate."""
+def test_the_openrouter_key_stops_a_run_on_the_default_provider(gate) -> None:
+    """This gate runs the stubbed `opencode` provider - the runner's own default - and the child
+    inherits the environment verbatim (`proc_group.run_bounded` passes no `env=`), which is one of
+    the two documented ways to authenticate opencode. So a placeholder here DOES reach a run, and
+    must be refused before the call rather than come back as an auth error naming no file."""
     result = gate("good", OPENROUTER_API_KEY="sk-or-v1-REPLACE_ME")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 2
+    assert "cause=config" in result.stderr
+    assert "OPENROUTER_API_KEY" in result.stderr
 
 
-def test_the_projects_own_env_is_in_scope_whatever_the_provider(gate) -> None:
+def test_the_projects_own_env_is_in_scope_too(gate) -> None:
     """The operator wrote that file, so every key in it is theirs to fill in - the scoping narrows
     what is read out of the real ENVIRONMENT, never what the project itself declared."""
     (gate.tmp / ".env").write_text(

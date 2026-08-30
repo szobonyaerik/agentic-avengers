@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from pipeline_init import (  # noqa: E402
     PIPELINE_EXAMPLE,
     PROJECT_EXAMPLE,
-    TEMPLATE_PATH,
     report_lines,
     survey,
 )
@@ -27,9 +26,11 @@ from pipeline_init import (  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "pipeline_init.py"
 
-#: The artifact this command writes. Reading it here is reading the survey's own input, not a
-#: source file used as a proxy: the question under test is what the survey answers ABOUT it.
-SHIPPED_TEMPLATE = TEMPLATE_PATH.read_text(encoding="utf-8")
+#: The template `/pipeline-init` copies. Reading it here is reading the command's own input, so a
+#: re-init can be set up exactly as it occurs: the file on disk IS what an earlier init wrote.
+SHIPPED_TEMPLATE = (REPO / "docs" / "templates" / "env.example").read_text(
+    encoding="utf-8"
+)
 
 
 class TestGreenfield:
@@ -39,17 +40,17 @@ class TestGreenfield:
         found = survey(tmp_path)
         assert found.greenfield
         assert found.template_target == PROJECT_EXAMPLE
-        assert not found.env_example_owned_by_project
+        assert not found.env_example_exists
 
 
 class TestNonGreenfield:
-    def test_an_existing_env_example_is_the_projects_own(self, tmp_path):
+    def test_an_existing_env_example_is_never_the_templates_target(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
         assert not found.greenfield
-        assert found.env_example_owned_by_project
+        assert found.env_example_exists
         assert found.template_target == PIPELINE_EXAMPLE
 
     def test_a_missing_cosmic_ray_config_names_the_steps_that_need_it(self, tmp_path):
@@ -73,62 +74,53 @@ class TestNonGreenfield:
         assert "never overwrite" in "\n".join(report_lines(found)).lower()
 
 
-class TestTellingThePipelinesOwnTemplateApart:
-    """A second `/pipeline-init` must not report the file IT wrote as the project's own.
+class TestOneRuleForAnExistingExample:
+    """An existing `.env.example` is never overwritten, WHOEVER wrote it.
 
-    Reported as the project's, the pipeline writes a second copy of the same template to
-    `.env.pipeline.example` and leaves the older one first in the assemble order.
+    A pipeline-written one was briefly told apart by its content and "refreshed in place". Any such
+    classification is wrong in the case that costs something: a repo initialised once whose operator
+    then added their own keys still matches the template, so the refresh destroys them - the
+    ownership assumption issue #108 is about. There is no third state, so nothing has to classify.
     """
 
-    def test_an_env_example_that_is_the_shipped_template_is_reported_as_the_pipelines(
+    def test_an_env_example_that_is_the_shipped_template_is_still_never_the_target(
         self, tmp_path
     ):
         (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
 
         found = survey(tmp_path)
 
-        assert found.env_example_written_by_pipeline
-        assert not found.env_example_owned_by_project
-        assert (
-            found.template_target == PROJECT_EXAMPLE
-        )  # refreshed in place, never a second copy
-        assert not found.greenfield  # an initialised repo is not a fresh one
+        assert found.env_example_exists
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert not found.greenfield
 
-    def test_an_operator_filling_in_a_value_does_not_make_it_the_projects_own(
+    def test_an_operator_who_added_keys_to_a_pipeline_written_example_keeps_them(
         self, tmp_path
     ):
-        edited = SHIPPED_TEMPLATE.replace("REPLACE_ME", "sk-or-v1-real") + "\n# mine\n"
-        (tmp_path / PROJECT_EXAMPLE).write_text(edited, encoding="utf-8")
+        example = tmp_path / PROJECT_EXAMPLE
+        example.write_text(SHIPPED_TEMPLATE + "MY_OWN_KEY=mine\n", encoding="utf-8")
+        before = example.read_text(encoding="utf-8")
 
-        assert survey(tmp_path).env_example_written_by_pipeline
+        found = survey(tmp_path)
 
-    def test_the_projects_own_file_is_still_the_projects_own(self, tmp_path):
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert example.read_text(encoding="utf-8") == before
+
+    def test_the_projects_own_file_gets_the_same_answer(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
-        assert found.env_example_owned_by_project
-        assert not found.env_example_written_by_pipeline
+        assert found.env_example_exists
         assert found.template_target == PIPELINE_EXAMPLE
 
-    def test_an_unreadable_template_falls_back_to_the_projects_own(
-        self, tmp_path, capsys
-    ):
-        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
-
-        found = survey(tmp_path, template=tmp_path / "not-shipped" / "env.example")
-
-        assert found.env_example_owned_by_project  # conservative: never overwrite it
-        assert not found.env_example_written_by_pipeline
-        assert found.template_target == PIPELINE_EXAMPLE
-        assert "cannot read the shipped template" in capsys.readouterr().err
-
-    def test_the_report_names_the_pipelines_own_file_as_such(self, tmp_path):
+    def test_the_report_states_the_rule_without_claiming_who_wrote_it(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
 
         text = "\n".join(report_lines(survey(tmp_path)))
 
-        assert "PIPELINE's own template" in text
+        assert "never overwrite it, whoever wrote it" in text
+        assert PIPELINE_EXAMPLE in text
 
 
 class TestTheCosmicRayRemedyTravels:
@@ -145,7 +137,7 @@ class TestTheCosmicRayRemedyTravels:
 
 
 class TestTheReportNamesBothHalves:
-    def test_an_existing_env_example_is_reported_as_the_projects_own(self, tmp_path):
+    def test_an_existing_env_example_names_both_paths(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
         text = "\n".join(report_lines(survey(tmp_path)))
         assert PIPELINE_EXAMPLE in text

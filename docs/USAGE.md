@@ -103,9 +103,11 @@ of a task (issue #108). `env_assemble.py` joins with an explicit separator and r
 key back out of the result; a key that did not survive stops the step and nothing is written. Fill in
 every `REPLACE_ME` before the first gate call — a run is refused while one is left, naming the key.
 The refusal is scoped to what your run actually reads: every key your own `.env` declares, plus the
-pipeline variables the **resolved provider** uses, so a key that provider never sends anywhere
-(`OPENROUTER_API_KEY` under `GATE_PROVIDER=opencode`) can never wedge a gate. Ask on demand with
-`python3 "$AV/scripts/env_assemble.py" check --provider <opencode|openrouter>`.
+pipeline's own variables (`GATE_*`, `OPENROUTER_*`, `AUTHOR_FAMILY`, `MUTATION_*`, `SPEC_*`) from the
+environment, so an unrelated tool's scaffold variable can never wedge a gate. `OPENROUTER_API_KEY`
+counts under **both** providers — opencode inherits it from the environment, which is one of the two
+documented ways to authenticate it. Ask on demand with
+`python3 "$AV/scripts/env_assemble.py" check`.
 
 Re-running `install.sh <target> --check` later classifies each file NEW / UPDATE / SAME / **DRIFT**
 (your local edits — skipped, never clobbered) / **GONE**. `--prune` removes upstream-deleted files you

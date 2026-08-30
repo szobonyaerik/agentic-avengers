@@ -31,7 +31,7 @@ before any provider call, so the refusal lands at the first gate with the key na
 an authentication error from a provider that was handed a placeholder.
 
     python3 scripts/env_assemble.py assemble --out .env .env.example .env.pipeline.example
-    python3 scripts/env_assemble.py check [--root .] [--provider opencode|openrouter]
+    python3 scripts/env_assemble.py check [--root .]
 """
 
 from __future__ import annotations
@@ -125,53 +125,43 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
     return expected
 
 
+#: Variables whose value is author-written PROSE rather than configuration (CLAUDE.md section 6).
+#: A bypass reason legitimately NAMES the key it is bypassing - `GATE_BYPASS="OPENROUTER_API_KEY
+#: still REPLACE_ME in CI, proceeding"` - and reporting that sentence as an unfilled config value
+#: is a wrong message on the exact path an operator uses to break glass past this refusal. Stated
+#: here, where the rule lives, so no caller has to remember it.
+PROSE_VALUED_KEYS = frozenset({"GATE_BYPASS", "GATE_SAME_FAMILY_WAIVER"})
+
+
 def placeholder_keys(values: dict[str, str]) -> list[str]:
     """The keys whose value still carries the templates' fill-me-in marker."""
-    return sorted(key for key, value in values.items() if PLACEHOLDER_MARKER in value)
+    return sorted(
+        key
+        for key, value in values.items()
+        if key not in PROSE_VALUED_KEYS and PLACEHOLDER_MARKER in value
+    )
 
 
-#: Pipeline variables EVERY provider path reads, so a placeholder in one always stops a run.
-PIPELINE_KEY_PREFIXES = ("GATE_", "AUTHOR_FAMILY", "MUTATION_", "SPEC_")
-
-#: ...and the variables only ONE provider's call path reads. `OPENROUTER_API_KEY` is read by
-#: `gate_runner.call_openrouter` alone, so under the `opencode` provider it is never sent anywhere
-#: and a placeholder in it must not stop the run: the remedy would be "obtain an OpenRouter key",
-#: which is not the operator's to apply - a wedge rather than a gate (CLAUDE.md section 3a).
-PROVIDER_KEY_PREFIXES: dict[str, tuple[str, ...]] = {
-    "openrouter": ("OPENROUTER_",),
-    "opencode": (),
-}
-
-#: What `gate_runner.py`'s own `--provider` falls back to. Named here so `check` can assume the same
-#: thing a run would, instead of a second answer of its own.
-DEFAULT_PROVIDER = "opencode"
+#: The pipeline's own variables. Every one of them is consumed on every provider path: the gate
+#: variables by the runner itself, and `OPENROUTER_API_KEY` by BOTH - `call_openrouter` sends it as
+#: a bearer token, and the `opencode` child inherits it verbatim (`proc_group.run_bounded` passes no
+#: `env=`), which is the documented way to authenticate opencode (AGENTS.md, docs/USAGE.md). So
+#: there is no provider under which one of these is unread, and nothing here is scoped by provider.
+PIPELINE_KEY_PREFIXES = ("GATE_", "OPENROUTER_", "AUTHOR_FAMILY", "MUTATION_", "SPEC_")
 
 
-def pipeline_key_prefixes(provider: str | None) -> tuple[str, ...]:
-    """The pipeline variables in scope for `provider`, resolved by the caller and never re-derived.
-
-    A provider nobody named contributes nothing beyond the common set: reading fewer keys can only
-    let a run start, never wedge one on a key the run would not have used.
-    """
-    return PIPELINE_KEY_PREFIXES + PROVIDER_KEY_PREFIXES.get(provider or "", ())
-
-
-def run_placeholders(
-    env: dict[str, str], root: Path | str = ".", provider: str | None = None
-) -> list[str]:
+def run_placeholders(env: dict[str, str], root: Path | str = ".") -> list[str]:
     """The keys a RUN must refuse to start on, with their EFFECTIVE values.
 
-    Scoped deliberately, in two halves. The project `.env`'s own keys are all in scope whatever the
-    provider: the operator wrote that file and every key in it is theirs to fill in. The pipeline's
-    own variables from the real environment are scoped to what the RESOLVED provider actually reads,
-    so a key that provider never sends anywhere cannot stop a gate. Scanning the whole environment
-    instead would let an unrelated tool's scaffold variable wedge every gate with a remedy that is
-    not the operator's to apply - a wedge, not a gate. The values are read from `env`, never from
-    the file, because the real environment wins over the file and it is the effective value that
-    reaches the provider.
+    Scoped deliberately: the project `.env`'s own keys - the operator wrote that file and every key
+    in it is theirs to fill in - plus the pipeline's own variables from the real environment.
+    Scanning the whole environment instead would let an unrelated tool's scaffold variable wedge
+    every gate with a remedy that is not the operator's to apply - a wedge, not a gate. The values
+    are read from `env`, never from the file, because the real environment wins over the file and it
+    is the effective value that reaches the provider.
     """
     keys = set(read_env(Path(root)))
-    keys |= {key for key in env if key.startswith(pipeline_key_prefixes(provider))}
+    keys |= {key for key in env if key.startswith(PIPELINE_KEY_PREFIXES)}
     return placeholder_keys({key: env[key] for key in sorted(keys) if key in env})
 
 
@@ -202,16 +192,6 @@ def _cmd_check(args: argparse.Namespace) -> int:
     overrode, and it passed a pipeline variable exported as a placeholder with no file at all.
     """
     root = Path(args.root)
-    provider = args.provider or os.environ.get("GATE_PROVIDER") or None
-    if provider is None:
-        provider = DEFAULT_PROVIDER
-        print(
-            f"env-assemble: no --provider and no GATE_PROVIDER - assuming '{DEFAULT_PROVIDER}', "
-            f"which is what `gate_runner.py` itself falls back to. A run configured for another "
-            f"provider reads more keys than this answer covers.",
-            file=sys.stderr,
-        )
-
     path = find_env_file(root)
     if path is None:
         # Absent is not a violation: the real environment may carry everything. Said out loud
@@ -222,7 +202,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    left = run_placeholders(load_into(dict(os.environ), root), root, provider=provider)
+    left = run_placeholders(load_into(dict(os.environ), root), root)
     if left:
         print(
             f"env-assemble: these values still carry {PLACEHOLDER_MARKER}: {', '.join(left)}. "
@@ -255,13 +235,6 @@ def main(argv: list[str] | None = None) -> int:
     look = sub.add_parser("check", help="refuse a placeholder value reaching a run")
     look.add_argument(
         "--root", default=".", help="project root holding the .env (default: cwd)"
-    )
-    look.add_argument(
-        "--provider",
-        choices=sorted(PROVIDER_KEY_PREFIXES),
-        default=None,
-        help="the provider the run will use, since which pipeline keys are read depends on it "
-        f"(default: GATE_PROVIDER, else '{DEFAULT_PROVIDER}' - said on stderr when assumed)",
     )
     look.set_defaults(func=_cmd_check)
 

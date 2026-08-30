@@ -497,9 +497,10 @@ def main():
         # the operator must fill in, and an unfilled `.env` used to reach the provider as a
         # credential — answered with an authentication error that says nothing about the file that
         # caused it. Asked here, before any call: the run stops with the key named (issue #108).
-        # Scoped to the RESOLVED provider: `OPENROUTER_API_KEY` is read by `call_openrouter`
-        # alone, so under `opencode` a placeholder in it stops nothing — the remedy would be
-        # "obtain an OpenRouter key", which is not the operator's to apply.
+        # Scoped to the pipeline's own variables plus the project .env's keys, never the whole
+        # environment. Every one of them is consumed on every provider path — `OPENROUTER_API_KEY`
+        # by `call_openrouter` as a bearer token, and by the `opencode` child, which inherits it
+        # verbatim and is documented as authenticating that way.
         if run_placeholders is None:
             print(
                 "gate_runner: the placeholder check is unavailable (env_assemble.py could not be "
@@ -509,9 +510,7 @@ def main():
             )
         else:
             unfilled = run_placeholders(
-                os.environ,
-                os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd(),
-                provider=args.provider,
+                os.environ, os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()
             )
             if unfilled:
                 raise GateError(

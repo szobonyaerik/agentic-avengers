@@ -193,24 +193,26 @@ class TestCLI:
         )
         assert proc.returncode == 0, proc.stderr
 
-    def test_check_names_the_provider_it_assumed_when_none_was_given(self, tmp_path):
-        proc = self.run("check", "--root", ".", cwd=tmp_path)
-        assert proc.returncode == 0
-        assert "opencode" in proc.stderr
-
-    def test_check_scopes_the_openrouter_key_to_the_named_provider(self, tmp_path):
-        env = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}"}
-        assert (
-            self.run(
-                "check", "--root", ".", "--provider", "opencode", cwd=tmp_path, **env
-            ).returncode
-            == 0
-        )
+    def test_check_refuses_the_openrouter_key_from_the_environment(self, tmp_path):
         refused = self.run(
-            "check", "--root", ".", "--provider", "openrouter", cwd=tmp_path, **env
+            "check",
+            "--root",
+            ".",
+            cwd=tmp_path,
+            OPENROUTER_API_KEY=f"sk-or-v1-{PLACEHOLDER_MARKER}",
         )
         assert refused.returncode == 1
         assert "OPENROUTER_API_KEY" in refused.stderr
+
+    def test_check_ignores_a_bypass_reason_that_mentions_the_marker(self, tmp_path):
+        proc = self.run(
+            "check",
+            "--root",
+            ".",
+            cwd=tmp_path,
+            GATE_BYPASS=f"OPENROUTER_API_KEY still {PLACEHOLDER_MARKER} in CI, proceeding",
+        )
+        assert proc.returncode == 0, proc.stderr
 
 
 class TestWhatARunRefuses:
@@ -229,41 +231,27 @@ class TestWhatARunRefuses:
         assert run_placeholders(env, tmp_path) == []
 
 
-class TestScopedToTheResolvedProvider:
-    """A key the run's provider never reads cannot stop that run.
+class TestEveryPipelineVariableIsConsumedOnEveryProviderPath:
+    """`OPENROUTER_API_KEY` is in scope whichever provider the run resolves to.
 
-    `OPENROUTER_API_KEY` is read by `gate_runner.call_openrouter` alone. Under `opencode` - the
-    runner's own default - an operator who correctly never obtained an OpenRouter key would
-    otherwise get `cause=config` on every gate call with a remedy that is not theirs to apply.
+    It was briefly scoped to `openrouter` alone, on the premise that `gate_runner.call_openrouter`
+    is its only reader. It is not: `proc_group.run_bounded` builds the `opencode` child with no
+    `env=`, so that child inherits the variable verbatim, and exporting it is one of the two
+    documented ways to authenticate opencode. A placeholder therefore reaches a run under the
+    runner's own default provider, which is exactly what this refusal exists to stop.
     """
 
-    def test_openrouters_key_is_ignored_when_the_run_uses_opencode(self, tmp_path):
+    def test_openrouters_key_is_refused_from_the_real_environment(self, tmp_path):
         env = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}"}
-        assert run_placeholders(env, tmp_path, provider="opencode") == []
+        assert run_placeholders(env, tmp_path) == ["OPENROUTER_API_KEY"]
 
-    def test_openrouters_key_is_refused_when_the_run_uses_openrouter(self, tmp_path):
-        env = {"OPENROUTER_API_KEY": f"sk-or-v1-{PLACEHOLDER_MARKER}"}
-        assert run_placeholders(env, tmp_path, provider="openrouter") == [
-            "OPENROUTER_API_KEY"
-        ]
-
-    @pytest.mark.parametrize("provider", ["opencode", "openrouter"])
-    def test_a_provider_independent_variable_is_refused_under_both(
-        self, tmp_path, provider
-    ):
-        env = {"GATE_MODEL": f"vendor/{PLACEHOLDER_MARKER}"}
-        assert run_placeholders(env, tmp_path, provider=provider) == ["GATE_MODEL"]
-
-    @pytest.mark.parametrize("provider", ["opencode", "openrouter"])
-    def test_the_projects_own_env_is_in_scope_under_both(self, tmp_path, provider):
+    def test_the_projects_own_env_is_in_scope_too(self, tmp_path):
         """The operator wrote that file; every key in it is theirs to fill in."""
         (tmp_path / ".env").write_text(
             f"OPENROUTER_API_KEY={PLACEHOLDER_MARKER}\n", encoding="utf-8"
         )
         env = {"OPENROUTER_API_KEY": PLACEHOLDER_MARKER}
-        assert run_placeholders(env, tmp_path, provider=provider) == [
-            "OPENROUTER_API_KEY"
-        ]
+        assert run_placeholders(env, tmp_path) == ["OPENROUTER_API_KEY"]
 
     def test_the_real_environment_wins_over_the_file(self, tmp_path):
         (tmp_path / ".env").write_text(
@@ -273,3 +261,29 @@ class TestScopedToTheResolvedProvider:
             run_placeholders({"GATE_MODEL": "google/gemini-3.1-pro-preview"}, tmp_path)
             == []
         )
+
+
+class TestProseValuedVariablesAreNotConfiguration:
+    """`GATE_BYPASS` and `GATE_SAME_FAMILY_WAIVER` hold author-written prose, and both start with
+    `GATE_`. A bypass reason legitimately NAMES the key it is bypassing, so a substring scan
+    reported the reason itself as an unfilled config value - on the exact path an operator uses to
+    break glass past this refusal."""
+
+    def test_a_bypass_reason_mentioning_the_marker_is_not_a_placeholder(self, tmp_path):
+        env = {
+            "GATE_BYPASS": f"OPENROUTER_API_KEY still {PLACEHOLDER_MARKER} in CI, proceeding"
+        }
+        assert run_placeholders(env, tmp_path) == []
+
+    def test_a_same_family_waiver_reason_is_not_a_placeholder(self, tmp_path):
+        env = {
+            "GATE_SAME_FAMILY_WAIVER": f"no other family reachable, {PLACEHOLDER_MARKER}"
+        }
+        assert run_placeholders(env, tmp_path) == []
+
+    def test_a_real_gate_variable_beside_one_is_still_refused(self, tmp_path):
+        env = {
+            "GATE_BYPASS": f"proceeding despite {PLACEHOLDER_MARKER}",
+            "GATE_MODEL": f"vendor/{PLACEHOLDER_MARKER}",
+        }
+        assert run_placeholders(env, tmp_path) == ["GATE_MODEL"]
