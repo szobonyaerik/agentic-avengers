@@ -223,6 +223,33 @@ class TestTheAssembleCommandNamesFilesThatExist:
         line = next(line for line in report_lines(found) if line.startswith(".env:"))
         return line.split("`")[1].split("--out .env ")[1].split("--force")[0].split()
 
+    def assembler(self, found):
+        line = next(line for line in report_lines(found) if line.startswith(".env:"))
+        return line.split("`")[1].split()[1]
+
+    @pytest.mark.parametrize("live_env", [False, True], ids=["create", "merge"])
+    def test_the_printed_assembler_is_a_path_that_exists(self, tmp_path, live_env):
+        """`commands/pipeline-init.md` tells the operator IN BOLD to run the command step 0 printed
+        rather than a path written elsewhere, so it has to resolve where it is read.
+
+        It was the bare relative `scripts/env_assemble.py`. Under the Claude Code plugin install -
+        the primary runtime - the pipeline lives at `$CLAUDE_PLUGIN_ROOT` and nothing puts
+        `scripts/` in the operator's repository, so running it verbatim from the repo root answered
+        `can't open file` and the pipeline's keys never reached the `.env` every gate reads.
+        """
+        if live_env:
+            (tmp_path / ".env").write_text(
+                "OPENROUTER_API_KEY=sk-live\n", encoding="utf-8"
+            )
+
+        named = self.assembler(survey(tmp_path))
+
+        assert named != "scripts/env_assemble.py"
+        assert Path(named).is_absolute()
+        assert Path(named).is_file()
+        # Beside this survey, which is what makes it resolve in every install shape.
+        assert Path(named).parent == SCRIPT.parent
+
     def test_no_example_at_all_names_the_target_step_2a_creates(self, tmp_path):
         found = survey(tmp_path)
 

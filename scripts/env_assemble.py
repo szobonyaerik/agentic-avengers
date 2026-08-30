@@ -205,8 +205,11 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
 #: `..env.<rand>.tmp` for a `.env`, which the literal `.env` in a `.gitignore` does not match: `git
 #: status` reported it untracked and the `git add -A` the pipeline's own commit steps run would have
 #: committed live credentials. `--out` is arbitrary, so no pattern derived from it could be written
-#: down in advance; this one can. The pattern lives in this repository's `.gitignore` and in the
-#: step-2 list `commands/pipeline-init.md` makes every project write - two places, and no more.
+#: down in advance; this one can. It is carried by every documented path that RUNS this writer, and
+#: that is the rule rather than a count: this repository's own `.gitignore`, the step-2 list
+#: `commands/pipeline-init.md` makes every project write, and step 5a of `docs/USAGE.md`'s
+#: `install.sh` + opencode route - which reaches neither of the first two, since `install.sh`
+#: vendors no `.gitignore` and `.opencode/` ships no `pipeline-init` command.
 TEMP_PREFIX = ".env-assemble."
 TEMP_SUFFIX = ".tmp"
 #: What those two places must carry, derived from the name above rather than restated. It is the

@@ -997,6 +997,18 @@ replace = '''
         return self.pipeline_example'''
 
 [[guard]]
+id = "pipeline-init.printed-assembler-resolves"
+implements = "scripts/pipeline_init.py"
+defect = "The survey printed the bare relative `scripts/env_assemble.py`, and `commands/pipeline-init.md` tells the operator IN BOLD to run the command step 0 printed rather than a path written elsewhere. Under the Claude Code plugin install - the primary runtime - the pipeline lives at `$CLAUDE_PLUGIN_ROOT` and nothing puts `scripts/` in the operator's repository, so running it verbatim answered `can't open file` and the pipeline's keys never reached the `.env` every gate reads. The report is the authority both documents defer to, and it named a path that resolved in neither install shape it is read in."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+ASSEMBLER = Path(__file__).resolve().parent / "env_assemble.py"'''
+replace = '''
+ASSEMBLER = "scripts/env_assemble.py"'''
+
+[[guard]]
 id = "env-assemble.symlinked-destination"
 implements = "scripts/env_assemble.py"
 defect = "`os.replace` replaces the SYMLINK at the destination where the `write_text` it took over from followed it. A worktree whose `.env` links to a shared canonical file - the pattern this repository's own multi-worktree setup uses - was silently detached: the command reported success, the link became a private regular file holding the merged credentials, the shared file kept its old contents, and later edits there stopped applying. `stat()` follows a link too, so the mode carried onto the replacement was the target's rather than the link's."

@@ -42,6 +42,16 @@ SHIPPED_TEMPLATE = (
     Path(__file__).resolve().parent.parent / "docs" / "templates" / "env.example"
 )
 
+#: The assembler this report tells the operator to run, resolved from THIS file's own location
+#: rather than written down. `env_assemble.py` ships beside `pipeline_init.py` in every install
+#: shape, so the printed command runs verbatim under the Claude Code plugin (where the pipeline
+#: lives at `$CLAUDE_PLUGIN_ROOT` and nothing puts `scripts/` in the operator's repository), under
+#: `install.sh` vendoring, and in this repository. A hardcoded `scripts/env_assemble.py` resolved in
+#: none of them: `commands/pipeline-init.md` tells the operator in bold to run the command step 0
+#: printed rather than a path written elsewhere, so it answered `can't open file` and the pipeline's
+#: keys never reached the `.env` every gate reads.
+ASSEMBLER = Path(__file__).resolve().parent / "env_assemble.py"
+
 ENV_FILE = ".env"
 COSMIC_RAY = "cosmic-ray.toml"
 NO_MISTAKES = ".no-mistakes.yaml"
@@ -351,7 +361,7 @@ def report_lines(found: Survey) -> list[str]:
         lines.append(
             f"{ENV_FILE}: EXISTS and holds live credentials, so merge IN PLACE rather than "
             f"replacing it: "
-            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
+            f"`python3 {ASSEMBLER} assemble --out {ENV_FILE} "
             f"{' '.join(found.merge_sources)} --force`. The live file is named as its OWN LAST "
             f"SOURCE, because the last source to declare a key wins - so every value you already "
             f"chose beats the template's default for that key, and every pipeline key you do not "
@@ -369,7 +379,7 @@ def report_lines(found: Survey) -> list[str]:
     else:
         lines.append(
             f"{ENV_FILE}: absent - assemble it: "
-            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
+            f"`python3 {ASSEMBLER} assemble --out {ENV_FILE} "
             f"{' '.join(found.assemble_sources)}`. The last source to declare a key wins, and what "
             f"decides the order is CONTENT: an example still byte-identical to the shipped template "
             f"carries nobody's decision, so it is named first and only fills in what nothing else "

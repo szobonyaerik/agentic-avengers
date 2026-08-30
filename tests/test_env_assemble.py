@@ -362,6 +362,69 @@ class TestTheWriteIsAtomic:
         for name in seen:
             assert fnmatch(name, env_assemble.TEMP_GITIGNORE_PATTERN)
 
+    @pytest.mark.subprocess(
+        "git is the only authority on what its own ignore rules match"
+    )
+    def test_the_declared_pattern_alone_is_enough_for_a_project_that_adopts_it(
+        self, tmp_path, monkeypatch
+    ):
+        """What every install path is told to add must be SUFFICIENT on its own.
+
+        A consumer repository gets no `.gitignore` from `install.sh` and reaches no
+        `/pipeline-init` step-2 list on the opencode route, so the one line the docs hand it is all
+        it has. A leftover temp file holds the fully merged result - on the merge path, live
+        credentials - and SIGKILL or power loss cannot be caught, so `git add -A` is what commits
+        them if that line does not match.
+        """
+        project = tmp_path / "consumer"
+        project.mkdir()
+        assert (
+            subprocess.run(
+                ["git", "-C", str(project), "init", "-q"], capture_output=True
+            ).returncode
+            == 0
+        )
+        (project / ".gitignore").write_text(
+            f".env\n{env_assemble.TEMP_GITIGNORE_PATTERN}\n", encoding="utf-8"
+        )
+
+        leftovers = []
+        real_mkstemp = env_assemble.tempfile.mkstemp
+
+        def record(*args, **kwargs):
+            handle, name = real_mkstemp(*args, **kwargs)
+            leftovers.append(name)
+            return handle, name
+
+        monkeypatch.setattr(env_assemble.tempfile, "mkstemp", record)
+        assemble([self.template(project)], project / ".env")
+        assert leftovers
+
+        for name in leftovers:
+            # The writer removed it; recreate it exactly where an uncatchable kill would have.
+            Path(name).write_text(
+                "OPENROUTER_API_KEY=sk-or-v1-real\n", encoding="utf-8"
+            )
+
+        untracked = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project),
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        assert untracked.returncode == 0, untracked.stderr
+        assert env_assemble.TEMP_PREFIX not in untracked.stdout, (
+            "a leftover temp file holding live credentials is untracked, so `git add -A` "
+            "would commit it"
+        )
+
     def test_a_symlinked_destination_is_written_through_rather_than_replaced(
         self, tmp_path
     ):
