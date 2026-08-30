@@ -153,10 +153,16 @@ Repeat until the resolver reports `done`:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py" <feature-id> --root "${CLAUDE_PROJECT_DIR}"
 ```
 
-It returns `{stage, phase, spec, spec_path, criticality, reason}` derived from the artifacts on disk —
-**this is the source of truth for where the feature stands**, not your memory of what you just ran.
-Re-run it after every stage. It is what makes a run resumable across a `/clear`, a compaction, or a
+It returns `{stage, phase, spec, spec_path, criticality, reason, skipped_stages}` derived from the
+artifacts on disk — **this is the source of truth for where the feature stands**, not your memory of
+what you just ran. Re-run it after every stage. It is what makes a run resumable across a `/clear`, a compaction, or a
 new session: invoking `/avenger-run <feature-id>` with no brief picks up exactly where it stopped.
+
+**`skipped_stages` names every criticality-gated stage that does NOT run on this phase, with its
+reason. Report each entry wherever you report the phase** — a skipped Breaker and a Breaker that ran
+clean produce the same passing verdict, so a reader who is not told cannot tell them apart. An empty
+list on a phase-level state means nothing was skipped; on a state naming a `spec`, the phase's
+criticality is not yet settled and the list says nothing either way.
 
 **If it parks on a phase that closed with a disclosed exception** — a captain-ordered cap, a stage
 deliberately not run, a gate that could not be reached — record that exception as state rather than
@@ -661,7 +667,8 @@ procedure and the triage step in `skills/pipeline-retrospective`.
 ## 8. Report
 
 At the end (done or halted) print: phases completed, the verdict for each, tests added, what stage it
-stopped at and why, and the commits made.
+stopped at and why, the commits made, and — per phase — every `skipped_stages` entry the resolver
+reported for it.
 
 Then, depending on how the run ended:
 - **Ship gate reached `checks-passed`** — give the PR link and ask the user to review and merge.

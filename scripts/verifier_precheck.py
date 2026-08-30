@@ -98,7 +98,7 @@ def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
     """
     try:
         text = spec.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return [], []
     owed: list[str] = []
     exempt: list[str] = []
@@ -121,7 +121,7 @@ def traced_ids(phase_dir: Path) -> set[str]:
             found.update(
                 re.findall(r"R\d+\.\d+\.\d+", mapping.read_text(encoding="utf-8"))
             )
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
     return found
 
@@ -147,7 +147,10 @@ def _test_root(phase_dir: Path) -> Path | None:
         return None
     root = phase.parents[3] if len(phase.parents) >= 4 else Path.cwd()
     feature = phase.parents[1].name
-    for candidate in (root / "tests" / feature / phase.name, root / "tests" / phase.name):
+    for candidate in (
+        root / "tests" / feature / phase.name,
+        root / "tests" / phase.name,
+    ):
         if candidate.is_dir():
             return candidate
     return None
@@ -163,7 +166,7 @@ def named_tests(phase_dir: Path) -> list[tuple[str, str]]:
     for mapping in sorted(phase_dir.glob("specs/*/test-mapping.md")):
         try:
             text = mapping.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         for name in TEST_NAME.findall(text):
             out.append((name, mapping.parent.name))
@@ -184,14 +187,14 @@ def _defined_tests(tests: Path) -> dict[str, bool]:
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         lines = text.splitlines()
         for index, line in enumerate(lines):
             match = re.match(r"[ \t]*(?:async +)?def +(test_[A-Za-z0-9_]+)", line)
             if not match:
                 continue
-            above = "\n".join(lines[max(0, index - 6):index])
+            above = "\n".join(lines[max(0, index - 6) : index])
             found[match.group(1)] = bool(SKIP_DECORATOR.search(above))
     return found
 
@@ -292,7 +295,7 @@ def check_phase(phase_dir: Path) -> list[str]:
 
         try:
             body = spec.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             out.append(f"{spec}: unreadable ({exc})")
             continue
         if not ACCEPTANCE_HEADING.search(body):

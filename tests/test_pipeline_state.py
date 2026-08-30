@@ -538,7 +538,10 @@ def test_a_standard_phase_names_the_breaker_as_skipped(tmp_path: Path) -> None:
     state = next_stage(tmp_path, "demo")
     assert state.stage == "handover"
     assert any(line.startswith("breaker: not run") for line in state.skipped_stages)
-    assert "skipped_stages" in state.as_json()
+
+    carried = json.loads(state.as_json())["skipped_stages"]
+    assert carried == list(state.skipped_stages)
+    assert any(line.startswith("breaker: not run") for line in carried)
 
 
 def test_a_critical_phase_that_runs_the_breaker_names_no_skipped_stage(

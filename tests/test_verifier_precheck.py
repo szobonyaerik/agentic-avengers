@@ -79,7 +79,8 @@ def stale_spec(phase: Path, name: str = "1.1-a") -> Path:
     spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n", name=name)
     stamp(spec)
     spec.write_text(
-        spec.read_text() + "\n\nan edit made after the gate judged it\n", encoding="utf-8"
+        spec.read_text() + "\n\nan edit made after the gate judged it\n",
+        encoding="utf-8",
     )
     return spec
 
@@ -519,7 +520,9 @@ def test_a_phase_with_no_test_tree_is_not_held(phase: Path, capsys) -> None:
     assert "not checked" in capsys.readouterr().err
 
 
-def test_a_row_whose_test_cell_names_nothing_is_not_invented_into_a_finding(phase: Path) -> None:
+def test_a_row_whose_test_cell_names_nothing_is_not_invented_into_a_finding(
+    phase: Path,
+) -> None:
     """`n/a`, a dash, or the template's own placeholder are not test names."""
     spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
     stamp(spec)
@@ -527,3 +530,33 @@ def test_a_row_whose_test_cell_names_nothing_is_not_invented_into_a_finding(phas
     write_phase_tests(phase, "def test_unrelated():\n    assert True\n")
 
     assert check_phase(phase) == []
+
+
+def test_an_undecodable_spec_is_reported_by_name_not_raised(phase: Path) -> None:
+    """A spec.md carrying non-UTF-8 bytes must produce a FINDING, not a traceback.
+
+    `hook_verifier.sh` runs this on the handover write and turns a non-zero exit into the phase
+    failure, so an escaping `UnicodeDecodeError` (a `ValueError`, not an `OSError`) made the stop
+    name a Python traceback instead of the spec and its remedy. It still fails closed either way;
+    what this pins is that the stop says which.
+    """
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    spec.write_bytes(
+        b"---\nphase: 1-core\n---\n\n## Acceptance criteria\n\n- R1.1.1 caf\xe9\n"
+    )
+
+    findings = check_phase(phase)
+
+    assert any("unreadable" in line for line in findings)
+    assert any(str(spec) in line for line in findings)
+
+
+def test_an_undecodable_test_mapping_does_not_raise(phase: Path) -> None:
+    """Same class, the sibling artifact this module also reads on the same call."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    (phase / "specs" / "1.1-a" / "test-mapping.md").write_bytes(
+        b"| requirement | test | level |\n|---|---|---|\n| R1.1.1 | caf\xe9 | integration |\n"
+    )
+
+    assert isinstance(check_phase(phase), list)
