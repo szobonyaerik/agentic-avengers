@@ -68,6 +68,15 @@ write no production code.
      --out .env <the target step 0 named> .env --force
    ```
 
+   **The merge form names the pipeline's example and the live file, and no other example.** That is
+   not an omission: last-wins protects every key the live `.env` already declares, but a key it does
+   NOT declare would arrive carrying the project example's value, and an example's values are dummies
+   and defaults by construction — `your_api_key_here`, a `DRY_RUN=false` default — written into a live
+   file where the app had been falling back to its own in-code default, with nothing reporting it. A
+   live `.env` is already the operator's chosen configuration; the project's example says what the
+   app's config should CONTAIN, which is exactly what the create form needs and exactly what a merge
+   must not import.
+
    **Never name the live `.env` first**: the template declares `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME`
    and default `GATE_MODEL`, `GATE_PROVIDER`, `AUTHOR_FAMILY` and `MUTATION_POLICY` uncommented, so a
    template read after the live file replaces the operator's real key and silently reverts their

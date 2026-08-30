@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import env_assemble  # noqa: E402
 from env_assemble import (  # noqa: E402
     PLACEHOLDER_MARKER,
     AssemblyError,
@@ -210,6 +211,90 @@ class TestMergingIntoALiveEnv:
         assert merged["DRY_RUN"] == "true"
         assert merged["API_KEY"] == "abc"
         assert merged["GATE_PROVIDER"] == "openrouter"
+
+
+class TestTheWriteIsAtomic:
+    """On the merge path the destination IS the live `.env` - the operator's real credentials, a
+    gitignored file with no backup - and it is also one of its own sources. A `write_text` there
+    opens it in truncate mode, so a failure between the truncate and the completed write destroys
+    a file that can no longer be re-merged, because one of the sources WAS it. The bytes therefore
+    go to a temp file beside the destination and are moved over it with `os.replace`.
+    """
+
+    def live_env(self, tmp_path):
+        live = tmp_path / ".env"
+        live.write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-real\nGATE_MODEL=deepseek/deepseek-chat\n",
+            encoding="utf-8",
+        )
+        return live
+
+    def template(self, tmp_path):
+        template = tmp_path / ".env.pipeline.example"
+        template.write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        return template
+
+    def test_a_failure_during_the_write_leaves_the_live_env_exactly_as_it_was(
+        self, tmp_path, monkeypatch
+    ):
+        """`write_text` would have truncated it first and left the operator with a partial file
+        and no error, which is why this asserts BOTH the loud failure and the intact bytes."""
+        live = self.live_env(tmp_path)
+        template = self.template(tmp_path)
+        before = live.read_bytes()
+
+        def boom(_fd):
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(env_assemble.os, "fsync", boom)
+
+        with pytest.raises(AssemblyError) as caught:
+            assemble([template, live], live, force=True)
+
+        assert "no space left on device" in str(caught.value)
+        assert live.read_bytes() == before
+
+    def test_no_temp_file_is_left_behind_by_a_failed_write(self, tmp_path, monkeypatch):
+        live = self.live_env(tmp_path)
+        template = self.template(tmp_path)
+
+        def boom(_fd):
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(env_assemble.os, "fsync", boom)
+
+        with pytest.raises(AssemblyError):
+            assemble([template, live], live, force=True)
+
+        assert sorted(q.name for q in tmp_path.iterdir()) == [
+            ".env",
+            ".env.pipeline.example",
+        ]
+
+    def test_the_destination_is_replaced_rather_than_opened_for_truncation(
+        self, tmp_path
+    ):
+        """The structural tell: `os.replace` installs a new inode, `write_text` keeps the old one
+        and empties it first. There is no window in which the live file is short."""
+        live = self.live_env(tmp_path)
+        template = self.template(tmp_path)
+        before = live.stat().st_ino
+
+        assemble([template, live], live, force=True)
+
+        assert live.stat().st_ino != before
+        assert parse(live.read_text())["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+
+    def test_an_existing_files_mode_survives_the_replace(self, tmp_path):
+        """A `.env` is routinely chmod 600; a fresh temp file is not, and a replace that carried
+        the temp file's mode would silently widen the credentials it holds."""
+        live = self.live_env(tmp_path)
+        template = self.template(tmp_path)
+        os.chmod(live, 0o600)
+
+        assemble([template, live], live, force=True)
+
+        assert live.stat().st_mode & 0o777 == 0o600
 
 
 class TestPlaceholders:

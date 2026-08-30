@@ -123,8 +123,22 @@ class Survey:
 
     @property
     def merge_sources(self) -> tuple[str, ...]:
-        """`assemble_sources` with the live `.env` LAST, per the rule stated there."""
-        return self.assemble_sources + (ENV_FILE,)
+        """The sources a merge into an EXISTING `.env` names: the PIPELINE's example, then the live
+        file. Deliberately NOT `assemble_sources` - the project's own `.env.example` is a source
+        when a `.env` is being CREATED and must not be one when it already exists.
+
+        Last-wins protects every key the live file declares. It does nothing for keys the live file
+        OMITS, and an example's values are dummies and defaults by construction: a committed
+        `.env.example` that drifted ahead of a filled-in `.env` would write `your_api_key_here`, or
+        a `DRY_RUN=false` default, into the live file where the app had been falling back to its own
+        in-code default. Nothing would report it - the value is syntactically valid, the read-back
+        passes because the example declared it and it survived, and a dummy carries no `REPLACE_ME`
+        for the run-time refusal to catch. A value nobody chose, arriving silently, through this
+        module's own remedy. A live `.env` is already the operator's chosen configuration; the
+        project's example describes what the app's config should CONTAIN, not what this operator
+        chose.
+        """
+        return (self.template_target, ENV_FILE)
 
     @property
     def cosmic_ray_required_by(self) -> tuple[str, ...]:

@@ -82,18 +82,21 @@ class TestNonGreenfield:
         assert "--out .env .env.example .env --force" in text
         assert "OWN LAST SOURCE" in text
 
-    def test_the_merge_names_every_example_that_exists_and_the_template_where_it_landed(
+    def test_the_merge_names_the_pipelines_template_and_the_live_file_only(
         self, tmp_path
     ):
+        """The project's own example is NOT a merge source. Last-wins protects the keys the live
+        `.env` declares and does nothing for the ones it omits, so an example's dummy would arrive
+        as live configuration with nothing reporting it."""
         (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
+        text = "\n".join(report_lines(found))
 
         assert found.template_target == PIPELINE_EXAMPLE
-        assert f"--out .env {PROJECT_EXAMPLE} {PIPELINE_EXAMPLE} .env --force" in (
-            "\n".join(report_lines(found))
-        )
+        assert f"--out .env {PIPELINE_EXAMPLE} .env --force" in text
+        assert f"--out .env {PROJECT_EXAMPLE}" not in text
 
 
 class TestTheAssembleCommandNamesFilesThatExist:
@@ -163,9 +166,48 @@ class TestTheAssembleCommandNamesFilesThatExist:
 
         found = survey(tmp_path)
 
-        assert found.merge_sources == found.assemble_sources + (".env",)
+        assert found.merge_sources == (found.template_target, ".env")
         assert self.command(found) == list(found.merge_sources)
         assert self.command(found)[-1] == ".env"
+
+    def test_the_merge_form_never_names_the_projects_own_example(self, tmp_path):
+        """A merge imports the PIPELINE's template and the operator's own file, and nothing else.
+        The project's example is a source only when a `.env` is being CREATED."""
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=false\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert PROJECT_EXAMPLE in found.assemble_sources
+        assert PROJECT_EXAMPLE not in found.merge_sources
+        assert found.merge_sources == (PIPELINE_EXAMPLE, ".env")
+
+    def test_a_project_examples_dummy_never_reaches_a_live_env(self, tmp_path):
+        """The measured shape: a committed `.env.example` drifts ahead of a live `.env`, so a key
+        the live file OMITS would arrive carrying the example's dummy. Last-wins cannot help - the
+        live file never declares it - so the example must not be a merge source at all."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "DRY_RUN=false\nBINANCE_API_KEY=your_api_key_here\n", encoding="utf-8"
+        )
+        (tmp_path / ".env").write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-live\n", encoding="utf-8"
+        )
+        found = survey(tmp_path)
+        (tmp_path / found.template_target).write_text(
+            "GATE_MODEL=deepseek/deepseek-chat\n", encoding="utf-8"
+        )
+
+        assemble(
+            [tmp_path / name for name in found.merge_sources],
+            tmp_path / ".env",
+            force=True,
+        )
+
+        merged = parse((tmp_path / ".env").read_text())
+        assert "DRY_RUN" not in merged
+        assert "BINANCE_API_KEY" not in merged
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-live"
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
 
     def test_every_named_source_is_a_file_that_exists_after_init_copies_the_template(
         self, tmp_path

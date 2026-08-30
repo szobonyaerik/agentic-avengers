@@ -941,6 +941,19 @@ replace = """
     return []"""
 
 
+[[guard]]
+id = "env-assemble.atomic-write"
+implements = "scripts/env_assemble.py"
+defect = "On the merge-in-place path the destination IS the live `.env` - the operator's real credentials, gitignored, no backup - and it is also one of its own sources. `write_text` opens it in truncate mode, so a full disk or a signal between the truncate and the completed write leaves a partial file that can no longer be re-merged, because one of the sources WAS it."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = """
+    _write_atomically(out, assembled)"""
+replace = """
+    out.write_text(assembled, encoding="utf-8")"""
+
+
 # --- exempt: on the enforcement path, but deciding nothing ------------------------------------------------------------
 #
 # The other half of the closed set. Each entry names one file the surfaces above invoke that reaches

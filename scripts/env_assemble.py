@@ -62,6 +62,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -135,10 +136,14 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
     An existing `out` is never overwritten without `force`: a live `.env` holds the operator's real
     credentials, and the greenfield assumption that it does not is half of issue #108.
 
-    Every check runs BEFORE the write, so a refusal leaves `out` exactly as it was. The one thing
-    that guarantee does not cover is the write itself: a disk that fills part-way through leaves a
-    truncated file, because the read-back that would notice has already run. That failure names its
-    own cause rather than escaping as a traceback, which is the most this module can offer there.
+    Every check runs BEFORE the write, and the write itself is ATOMIC - the bytes go to a temp file
+    beside `out` and are moved over it with `os.replace`, so nothing ever truncates `out` in place.
+    On the merge-in-place path the destination IS the live `.env`, holding the operator's real
+    credentials, AND one of its own sources: a `write_text` there opens it in truncate mode, so a
+    full disk or a signal between the truncate and the completed write destroys a file that is
+    gitignored, has no backup, and can no longer be re-merged because one of the sources WAS it.
+    `scripts/plugin_release.py` writes the install registry the same way, for a far less valuable
+    file. So "nothing half-written is left behind" holds for the write too, not just the checks.
     """
     out = Path(out)
     if out.exists() and not force:
@@ -158,11 +163,32 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
             + "\n  ".join(problems)
         )
 
-    try:
-        out.write_text(assembled, encoding="utf-8")
-    except OSError as exc:
-        raise AssemblyError(f"cannot write {out}: {exc}") from exc
+    _write_atomically(out, assembled)
     return expected
+
+
+def _write_atomically(out: Path, text: str) -> None:
+    """Write `text` to `out` without ever truncating it: temp file in the same directory, then
+    `os.replace`. Same directory so the replace is a rename within one filesystem, which is what
+    makes it atomic. An existing file's mode is carried over - a `.env` is often chmod 600 and a
+    fresh temp file is not. Every failure leaves `out` untouched and removes the temp file."""
+    tmp = None
+    try:
+        handle, tmp_name = tempfile.mkstemp(
+            dir=str(out.parent), prefix=f".{out.name}.", suffix=".tmp"
+        )
+        tmp = Path(tmp_name)
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if out.exists():
+            os.chmod(tmp, out.stat().st_mode & 0o7777)
+        os.replace(tmp, out)
+    except OSError as exc:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        raise AssemblyError(f"cannot write {out}: {exc}") from exc
 
 
 #: Variables whose value is author-written PROSE rather than configuration (CLAUDE.md section 6).
