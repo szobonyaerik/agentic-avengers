@@ -46,12 +46,15 @@ added, and the read-back then proves every key it declared survived into the res
 written any other way is how the pipeline's keys end up somewhere no gate reads, since
 `env_file.find_env_file` looks for `.env` and nothing else.
 
-**The CREATE form obeys the same principle: the more operator-owned file goes later.** The
-pipeline's template is named FIRST there too, so it supplies only what the repository does not
-already declare and anything the repository has already configured wins. Named last it did the
-opposite - a freshly copied shipped template reverting a team's committed `GATE_MODEL`,
-`GATE_PROVIDER` and `MUTATION_POLICY` to its own defaults, with nothing anywhere reporting it.
-`pipeline_init.Survey` is the one place that decides both source lists; nothing else restates them.
+**The CREATE form obeys the same principle: the more operator-owned file goes later.** Only the file
+`/pipeline-init` is about to CREATE is the shipped template, and it is named FIRST, so it supplies
+only what the repository does not already declare. Every example ALREADY ON DISK is operator-owned,
+whoever originally wrote it, and is named after it. Both halves are load-bearing: named last, a
+freshly copied template reverted a team's committed `GATE_MODEL`, `GATE_PROVIDER` and
+`MUTATION_POLICY` to its own defaults; named first unconditionally, an operator's filled-in
+`.env.pipeline.example` lost every key it shares with `.env.example` - and the two derive from the
+same template, so they share all of them. `pipeline_init.Survey` is the one place that decides both
+source lists; nothing else restates them.
 
 There is no prompt and no conflict-resolution mode; the order IS the resolution. Re-merging is not
 idempotent either: the template's text is appended again each time, which parses correctly because

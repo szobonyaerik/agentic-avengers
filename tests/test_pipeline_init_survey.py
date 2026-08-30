@@ -139,14 +139,72 @@ class TestTheAssembleCommandNamesFilesThatExist:
         assert found.template_target == PIPELINE_EXAMPLE
         assert found.assemble_sources == (PIPELINE_EXAMPLE,)
 
-    def test_both_examples_are_sources_template_first(self, tmp_path):
-        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
-        (tmp_path / PIPELINE_EXAMPLE).write_text("GATE_MODEL=x\n", encoding="utf-8")
+    def test_both_examples_on_disk_keep_existing_order_and_the_pipelines_wins(
+        self, tmp_path
+    ):
+        """Nothing is CREATED here, so neither file is the shipped template: both are
+        operator-owned, and they keep `existing_examples` order. The fixture OVERLAPS on
+        `GATE_MODEL` so the assertion is about who won, not about order alone."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(
+            "DRY_RUN=true\nGATE_MODEL=google/gemini-3.1-pro-preview\n", encoding="utf-8"
+        )
+        (tmp_path / PIPELINE_EXAMPLE).write_text(
+            "GATE_MODEL=deepseek/deepseek-chat\n", encoding="utf-8"
+        )
 
         found = survey(tmp_path)
 
         assert found.template_target == PIPELINE_EXAMPLE
-        assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
+        assert found.assemble_sources == (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)
+
+        assemble(
+            [tmp_path / name for name in found.assemble_sources], tmp_path / ".env"
+        )
+        merged = parse((tmp_path / ".env").read_text())
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["DRY_RUN"] == "true"
+
+    def test_a_filled_in_pipeline_example_is_never_displaced_by_an_older_env_example(
+        self, tmp_path
+    ):
+        """The measured trace, end to end, for the state where NOTHING is created.
+
+        Init #1 wrote the shipped template to `.env.example` and the team committed it, editing
+        some values and leaving the secret as `REPLACE_ME`. Init #2 routed the template to
+        `.env.pipeline.example` and the operator filled THAT one in. Both are committed; a fresh
+        worktree has no `.env`. Both derive from the same template, so they share every pipeline
+        key - naming the pipeline's example first handed the assembled `.env` the older, less
+        edited copy and discarded the operator's, silently.
+        """
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        (tmp_path / PIPELINE_EXAMPLE).write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-real\n"
+            "GATE_MODEL=deepseek/deepseek-chat\n"
+            "MUTATION_POLICY=enforce\n",
+            encoding="utf-8",
+        )
+
+        found = survey(tmp_path)
+        # `cp -n` creates nothing: the target is already on disk, and never overwritten.
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert found.pipeline_example_exists
+
+        assemble(
+            [tmp_path / name for name in found.assemble_sources], tmp_path / ".env"
+        )
+
+        merged = parse((tmp_path / ".env").read_text())
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["MUTATION_POLICY"] == "enforce"
+        # ...and the older example still contributes every key the operator's copy omits.
+        shipped = parse(SHIPPED_TEMPLATE)
+        for key in set(shipped) - {
+            "OPENROUTER_API_KEY",
+            "GATE_MODEL",
+            "MUTATION_POLICY",
+        }:
+            assert merged[key] == shipped[key]
 
     def test_a_freshly_copied_template_never_beats_a_configured_example(self, tmp_path):
         """The measured trace, end to end through the real assembler.
@@ -261,14 +319,30 @@ class TestTheAssembleCommandNamesFilesThatExist:
         for path in self.command(found):
             assert (tmp_path / path).is_file()
 
-    def test_the_printed_create_command_names_the_sources_in_order(self, tmp_path):
-        """The report is what an operator runs, so it must not state a different order."""
-        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
+    @pytest.mark.parametrize(
+        "present, expected",
+        [
+            ((), (PROJECT_EXAMPLE,)),
+            ((PROJECT_EXAMPLE,), (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)),
+            ((PIPELINE_EXAMPLE,), (PIPELINE_EXAMPLE,)),
+            ((PROJECT_EXAMPLE, PIPELINE_EXAMPLE), (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)),
+        ],
+    )
+    def test_the_printed_create_command_names_the_sources_in_order(
+        self, tmp_path, present, expected
+    ):
+        """The report is what an operator runs, so it must not state a different order.
+
+        All four example-presence states at once: a file step 2a is about to CREATE is named
+        first, and every example already on disk follows in `existing_examples` order.
+        """
+        for name in present:
+            (tmp_path / name).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
-        assert self.command(found) == list(found.assemble_sources)
-        assert self.command(found)[0] == found.template_target
+        assert found.assemble_sources == expected
+        assert self.command(found) == list(expected)
 
     def test_an_operators_filled_in_pipeline_example_survives_the_assembled_env(
         self, tmp_path

@@ -98,8 +98,9 @@ python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebas
 python3 "$AV/scripts/pipeline_init.py" survey            # <- the authority for the two paths below
 cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier init's copy is kept
 
-#    (a) no .env yet — build it from the two examples, the pipeline's template FIRST so it only
-#        fills in what this repository does not already declare
+#    (a) no .env yet — build it from the two examples. The file the `cp -n` above CREATED is named
+#        first, so it only fills in what this repository does not already declare. Had that file
+#        already existed, it would be operator-owned and would go LAST — run what survey printed.
 python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env.example
 
 #    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
@@ -117,18 +118,23 @@ that key, while every pipeline key you do not have yet is still added. Name it f
 template's `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME` and its default `GATE_MODEL`, `GATE_PROVIDER`,
 `AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours.
 
-**Both forms name the pipeline's template FIRST**, by the principle both obey — the more
-operator-owned file goes later, so the template supplies only what your repository does not already
-declare. Named last, form (a) did the opposite: if an earlier init wrote your `.env.example` and
+**The more operator-owned file goes later, and only a file `cp -n` actually CREATED is the shipped
+template** — that is the principle both forms obey. A created file is named first and supplies only
+what your repository does not already declare; every example that was already on disk is
+operator-owned, whoever originally wrote it, and goes after it. Both halves are load-bearing.
+
+Named last, form (a) did the opposite: if an earlier init wrote your `.env.example` and
 your team then filled it in and committed it, the target is `.env.pipeline.example`, `cp -n` writes
 the SHIPPED template there unmodified, and it would revert your committed `GATE_MODEL`,
-`GATE_PROVIDER` and `MUTATION_POLICY` to its defaults — values that parse, survive the read-back and
-carry no `REPLACE_ME`, so nothing reports them.
+`GATE_PROVIDER` and `MUTATION_POLICY` to its defaults. Named first unconditionally it failed the
+mirror case: an already filled-in `.env.pipeline.example` lost every key it shares with
+`.env.example`, and since both derive from the same template that is all of them. Either way the
+values parse, survive the read-back and carry no `REPLACE_ME`, so nothing reports them.
 
 **Form (b) names the pipeline's example and your live file, and no other example** — while form
 (a), which is CREATING the file, names every example that exists, because one left out there is one
-whose values revert to another file's. That asymmetry is in the SOURCE SET, not the order, and it is
-deliberate. Last-wins protects every key
+whose values revert to another file's. That asymmetry is in the SOURCE SET, not the principle, and
+it is deliberate. Last-wins protects every key
 your live `.env` already declares; it does nothing for a key your `.env` OMITS, and that key would
 arrive carrying the project example's value — and an example's values are dummies and defaults by
 construction (`your_api_key_here`, a `DRY_RUN=false` default). A committed `.env.example` that has

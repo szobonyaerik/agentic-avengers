@@ -113,31 +113,41 @@ class Survey:
 
         The order answers who wins a conflict, by the one rule this whole path obeys: **the LAST
         source to declare a key wins**, and by the one principle both branches obey: **the more
-        operator-owned file goes later**. So the pipeline's template - the file step 2a writes, or
-        an earlier init already wrote - is named FIRST and supplies only what the repository does
-        not already declare; anything the repository has already configured wins.
+        operator-owned file goes later**. Only a file step 2a is about to CREATE is the shipped
+        template: it is named FIRST and supplies only what the repository does not already declare.
+        **Every example already on disk is operator-owned, whoever originally wrote it**, and is
+        named after it, in `existing_examples` order.
 
-        Named last, it did the opposite. A repository whose `.env.example` an earlier init wrote and
-        the team then filled in and committed (`GATE_MODEL=deepseek/deepseek-chat`,
-        `GATE_PROVIDER=opencode`, `MUTATION_POLICY=enforce`) gets `.env.pipeline.example` as its
-        target; step 2a's `cp -n` writes the SHIPPED template there unmodified, and last-wins handed
-        the assembled `.env` the shipped defaults instead of the team's choices. Nothing errors: the
-        values are syntactically valid, the read-back passes because the template declared them and
-        they survived, and a default carries no `REPLACE_ME` for the run-time refusal to catch. That
-        is a value nobody chose arriving silently, which is the class this module exists to close.
+        `template_target` alone cannot answer this, because it carries both meanings. Named first
+        unconditionally, an existing `.env.pipeline.example` - the file the report itself promises
+        "keeps whatever was edited into it" - lost every key it shares with `.env.example`. Both
+        derive from the same shipped template, so they share EVERY pipeline key: the assembled
+        `.env` took the older, less-edited copy and discarded the operator's filled-in
+        `GATE_MODEL=deepseek/deepseek-chat` and `MUTATION_POLICY=enforce`.
+
+        Named last, it failed the mirror case. A repository whose `.env.example` an earlier init
+        wrote and the team then filled in and committed gets `.env.pipeline.example` as its target;
+        step 2a's `cp -n` writes the SHIPPED template there unmodified, and last-wins handed the
+        assembled `.env` the shipped defaults instead of the team's choices.
+
+        Neither errors: the values are syntactically valid, the read-back passes because a source
+        declared them and they survived, and a default carries no `REPLACE_ME` for the run-time
+        refusal to catch. That is a value nobody chose arriving silently, which is the class this
+        module exists to close.
         """
         existing = self.existing_examples
-        return (self.template_target,) + tuple(
-            name for name in existing if name != self.template_target
-        )
+        if self.template_target in existing:
+            return existing
+        return (self.template_target,) + existing
 
     @property
     def merge_sources(self) -> tuple[str, ...]:
         """The sources a merge into an EXISTING `.env` names: the PIPELINE's example, then the live
-        file. Same principle as `assemble_sources` - the more operator-owned file goes later, so the
-        template is first here too. What differs is the SOURCE SET, not the order: the project's own
-        `.env.example` is a source when a `.env` is being CREATED and must not be one when it
-        already exists.
+        file. Same principle as `assemble_sources` - the more operator-owned file goes later, and
+        nothing the operator owns more than a live `.env` - so the example is first here whether
+        step 2a is about to create it or an earlier init already did. What differs is the SOURCE
+        SET, not the principle: the project's own `.env.example` is a source when a `.env` is being
+        CREATED and must not be one when it already exists.
 
         Last-wins protects every key the live file declares. It does nothing for keys the live file
         OMITS, and an example's values are dummies and defaults by construction: a committed
@@ -211,10 +221,10 @@ def report_lines(found: Survey) -> list[str]:
         lines.append(
             f"{ENV_FILE}: absent - assemble it: "
             f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
-            f"{' '.join(found.assemble_sources)}`. The pipeline's template is named FIRST, so its "
-            f"defaults fill in whatever the project's own example does not declare - the last "
-            f"source to declare a key wins, so anything this repository has already configured "
-            f"beats the template's default for that key."
+            f"{' '.join(found.assemble_sources)}`. The last source to declare a key wins, so the "
+            f"file step 2a is about to CREATE is named first and only fills in what this repository "
+            f"does not already declare, and every example already on disk is named after it - "
+            f"anything you have already configured beats a template default for that key."
         )
 
     lines.append(
