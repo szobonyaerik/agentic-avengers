@@ -77,15 +77,21 @@ class BreakerGateError(Exception):
     """A record or ledger this cannot read. Always fails the caller closed."""
 
 
-def owed(phase_dir: Path) -> bool:
+def owed(phase_dir: Path, resolved: criticality.PhaseCriticality | None = None) -> bool:
     """Whether any spec in this phase resolves to `criticality: critical` - what routes the Breaker.
 
     The resolution itself lives in `scripts/criticality.py`, which `pipeline_state` reads too, so the
     resolver and the gate cannot disagree about whether a phase is critical. That module is also
     where issue #101's decision lives: an absent, malformed or unreadable `criticality` resolves to
     `critical`, because it used to resolve to `standard` and silently delete this stage.
+
+    `resolved` is the same argument `skipped()` takes, for the reason that matters more than the
+    duplicate parse: a caller that resolved this phase for one decision and let this re-read the
+    tree for the next is asking about two different instants, so a spec written between them makes
+    the two answers disagree about one phase. Handing the answer in is what makes them one decision.
     """
-    resolved = criticality.phase(Path(phase_dir))
+    if resolved is None:
+        resolved = criticality.phase(Path(phase_dir))
     criticality.announce(Path(phase_dir), resolved)
     return resolved.critical
 
@@ -314,10 +320,12 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.action == "skipped":
         # Reporting, never an obligation: this always exits 0 so a caller can print it beside a
         # gate without a skipped stage ever failing a phase.
-        reason = skipped(args.phase_dir)
+        resolved = criticality.phase(args.phase_dir)
+        reason = skipped(args.phase_dir, resolved)
         if reason is None:
             print(
-                f"[breaker_gate] {args.phase_dir} - the Breaker is owed and runs on this phase"
+                f"[breaker_gate] {args.phase_dir} - the Breaker is owed and runs on this phase: "
+                f"{resolved.reason()}"
             )
         else:
             print(

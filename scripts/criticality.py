@@ -66,10 +66,6 @@ UNREADABLE = "unreadable"
 #: changes the message with it rather than leaving a stale sentence behind.
 DEFAULT = CRITICAL
 
-#: Every stage gated on criticality. One today; named as a set because the reporting below is about
-#: "which criticality-gated stages did not run", not about the Breaker specifically.
-GATED_STAGES: tuple[str, ...] = ("breaker",)
-
 
 @dataclass(frozen=True)
 class Resolution:

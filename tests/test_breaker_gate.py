@@ -100,6 +100,23 @@ def test_not_owed_with_no_specs_at_all(tmp_path: Path) -> None:
     assert breaker_gate.owed(phase_dir(tmp_path)) is False
 
 
+def test_owed_reads_the_phase_it_was_handed_not_the_tree(tmp_path: Path) -> None:
+    """The routing question and the state's own `criticality` must answer about ONE instant.
+
+    `pipeline_state._phase_state` resolves the phase for the state it returns and hands that same
+    answer here; re-reading the tree would ask about a later one, and a spec written in between
+    would make the two disagree about the same phase.
+    """
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    phase = phase_dir(tmp_path)
+    stale = criticality.phase(phase)
+
+    write_spec(tmp_path, "1-core", "1.2-b", criticality="critical")
+
+    assert breaker_gate.owed(phase, stale) is False
+    assert breaker_gate.owed(phase) is True
+
+
 # --- issue #101: an absent field must not resolve to the weaker pipeline -------------------------
 
 
@@ -250,6 +267,27 @@ def test_skipped_cli_always_exits_zero(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert "breaker: not run" in result.stderr
+
+
+def test_skipped_cli_says_why_the_breaker_runs_when_it_is_not_skipped(
+    tmp_path: Path,
+) -> None:
+    """The not-skipped line carries the same resolution the skip line does: a reader is told which
+    specs made the phase critical, not only that the stage runs."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "breaker_gate.py"),
+            "skipped",
+            str(phase_dir(tmp_path)),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "the Breaker is owed and runs on this phase" in result.stdout
+    assert "1.1-a" in result.stdout
 
 
 # --- due(): reproduce the gap, then close it -----------------------------------------------------

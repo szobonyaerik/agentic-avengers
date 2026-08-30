@@ -496,6 +496,38 @@ def test_a_spec_level_state_reports_a_defaulted_criticality(tmp_path: Path) -> N
     assert next_stage(tmp_path, "demo").criticality == "critical"
 
 
+def test_an_undecodable_spec_routes_instead_of_killing_the_resolver(
+    tmp_path: Path,
+) -> None:
+    """A spec.md carrying non-UTF-8 bytes must ROUTE, not raise out of `next_stage`.
+
+    `_frontmatter` runs before any phase reaches the criticality resolver, so an `OSError`-only
+    handler there propagated `UnicodeDecodeError` out of the resolver that routes every stage - not
+    just the Breaker. Asserted end to end through `next_stage` on purpose: a unit test on
+    `criticality.resolve_spec_file` alone passes while this path still dies.
+    """
+    feature = planned(tmp_path)
+    spec = write_spec(feature, "1-core", "1.1-a")
+    spec.write_bytes(b"---\nstatus: done\ncriticality: standard\nx: caf\xe9\n---\n")
+
+    state = next_stage(tmp_path, "demo")
+
+    assert state.phase == "1-core"
+    assert state.spec == "1.1-a"
+
+
+def test_an_undecodable_spec_does_not_resolve_to_the_weaker_pipeline(
+    tmp_path: Path,
+) -> None:
+    """Unreadable frontmatter is empty frontmatter, and an absent field defaults to `critical` -
+    so the phase this resolver cannot parse never silently loses its adversarial stage."""
+    feature = planned(tmp_path)
+    spec = write_spec(feature, "1-core", "1.1-a")
+    spec.write_bytes(b"---\nx: caf\xe9\n---\n")
+
+    assert next_stage(tmp_path, "demo").criticality == "critical"
+
+
 def test_a_standard_phase_names_the_breaker_as_skipped(tmp_path: Path) -> None:
     """A skipped Breaker and a clean one produce the same passing verdict; the resolver's output is
     where a reader can tell them apart."""

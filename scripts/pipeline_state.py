@@ -105,10 +105,20 @@ class State:
 
 
 def _frontmatter(path: Path) -> dict[str, str]:
-    """Parse a markdown artifact's YAML frontmatter as flat key/value strings."""
+    """Parse a markdown artifact's YAML frontmatter as flat key/value strings.
+
+    Unreadable is empty frontmatter, and it has the same two shapes here as in
+    `criticality.resolve_spec_file`: the file cannot be OPENED (`OSError`), and its bytes cannot be
+    DECODED (`UnicodeDecodeError`). The two readers must agree, because this one runs FIRST — every
+    spec goes through `_spec_state` before any phase reaches the criticality resolver — so an
+    `OSError`-only handler here propagated a decode failure out of `next_stage`, which routes every
+    stage rather than only the Breaker. A spec that crashes the resolver is strictly worse than one
+    that resolves to `critical`. Nothing wider is caught: any other failure is a defect, not a
+    document this cannot read.
+    """
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
 
     match = FRONTMATTER.match(text)
@@ -361,7 +371,7 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         # reach the phase in flight at all, which is the first wedge `applicability.py`'s own
         # docstring names. Enforcement loses nothing: `hook_verifier.sh` fires on the handover WRITE,
         # which is this same open moment, and `gate_ci.sh` backs it up diff-scoped.
-        if breaker_gate.owed(phase):
+        if breaker_gate.owed(phase, resolved):
             reason = breaker_gate.satisfied(phase)
             if reason is not None and not _excepted(phase, "breaker", phase.name):
                 return State(stage="breaker", reason=reason, **common)
