@@ -479,8 +479,14 @@ with every check green. `trace_claims` now holds the minimum - the named test **
 phase's own test tree and is **not skipped**. **What it does not do is stated rather than implied**:
 it does not read a row's prose against a test's assertions, so a row whose words contradict its
 existing, running test still passes; generating the claim from the test is the better fix and this
-is not it. Test definition and skip detection are Python-specific, so a tree yielding no readable
-definitions is **not held at all** - an unreadable scope, not a violated one. A full audit on every commit would hard-fail a consumer
+is not it. Test definition and skip detection are Python-specific, so a tree that yields no test
+definitions at all is **not held** - an unreadable scope, not a violated one. **An artifact that
+exists and cannot be OPENED is the other case, and it is a FINDING** (`read_artifact`): a
+`test-mapping.md`, a test file or a spec whose read is refused - a dangling symlink, a mode-000
+file, undecodable bytes - is named as an UNDECIDABLE check rather than skipped, because a mapping
+nothing could read used to leave the phase either fully clean or holding the misattributed "appears
+in no test-mapping.md row", whose remedy is to add a row that is already there. Absent keeps its own
+meaning: a phase that legitimately owes no mapping is still clean. A full audit on every commit would hard-fail a consumer
 repo's CI over locked phases nobody touched, which is the hostage failure the scoping removes; when
 git cannot say what changed, nothing is enforced and the check says so out loud.
 

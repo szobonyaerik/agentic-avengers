@@ -153,7 +153,10 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    phase owing a Breaker run does not close without a valid `breaker.json` beside `verdict.json` (a
    `clean` verdict naming what it attacked, or a `found` verdict naming its counterexample — a vacuous
    record is refused the same as a missing one). Enforced by `hook_verifier.sh` and `gate_ci.sh`
-   (diff-scoped, `check --all` audits) and reported by `pipeline_state.py` as `stage: breaker`, and
+   (diff-scoped, `check --all` audits - the CI sweep counts rather than blocks a phase that already
+   wrote `handover.md` when its `critical` came only from the issue #101 default below; a spec that
+   DECLARES `critical` is still reported, closed or not) and reported by `pipeline_state.py` as
+   `stage: breaker`, and
    waivable only through the same disclosed-exception ledger as every other rule here.
    **What routes it is resolved in one place, and an omission does not weaken it** (issue #101):
    `scripts/criticality.py` resolves an absent, blank, unrecognised or unreadable `criticality` to
