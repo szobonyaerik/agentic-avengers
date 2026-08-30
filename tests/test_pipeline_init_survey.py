@@ -16,6 +16,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from env_assemble import assemble  # noqa: E402
+from env_file import parse  # noqa: E402
 from pipeline_init import (  # noqa: E402
     PIPELINE_EXAMPLE,
     PROJECT_EXAMPLE,
@@ -80,38 +82,90 @@ class TestNonGreenfield:
         assert "--out .env .env.example .env --force" in text
         assert "OWN LAST SOURCE" in text
 
-    def test_the_merge_names_the_template_where_it_actually_landed(self, tmp_path):
+    def test_the_merge_names_every_example_that_exists_and_the_template_where_it_landed(
+        self, tmp_path
+    ):
         (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
         assert found.template_target == PIPELINE_EXAMPLE
-        assert f"--out .env {PIPELINE_EXAMPLE} .env --force" in "\n".join(
-            report_lines(found)
+        assert f"--out .env {PROJECT_EXAMPLE} {PIPELINE_EXAMPLE} .env --force" in (
+            "\n".join(report_lines(found))
         )
 
 
 class TestTheAssembleCommandNamesFilesThatExist:
-    """The executed step used to hardcode `.env.pipeline.example`, which is not where the template
-    lands in a repository that has no `.env.example` of its own - the common shape, since `.env` is
-    gitignored and many projects commit no example. Both commands derive from `template_target`."""
+    """Which example files exist decides the template's target AND the source list.
 
-    def test_with_no_project_example_the_template_is_the_only_source(self, tmp_path):
+    Two ways this answered wrongly. A hardcoded `.env.pipeline.example` named a file that does not
+    exist in a repo without its own `.env.example`. Then, deriving the sources from the target
+    alone, an existing `.env.pipeline.example` was dropped from the command entirely while the same
+    report said it was being kept - so an operator's filled-in model or provider silently reverted
+    to a template default, with no placeholder anywhere for the gate refusal to catch.
+    """
+
+    def command(self, found):
+        line = next(line for line in report_lines(found) if line.startswith(".env:"))
+        return line.split("`")[1].split("--out .env ")[1].split("--force")[0].split()
+
+    def test_no_example_at_all_names_the_target_step_2a_creates(self, tmp_path):
         found = survey(tmp_path)
 
+        assert found.template_target == PROJECT_EXAMPLE
         assert found.assemble_sources == (PROJECT_EXAMPLE,)
-        assert f"--out .env {PROJECT_EXAMPLE}`" in "\n".join(report_lines(found))
 
-    def test_with_a_project_example_the_template_is_named_last(self, tmp_path):
+    def test_only_the_projects_own_example_puts_the_template_after_it(self, tmp_path):
         (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
 
         found = survey(tmp_path)
 
+        assert found.template_target == PIPELINE_EXAMPLE
         assert found.assemble_sources == (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)
-        assert f"--out .env {PROJECT_EXAMPLE} {PIPELINE_EXAMPLE}`" in "\n".join(
-            report_lines(found)
+
+    def test_only_an_existing_pipeline_example_is_the_pipelines_example(self, tmp_path):
+        """The reported defect: the target resolved to a FRESH `.env.example`, shadowing this
+        file, and the printed command then dropped it."""
+        (tmp_path / PIPELINE_EXAMPLE).write_text(
+            "GATE_MODEL=deepseek/deepseek-chat\n", encoding="utf-8"
         )
+
+        found = survey(tmp_path)
+
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert found.assemble_sources == (PIPELINE_EXAMPLE,)
+
+    def test_both_examples_are_sources_template_last(self, tmp_path):
+        (tmp_path / PROJECT_EXAMPLE).write_text("DRY_RUN=true\n", encoding="utf-8")
+        (tmp_path / PIPELINE_EXAMPLE).write_text("GATE_MODEL=x\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.template_target == PIPELINE_EXAMPLE
+        assert found.assemble_sources == (PROJECT_EXAMPLE, PIPELINE_EXAMPLE)
+
+    @pytest.mark.parametrize(
+        "present",
+        [
+            (),
+            (PROJECT_EXAMPLE,),
+            (PIPELINE_EXAMPLE,),
+            (PROJECT_EXAMPLE, PIPELINE_EXAMPLE),
+        ],
+    )
+    def test_the_merge_form_ends_with_the_live_env_in_every_state(
+        self, tmp_path, present
+    ):
+        for name in present:
+            (tmp_path / name).write_text("DRY_RUN=true\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.merge_sources == found.assemble_sources + (".env",)
+        assert self.command(found) == list(found.merge_sources)
+        assert self.command(found)[-1] == ".env"
 
     def test_every_named_source_is_a_file_that_exists_after_init_copies_the_template(
         self, tmp_path
@@ -123,12 +177,29 @@ class TestTheAssembleCommandNamesFilesThatExist:
             "GATE_MODEL=x\n", encoding="utf-8"
         )
 
-        merge = next(line for line in report_lines(found) if line.startswith(".env:"))
-        named = merge.split("--force")[0].split("--out .env ")[1].split()
-
-        assert named == [found.template_target, ".env"]
-        for path in named:
+        for path in self.command(found):
             assert (tmp_path / path).is_file()
+
+    def test_an_operators_filled_in_pipeline_example_survives_the_assembled_env(
+        self, tmp_path
+    ):
+        """End to end, through the real assembler: the state the finding measured. Following the
+        survey must not revert a chosen model to the shipped template's default."""
+        (tmp_path / PIPELINE_EXAMPLE).write_text(
+            "OPENROUTER_API_KEY=sk-or-v1-real\nGATE_MODEL=deepseek/deepseek-chat\n",
+            encoding="utf-8",
+        )
+        found = survey(tmp_path)
+        # Step 2a's `cp -n` keeps the existing target, so nothing else is created here.
+        assert (tmp_path / found.template_target).is_file()
+
+        assemble(
+            [tmp_path / name for name in found.assemble_sources], tmp_path / ".env"
+        )
+
+        merged = parse((tmp_path / ".env").read_text())
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
 
 
 class TestBothExampleFilesAreLeftAlone:

@@ -91,7 +91,11 @@ pre-commit install
 $EDITOR cosmic-ray.toml                       # module-path = "<your package dir>", test-command = "pytest -x -q"
 python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebase/MOC.md
 
-# 5) assemble .env — this repo already owns .env.example, so the pipeline's template lands beside it
+# 5) assemble .env. `pipeline_init.py survey` prints the exact command for THIS repository —
+#    which example files exist decides both the template's target and the source list, so run
+#    what it printed rather than a path copied from here. The commands below are this repo's
+#    shape: it owns .env.example, so the pipeline's template lands beside it.
+python3 "$AV/scripts/pipeline_init.py" survey            # <- the authority for the two paths below
 cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier init's copy is kept
 
 #    (a) no .env yet — build it from the two examples
@@ -99,7 +103,7 @@ python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.example .env.pipe
 
 #    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
 #        merge in place by naming it as its OWN LAST SOURCE. (a) refuses here, by design.
-python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env --force
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.example .env.pipeline.example .env --force
 ```
 
 Form **(b)** is not the destructive `--force` it looks like: `assemble` reads every source before it
@@ -108,7 +112,8 @@ declared survived into the result. **The order is the point** — the last sourc
 wins, so the live file goes LAST and every value you already chose beats the template's default for
 that key, while every pipeline key you do not have yet is still added. Name it first instead and the
 template's `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME` and its default `GATE_MODEL`, `GATE_PROVIDER`,
-`AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours. Re-merging appends the template's text again
+`AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours. The same rule is why every example that
+already exists is named as a source: one left out is one whose values revert to another file's. Re-merging appends the template's text again
 rather than replacing it, which parses correctly because the last declaration still wins. Assembling
 anywhere else configures nothing: every gate reads `.env` and no other path.
 

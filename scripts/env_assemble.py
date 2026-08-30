@@ -94,16 +94,25 @@ def join_text(texts: list[str]) -> str:
     )
 
 
-def declared(sources: list[Path]) -> dict[str, str]:
-    """Every key the sources declare, with the value the LAST source to declare it gives it.
+def declared_in(texts: list[str]) -> dict[str, str]:
+    """Every key `texts` declare, with the value the LAST text to declare it gives it.
 
     That is the resolution a concatenation has always had; what this module changes is that the
-    resolution is now stated and checked rather than being whatever the bytes produced.
+    resolution is now stated and checked rather than being whatever the bytes produced. It takes
+    the texts rather than the paths so `assemble` can derive the expectation and the joined result
+    from ONE read of each source: reading twice is a seam where a file edited in between makes the
+    read-back report "declared as X, assembled as Y" about a file that was simply rewritten - a
+    misleading cause on the one step whose whole purpose is a legible config failure.
     """
     values: dict[str, str] = {}
-    for source in sources:
-        values.update(parse(_read(source)))
+    for text in texts:
+        values.update(parse(text))
     return values
+
+
+def declared(sources: list[Path]) -> dict[str, str]:
+    """`declared_in`, reading each source. The answer for callers that hold paths, not texts."""
+    return declared_in([_read(source) for source in sources])
 
 
 def verify(assembled: str, expected: dict[str, str]) -> list[str]:
@@ -138,9 +147,9 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
             f"pass --force only when you mean to replace it."
         )
 
-    sources = [Path(source) for source in sources]
-    expected = declared(sources)
-    assembled = join_text([_read(source) for source in sources])
+    texts = [_read(Path(source)) for source in sources]
+    expected = declared_in(texts)
+    assembled = join_text(texts)
 
     problems = verify(assembled, expected)
     if problems:

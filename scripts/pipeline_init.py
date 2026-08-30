@@ -80,26 +80,51 @@ class Survey:
         )
 
     @property
+    def existing_examples(self) -> tuple[str, ...]:
+        """Every example file already on disk, project's own first, the pipeline's second."""
+        return tuple(
+            name
+            for name, present in (
+                (PROJECT_EXAMPLE, self.env_example_exists),
+                (PIPELINE_EXAMPLE, self.pipeline_example_exists),
+            )
+            if present
+        )
+
+    @property
     def template_target(self) -> str:
         """Where the pipeline's `env.example` may be written without taking a name it does not own.
 
-        Never `.env.example` once that file exists, whoever wrote it: nothing is overwritten, so
-        the file's provenance decides nothing and is never asked. Never-overwrite is the rule for
-        BOTH example files - `pipeline_example_exists` is what lets the caller honour it for the
-        second one, which the report states outright.
+        ANY existing example makes it `.env.pipeline.example`. `.env.example` is off limits once it
+        exists, whoever wrote it - nothing is overwritten, so provenance decides nothing and is
+        never asked. And an existing `.env.pipeline.example` IS the pipeline's example: writing a
+        fresh copy of the same template to `.env.example` instead would shadow the operator's
+        filled-in one under another name, so a chosen model or provider would quietly revert to a
+        template default with nothing anywhere reporting it.
         """
-        return PIPELINE_EXAMPLE if self.env_example_exists else PROJECT_EXAMPLE
+        return PROJECT_EXAMPLE if not self.existing_examples else PIPELINE_EXAMPLE
 
     @property
     def assemble_sources(self) -> tuple[str, ...]:
-        """The example files a fresh `.env` is assembled from, in order, template LAST.
+        """The example files a fresh `.env` is assembled from, in the order they are named.
 
-        Derived from `template_target` rather than restated, so no caller can name an example file
-        this repository does not have: with no `.env.example` of its own the template takes that
-        name and is the only source, and a fixed second path would read a file that is not there.
+        Every example that EXISTS is a source - dropping one silently reverts whatever it declared
+        to another file's value - plus the target, when step 2a is about to create it.
+
+        The order answers who wins a conflict, by the one rule this whole path obeys: **the LAST
+        source to declare a key wins**. So the pipeline's template is named after the project's own
+        example, its defaults filling in what that example does not declare; and in the merge form
+        the live `.env` is named after every example, so the operator's own values win outright.
         """
-        own = (PROJECT_EXAMPLE,) if self.env_example_exists else ()
-        return own + (self.template_target,)
+        existing = self.existing_examples
+        if self.template_target in existing:
+            return existing
+        return existing + (self.template_target,)
+
+    @property
+    def merge_sources(self) -> tuple[str, ...]:
+        """`assemble_sources` with the live `.env` LAST, per the rule stated there."""
+        return self.assemble_sources + (ENV_FILE,)
 
     @property
     def cosmic_ray_required_by(self) -> tuple[str, ...]:
@@ -146,7 +171,7 @@ def report_lines(found: Survey) -> list[str]:
             f"{ENV_FILE}: EXISTS and holds live credentials, so merge IN PLACE rather than "
             f"replacing it: "
             f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
-            f"{found.template_target} {ENV_FILE} --force`. The live file is named as its OWN LAST "
+            f"{' '.join(found.merge_sources)} --force`. The live file is named as its OWN LAST "
             f"SOURCE, because the last source to declare a key wins - so every value you already "
             f"chose beats the template's default for that key, and every pipeline key you do not "
             f"have yet is added. `assemble` reads every source before it writes anything, and the "
