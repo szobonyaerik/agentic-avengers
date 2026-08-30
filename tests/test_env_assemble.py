@@ -276,22 +276,68 @@ class TestTheWriteIsAtomic:
         assert "no space left on device" in str(caught.value)
         assert live.read_bytes() == before
 
-    def test_no_temp_file_is_left_behind_by_a_failed_write(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(
+        "interruption",
+        [
+            pytest.param(OSError("no space left on device"), id="enospc"),
+            pytest.param(KeyboardInterrupt(), id="ctrl-c"),
+            pytest.param(SystemExit(1), id="sigterm-handler"),
+        ],
+    )
+    def test_no_temp_file_is_left_behind_by_an_interrupted_write(
+        self, tmp_path, monkeypatch, interruption
+    ):
+        """Ctrl-C and a hook-budget SIGTERM are the exact scenario the atomic write exists for, and
+        both are `BaseException` - cleaned up only in `except OSError`, the temp file survived, and
+        it holds the FULLY MERGED result including the live `.env`'s own credentials."""
         live = self.live_env(tmp_path)
         template = self.template(tmp_path)
+        before = live.read_bytes()
 
         def boom(_fd):
-            raise OSError("no space left on device")
+            raise interruption
 
         monkeypatch.setattr(env_assemble.os, "fsync", boom)
 
-        with pytest.raises(AssemblyError):
+        with pytest.raises((AssemblyError, KeyboardInterrupt, SystemExit)):
             assemble([template, live], live, force=True)
 
         assert sorted(q.name for q in tmp_path.iterdir()) == [
             ".env",
             ".env.pipeline.example",
         ]
+        assert live.read_bytes() == before
+
+    @pytest.mark.subprocess(
+        "git is the only authority on what its own ignore rules match"
+    )
+    def test_the_temp_name_is_ignored_by_this_repositorys_own_gitignore(self, tmp_path):
+        """Asked of git itself, not of the file's text: `.gitignore` is a machine-consumed artifact
+        and git is its only authority. The temp file holds the merged credentials, an interruption
+        nothing can catch leaves it behind, and `git add -A` is what the pipeline's own commit steps
+        run - the name built from the destination (`..env.<rand>.tmp`) matched no pattern at all.
+        """
+        toplevel = subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+        if toplevel.returncode != 0 or Path(toplevel.stdout.strip()) != REPO:
+            pytest.skip(
+                "not this repository's git work tree, so its ignore rules cannot be asked"
+            )
+
+        leftover = f"{env_assemble.TEMP_PREFIX}probe{env_assemble.TEMP_SUFFIX}"
+
+        proc = subprocess.run(
+            ["git", "-C", str(REPO), "check-ignore", "-q", leftover],
+            capture_output=True,
+        )
+
+        assert proc.returncode == 0, (
+            f"{leftover} is not ignored - a leftover temp file holding live credentials would be "
+            f"reported untracked and committed by `git add -A`"
+        )
 
     def test_the_destination_is_replaced_rather_than_opened_for_truncation(
         self, tmp_path

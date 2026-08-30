@@ -33,7 +33,11 @@ write no production code.
    `.avenger-gate-cache/` (the body each gate last judged, so a re-gate can be scoped to the diff —
    rebuildable, and a lost entry costs one full re-gate, the safe direction),
    `.avenger-metrics.log` (diagnostics from the fail-open metrics path — the measurements themselves
-   live in firstmate's record, never here), and **`.env`** (it holds a live API key). None of these
+   live in firstmate's record, never here), **`.env`** (it holds a live API key), and
+   **`.env-assemble.*.tmp`** (step 2a's assembler writes the merged config to a temp file beside the
+   destination and renames it over, so a crash cannot truncate a live `.env` — that temp file holds
+   the fully merged result, credentials included, and an interruption nothing can catch leaves it
+   behind. `.env` does not match it, so without this pattern a `git add -A` commits it). None of these
    may ever be committed.
 
 2a. **Configuration.** Copy `${CLAUDE_PLUGIN_ROOT}/docs/templates/env.example` to the

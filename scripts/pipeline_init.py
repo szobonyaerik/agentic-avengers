@@ -120,18 +120,46 @@ class Survey:
     def is_fresh_template(self, name: str) -> bool:
         """Whether `name` carries no operator decision - the shipped template's bytes, unedited.
 
-        A target step 2a has yet to create counts as fresh: `cp -n` writes the shipped template
-        byte for byte, so the answer is the same before and after the copy. That is the whole
-        point - see `assemble_sources`.
+        A file step 2a has yet to create counts as fresh: `cp -n` writes the shipped template byte
+        for byte, so the answer is the same before and after the copy. That is the whole point -
+        see `assemble_sources`.
         """
         return name in self.fresh_examples or name not in self.existing_examples
+
+    @property
+    def pipeline_example(self) -> str:
+        """The file that HOLDS the pipeline's shipped template - already, or once step 2a runs.
+
+        An example on disk that is byte-identical to the shipped template already IS that template,
+        under whatever name it happens to carry, so nothing further needs creating or naming.
+        Only when no such file exists does step 2a have work to do, and then it is `template_target`.
+
+        Deciding this by CONTENT is what makes it stable, for the same reason the order is: step 2a's
+        own `cp -n` changes presence, and `template_target` is decided purely by presence. In a
+        repository with no examples at all the target was `.env.example` before the copy and
+        `.env.pipeline.example` after it - so the single authority named a file that had never been
+        created, and `assemble` refused with `cannot read .env.pipeline.example`.
+        """
+        for name in self.existing_examples:
+            if name in self.fresh_examples:
+                return name
+        return self.template_target
 
     @property
     def assemble_sources(self) -> tuple[str, ...]:
         """The example files a fresh `.env` is assembled from, in the order they are named.
 
-        Every example that EXISTS is a source - dropping one silently reverts whatever it declared
-        to another file's value - plus the target, when step 2a is about to create it.
+        Every EDITED example is a source - dropping one silently reverts whatever it declared to
+        another file's value - plus **exactly one** copy of the shipped template, `pipeline_example`.
+        A second fresh copy is byte-identical to the first, so naming it adds no key and only makes
+        the answer depend on how many copies happen to be lying around.
+
+        CONTENT decides the SET as well as the order, and both for the same reason. The set used to
+        fold in `template_target`, which is decided purely by presence, so it moved across step 2a's
+        own `cp -n`: a repository with no examples printed `--out .env .env.example` before the copy
+        and `--out .env .env.example .env.pipeline.example` after it, naming a file that was never
+        created, and `assemble` refused with `cannot read .env.pipeline.example` rather than writing
+        anything.
 
         The order answers who wins a conflict, by the one rule this whole path obeys: **the LAST
         source to declare a key wins**, and by the one principle both branches obey: **the more
@@ -162,21 +190,25 @@ class Survey:
         refusal to catch. That is a value nobody chose arriving silently, which is the class this
         module exists to close.
         """
-        named = set(self.existing_examples) | {self.template_target}
+        named = set(self.existing_examples) | {self.pipeline_example}
         ordered = tuple(
             name for name in (PROJECT_EXAMPLE, PIPELINE_EXAMPLE) if name in named
         )
         fresh = tuple(name for name in ordered if self.is_fresh_template(name))
-        return fresh + tuple(name for name in ordered if name not in fresh)
+        return fresh[:1] + tuple(name for name in ordered if name not in fresh)
 
     @property
     def merge_sources(self) -> tuple[str, ...]:
         """The sources a merge into an EXISTING `.env` names: the PIPELINE's example, then the live
         file. Same principle as `assemble_sources` - the more operator-owned file goes later, and
         nothing is more operator-owned than a live `.env` - so the example is first here whatever
-        its content, and no content comparison is needed to decide it. What differs is the SOURCE
-        SET, not the principle: the project's own `.env.example` is a source when a `.env` is being
-        CREATED and must not be one when it already exists.
+        its content. What differs is the SOURCE SET, not the principle: the project's own EDITED
+        `.env.example` is a source when a `.env` is being CREATED and must not be one when it
+        already exists.
+
+        `pipeline_example` and not `template_target`, so this answer does not move across step 2a's
+        `cp -n` either: in a repository with no examples the target was `.env.example` before the
+        copy and `.env.pipeline.example` after it, and the second one named a file nothing created.
 
         Last-wins protects every key the live file declares. It does nothing for keys the live file
         OMITS, and an example's values are dummies and defaults by construction: a committed
@@ -189,7 +221,7 @@ class Survey:
         project's example describes what the app's config should CONTAIN, not what this operator
         chose.
         """
-        return (self.template_target, ENV_FILE)
+        return (self.pipeline_example, ENV_FILE)
 
     @property
     def cosmic_ray_required_by(self) -> tuple[str, ...]:

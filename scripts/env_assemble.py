@@ -195,15 +195,39 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
     return expected
 
 
+#: The temp file's name is FIXED rather than derived from the destination, so that ONE gitignore
+#: pattern covers every use of this writer. That file holds the fully merged result - on the
+#: merge-in-place path, the operator's real credentials - and a name built from `out.name` produced
+#: `..env.<rand>.tmp` for a `.env`, which the literal `.env` in a `.gitignore` does not match: `git
+#: status` reported it untracked and the `git add -A` the pipeline's own commit steps run would have
+#: committed live credentials. `--out` is arbitrary, so no pattern derived from it could be written
+#: down in advance; this one can. The pattern lives in this repository's `.gitignore` and in the
+#: step-2 list `commands/pipeline-init.md` makes every project write - two places, and no more.
+TEMP_PREFIX = ".env-assemble."
+TEMP_SUFFIX = ".tmp"
+#: What those two places must carry. Stated here, beside the name it describes, so a test can ask
+#: git itself rather than a second copy of the literal.
+TEMP_GITIGNORE_PATTERN = f"{TEMP_PREFIX}*{TEMP_SUFFIX}"
+
+
 def _write_atomically(out: Path, text: str) -> None:
     """Write `text` to `out` without ever truncating it: temp file in the same directory, then
     `os.replace`. Same directory so the replace is a rename within one filesystem, which is what
     makes it atomic. An existing file's mode is carried over - a `.env` is often chmod 600 and a
-    fresh temp file is not. Every failure leaves `out` untouched and removes the temp file."""
-    tmp = None
+    fresh temp file is not.
+
+    The temp file is removed whenever the `os.replace` did not happen, in a `finally` rather than an
+    `except OSError`. `KeyboardInterrupt` and `SystemExit` are `BaseException`, and a Ctrl-C or a
+    hook-budget SIGTERM between `mkstemp` and `replace` is the exact scenario this atomic write
+    exists for - caught only as `OSError`, it traded a truncated `.env` for a file holding the fully
+    merged credentials left in the working tree. Cleanup alone is still not sufficient, since
+    SIGKILL and power loss cannot be caught at all, which is why `TEMP_PREFIX` is also gitignored.
+    """
+    tmp: Path | None = None
+    replaced = False
     try:
         handle, tmp_name = tempfile.mkstemp(
-            dir=str(out.parent), prefix=f".{out.name}.", suffix=".tmp"
+            dir=str(out.parent), prefix=TEMP_PREFIX, suffix=TEMP_SUFFIX
         )
         tmp = Path(tmp_name)
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
@@ -213,10 +237,12 @@ def _write_atomically(out: Path, text: str) -> None:
         if out.exists():
             os.chmod(tmp, out.stat().st_mode & 0o7777)
         os.replace(tmp, out)
+        replaced = True
     except OSError as exc:
-        if tmp is not None:
-            tmp.unlink(missing_ok=True)
         raise AssemblyError(f"cannot write {out}: {exc}") from exc
+    finally:
+        if tmp is not None and not replaced:
+            tmp.unlink(missing_ok=True)
 
 
 #: Variables whose value is author-written PROSE rather than configuration (CLAUDE.md section 6).

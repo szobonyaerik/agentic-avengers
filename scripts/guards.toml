@@ -949,11 +949,9 @@ tests = ["tests/test_pipeline_init_survey.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_init.py"
 find = '''
-        fresh = tuple(name for name in ordered if self.is_fresh_template(name))
-        return fresh + tuple(name for name in ordered if name not in fresh)'''
+        return fresh[:1] + tuple(name for name in ordered if name not in fresh)'''
 replace = '''
-        fresh = tuple(name for name in ordered if self.is_fresh_template(name))
-        return tuple(name for name in ordered if name not in fresh) + fresh'''
+        return tuple(name for name in ordered if name not in fresh) + fresh[:1]'''
 
 [[guard]]
 id = "pipeline-init.order-by-content-not-presence"
@@ -966,6 +964,37 @@ find = '''
         return name in self.fresh_examples or name not in self.existing_examples'''
 replace = '''
         return name not in self.existing_examples'''
+
+[[guard]]
+id = "pipeline-init.source-set-by-content"
+implements = "scripts/pipeline_init.py"
+defect = "Content decided the ORDER but the SOURCE SET still folded in `template_target`, which is decided purely by presence - and step 2a's own `cp -n` is what changes presence. A repository with no examples printed `--out .env .env.example` before the copy and `--out .env .env.example .env.pipeline.example` after it, the second naming a file nothing ever created, so `assemble` refused with `cannot read .env.pipeline.example` and init finished with the pipeline's keys in no file any gate reads. The merge branch had the same shape."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        for name in self.existing_examples:
+            if name in self.fresh_examples:
+                return name
+        return self.template_target'''
+replace = '''
+        return self.template_target'''
+
+[[guard]]
+id = "env-assemble.temp-file-cleanup"
+implements = "scripts/env_assemble.py"
+defect = "The temp file holding the FULLY MERGED result - on the merge-in-place path, the operator's real credentials - was unlinked only in `except OSError`. `KeyboardInterrupt` and `SystemExit` are `BaseException`, and a Ctrl-C or a hook-budget SIGTERM between `mkstemp` and `os.replace` is the exact scenario the atomic write exists for, so the fix traded a truncated `.env` for a credential file left in the working tree."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = '''
+    finally:
+        if tmp is not None and not replaced:
+            tmp.unlink(missing_ok=True)'''
+replace = '''
+    finally:
+        if tmp is not None and not replaced and not isinstance(out, Path):
+            tmp.unlink(missing_ok=True)'''
 
 
 [[guard]]

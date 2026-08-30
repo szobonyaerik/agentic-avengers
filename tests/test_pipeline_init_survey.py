@@ -8,6 +8,7 @@ the first one immediately.
 This is a REPORT, never a gate: it always exits 0. What it must never do is answer wrongly.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import pipeline_init  # noqa: E402
 from env_assemble import assemble  # noqa: E402
 from env_file import parse  # noqa: E402
 from pipeline_init import (  # noqa: E402
@@ -339,14 +341,21 @@ class TestTheAssembleCommandNamesFilesThatExist:
     def test_every_named_source_is_a_file_that_exists_after_init_copies_the_template(
         self, tmp_path
     ):
-        """The property the hardcoded path broke: what the report names must be readable."""
+        """The property the hardcoded path broke: what the report names must be readable.
+
+        Re-surveyed AFTER the copy, because that is the state the report is read in: step 2a runs
+        between step 0 and the assemble, and `commands/pipeline-init.md` tells every later writing
+        step to read the report again.
+        """
         (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
         found = survey(tmp_path)
+        # `cp -n` writes the SHIPPED template, byte for byte - the survey's answer is derived from
+        # exactly those bytes, so a stand-in with different content is not step 2a.
         (tmp_path / found.template_target).write_text(
-            "GATE_MODEL=x\n", encoding="utf-8"
+            SHIPPED_TEMPLATE, encoding="utf-8"
         )
 
-        for path in self.command(found):
+        for path in self.command(survey(tmp_path)):
             assert (tmp_path / path).is_file()
 
     @pytest.mark.parametrize(
@@ -375,17 +384,35 @@ class TestTheAssembleCommandNamesFilesThatExist:
         assert found.assemble_sources == expected
         assert self.command(found) == list(expected)
 
-    @pytest.mark.parametrize(
-        "project_example",
-        [
-            pytest.param("GATE_MODEL=deepseek/deepseek-chat\n", id="edited"),
-            pytest.param(SHIPPED_TEMPLATE, id="untouched-copy-of-the-template"),
-        ],
-    )
-    def test_step_2as_own_copy_never_changes_the_printed_order(
-        self, tmp_path, project_example
+    #: Every example-presence state x content class, as `{filename: bytes}`. `SHIPPED_TEMPLATE`
+    #: means a file `cp -n` wrote and nobody touched; anything else is operator-owned.
+    EXAMPLE_STATES = [
+        pytest.param({}, id="no-example-at-all"),
+        pytest.param({PROJECT_EXAMPLE: "GATE_MODEL=a\n"}, id="project-edited"),
+        pytest.param({PROJECT_EXAMPLE: SHIPPED_TEMPLATE}, id="project-untouched"),
+        pytest.param({PIPELINE_EXAMPLE: "GATE_MODEL=b\n"}, id="pipeline-edited"),
+        pytest.param({PIPELINE_EXAMPLE: SHIPPED_TEMPLATE}, id="pipeline-untouched"),
+        pytest.param(
+            {PROJECT_EXAMPLE: "GATE_MODEL=a\n", PIPELINE_EXAMPLE: "GATE_MODEL=b\n"},
+            id="both-edited",
+        ),
+        pytest.param(
+            {PROJECT_EXAMPLE: "GATE_MODEL=a\n", PIPELINE_EXAMPLE: SHIPPED_TEMPLATE},
+            id="project-edited-pipeline-untouched",
+        ),
+        pytest.param(
+            {PROJECT_EXAMPLE: SHIPPED_TEMPLATE, PIPELINE_EXAMPLE: "GATE_MODEL=b\n"},
+            id="project-untouched-pipeline-edited",
+        ),
+    ]
+
+    @pytest.mark.parametrize("examples", EXAMPLE_STATES)
+    @pytest.mark.parametrize("live_env", [False, True], ids=["create", "merge"])
+    def test_step_2as_own_copy_never_changes_the_printed_command(
+        self, tmp_path, examples, live_env
     ):
-        """The command step 0 prints is IDENTICAL before and after step 2a's `cp -n`.
+        """The command step 0 prints is IDENTICAL before and after step 2a's `cp -n`, and every
+        file it names EXISTS when the operator runs it. Every example-presence state, both branches.
 
         This is the property the content rule exists to provide, and the one a presence rule could
         not: `existing_examples` is read off disk and the copy is what changes that disk state, so
@@ -393,19 +420,72 @@ class TestTheAssembleCommandNamesFilesThatExist:
         for one repository from the single authority. `commands/pipeline-init.md` tells every later
         writing step to read this report, and a second `/pipeline-init` on an already-initialised
         repository reaches the after state with no copy of its own at all.
+
+        The state that used to fail both halves is `no-example-at-all`: the report named
+        `.env.example` before the copy and `.env.example .env.pipeline.example` after it, the second
+        naming a file nothing ever created, so `assemble` refused with `cannot read
+        .env.pipeline.example` and wrote nothing.
         """
-        (tmp_path / PROJECT_EXAMPLE).write_text(project_example, encoding="utf-8")
+        for name, body in examples.items():
+            (tmp_path / name).write_text(body, encoding="utf-8")
+        if live_env:
+            (tmp_path / ".env").write_text(
+                "OPENROUTER_API_KEY=sk-live\n", encoding="utf-8"
+            )
 
         before = survey(tmp_path)
-        assert not (tmp_path / before.template_target).exists()
-        # Step 2a, verbatim: `cp -n <shipped template> <the target step 0 named>`.
-        (tmp_path / before.template_target).write_text(
-            SHIPPED_TEMPLATE, encoding="utf-8"
-        )
+        # Step 2a, verbatim: `cp -n <shipped template> <the target step 0 named>` - `-n` keeps an
+        # existing file, so the copy only lands where there is nothing.
+        target = tmp_path / before.template_target
+        if not target.exists():
+            target.write_text(SHIPPED_TEMPLATE, encoding="utf-8")
         after = survey(tmp_path)
 
         assert self.command(after) == self.command(before)
-        assert after.assemble_sources == before.assemble_sources
+        for name in self.command(after):
+            assert (tmp_path / name).is_file(), (
+                f"the report names {name}, which does not exist for the operator to read"
+            )
+
+    @pytest.mark.parametrize("examples", EXAMPLE_STATES)
+    def test_the_printed_create_command_assembles_without_refusing(
+        self, tmp_path, examples
+    ):
+        """The end of that property: what the survey prints after step 2a actually runs.
+
+        Naming a file that was never created is not a silent wrong config - it is an
+        `AssemblyError` and nothing written - but init then finishes with the pipeline's keys in no
+        file any gate reads, which is the state issue #108 is about.
+        """
+        for name, body in examples.items():
+            (tmp_path / name).write_text(body, encoding="utf-8")
+
+        found = survey(tmp_path)
+        target = tmp_path / found.template_target
+        if not target.exists():
+            target.write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        found = survey(tmp_path)
+
+        assemble([tmp_path / name for name in self.command(found)], tmp_path / ".env")
+
+        merged = parse((tmp_path / ".env").read_text())
+        for name in self.command(found):
+            for key in parse((tmp_path / name).read_text()):
+                assert key in merged
+        if found.fresh_examples:
+            # A copy of the template landed somewhere, so its keys reach the run.
+            assert merged["AUTHOR_FAMILY"] == parse(SHIPPED_TEMPLATE)["AUTHOR_FAMILY"]
+
+    def test_a_second_copy_of_the_shipped_template_is_not_named_twice(self, tmp_path):
+        """Two byte-identical copies declare the same values, so naming the second adds no key and
+        only makes the answer depend on how many copies happen to be on disk."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        (tmp_path / PIPELINE_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+
+        found = survey(tmp_path)
+
+        assert found.assemble_sources == (PROJECT_EXAMPLE,)
+        assert found.merge_sources == (PROJECT_EXAMPLE, ".env")
 
     def test_the_reported_trace_end_to_end_across_step_2a(self, tmp_path):
         """The measured sequence, run the way an operator runs it.
@@ -437,17 +517,58 @@ class TestTheAssembleCommandNamesFilesThatExist:
         shipped = parse(SHIPPED_TEMPLATE)
         assert merged["AUTHOR_FAMILY"] == shipped["AUTHOR_FAMILY"]
 
-    def test_an_unreadable_example_is_treated_as_edited_never_as_a_fresh_template(
-        self, tmp_path
-    ):
-        """An unanswerable comparison resolves to operator-owned, the safe direction: it can only
-        make an operator's file win a key, never lose one."""
+    def test_an_example_that_differs_by_one_byte_is_edited(self, tmp_path):
+        """The comparison is on bytes, so a file that merely resembles the template is operator
+        owned. This is the ordinary edited path, not a failure path."""
         (tmp_path / PROJECT_EXAMPLE).write_bytes(SHIPPED_TEMPLATE.encode() + b"\xff")
 
         found = survey(tmp_path)
 
         assert PROJECT_EXAMPLE not in found.fresh_examples
         assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="root reads a chmod 000 file, so it is never unreadable",
+    )
+    def test_an_unreadable_example_is_treated_as_edited_and_still_reports(
+        self, tmp_path
+    ):
+        """An unanswerable comparison resolves to operator-owned, the safe direction: it can only
+        make an operator's file win a key, never lose one.
+
+        And the survey still REPORTS. Step 0 runs before anything else in `/pipeline-init` and its
+        stated contract is that it always exits 0 - raising out of it would abort init with a
+        traceback instead of describing the repository.
+        """
+        unreadable = tmp_path / PROJECT_EXAMPLE
+        unreadable.write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        os.chmod(unreadable, 0o000)
+        try:
+            found = survey(tmp_path)
+
+            assert found.fresh_examples == frozenset()
+            assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
+            assert report_lines(found)
+        finally:
+            os.chmod(unreadable, 0o600)
+
+    def test_a_missing_shipped_template_leaves_every_example_edited_and_still_reports(
+        self, tmp_path, monkeypatch
+    ):
+        """A vendored install without `docs/templates/env.example` reaches exactly this. Nothing can
+        be shown to be a fresh template, so nothing is - and step 0 still describes the repository
+        rather than aborting it."""
+        (tmp_path / PROJECT_EXAMPLE).write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        monkeypatch.setattr(
+            pipeline_init, "SHIPPED_TEMPLATE", tmp_path / "nowhere" / "env.example"
+        )
+
+        found = survey(tmp_path)
+
+        assert found.fresh_examples == frozenset()
+        assert found.assemble_sources == (PIPELINE_EXAMPLE, PROJECT_EXAMPLE)
+        assert report_lines(found)
 
     def test_an_operators_filled_in_pipeline_example_survives_the_assembled_env(
         self, tmp_path
