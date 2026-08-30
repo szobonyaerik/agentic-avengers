@@ -37,6 +37,7 @@ def _project_dir(tmp_path, monkeypatch):
     """bypass_log.sh writes gate-overrides.log under $CLAUDE_PROJECT_DIR — never this repository."""
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
+
 SPEC = """---
 feature: demo
 phase: {phase}
@@ -48,11 +49,21 @@ criticality: {criticality}
 """
 
 
-def write_spec(root: Path, phase: str, spec: str, *, criticality: str = "standard") -> Path:
+def write_spec(
+    root: Path, phase: str, spec: str, *, criticality: str | None = "standard"
+) -> Path:
+    """`criticality=None` omits the line entirely - issue #101's own shape."""
     spec_dir = root / "docs" / "features" / "demo" / "phases" / phase / "specs" / spec
     spec_dir.mkdir(parents=True, exist_ok=True)
     path = spec_dir / "spec.md"
-    path.write_text(SPEC.format(phase=phase, spec=spec, criticality=criticality))
+    body = SPEC.format(phase=phase, spec=spec, criticality=criticality)
+    if criticality is None:
+        body = "\n".join(
+            line
+            for line in body.splitlines(keepends=True)
+            if not line.startswith("criticality:")
+        )
+    path.write_text(body)
     return path
 
 
@@ -88,6 +99,90 @@ def test_not_owed_with_no_specs_at_all(tmp_path: Path) -> None:
     assert breaker_gate.owed(phase_dir(tmp_path)) is False
 
 
+# --- issue #101: an absent field must not resolve to the weaker pipeline -------------------------
+
+
+def test_owed_when_a_spec_omits_criticality_entirely(tmp_path: Path) -> None:
+    """The defect itself: a spec that never wrote the line used to make the phase non-critical, so
+    the Breaker was silently deleted from it. It now resolves to critical and the run is owed."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality=None)
+    assert breaker_gate.owed(phase_dir(tmp_path)) is True
+
+
+def test_owed_when_a_spec_declares_a_malformed_criticality(tmp_path: Path) -> None:
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="high")
+    assert breaker_gate.owed(phase_dir(tmp_path)) is True
+
+
+def test_an_absent_field_is_announced_as_a_default(tmp_path: Path, capsys) -> None:
+    write_spec(tmp_path, "1-core", "1.1-a", criticality=None)
+    breaker_gate.owed(phase_dir(tmp_path))
+    err = capsys.readouterr().err
+    assert "1.1-a" in err and "defaulted to `critical`" in err
+
+
+def test_due_refuses_a_phase_whose_spec_omits_criticality(tmp_path: Path) -> None:
+    write_spec(tmp_path, "1-core", "1.1-a", criticality=None)
+    assert breaker_gate.due(phase_dir(tmp_path)) is not None
+
+
+# --- skipped(): a stage that did not run is named, with its reason -------------------------------
+
+
+def test_skipped_names_the_breaker_on_a_standard_phase(tmp_path: Path) -> None:
+    """A skipped Breaker and a clean one produce the same passing verdict, so the difference is
+    stated rather than inferred from an absence."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    reason = breaker_gate.skipped(phase_dir(tmp_path))
+    assert reason is not None
+    assert reason.startswith("breaker: not run")
+    assert "no spec in this phase resolves to `critical`" in reason
+
+
+def test_skipped_is_none_when_the_breaker_actually_runs(tmp_path: Path) -> None:
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    assert breaker_gate.skipped(phase_dir(tmp_path)) is None
+
+
+def test_skipped_names_a_disclosed_exception_as_the_reason(tmp_path: Path) -> None:
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
+    applicability.record_exception(
+        phase_dir(tmp_path),
+        "breaker",
+        "1-core",
+        "no reachable critical path",
+        "captain",
+    )
+    reason = breaker_gate.skipped(phase_dir(tmp_path))
+    assert reason is not None
+    assert "disclosed exception" in reason and "no reachable critical path" in reason
+
+
+def test_skipped_is_none_for_a_phase_whose_spec_omits_criticality(
+    tmp_path: Path,
+) -> None:
+    """Nothing is reported as skipped when the default is what put the Breaker back on."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality=None)
+    assert breaker_gate.skipped(phase_dir(tmp_path)) is None
+
+
+def test_skipped_cli_always_exits_zero(tmp_path: Path) -> None:
+    """Reporting, never an obligation - a named skip must not fail a phase."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "breaker_gate.py"),
+            "skipped",
+            str(phase_dir(tmp_path)),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "breaker: not run" in result.stderr
+
+
 # --- due(): reproduce the gap, then close it -----------------------------------------------------
 
 
@@ -101,20 +196,26 @@ def test_due_refuses_a_critical_phase_with_no_record_at_all(tmp_path: Path) -> N
     assert "1-core" in reason
 
 
-def test_due_is_clear_once_a_clean_record_names_what_it_attacked(tmp_path: Path) -> None:
+def test_due_is_clear_once_a_clean_record_names_what_it_attacked(
+    tmp_path: Path,
+) -> None:
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
     write_breaker(tmp_path, {"verdict": "clean", "attacked": ["malformed payloads"]})
     assert breaker_gate.due(phase_dir(tmp_path)) is None
 
 
-def test_due_is_clear_once_a_found_record_names_a_counterexample(tmp_path: Path) -> None:
+def test_due_is_clear_once_a_found_record_names_a_counterexample(
+    tmp_path: Path,
+) -> None:
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
-    write_breaker(tmp_path, {"verdict": "found", "counterexamples": ["tests/demo/1-core/x.py"]})
+    write_breaker(
+        tmp_path, {"verdict": "found", "counterexamples": ["tests/demo/1-core/x.py"]}
+    )
     assert breaker_gate.due(phase_dir(tmp_path)) is None
 
 
 def test_due_refuses_a_clean_verdict_naming_nothing_attacked(tmp_path: Path) -> None:
-    """"A clean Breaker report with no attempts described is not acceptable" was already the agent's
+    """ "A clean Breaker report with no attempts described is not acceptable" was already the agent's
     own instruction (agents/avenger-breaker.md) - this is what makes it checkable rather than a
     sentence nobody enforces."""
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
@@ -163,7 +264,9 @@ def test_due_refuses_a_record_whose_readers_list_is_empty(tmp_path: Path) -> Non
     assert "declares no `readers`" in reason
 
 
-def test_a_record_this_gate_accepts_is_one_the_read_path_check_accepts(tmp_path: Path) -> None:
+def test_a_record_this_gate_accepts_is_one_the_read_path_check_accepts(
+    tmp_path: Path,
+) -> None:
     """The two gates are pinned to ONE answer: whatever clears the phase close must also clear the
     artifact check that reads the same file. `doc_read_path` takes its declared readers from this
     module's constant, so the entry and the enforcement cannot drift apart."""
@@ -176,7 +279,12 @@ def test_a_record_this_gate_accepts_is_one_the_read_path_check_accepts(tmp_path:
     spec = doc_read_path.spec_for(breaker_gate.FILENAME)
     assert spec is not None, "breaker.json is not on the read-path table"
     assert spec["readers"] == breaker_gate.READERS
-    assert doc_read_path._artifact_problems(breaker_gate.record_path(phase_dir(tmp_path)), spec) == []
+    assert (
+        doc_read_path._artifact_problems(
+            breaker_gate.record_path(phase_dir(tmp_path)), spec
+        )
+        == []
+    )
 
 
 def test_due_refuses_malformed_json(tmp_path: Path) -> None:
@@ -195,17 +303,25 @@ def test_due_is_clear_for_a_standard_phase_with_no_record(tmp_path: Path) -> Non
 # --- the disclosed exception --------------------------------------------------------------------
 
 
-def test_a_recorded_exception_clears_an_owed_and_unmet_obligation(tmp_path: Path) -> None:
+def test_a_recorded_exception_clears_an_owed_and_unmet_obligation(
+    tmp_path: Path,
+) -> None:
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
     applicability.record_exception(
-        phase_dir(tmp_path), "breaker", "1-core", "no reachable critical path", "captain"
+        phase_dir(tmp_path),
+        "breaker",
+        "1-core",
+        "no reachable critical path",
+        "captain",
     )
     assert breaker_gate.due(phase_dir(tmp_path)) is None
 
 
 def test_an_exception_for_a_different_rule_does_not_clear_it(tmp_path: Path) -> None:
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
-    applicability.record_exception(phase_dir(tmp_path), "verdict", "1-core", "unrelated", "captain")
+    applicability.record_exception(
+        phase_dir(tmp_path), "verdict", "1-core", "unrelated", "captain"
+    )
     assert breaker_gate.due(phase_dir(tmp_path)) is not None
 
 
@@ -229,7 +345,9 @@ def commit_all(root: Path) -> None:
 def test_check_holds_an_untracked_critical_phase_with_no_record(tmp_path: Path) -> None:
     root = git_repo(tmp_path)
     write_spec(root, "1-core", "1.1-a", criticality="critical")
-    assert breaker_gate.check(root), "an owed Breaker run in an untracked phase must be enforced"
+    assert breaker_gate.check(root), (
+        "an owed Breaker run in an untracked phase must be enforced"
+    )
 
 
 def test_check_only_counts_a_phase_the_diff_does_not_touch(tmp_path: Path) -> None:
@@ -240,15 +358,21 @@ def test_check_only_counts_a_phase_the_diff_does_not_touch(tmp_path: Path) -> No
     commit_all(root)
 
     assert breaker_gate.check(root) == []
-    assert breaker_gate.check(root, enforce_all=True), "--all is the audit, and it audits"
+    assert breaker_gate.check(root, enforce_all=True), (
+        "--all is the audit, and it audits"
+    )
 
 
-def test_check_enforces_nothing_when_git_cannot_say_what_changed(tmp_path: Path) -> None:
+def test_check_enforces_nothing_when_git_cannot_say_what_changed(
+    tmp_path: Path,
+) -> None:
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
     assert breaker_gate.check(tmp_path) == []
 
 
-def test_check_over_a_tree_with_no_specs_is_clean_and_says_so(tmp_path: Path, capsys) -> None:
+def test_check_over_a_tree_with_no_specs_is_clean_and_says_so(
+    tmp_path: Path, capsys
+) -> None:
     assert breaker_gate.check(tmp_path) == []
     assert "nothing to check" in capsys.readouterr().err
 

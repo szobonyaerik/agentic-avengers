@@ -32,8 +32,9 @@ An owed phase may be excepted (`applicability.py record --rule breaker`) for a d
 critical path reachable, a captain-ordered cap - the same as every other rule this pipeline enforces.
 
 Usage:
-    breaker_gate.py owed <phase-dir>    exit 1 when this phase declares criticality: critical
+    breaker_gate.py owed <phase-dir>    exit 1 when this phase resolves to criticality: critical
     breaker_gate.py due <phase-dir>     exit 1 when owed and no valid record exists
+    breaker_gate.py skipped <phase-dir> report (always exit 0) why the Breaker does NOT run here
     breaker_gate.py check [--root .] [--all]
                                         the `due` obligation over every phase, for CI. Diff-scoped by
                                         default; `--all` audits every phase.
@@ -50,7 +51,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import applicability  # noqa: E402
-import spec_gate_state  # noqa: E402
+import criticality  # noqa: E402
 
 OK = 0
 OWED = 1
@@ -75,26 +76,17 @@ class BreakerGateError(Exception):
     """A record or ledger this cannot read. Always fails the caller closed."""
 
 
-def _spec_files(phase_dir: Path) -> list[Path]:
-    return sorted(Path(phase_dir).glob("specs/*/spec.md"))
-
-
 def owed(phase_dir: Path) -> bool:
-    """Whether any spec in this phase declares `criticality: critical` - what routes the Breaker.
+    """Whether any spec in this phase resolves to `criticality: critical` - what routes the Breaker.
 
-    Read through `spec_gate_state.frontmatter`, the repository's one strict reader of a spec's
-    stamps, so this asks the same question `pipeline_state._phase_criticality` does. An unreadable
-    spec is not critical by construction - under-report here just means one more spec checked once
-    it is readable, never a Breaker run silently waived.
+    The resolution itself lives in `scripts/criticality.py`, which `pipeline_state` reads too, so the
+    resolver and the gate cannot disagree about whether a phase is critical. That module is also
+    where issue #101's decision lives: an absent, malformed or unreadable `criticality` resolves to
+    `critical`, because it used to resolve to `standard` and silently delete this stage.
     """
-    for spec_file in _spec_files(phase_dir):
-        try:
-            text = spec_file.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if spec_gate_state.frontmatter(text).get("criticality") == "critical":
-            return True
-    return False
+    resolved = criticality.phase(Path(phase_dir))
+    criticality.announce(Path(phase_dir), resolved)
+    return resolved.critical
 
 
 def record_path(phase_dir: Path) -> Path:
@@ -170,6 +162,25 @@ def due(phase_dir: Path) -> str | None:
     return reason
 
 
+def skipped(phase_dir: Path) -> str | None:
+    """Why the Breaker will NOT run on this phase, or None when it is owed and does run.
+
+    Issue #101's second half: a skipped stage has to be visible. A phase that never routes the
+    Breaker looks exactly like a phase whose Breaker ran and found nothing - the verdict passes
+    either way - so the reason is reported rather than left to be inferred from an absence. This
+    holds whichever way the default in `criticality.py` is later decided, which is the point of
+    stating it here rather than only defaulting harder.
+    """
+    resolved = criticality.phase(Path(phase_dir))
+    criticality.announce(Path(phase_dir), resolved)
+    if not resolved.critical:
+        return f"breaker: not run - {resolved.reason()}"
+    exception = _excepted(phase_dir)
+    if exception is not None:
+        return f"breaker: not run - disclosed exception: {exception.describe()}"
+    return None
+
+
 def _excepted(phase_dir: Path) -> applicability.Exception_ | None:
     try:
         record = applicability.excepted(Path(phase_dir), RULE, Path(phase_dir).name)
@@ -191,7 +202,10 @@ def _excepted(phase_dir: Path) -> applicability.Exception_ | None:
 def closed_phases(root: Path) -> list[Path]:
     """Every phase directory holding at least one spec, in path order."""
     return sorted(
-        {spec.parents[2] for spec in Path(root).glob("docs/features/*/phases/*/specs/*/spec.md")}
+        {
+            spec.parents[2]
+            for spec in Path(root).glob("docs/features/*/phases/*/specs/*/spec.md")
+        }
     )
 
 
@@ -206,7 +220,10 @@ def check(root: Path, *, enforce_all: bool = False) -> list[str]:
     """
     phases = closed_phases(root)
     if not phases:
-        print(f"[breaker_gate] no phases with specs under {root} - nothing to check", file=sys.stderr)
+        print(
+            f"[breaker_gate] no phases with specs under {root} - nothing to check",
+            file=sys.stderr,
+        )
         return []
 
     scope: set[Path] | None = None
@@ -247,7 +264,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[breaker_gate] {exc}", file=sys.stderr)
         return ERROR
     except Exception as exc:  # noqa: BLE001 - an undecidable check is never an owed item
-        print(f"[breaker_gate] the check could not be decided: {exc!r}", file=sys.stderr)
+        print(
+            f"[breaker_gate] the check could not be decided: {exc!r}", file=sys.stderr
+        )
         return ERROR
 
 
@@ -255,13 +274,15 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
 
-    for name in ("owed", "due"):
+    for name in ("owed", "due", "skipped"):
         p = sub.add_parser(name)
         p.add_argument("phase_dir", type=Path)
 
     p_check = sub.add_parser("check")
     p_check.add_argument("--root", default=".", type=Path)
-    p_check.add_argument("--all", action="store_true", help="every phase, not just changed ones")
+    p_check.add_argument(
+        "--all", action="store_true", help="every phase, not just changed ones"
+    )
 
     return parser.parse_args(argv)
 
@@ -271,6 +292,21 @@ def _dispatch(args: argparse.Namespace) -> int:
         is_owed = owed(args.phase_dir)
         print("owed" if is_owed else "not owed")
         return OWED if is_owed else OK
+
+    if args.action == "skipped":
+        # Reporting, never an obligation: this always exits 0 so a caller can print it beside a
+        # gate without a skipped stage ever failing a phase.
+        reason = skipped(args.phase_dir)
+        if reason is None:
+            print(
+                f"[breaker_gate] {args.phase_dir} - the Breaker is owed and runs on this phase"
+            )
+        else:
+            print(
+                f"[breaker_gate] {args.phase_dir} - criticality-gated stage skipped:\n  - {reason}",
+                file=sys.stderr,
+            )
+        return OK
 
     if args.action == "due":
         reason = due(args.phase_dir)

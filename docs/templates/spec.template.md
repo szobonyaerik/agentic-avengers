@@ -17,7 +17,12 @@ review_status: pending   # <!-- only the human reviewer sets this to 'approved',
                          #      unattended run the machine gate is the whole wall. -->
 criticality: standard    # <!-- standard | critical — 'critical' runs the Breaker on this phase,
                          #      and the phase then does NOT close without the Breaker's
-                         #      breaker.json record beside verdict.json. -->
+                         #      breaker.json record beside verdict.json.
+                         #      REQUIRED, and not because it is pretty: an absent, blank or
+                         #      unrecognised value resolves to `critical` (scripts/criticality.py,
+                         #      issue #101). It used to resolve to `standard`, so a spec that
+                         #      simply never wrote this line silently lost its adversarial stage.
+                         #      Writing `standard` deliberately is how a phase opts out. -->
 readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
 ---
 

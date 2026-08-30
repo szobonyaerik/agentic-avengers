@@ -530,12 +530,33 @@ Three consequences worth stating outright:
   about non-discriminating tests — still advisory, still not a wall, and named as partial cover
   rather than a replacement (see *The Verifier* below).
 - **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
-  spec in the phase declares `criticality: critical`). Not optional in practice: it was owed on
+  spec in the phase **resolves to** `criticality: critical`). Not optional in practice: it was owed on
   every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that
   feature's docs or tests, because nothing checked for it (issue #45). It now persists `breaker.json`
   beside `verdict.json`, and a critical phase does not close without a valid one
   (`scripts/breaker_gate.py`). **A stage that emits nothing is indistinguishable from a stage that
   never ran**, which is why the record — not the run — is what is checked.
+  - **An absent `criticality` resolves to `critical`, and a skipped stage is named** (issue #101).
+    The field was read as `fields.get("criticality", "standard")` in both readers, so a spec that
+    never wrote the line resolved to the WEAKER pipeline and this stage was deleted from the phase
+    with no author involved — caught by hand in grid-bot-platform phase 4, that feature's
+    highest-risk phase, and nothing in the pipeline would have flagged it. `scripts/criticality.py`
+    is the one resolver both `pipeline_state.py` and `breaker_gate.py` read, and an absent, blank,
+    unrecognised or unreadable value resolves to `critical` there. The taxonomy does **not** grow:
+    the resolved value is still `standard` or `critical`, and what is new is that the resolution
+    carries WHY — so a defaulted `critical` is announced as the default it is rather than passing
+    for something somebody wrote. The direction was chosen against failing at spec-gate time for
+    §3a's reason: a gate binds only a spec still going through it, a `status: done` spec has
+    shipped and cannot be re-gated, so that direction leaves the hole open on exactly the specs
+    nobody is looking at any more — and the default's own cost, a Breaker run on a phase that never
+    asked for one, has a remedy that already exists and is audited (`applicability.py record --rule
+    breaker`).
+  - **A skipped stage is stated, not inferred from an absence.** A phase whose Breaker never ran and
+    one whose Breaker ran clean produce the same passing verdict. `breaker_gate.py skipped`
+    (reporting only, always exit 0) names why the stage does not run — non-critical phase, or a
+    disclosed exception — `pipeline_state` carries it on `State.skipped_stages`, and
+    `hook_verifier.sh` prints it at the close. **This half holds whichever way the default is later
+    decided**, which is why it is stated separately from it.
   - **Valid means non-vacuous.** A `clean` verdict must name what it **attacked**; a `found` verdict
     must name its **counterexample**. Either one empty is refused exactly like a missing record,
     because *"a clean report with no attempts described is not acceptable"* was already the agent's

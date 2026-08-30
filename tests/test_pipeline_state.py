@@ -30,6 +30,7 @@ def write_breaker(feature: Path, phase: str, data: dict) -> None:
     record = {"readers": list(breaker_gate.READERS), **data}
     (feature / "phases" / phase / "breaker.json").write_text(json.dumps(record))
 
+
 SPEC = """---
 feature: demo
 phase: {phase}
@@ -61,22 +62,31 @@ def write_spec(
     status: str = "draft",
     review_status: str = "pending",
     spec_gate: str = "approved",
-    criticality: str = "standard",
+    criticality: str | None = "standard",
 ) -> Path:
-    """Create one spec under its phase, with gate stamps in the frontmatter."""
+    """Create one spec under its phase, with gate stamps in the frontmatter.
+
+    `criticality=None` omits the line entirely — issue #101's own shape, where an absent field used
+    to resolve to `standard` and silently delete the Breaker from the phase.
+    """
     spec_dir = feature / "phases" / phase / "specs" / spec
     spec_dir.mkdir(parents=True)
     path = spec_dir / "spec.md"
-    path.write_text(
-        SPEC.format(
-            phase=phase,
-            spec=spec,
-            status=status,
-            review_status=review_status,
-            spec_gate=spec_gate,
-            criticality=criticality,
-        )
+    body = SPEC.format(
+        phase=phase,
+        spec=spec,
+        status=status,
+        review_status=review_status,
+        spec_gate=spec_gate,
+        criticality=criticality,
     )
+    if criticality is None:
+        body = "".join(
+            line
+            for line in body.splitlines(keepends=True)
+            if not line.startswith("criticality:")
+        )
+    path.write_text(body)
     return path
 
 
@@ -127,7 +137,9 @@ def test_phase_dir_without_specs_goes_to_spec_writer(tmp_path: Path) -> None:
 
 def test_a_blocked_spec_routes_back_to_spec_writer(tmp_path: Path) -> None:
     feature = planned(tmp_path)
-    write_spec(feature, "1-core", "1.1-a", spec_gate="blocked", review_status="approved")
+    write_spec(
+        feature, "1-core", "1.1-a", spec_gate="blocked", review_status="approved"
+    )
     state = next_stage(tmp_path, "demo")
     assert state.stage == "spec-writer"
     assert state.spec == "1.1-a"
@@ -238,12 +250,19 @@ def test_e2e_mapping_present_means_done(tmp_path: Path) -> None:
 # and no Breaker record must NOT reach `handover`.
 
 
-def test_a_critical_phase_with_no_breaker_record_does_not_reach_handover(tmp_path: Path) -> None:
+def test_a_critical_phase_with_no_breaker_record_does_not_reach_handover(
+    tmp_path: Path,
+) -> None:
     """The gap issue #45 describes, reproduced: two owed Breaker runs went missing and nothing
     noticed. Without the fix this asserts the wrong thing — the resolver would report `handover`."""
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
 
@@ -256,11 +275,18 @@ def test_a_critical_phase_with_no_breaker_record_does_not_reach_handover(tmp_pat
 def test_a_valid_breaker_record_lets_the_phase_reach_handover(tmp_path: Path) -> None:
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     write_breaker(
-        feature, "1-core", {"verdict": "clean", "attacked": ["malformed payloads", "auth bypass"]}
+        feature,
+        "1-core",
+        {"verdict": "clean", "attacked": ["malformed payloads", "auth bypass"]},
     )
 
     assert next_stage(tmp_path, "demo").stage == "handover"
@@ -271,10 +297,17 @@ def test_a_breaker_record_with_no_verdict_still_blocks(tmp_path: Path) -> None:
     failure mode the issue names, one level down: a Breaker that writes junk rather than a verdict."""
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
-    (feature / "phases" / "1-core" / "breaker.json").write_text(json.dumps({"ran": True}))
+    (feature / "phases" / "1-core" / "breaker.json").write_text(
+        json.dumps({"ran": True})
+    )
 
     assert next_stage(tmp_path, "demo").stage == "breaker"
 
@@ -284,7 +317,12 @@ def test_a_record_declaring_no_readers_still_blocks(tmp_path: Path) -> None:
     the phase here and fail `doc_read_path.py` on the next commit routes back to the Breaker."""
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     (feature / "phases" / "1-core" / "breaker.json").write_text(
@@ -295,11 +333,16 @@ def test_a_record_declaring_no_readers_still_blocks(tmp_path: Path) -> None:
 
 
 def test_a_clean_verdict_naming_nothing_attacked_still_blocks(tmp_path: Path) -> None:
-    """"A clean Breaker report with no attempts described is not acceptable" (agents/avenger-breaker
+    """ "A clean Breaker report with no attempts described is not acceptable" (agents/avenger-breaker
     .md) — this is what makes that instruction checkable rather than a sentence nobody enforces."""
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     (feature / "phases" / "1-core" / "breaker.json").write_text(
@@ -312,7 +355,12 @@ def test_a_clean_verdict_naming_nothing_attacked_still_blocks(tmp_path: Path) ->
 def test_a_found_verdict_naming_no_counterexample_still_blocks(tmp_path: Path) -> None:
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     (feature / "phases" / "1-core" / "breaker.json").write_text(
@@ -322,16 +370,26 @@ def test_a_found_verdict_naming_no_counterexample_still_blocks(tmp_path: Path) -
     assert next_stage(tmp_path, "demo").stage == "breaker"
 
 
-def test_a_found_verdict_naming_a_counterexample_lets_the_phase_reach_handover(tmp_path: Path) -> None:
+def test_a_found_verdict_naming_a_counterexample_lets_the_phase_reach_handover(
+    tmp_path: Path,
+) -> None:
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     write_breaker(
         feature,
         "1-core",
-        {"verdict": "found", "counterexamples": ["tests/demo/1-core/test_breaker_auth.py"]},
+        {
+            "verdict": "found",
+            "counterexamples": ["tests/demo/1-core/test_breaker_auth.py"],
+        },
     )
 
     assert next_stage(tmp_path, "demo").stage == "handover"
@@ -347,7 +405,12 @@ def test_a_phase_that_already_handed_over_is_never_reopened_for_a_missing_breake
     """
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     (feature / "phases" / "1-core" / "handover.md").write_text("done\n")
@@ -365,7 +428,12 @@ def test_the_last_phase_handed_over_without_a_breaker_record_still_reaches_e2e(
     """The same boundary at the end of the walk: a shipped phase must not wedge the feature."""
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     (feature / "phases" / "1-core" / "handover.md").write_text("done\n")
@@ -381,10 +449,116 @@ def test_a_standard_phase_owes_no_breaker_record(tmp_path: Path) -> None:
     assert next_stage(tmp_path, "demo").stage == "handover"
 
 
-def test_a_recorded_breaker_exception_lets_the_phase_reach_handover(tmp_path: Path) -> None:
+def test_a_phase_whose_spec_omits_criticality_routes_the_breaker(
+    tmp_path: Path,
+) -> None:
+    """Issue #101 through the resolver: an omitted field used to make this phase `standard`, so
+    `/avenger-run` never routed the Breaker and the phase closed on a passing verdict with an entire
+    stage missing and nothing saying so."""
     feature = planned(tmp_path)
     write_spec(
-        feature, "1-core", "1.1-a", review_status="approved", status="done", criticality="critical"
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality=None,
+    )
+    write_verdict(feature, "1-core", "pass")
+
+    state = next_stage(tmp_path, "demo")
+    assert state.stage == "breaker"
+    assert state.criticality == "critical"
+
+
+def test_a_phase_whose_spec_declares_a_malformed_criticality_routes_the_breaker(
+    tmp_path: Path,
+) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="high",
+    )
+    write_verdict(feature, "1-core", "pass")
+
+    assert next_stage(tmp_path, "demo").stage == "breaker"
+
+
+def test_a_spec_level_state_reports_a_defaulted_criticality(tmp_path: Path) -> None:
+    """The per-spec `criticality` the orchestrator reads is resolved the same way as the phase's."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", criticality=None)
+
+    assert next_stage(tmp_path, "demo").criticality == "critical"
+
+
+def test_a_standard_phase_names_the_breaker_as_skipped(tmp_path: Path) -> None:
+    """A skipped Breaker and a clean one produce the same passing verdict; the resolver's output is
+    where a reader can tell them apart."""
+    feature = planned(tmp_path)
+    write_spec(feature, "1-core", "1.1-a", review_status="approved", status="done")
+    write_verdict(feature, "1-core", "pass")
+
+    state = next_stage(tmp_path, "demo")
+    assert state.stage == "handover"
+    assert any(line.startswith("breaker: not run") for line in state.skipped_stages)
+    assert "skipped_stages" in state.as_json()
+
+
+def test_a_critical_phase_that_runs_the_breaker_names_no_skipped_stage(
+    tmp_path: Path,
+) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
+    )
+    write_verdict(feature, "1-core", "pass")
+
+    assert next_stage(tmp_path, "demo").skipped_stages == ()
+
+
+def test_a_waived_breaker_is_reported_as_skipped_with_its_reason(
+    tmp_path: Path,
+) -> None:
+    """A disclosed exception closes the obligation; it must not also hide that the stage did not
+    run — that is the state the phase output has to distinguish."""
+    feature = planned(tmp_path)
+    write_spec(
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
+    )
+    write_verdict(feature, "1-core", "pass")
+    record(feature / "phases" / "1-core", "breaker", "1-core")
+
+    state = next_stage(tmp_path, "demo")
+    assert state.stage == "handover"
+    assert any("disclosed exception" in line for line in state.skipped_stages)
+
+
+def test_a_recorded_breaker_exception_lets_the_phase_reach_handover(
+    tmp_path: Path,
+) -> None:
+    feature = planned(tmp_path)
+    write_spec(
+        feature,
+        "1-core",
+        "1.1-a",
+        review_status="approved",
+        status="done",
+        criticality="critical",
     )
     write_verdict(feature, "1-core", "pass")
     record(feature / "phases" / "1-core", "breaker", "1-core")
@@ -407,13 +581,18 @@ def test_criticality_is_reported_for_the_breaker_decision(tmp_path: Path) -> Non
     assert state.criticality == "critical"
 
 
-def test_criticality_defaults_to_standard(tmp_path: Path) -> None:
+def test_criticality_defaults_to_critical(tmp_path: Path) -> None:
+    """This assertion used to read `standard`, and that was issue #101 written down as a test: an
+    absent safety-relevant field resolved to the WEAKER pipeline, deleting the Breaker from the
+    phase with no author involved. The default is now `critical` (scripts/criticality.py), whose
+    cost — a Breaker run on a phase that never asked for one — has an audited remedy the opposite
+    direction does not: a disclosed exception on the phase's ledger."""
     feature = planned(tmp_path)
     spec = write_spec(
         feature, "1-core", "1.1-a", review_status="approved", status="done"
     )
     spec.write_text(spec.read_text().replace("criticality: standard\n", ""))
-    assert next_stage(tmp_path, "demo").criticality == "standard"
+    assert next_stage(tmp_path, "demo").criticality == "critical"
 
 
 def test_state_is_immutable(tmp_path: Path) -> None:
@@ -466,7 +645,9 @@ def test_green_disk_phases_do_not_finish_a_longer_plan(tmp_path: Path) -> None:
 def test_gap_in_planned_phases_is_reported_not_skipped(tmp_path: Path) -> None:
     feature = finished_phase(tmp_path)
     (feature / "plan.md").write_text(PLAN_WITH_PHASES)
-    write_spec(feature, "3-audit-layer", "3.1-a", review_status="approved", status="done")
+    write_spec(
+        feature, "3-audit-layer", "3.1-a", review_status="approved", status="done"
+    )
     write_verdict(feature, "3-audit-layer", "pass")
     (feature / "phases" / "3-audit-layer" / "handover.md").write_text("done\n")
     state = next_stage(tmp_path, "demo")
@@ -476,16 +657,22 @@ def test_gap_in_planned_phases_is_reported_not_skipped(tmp_path: Path) -> None:
 
 def test_all_planned_phases_built_proceeds_to_e2e(tmp_path: Path) -> None:
     feature = finished_phase(tmp_path)
-    plan = PLAN_WITH_PHASES.replace("### Phase 2 — telegram runtime and ping\n- **Goal**: runtime.\n\n", "")
+    plan = PLAN_WITH_PHASES.replace(
+        "### Phase 2 — telegram runtime and ping\n- **Goal**: runtime.\n\n", ""
+    )
     plan = plan.replace("### Phase 3 — audit layer\n- **Goal**: audit.\n", "")
     (feature / "plan.md").write_text(plan)
     assert next_stage(tmp_path, "demo").stage == "e2e-author"
 
 
-def test_plan_without_recognisable_headings_keeps_folder_walk_behaviour(tmp_path: Path) -> None:
+def test_plan_without_recognisable_headings_keeps_folder_walk_behaviour(
+    tmp_path: Path,
+) -> None:
     # a malformed plan must not wedge a green feature — only an explicit phase list may extend it
     feature = finished_phase(tmp_path)
-    (feature / "plan.md").write_text("---\nfeature: demo\n---\n\nfreeform prose, no headings\n")
+    (feature / "plan.md").write_text(
+        "---\nfeature: demo\n---\n\nfreeform prose, no headings\n"
+    )
     assert next_stage(tmp_path, "demo").stage == "e2e-author"
 
 
@@ -524,7 +711,9 @@ def test_an_unreviewed_spec_still_parks_without_an_exception(tmp_path: Path) -> 
     assert next_stage(tmp_path, "demo").stage == "spec-review"
 
 
-def test_a_recorded_spec_review_exception_lets_the_resolver_move_on(tmp_path: Path) -> None:
+def test_a_recorded_spec_review_exception_lets_the_resolver_move_on(
+    tmp_path: Path,
+) -> None:
     feature = planned(tmp_path)
     write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
     record(feature / "phases" / "1-core", "spec-review", "1.1-a")
@@ -544,12 +733,21 @@ def test_an_exception_covers_only_the_spec_it_names(tmp_path: Path) -> None:
 
 def test_an_exception_covers_only_the_rule_it_names(tmp_path: Path) -> None:
     feature = planned(tmp_path)
-    write_spec(feature, "1-core", "1.1-a", spec_gate="pending", review_status="pending", status="done")
+    write_spec(
+        feature,
+        "1-core",
+        "1.1-a",
+        spec_gate="pending",
+        review_status="pending",
+        status="done",
+    )
     record(feature / "phases" / "1-core", "spec-review", "1.1-a")
     assert next_stage(tmp_path, "demo").stage == "spec-gate"
 
 
-def test_a_failing_verdict_can_be_closed_by_a_recorded_exception(tmp_path: Path) -> None:
+def test_a_failing_verdict_can_be_closed_by_a_recorded_exception(
+    tmp_path: Path,
+) -> None:
     feature = finished_phase(tmp_path)
     write_verdict(feature, "1-core", "fail")
     assert next_stage(tmp_path, "demo").stage == "implementer"
@@ -567,7 +765,9 @@ def test_an_exception_applied_is_named_on_stderr(tmp_path: Path, capsys) -> None
     assert "spec-review" in err and "captain" in err
 
 
-def test_an_unreadable_ledger_grants_nothing_and_says_so(tmp_path: Path, capsys) -> None:
+def test_an_unreadable_ledger_grants_nothing_and_says_so(
+    tmp_path: Path, capsys
+) -> None:
     """Under-report: a ledger nobody can parse must not delete a stage."""
     feature = planned(tmp_path)
     write_spec(feature, "1-core", "1.1-a", review_status="pending", status="done")
@@ -603,7 +803,9 @@ def entered_over_an_unfinished_phase(tmp_path: Path) -> Path:
     return feature
 
 
-def test_from_phase_claims_nothing_feature_wide_over_a_phase_it_skipped(tmp_path: Path) -> None:
+def test_from_phase_claims_nothing_feature_wide_over_a_phase_it_skipped(
+    tmp_path: Path,
+) -> None:
     """`done`/`e2e-author` here would drive an --auto run to feature close over an unfinished phase."""
     entered_over_an_unfinished_phase(tmp_path)
     state = next_stage(tmp_path, "demo", from_phase=2)
@@ -630,7 +832,9 @@ def test_entering_past_every_phase_on_disk_claims_nothing(tmp_path: Path) -> Non
     assert next_stage(tmp_path, "demo", from_phase=99).stage == "unknown"
 
 
-def test_from_phase_that_skips_nothing_still_resolves_the_feature(tmp_path: Path) -> None:
+def test_from_phase_that_skips_nothing_still_resolves_the_feature(
+    tmp_path: Path,
+) -> None:
     """The narrowing is what forbids a feature-wide answer, not the flag being present."""
     finished_phase(tmp_path)
     assert next_stage(tmp_path, "demo", from_phase=1).stage == "e2e-author"
@@ -661,7 +865,9 @@ def test_a_drifted_spec_is_ungated_to_the_resolver_too(tmp_path):
     a spec no gate has judged in its current form.
     """
     _feature, spec = _gated_spec(tmp_path)
-    spec.write_text(spec.read_text() + "\n## Requirements\n- R1.0.9 nobody gated this\n")
+    spec.write_text(
+        spec.read_text() + "\n## Requirements\n- R1.0.9 nobody gated this\n"
+    )
 
     state = next_stage(tmp_path, "demo")
 
@@ -702,8 +908,11 @@ def test_a_recorded_exception_clears_the_drift_for_the_resolver(tmp_path, monkey
     reason = tmp_path / "why.txt"
     reason.write_text("the gate provider was down")
     applicability.record_exception(
-        phase_dir, rule="spec-gate", subject="1.0-a",
-        reason=reason.read_text(), recorded_by="tester",
+        phase_dir,
+        rule="spec-gate",
+        subject="1.0-a",
+        reason=reason.read_text(),
+        recorded_by="tester",
     )
 
     assert next_stage(tmp_path, "demo").stage != "spec-gate"
@@ -716,7 +925,9 @@ def test_a_feature_whose_code_changed_after_its_newest_verdict_owes_an_amendment
     feature = write_feature(tmp_path, docs=ALL_DOCS + ("e2e-mapping.md",))
     write_spec(feature, "1-first", "1.0-a", status="done", review_status="approved")
     write_verdict(feature, "1-first", "pass")
-    (feature / "phases" / "1-first" / "handover.md").write_text("---\nfeature: demo\n---\n")
+    (feature / "phases" / "1-first" / "handover.md").write_text(
+        "---\nfeature: demo\n---\n"
+    )
 
     monkeypatch.setattr(
         verdict_currency, "check", lambda root, fdir: "demo: 1 tracked file(s) changed"
@@ -732,7 +943,9 @@ def test_a_current_verdict_still_reaches_done(tmp_path, monkeypatch):
     feature = write_feature(tmp_path, docs=ALL_DOCS + ("e2e-mapping.md",))
     write_spec(feature, "1-first", "1.0-a", status="done", review_status="approved")
     write_verdict(feature, "1-first", "pass")
-    (feature / "phases" / "1-first" / "handover.md").write_text("---\nfeature: demo\n---\n")
+    (feature / "phases" / "1-first" / "handover.md").write_text(
+        "---\nfeature: demo\n---\n"
+    )
     monkeypatch.setattr(verdict_currency, "check", lambda root, fdir: None)
 
     assert next_stage(tmp_path, "demo").stage == "done"

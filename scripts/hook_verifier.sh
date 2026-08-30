@@ -474,6 +474,11 @@ case "$V" in
         "a Breaker that never ran, and neither running it nor waiving it will repair this. A check" \
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
+    # A phase that does NOT route the Breaker says so out loud at close (issue #101). The verdict
+    # reads identically whether the Breaker ran clean or never ran at all, so the skip is stated
+    # rather than left as an absence for a reader to notice. Reporting only: `skipped` always exits
+    # 0, and `|| true` keeps a reporting line from ever failing a phase.
+    python3 "$SD/breaker_gate.py" skipped "$PHASE_DIR" || true
     carried_items_gate
     # Which stage found each defect is the one field the record cannot recover afterwards (§6d).
     # It used to be emitted by `verifier_review.sh` the moment the removed cross-family reading
