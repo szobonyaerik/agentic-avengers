@@ -77,8 +77,8 @@ class TestNonGreenfield:
         text = "\n".join(report_lines(found))
 
         assert found.env_exists
-        assert "--out .env .env .env.example --force" in text
-        assert "OWN FIRST SOURCE" in text
+        assert "--out .env .env.example .env --force" in text
+        assert "OWN LAST SOURCE" in text
 
     def test_the_merge_names_the_template_where_it_actually_landed(self, tmp_path):
         (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
@@ -87,7 +87,7 @@ class TestNonGreenfield:
         found = survey(tmp_path)
 
         assert found.template_target == PIPELINE_EXAMPLE
-        assert f"--out .env .env {PIPELINE_EXAMPLE} --force" in "\n".join(
+        assert f"--out .env {PIPELINE_EXAMPLE} .env --force" in "\n".join(
             report_lines(found)
         )
 

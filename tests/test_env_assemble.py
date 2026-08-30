@@ -37,6 +37,12 @@ SCRIPT = REPO / "scripts" / "env_assemble.py"
 PROJECT_EXAMPLE_NO_NEWLINE = "API_KEY=abc\nDRY_RUN=true"
 PIPELINE_EXAMPLE = "GATE_PROVIDER=openrouter\nMUTATION_POLICY=advisory\n"
 
+#: The template `/pipeline-init` copies, read as the shipped artifact it is: what an operator's own
+#: `.env` is actually merged against, and the reason source order decides real values.
+SHIPPED_TEMPLATE = (REPO / "docs" / "templates" / "env.example").read_text(
+    encoding="utf-8"
+)
+
 
 def write_sources(tmp_path, first=PROJECT_EXAMPLE_NO_NEWLINE, second=PIPELINE_EXAMPLE):
     a = tmp_path / ".env.example"
@@ -117,51 +123,77 @@ class TestMergingIntoALiveEnv:
     """The non-greenfield path: a worktree that already has a `.env`.
 
     `assemble` refuses an existing output without `--force`, so the only way the pipeline's keys
-    reach a configured worktree is to name the live file as its OWN FIRST SOURCE. That is safe
-    because every source is read before anything is written, and the read-back then proves the
-    live file's own keys survived - which is the property the whole module exists for.
+    reach a configured worktree is to name the live file as a source of its own. It goes LAST,
+    because the last source to declare a key wins: that is what keeps the operator's real values
+    and still adds every pipeline key they lack. It is safe because every source is read before
+    anything is written, and the read-back then proves the live file's own keys survived - which
+    is the property the whole module exists for.
     """
 
-    def test_the_live_credentials_survive_and_the_pipeline_keys_arrive(self, tmp_path):
+    def write_live(self, tmp_path, text):
         live = tmp_path / ".env"
-        live.write_text(
-            "OPENROUTER_API_KEY=sk-or-v1-real\nDRY_RUN=true\n", encoding="utf-8"
-        )
-        template = tmp_path / ".env.pipeline.example"
-        template.write_text(PIPELINE_EXAMPLE, encoding="utf-8")
+        live.write_text(text, encoding="utf-8")
+        return live
 
-        assemble([live, template], live, force=True)
+    def shipped_template(self, tmp_path):
+        """The REAL `docs/templates/env.example`, not a hand-written minimal stand-in.
+
+        The template is the artifact `/pipeline-init` actually copies, and it is what makes the
+        ordering matter: it declares `OPENROUTER_API_KEY`, `GATE_MODEL`, `GATE_PROVIDER`,
+        `AUTHOR_FAMILY` and `MUTATION_POLICY` UNCOMMENTED. A minimal fixture that overlaps the live
+        `.env` in no key cannot observe which source won, so it can never catch the defect this
+        pins - the same reason `tests/test_mutation_target.py` reads the shipped `cosmic-ray.toml`.
+        """
+        template = tmp_path / ".env.pipeline.example"
+        template.write_text(SHIPPED_TEMPLATE, encoding="utf-8")
+        return template
+
+    def test_the_live_credentials_survive_and_the_pipeline_keys_arrive(self, tmp_path):
+        live = self.write_live(
+            tmp_path,
+            "OPENROUTER_API_KEY=sk-or-v1-real\n"
+            "GATE_MODEL=deepseek/deepseek-chat\n"
+            "MUTATION_POLICY=enforce\n"
+            "DRY_RUN=true\n",
+        )
+        template = self.shipped_template(tmp_path)
+
+        assemble([template, live], live, force=True)
 
         merged = parse(live.read_text())
         assert merged["OPENROUTER_API_KEY"] == "sk-or-v1-real"
+        assert merged["GATE_MODEL"] == "deepseek/deepseek-chat"
+        assert merged["MUTATION_POLICY"] == "enforce"
         assert merged["DRY_RUN"] == "true"
-        assert merged["GATE_PROVIDER"] == "openrouter"
-        assert merged["MUTATION_POLICY"] == "advisory"
+        # ...and a pipeline key the live file never had is still added by the template.
+        assert merged["AUTHOR_FAMILY"] == "anthropic"
 
-    def test_a_key_both_files_declare_takes_the_templates_value(self, tmp_path):
-        """The one case where merging changes an existing value - last source wins."""
-        live = tmp_path / ".env"
-        live.write_text("GATE_PROVIDER=opencode\nAPI_KEY=mine\n", encoding="utf-8")
-        template = tmp_path / ".env.pipeline.example"
-        template.write_text(PIPELINE_EXAMPLE, encoding="utf-8")
+    def test_the_wrong_order_is_what_loses_the_operators_values(self, tmp_path):
+        """The defect this ordering exists to stop, kept reproducible rather than only asserted
+        away: with the live file FIRST the template wins every key they share, so a real API key
+        becomes the placeholder and a chosen model reverts to the template's default."""
+        live = self.write_live(
+            tmp_path,
+            "OPENROUTER_API_KEY=sk-or-v1-real\nGATE_MODEL=deepseek/deepseek-chat\n",
+        )
+        template = self.shipped_template(tmp_path)
 
         assemble([live, template], live, force=True)
 
         merged = parse(live.read_text())
-        assert merged["GATE_PROVIDER"] == "openrouter"
-        assert merged["API_KEY"] == "mine"
+        assert PLACEHOLDER_MARKER in merged["OPENROUTER_API_KEY"]
+        assert merged["GATE_MODEL"] == "google/gemini-3.1-pro-preview"
 
     def test_a_live_env_with_no_trailing_newline_still_merges_intact(self, tmp_path):
         """The measured defect, on the path that reads the live file as a source."""
-        live = tmp_path / ".env"
-        live.write_text("API_KEY=abc\nDRY_RUN=true", encoding="utf-8")
-        template = tmp_path / ".env.pipeline.example"
-        template.write_text(PIPELINE_EXAMPLE, encoding="utf-8")
+        live = self.write_live(tmp_path, "API_KEY=abc\nDRY_RUN=true")
+        template = self.shipped_template(tmp_path)
 
-        assemble([live, template], live, force=True)
+        assemble([template, live], live, force=True)
 
         merged = parse(live.read_text())
         assert merged["DRY_RUN"] == "true"
+        assert merged["API_KEY"] == "abc"
         assert merged["GATE_PROVIDER"] == "openrouter"
 
 

@@ -41,13 +41,24 @@ write no production code.
    in one that already has that file, whoever wrote it. **Never overwrite either file, and never
    overwrite a live `.env`.**
 
-   Then assemble the run's `.env` from every example the project now has, **in that order** — and
-   never with `cat`:
+   Then assemble the run's `.env`, **never with `cat`**. Which form depends on what step 0 reported
+   about `.env` — **the last source to declare a key wins, and that is what decides the order**:
 
    ```bash
+   # no .env yet — build it from every example the project now has, in that order
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
      --out .env .env.example .env.pipeline.example      # drop the second path when there is only one
+
+   # a live .env ALREADY exists — merge in place, naming it as its OWN LAST SOURCE so every value
+   # the operator already chose beats the template's default, while missing pipeline keys are added
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/env_assemble.py" assemble \
+     --out .env .env.pipeline.example .env --force
    ```
+
+   **Never name the live `.env` first**: the template declares `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME`
+   and default `GATE_MODEL`, `GATE_PROVIDER`, `AUTHOR_FAMILY` and `MUTATION_POLICY` uncommented, so a
+   template read after the live file replaces the operator's real key and silently reverts their
+   config to those defaults.
 
    `cat` joins BYTES. A first file with no trailing newline fuses its last key onto the first line of
    the second, and the parser reads the merged line as a different value: measured on
@@ -56,7 +67,8 @@ write no production code.
    happened to be a demo. `env_assemble.py` joins with an explicit separator **and reads the result
    back**: every key each source declared must parse out of `.env` holding the value that source
    declared, or nothing is written and the step stops naming the key. It refuses an existing `.env`
-   unless `--force`, so a live one is never replaced by accident.
+   unless `--force`, so a live one is never replaced by accident — the merge form above is the only
+   sanctioned use of that flag, and its read-back is what proves the live file's own keys survived.
 
    Tell the user what they must fill in: `OPENROUTER_API_KEY`, and `GATE_PROVIDER=openrouter`
    (without it `gate_runner.py` defaults to the `opencode` CLI and the key is ignored). Warn that

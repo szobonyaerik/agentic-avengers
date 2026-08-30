@@ -98,14 +98,18 @@ cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier 
 python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.example .env.pipeline.example
 
 #    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
-#        merge in place by naming it as its OWN FIRST SOURCE. (a) refuses here, by design.
-python3 "$AV/scripts/env_assemble.py" assemble --out .env .env .env.pipeline.example --force
+#        merge in place by naming it as its OWN LAST SOURCE. (a) refuses here, by design.
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env --force
 ```
 
 Form **(b)** is not the destructive `--force` it looks like: `assemble` reads every source before it
 writes anything, so the live `.env` is read first and the read-back then proves every credential it
-declared survived into the result. A key BOTH files declare takes the template's value — the last
-source to declare it — which is the one case where merging changes an existing value. Assembling
+declared survived into the result. **The order is the point** — the last source to declare a key
+wins, so the live file goes LAST and every value you already chose beats the template's default for
+that key, while every pipeline key you do not have yet is still added. Name it first instead and the
+template's `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME` and its default `GATE_MODEL`, `GATE_PROVIDER`,
+`AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours. Re-merging appends the template's text again
+rather than replacing it, which parses correctly because the last declaration still wins. Assembling
 anywhere else configures nothing: every gate reads `.env` and no other path.
 
 **Never `cat` those two files together.** A source with no trailing newline fuses its last key onto

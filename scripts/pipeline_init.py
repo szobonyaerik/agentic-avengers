@@ -134,12 +134,15 @@ def report_lines(found: Survey) -> list[str]:
         lines.append(
             f"{ENV_FILE}: EXISTS and holds live credentials, so merge IN PLACE rather than "
             f"replacing it: "
-            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} {ENV_FILE} "
-            f"{found.template_target} --force`. The live file is named as its OWN FIRST SOURCE - "
-            f"`assemble` reads every source before it writes anything, and the read-back then "
-            f"proves every key it declared survived, which is what makes this safe where a bare "
-            f"--force is not. A key BOTH files declare takes the template's value, the last source "
-            f"to declare it. Assembling anywhere else configures nothing: every gate reads "
+            f"`python3 scripts/env_assemble.py assemble --out {ENV_FILE} "
+            f"{found.template_target} {ENV_FILE} --force`. The live file is named as its OWN LAST "
+            f"SOURCE, because the last source to declare a key wins - so every value you already "
+            f"chose beats the template's default for that key, and every pipeline key you do not "
+            f"have yet is added. `assemble` reads every source before it writes anything, and the "
+            f"read-back then proves every key the live file declared survived, which is what makes "
+            f"this safe where a bare --force is not. Name it FIRST instead and the template's "
+            f"`REPLACE_ME` key and default GATE_MODEL/GATE_PROVIDER/AUTHOR_FAMILY/MUTATION_POLICY "
+            f"overwrite yours. Assembling anywhere else configures nothing: every gate reads "
             f"{ENV_FILE} and no other path."
         )
     else:

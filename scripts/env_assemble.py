@@ -30,20 +30,30 @@ A third refusal lives here because it is about the same file: a value still carr
 before any provider call, so the refusal lands at the first gate with the key named, instead of as
 an authentication error from a provider that was handed a placeholder.
 
-**A worktree that already has a live `.env` merges IN PLACE, by naming that file as its own first
-source.** `assemble` reads every source before it writes anything, so `--out .env .env <template>
---force` is not the destructive `--force` it looks like: the live file is read first, and the
-read-back then proves every key it declared - every existing credential - survived into the result.
-A `.env` written any other way is how the pipeline's keys end up somewhere no gate reads, since
-`env_file.find_env_file` looks for `.env` and nothing else.
+**The LAST source to declare a key wins.** That one rule decides the source ORDER everywhere, and
+getting it backwards is not a cosmetic mistake: the shipped `docs/templates/env.example` declares
+`OPENROUTER_API_KEY`, `GATE_MODEL`, `GATE_PROVIDER`, `AUTHOR_FAMILY` and `MUTATION_POLICY`
+uncommented, so a template placed after an operator's own file replaces their real API key with
+`sk-or-v1-REPLACE_ME` and reverts their chosen model, provider, author family and mutation policy to
+its defaults - a wrong config that never errors, which is the same class of harm as the `DRY_RUN`
+inversion above.
 
-**What merging does NOT promise:** a key BOTH the live `.env` and the pipeline's template declare
-resolves to the LAST source that declares it, which is the template. That is the one case where
-merging changes an existing value, and it is stated here rather than left to be discovered. There is
-no prompt and no conflict-resolution mode - naming the resolution is the whole of it.
+**So a worktree that already has a live `.env` merges IN PLACE by naming that file as its own LAST
+source.** `assemble` reads every source before it writes anything, so `--out .env <template> .env
+--force` is not the destructive `--force` it looks like: the live file is read first, every key it
+declares wins over the template's default for the same key, every pipeline key it does not have is
+added, and the read-back then proves every key it declared survived into the result. A `.env`
+written any other way is how the pipeline's keys end up somewhere no gate reads, since
+`env_file.find_env_file` looks for `.env` and nothing else. The greenfield form - a template into a
+`.env` that does not exist yet - has no such conflict and is unaffected.
+
+There is no prompt and no conflict-resolution mode; the order IS the resolution. Re-merging is not
+idempotent either: the template's text is appended again each time, which parses correctly because
+the last declaration still wins, and de-duplicating on write would break this module's contract that
+the bytes are its sources joined.
 
     python3 scripts/env_assemble.py assemble --out .env .env.example .env.pipeline.example
-    python3 scripts/env_assemble.py assemble --out .env .env .env.pipeline.example --force
+    python3 scripts/env_assemble.py assemble --out .env .env.pipeline.example .env --force
     python3 scripts/env_assemble.py check [--root .]
 """
 
