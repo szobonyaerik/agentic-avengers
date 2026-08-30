@@ -163,7 +163,7 @@ elif [ "$evidence_rc" -ne 0 ]; then
   record_fail "verifier:execution-evidence-undecidable"
 fi
 
-# 1bf) Breaker — a phase that declares criticality: critical does not close without a Breaker record
+# 1bf) Breaker — a phase that resolves to criticality: critical does not close without a Breaker record
 #      (breaker.json). It was owed twice on one measured feature and ran neither time, with zero
 #      trace anywhere (issue #45): a stage that emits nothing is indistinguishable from one that never
 #      ran. Enforced here as well as in scripts/hook_verifier.sh, for the same reason the carried-items

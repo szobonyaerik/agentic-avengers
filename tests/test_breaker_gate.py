@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
+import criticality  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -142,6 +143,33 @@ def test_skipped_names_the_breaker_on_a_standard_phase(tmp_path: Path) -> None:
 def test_skipped_is_none_when_the_breaker_actually_runs(tmp_path: Path) -> None:
     write_spec(tmp_path, "1-core", "1.1-a", criticality="critical")
     assert breaker_gate.skipped(phase_dir(tmp_path)) is None
+
+
+def test_skipped_accepts_an_already_resolved_phase_and_agrees_with_resolving_itself(
+    tmp_path: Path,
+) -> None:
+    """A caller that has already resolved the phase hands the answer in rather than re-reading every
+    spec.md. The pre-resolved answer must be the same one this would have derived alone."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    phase = phase_dir(tmp_path)
+
+    handed_in = breaker_gate.skipped(phase, criticality.phase(phase))
+
+    assert handed_in == breaker_gate.skipped(phase)
+    assert handed_in is not None and handed_in.startswith("breaker: not run")
+
+
+def test_skipped_reads_the_phase_it_was_handed_not_the_tree(tmp_path: Path) -> None:
+    """The argument is authoritative, which is what makes it an argument and not a cache: a stale
+    memo keyed on the path would answer a later question with an earlier tree."""
+    write_spec(tmp_path, "1-core", "1.1-a", criticality="standard")
+    phase = phase_dir(tmp_path)
+    stale = criticality.phase(phase)
+
+    write_spec(tmp_path, "1-core", "1.2-b", criticality="critical")
+
+    assert breaker_gate.skipped(phase, stale) is not None
+    assert breaker_gate.skipped(phase) is None
 
 
 def test_skipped_names_a_disclosed_exception_as_the_reason(tmp_path: Path) -> None:

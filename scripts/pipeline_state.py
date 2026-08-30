@@ -243,7 +243,7 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
     return None
 
 
-def _phase_criticality(phase: Path) -> str:
+def _phase_criticality(phase: Path) -> criticality_mod.PhaseCriticality:
     """`critical` when any spec in the phase resolves to it — that is what the Breaker keys on.
 
     The resolution lives in `scripts/criticality.py`, which `breaker_gate` reads too: the stage this
@@ -251,13 +251,18 @@ def _phase_criticality(phase: Path) -> str:
     absent, malformed or unreadable `criticality` resolves to `critical` there (issue #101) — it used
     to resolve to `standard` here, which deleted the Breaker from a phase with no author involved and
     nothing said so.
+
+    Returns the whole resolution rather than its value so the one caller can hand it to
+    `_skipped_stages` too; both readers otherwise parsed every spec.md in the phase separately.
     """
     resolved = criticality_mod.phase(phase)
     criticality_mod.announce(phase, resolved)
-    return resolved.value
+    return resolved
 
 
-def _skipped_stages(phase: Path) -> tuple[str, ...]:
+def _skipped_stages(
+    phase: Path, resolved: criticality_mod.PhaseCriticality
+) -> tuple[str, ...]:
     """The criticality-gated stages that will not run on this phase, each with its reason.
 
     Issue #101's second half, and the half that has to hold whichever way the default is decided: a
@@ -265,8 +270,11 @@ def _skipped_stages(phase: Path) -> tuple[str, ...]:
     verdict, so the difference is stated rather than left to be inferred from an absence. Each gated
     stage answers for itself — `breaker_gate.skipped` knows about the exception ledger, which this
     resolver has no business re-deriving.
+
+    The phase is resolved once by the caller and handed to both readers: every spec.md in it was
+    otherwise read and parsed twice per state resolution, on every phase `next_stage` walks.
     """
-    reason = breaker_gate.skipped(phase)
+    reason = breaker_gate.skipped(phase, resolved)
     return (reason,) if reason is not None else ()
 
 
@@ -295,11 +303,12 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         if pending is not None:
             return pending
 
+    resolved = _phase_criticality(phase)
     common = {
         "feature": feature,
         "phase": phase.name,
-        "criticality": _phase_criticality(phase),
-        "skipped_stages": _skipped_stages(phase),
+        "criticality": resolved.value,
+        "skipped_stages": _skipped_stages(phase, resolved),
     }
 
     verdict = _verdict(phase)

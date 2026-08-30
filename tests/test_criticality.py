@@ -122,6 +122,36 @@ def test_unreadable_spec_file_resolves_to_critical(tmp_path: Path) -> None:
     assert resolved.source == criticality.UNREADABLE
 
 
+def test_undecodable_spec_file_resolves_to_critical(tmp_path: Path) -> None:
+    """Bytes that are not UTF-8 are the OTHER unreadable shape, and it used to escape the handler.
+
+    `Path.read_text(encoding="utf-8")` raises `UnicodeDecodeError` here - a `ValueError`, not an
+    `OSError` - so a latin-1 byte pasted into a spec.md propagated out of `criticality.phase()` and
+    killed `pipeline_state.next_stage` with a traceback instead of routing the phase. The source is
+    asserted as well as the value: `critical` alone would also be produced by an absent field, so a
+    test reading only the value would pass for the wrong reason.
+    """
+    spec = tmp_path / "spec.md"
+    spec.write_bytes(b"---\ncriticality: standard\nauthor: caf\xe9\n---\n\n# Spec\n")
+
+    resolved = criticality.resolve_spec_file(spec)
+
+    assert resolved.value == criticality.CRITICAL
+    assert resolved.source == criticality.UNREADABLE
+
+
+def test_a_phase_holding_an_undecodable_spec_still_resolves(tmp_path: Path) -> None:
+    """The reachable path: the resolver must ANSWER over such a phase, not raise through it."""
+    spec_dir = tmp_path / "specs" / "1.1-a"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_bytes(b"---\ncriticality: standard\nx: caf\xe9\n---\n")
+
+    resolved = criticality.phase(tmp_path)
+
+    assert resolved.critical is True
+    assert [r.source for _, r in resolved.resolutions] == [criticality.UNREADABLE]
+
+
 # --- the phase-level OR -------------------------------------------------------------------------
 
 

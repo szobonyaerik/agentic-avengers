@@ -120,10 +120,16 @@ def resolve_spec_file(spec_file: Path) -> Resolution:
     A spec this cannot read resolves to `DEFAULT`, not to `standard`. The previous readers skipped an
     unreadable spec, which is the same silent weakening as an absent field one layer down: a phase
     whose specs cannot be parsed is the last phase that should quietly lose its adversarial stage.
+
+    Unreadable has two shapes and both answer here: the file cannot be OPENED (`OSError` - a
+    permission error is the one `phase()` can produce, since a missing file is never globbed), and
+    its bytes cannot be DECODED (`UnicodeDecodeError`, which is a `ValueError` and escaped an
+    `OSError`-only handler). Nothing wider is caught: an unreadable spec is a known state with a
+    defined answer, and any other failure is a defect that must not be swallowed into one.
     """
     try:
         text = Path(spec_file).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return Resolution(value=DEFAULT, source=UNREADABLE)
     return resolve(spec_gate_state.frontmatter(text))
 

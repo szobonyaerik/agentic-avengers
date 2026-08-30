@@ -354,6 +354,22 @@ find = """
 replace = """
     if false; then"""
 
+# --- the CI gate floor's own enforcement --------------------------------------------------------
+
+[[guard]]
+id = "gate-ci.cross-family-refusal"
+implements = "scripts/gate_ci.sh"
+defect = "`gate_ci.sh` IS the CI gate floor, so a branch of it that stopped refusing would remove an invariant everywhere the pipeline is driven outside a session hook, with a green build as the only signal. The cross-family assertion is the sharpest case: state 3 (an unset GATE_MODEL) deliberately passes and says nothing was checked, so state 2 still biting is what keeps that a scope reduction rather than a silent deletion. Declared when issue #101's wording fix touched this file and found the CI floor itself carried no proof it guards anything."
+tests = ["tests/test_gate_ci_cross_family.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+      echo "    AUTHOR_FAMILY, which drops the invariant silently instead of disclosing it." >&2
+      return 1"""
+replace = """
+      echo "    AUTHOR_FAMILY, which drops the invariant silently instead of disclosing it." >&2
+      return 0"""
+
 # --- criticality resolution ------------------------------------------------------------------------
 
 [[guard]]

@@ -268,7 +268,7 @@ agentic-avengers/
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
 │   │                          the phase does not close
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
-│   ├── breaker_gate.py        the Breaker's record: a phase declaring `criticality: critical` does
+│   ├── breaker_gate.py        the Breaker's record: a phase resolving to `criticality: critical` does
 │   │                          not close without a valid breaker.json (a vacuous one is refused like
 │   │                          a missing one). Authoritative at the handover hook, diff-scoped in CI
 │   │                          (`check --all` audits), and the `stage: breaker` the resolver reports

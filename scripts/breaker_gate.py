@@ -163,7 +163,9 @@ def due(phase_dir: Path) -> str | None:
     return reason
 
 
-def skipped(phase_dir: Path) -> str | None:
+def skipped(
+    phase_dir: Path, resolved: criticality.PhaseCriticality | None = None
+) -> str | None:
     """Why the Breaker will NOT run on this phase, or None when it is owed and does run.
 
     Issue #101's second half: a skipped stage has to be visible. A phase that never routes the
@@ -177,8 +179,15 @@ def skipped(phase_dir: Path) -> str | None:
     a run looked impossible does not retroactively unrun a Breaker that went ahead anyway, and
     reporting one as skipped would be this report's own defect - a reader unable to tell a skipped
     Breaker from a clean one, in the direction it exists to settle.
+
+    `resolved` lets a caller that has ALREADY resolved this phase hand the answer in rather than pay
+    for every spec.md to be read and parsed a second time (`pipeline_state._phase_state` resolves it
+    for the state's own `criticality` field one line earlier). Deliberately an argument and not a
+    memo: this resolver reads files that change during a run, so a cache keyed on the path would
+    answer a later question with an earlier tree - wrong rather than merely slow.
     """
-    resolved = criticality.phase(Path(phase_dir))
+    if resolved is None:
+        resolved = criticality.phase(Path(phase_dir))
     criticality.announce(Path(phase_dir), resolved)
     if not resolved.critical:
         return f"breaker: not run - {resolved.reason()}"
