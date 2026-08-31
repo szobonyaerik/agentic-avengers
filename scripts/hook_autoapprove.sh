@@ -27,13 +27,17 @@ SENTINEL="$PROJECT/.avenger-auto"
 
 PAYLOAD="$(cat)"
 
-python3 - "$SENTINEL" "$PAYLOAD" "${AVENGER_AUTO_DENY:-}" "${AVENGER_AUTO_TTL_MIN:-240}" <<'PY'
+python3 - "$SENTINEL" "$PAYLOAD" "${AVENGER_AUTO_DENY:-}" "${AVENGER_AUTO_TTL_MIN:-240}" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" <<'PY'
 import json
 import re
 import sys
 import time
+from pathlib import Path
 
 sentinel, raw, extra_deny, ttl_min = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+# The scripts directory, because this body runs as `python3 -` and has no __file__ of its own.
+SCRIPT_DIR = sys.argv[5]
 
 # Outward-facing or unrecoverable. Deliberately not overridable — see the header.
 HARD_DENY = r"""
@@ -75,8 +79,29 @@ except (ValueError, AttributeError):
 command = str(tool_input.get("command") or "") if isinstance(tool_input, dict) else ""
 
 
+def scope_statement() -> str:
+    """What a clean (allow) result here does NOT establish, carried on the output a reader sees.
+
+    It rides the DENY reason rather than the allow: an allow is emitted per tool call, thousands of
+    times in one run, and a scope statement there would bury every other line the pipeline prints.
+    The deny is where somebody is being told a verdict, and the limitation this guard has - the
+    regex matches the whole command STRING, so it cannot tell an intent from a mention - is exactly
+    what that reader needs. Never raises: a decision may not be moved by its own documentation.
+    """
+    try:
+        sys.path.insert(0, str(Path(SCRIPT_DIR)))
+        import guard_scope
+
+        found = guard_scope.statement("hook_autoapprove.sh")
+        return f" {found.render()}" if found else ""
+    except Exception:
+        return ""
+
+
 def decide(decision: str, reason: str) -> None:
     """Emit the permission decision and stop."""
+    if decision == "deny":
+        reason = f"{reason}{scope_statement()}"
     json.dump(
         {
             "hookSpecificOutput": {

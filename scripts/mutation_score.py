@@ -47,6 +47,10 @@ except ImportError as exc:  # cosmic-ray absent -> the gate cannot run -> fail c
     print(f"[mutation_score] cosmic-ray is not importable: {exc}", file=sys.stderr)
     sys.exit(2)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 GO = 0
 NO_GO = 1
 FAIL_CLOSED = 2
@@ -208,4 +212,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

@@ -53,6 +53,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 #: The plugin's shipped payload — mirrors CLAUDE.md §7 "canonical-source driven": edit these, and
 #: `.claude-plugin/plugin.json` for the version and identity. `docs/templates` ships too (see
 #: commands/pipeline-init.md and install.sh's own SRC_SETS) — the rest of docs/ is this repo's own
@@ -734,4 +738,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

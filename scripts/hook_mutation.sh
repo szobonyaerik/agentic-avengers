@@ -241,6 +241,8 @@ python3 "$SD/mutation_score.py" --min-score "$MUTATION_MIN_SCORE" --json "$SESSI
 python3 "$SD/pipeline_metrics.py" mutation-survivors "$FILE" "$WORK/score.json" >/dev/null 2>&1 || true
 
 if [ "$sc" -eq 0 ]; then
+  # A passing score is not a quality bar, and this says so beside the pass (issue #97).
+  python3 "$SD/guard_scope.py" emit hook_mutation.sh >/dev/null || true
   exit 0
 fi
 if [ "$sc" -eq 3 ]; then

@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gate_errors import GateError, classify_provider_failure  # noqa: E402
 from gate_plausibility import FloorMisconfigured, implausible, provider_floor_ms  # noqa: E402
 from gate_timeouts import call_timeout  # noqa: E402
+import guard_scope  # noqa: E402
 from model_vendors import UnknownVendor, model_family  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
 
@@ -733,4 +734,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(guard_scope.run(__file__, main))

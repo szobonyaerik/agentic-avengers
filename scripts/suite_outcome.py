@@ -53,6 +53,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
 
 OK = 0
@@ -228,4 +229,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

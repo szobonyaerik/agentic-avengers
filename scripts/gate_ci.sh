@@ -377,6 +377,21 @@ if ! python3 "$SCRIPT_DIR/spec_gate_context.py" check "$ROOT"; then
   record_fail "overview-contracts-heading"
 fi
 
+# 1bcy) Allowlist growth, REPORTED and never gated (issue #97). A drift guard was once quietened
+#       with NINE allowlist entries instead of a fix to its extraction layer, and that landed as
+#       nine lines of routine-looking maintenance. This puts the delta where a reviewer sees it, in
+#       the CI log beside the checks those allowlists quieten. Deliberately not a failure: growth is
+#       often legitimate, and a blocking check would be answered with a bypass rather than with the
+#       attention this exists to buy.
+#
+#       The other half of issue #97 - that every guard with runtime output declares AND emits what
+#       a clean result does not establish - is `guard_proof.py scope`, and it is NOT called here:
+#       this file ships into every consumer repo and `guard_proof.py` deliberately does not, so it
+#       runs from .github/workflows/guard-proof.yml with the rest of the harness's own wiring.
+echo "• allowlists: growth is a signal, not routine maintenance"
+python3 "$SCRIPT_DIR/guard_scope.py" allowlists --root "$ROOT" \
+  ${GUARD_SCOPE_BASE:+--base "$GUARD_SCOPE_BASE"} || true
+
 # 1bd) Per-stage reasoning effort — declared where the harness reads it, and nowhere else claimed.
 #      The runbook carried an effort table for ten phases and told the orchestrator to PASS effort at
 #      spawn; the delegation tool has no such parameter, so nothing could obey it and every stage ran

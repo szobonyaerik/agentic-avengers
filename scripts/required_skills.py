@@ -100,6 +100,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
 import metrics_sink as sink  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
 import skill_contract  # noqa: E402
@@ -442,4 +443,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

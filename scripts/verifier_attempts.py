@@ -50,6 +50,8 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
+
 # "Still open" is ONE rule — `status: open` and not waived by break-glass — and `verdict_findings`
 # owns it. Restating it here as "the findings array is empty" made the cap unclearable by the very
 # remedy its own message prescribes: waive the remainder, the Verifier writes `pass` with
@@ -306,4 +308,4 @@ def _check(argv: list[str] | None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

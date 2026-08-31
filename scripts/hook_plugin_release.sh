@@ -73,6 +73,8 @@ REPORT=$(python3 "$SD/plugin_release.py" check 2>&1); RC=$?
 # would see the same silence for "cannot tell" as for "clean" (§3a).
 if [ "$RC" -eq 0 ]; then
   printf '%s\n' "$REPORT" >&2
+  # What a fresh (or unknown) verdict does NOT establish, beside the verdict itself.
+  python3 "$SD/guard_scope.py" emit hook_plugin_release.sh >/dev/null || true
   exit 0
 fi
 

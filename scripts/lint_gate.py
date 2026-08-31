@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
+import guard_scope  # noqa: E402
 
 OK = 0
 FOUND = 1
@@ -185,4 +186,4 @@ def _rel(path: Path, cwd: Path) -> str:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

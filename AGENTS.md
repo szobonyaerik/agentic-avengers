@@ -528,6 +528,25 @@ than the proof of them.
 **The rule that travels is about your own checks:** a check whose test only exercises its happy path
 is decoration. Write the test that goes red when the defect it guards against comes back.
 
+## A guard says what a clean result does NOT establish (issue #97)
+
+The section above asks whether a guard would notice its defect. This asks the next question: **a
+guard must either cover what it claims, or state at the point of use what it does not cover - in its
+RUNTIME OUTPUT, not only in its source.** Four guards reported CLEAN while missing something real,
+and three of the four had the limitation written down - in a module docstring. **A later stage reads
+output, not source**, so the reader who needed it never saw it.
+
+Every guard with runtime output emits, on a clean result, one line naming what it proves and what
+that clean result does not establish. The statements live in `scripts/guard_scope.toml`, one per
+guard, because thirty-odd sentences maintained at thirty-odd clean branches drift, and a stale scope
+statement is worse than none - it is read as current. Two properties are fixed: **an emission may
+never move an exit code**, and **an absent statement is a named notice**, never silence, since
+silence reads as "no limits".
+
+**The rule that travels:** when you cannot close a gap at the extraction layer, write the limitation
+into the output a later stage reads. And treat **allowlist growth as a signal** - a guard quietened
+with nine new entries has been weakened, not maintained.
+
 ## Environment
 | var | default | effect |
 |---|---|---|
@@ -554,6 +573,7 @@ is decoration. Write the test that goes red when the defect it guards against co
 | `SUITE_SUMMARY_PATTERN` | pytest / unittest / jest / go / cargo summaries | one regex recognising this project's test-runner summary; it REPLACES the defaults. A suite run with no summary, or one killed by its watchdog, is refused rather than read as green (`scripts/suite_outcome.py`). Deliberately no off switch |
 | `SUITE_BUDGET_S` | `1800` | seconds a suite run gets before its process group is killed and the run is recorded as incomplete |
 | `IMPLEMENTER_AGENTS` | `avenger-backend-architect\|avenger-frontend-developer` | which stages may not overlap in one working copy (`scripts/implementer_liveness.py`). Asked of the spawning stage AND of every live entry by the same module, so no caller carries a second copy |
+| `GUARD_SCOPE_BASE` | unset | a ref to measure allowlist growth against (`scripts/guard_scope.py allowlists`). Unset, sizes are reported without a comparison. Growth is a SIGNAL and never a failure: a guard quietened with new allowlist entries has been weakened, not maintained, and a blocking check would be answered with a bypass rather than with a reviewer's attention |
 | `IMPLEMENTER_MAX_AGE_S` | `14400` | seconds after which an implementer that started and never recorded a stop is presumed dead, so a crashed agent cannot hold the lock forever |
 | `IMPLEMENTER_LOCK_OFF` | unset | `1` disables the second-implementer refusal (Claude Code hook only; opencode has no pre-spawn event) |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |

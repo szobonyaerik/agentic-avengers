@@ -71,6 +71,8 @@ guards, not the proof of them.
 
 Usage:
     guard_proof.py list                          the inventory, one line per guard
+    guard_proof.py scope                          every guard with runtime output declares and
+                                                  emits what a clean result does not establish
     guard_proof.py discover [--base REF] [--all]  the guard universe: declared, exempt, undeclared
     guard_proof.py prove [--guard ID] [--jobs N]  mutate and run every declared guard; the
                                                   undeclared count is printed, not enforced
@@ -95,6 +97,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
+import guard_scope  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
 
 OK = 0
@@ -556,6 +559,113 @@ def guard_universe(root: Path) -> dict[str, set[str]]:
                 pending.append(imported)
             known.add(f"{name} (import)")
     return universe
+
+
+# --- scope statements: what a clean result does NOT establish -------------------------------------
+#
+# Issue #97. Four guards reported CLEAN while missing something real, and three of the four had
+# their limitation written down - in a module docstring, which a later stage never reads. The
+# statements live in `scripts/guard_scope.toml` and are emitted by each guard; this is the half that
+# holds the two ends together, and it lives HERE rather than beside them because the question is
+# about the INVENTORY: which guards exist, and which of them print a result of their own.
+#
+# It runs in this repository only, on `doc_read_path.is_canonical_repo`'s rule: `guards.toml` is
+# deliberately unvendored, so downstream there is no inventory to hold the statements against and a
+# half-running check is worse than an honestly absent one. Keeping the direction this way round also
+# keeps the dependency legal: `guard_scope.py` SHIPS and may not reach for this file, while this
+# file is free to read a vendored one.
+
+
+def obligated(root: Path, inventory: Inventory) -> dict[str, str]:
+    """Every declared guard file that HAS runtime output, mapped to why it is obligated.
+
+    A guard emits where it runs, so the obligation follows the entry point: a `.py` with a
+    `__main__` block, or a `.sh` a hook configuration runs. A library module reached only by import
+    prints nothing of its own - its verdict reaches a reader through the caller that IS obligated -
+    and a test file is not a guard's runtime at all. Neither is silently dropped: both are simply
+    outside the set, and `scope_findings` names any statement written for one.
+    """
+    found: dict[str, str] = {}
+    for guard in inventory.guards:
+        target = root / guard.implements
+        if not target.is_file() or guard.implements.startswith("tests/"):
+            continue
+        try:
+            text = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if guard.implements.endswith(".sh"):
+            found[guard.implements] = "a shell guard, which prints its own result"
+        elif "__main__" in text:
+            found[guard.implements] = "a CLI, which prints its own result"
+    return found
+
+
+def scope_findings(root: Path, inventory: Inventory) -> list[str]:
+    """Every guard with runtime output declares a statement AND emits it, and no statement is idle."""
+    findings: list[str] = []
+    try:
+        declared = guard_scope.load(guard_scope.inventory_path(root / "scripts"))
+    except guard_scope.GuardScopeError as exc:
+        raise GuardProofError(str(exc)) from exc
+
+    duty = obligated(root, inventory)
+    for path, why in sorted(duty.items()):
+        name = Path(path).name
+        if name not in declared.statements:
+            findings.append(
+                f"{path} is {why} and declares no scope statement in {guard_scope.INVENTORY}. A "
+                f"clean result from it is read as a stronger claim than it can support, which is "
+                f"issue #97 exactly."
+            )
+            continue
+        try:
+            text = (root / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not guard_scope.emits(text):
+            findings.append(
+                f"{path} has a scope statement and never emits it. A limitation only the source "
+                f"carries is invisible to a later stage, which reads OUTPUT."
+            )
+
+    names = {Path(path).name for path in duty}
+    for name in sorted(declared.statements):
+        if name not in names:
+            findings.append(
+                f"{guard_scope.INVENTORY} declares a statement for {name}, which no guard in "
+                f"{INVENTORY} implements as a runtime entry point. A statement nothing emits is "
+                f"not a statement."
+            )
+    for entry in declared.allowlists:
+        if not entry.paths(root):
+            findings.append(
+                f"allowlist {entry.id!r} names {entry.file or entry.glob!r}, which matches no "
+                f"file. An allowlist nobody can grow is a counter nobody reads."
+            )
+    return findings
+
+
+def _do_scope(root: Path, inventory: Inventory) -> int:
+    if not (root / "scripts" / "sync_opencode.py").is_file():
+        print(
+            "[guard-proof] scope NOT CHECKED: this is not the pipeline's own repository, and the "
+            f"inventory the statements are held against ({INVENTORY}) is not vendored. A "
+            "half-running check is worse than an honestly absent one; the remedy lives upstream.",
+            file=sys.stderr,
+        )
+        return OK
+    findings = scope_findings(root, inventory)
+    for line in findings:
+        print(f"[guard-proof] {line}", file=sys.stderr)
+    if findings:
+        return FINDINGS
+    print(
+        f"[guard-proof] scope clean - {len(obligated(root, inventory))} guard(s) with runtime "
+        f"output declare and emit what a clean result does not establish.",
+        file=sys.stderr,
+    )
+    return OK
 
 
 # --- the throwaway copy --------------------------------------------------------------------------
@@ -1116,6 +1226,11 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     listing = sub.add_parser("list", help="the inventory, one line per guard")
     common(listing)
 
+    scope = sub.add_parser(
+        "scope", help="every guard with runtime output declares and emits what it does not cover"
+    )
+    common(scope)
+
     discover = sub.add_parser(
         "discover", help="the guard universe and what declares each file"
     )
@@ -1206,6 +1321,8 @@ def main(argv: list[str] | None = None) -> int:
         inventory = load(_inventory_path(args, root))
         if args.action == "list":
             return _do_list(inventory)
+        if args.action == "scope":
+            return _do_scope(root, inventory)
         if args.action == "discover":
             return _do_discover(root, inventory, args)
 
@@ -1245,4 +1362,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

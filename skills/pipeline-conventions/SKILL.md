@@ -1446,6 +1446,42 @@ than the proof of them. Nothing here is a command to run in a vendored install.
 whose test only exercises its happy path is decoration, and it stays green after the check stops
 checking. Write the test that goes red when the defect it guards against comes back.
 
+## A guard says what a clean result does NOT establish (issue #97)
+
+The section above asks whether a guard would notice its defect. This asks the next question, and it
+is a different one: **a guard must either cover what it claims, or state at the point of use what it
+does not cover - in its RUNTIME OUTPUT, not only in its source.**
+
+Four guards reported CLEAN while missing something real: an AST scan that stopped at the first dot
+and so never saw two live call sites; a mutation gate diff-scoped by `git diff`, which cannot see an
+untracked file, over a pipeline that verifies uncommitted work; an unannotated decorator that
+degraded a conformance check to presence-only; a drift guard that never watched `in` / `not in` /
+`is` / `is not`, so a capacity guard could be deleted from live trading logic with the check still
+green. In every case the reader took the clean result for a stronger claim than the check could
+support, and in every case the reader was being reasonable, because **nothing told them otherwise**.
+
+Three of the four had the limitation written down - in a module docstring. That is the part that
+matters, and it came from an operator rather than a design review: **a later stage reads output, not
+source.** A limitation documented only in the source is invisible to the reader who needs it.
+
+**Where the gap can be closed, close it at the EXTRACTION LAYER, never by silencing the symptom.**
+An allowlist entry, an exemption or a narrowed input is how a guard gets weakened while looking
+maintained - one of these instances was quietened with **nine** allowlist entries instead of a fix.
+If a guard's claim and its coverage cannot be reconciled, **narrow the claim, never the check.**
+
+**Where it cannot be closed, declare it in the output.** In this repository that is
+`scripts/guard_scope.toml` (one statement per guard: what it proves, and what a clean result does
+not establish) emitted by `scripts/guard_scope.py` on every clean result, held against the guard
+inventory by `guard_proof.py scope`. Two properties are fixed and both are tested: **an emission may
+never move an exit code**, because a guard weakened by its own documentation is the one remedy this
+rule puts out of scope; and **an absent statement is a named notice**, never silence, since silence
+reads as "no limits".
+
+**The rule that travels:** when you write a check for a project, write down what a clean result from
+it does NOT establish, and put that where the next reader will see it - in what the check prints,
+not only in its source. And treat a growing allowlist as a signal in itself: a guard quietened with
+new entries has been weakened, not maintained.
+
 ## Agent tooling
 
 Every canonical agent declares an explicit `tools:` allowlist (`Read, Write, Glob, Grep, Bash`, plus

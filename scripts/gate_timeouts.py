@@ -64,8 +64,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import metrics_sink  # noqa: E402
 from gate_errors import GateError  # noqa: E402
+import guard_scope  # noqa: E402
+import metrics_sink  # noqa: E402
 
 #: Seconds the provider call gets, and the value `gate_runner.py` passes to the child runner.
 #: Overridable so a slow model can be given room — the relation below is checked against whatever
@@ -435,4 +436,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

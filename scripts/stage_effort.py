@@ -49,6 +49,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 #: The named levels the harness accepts. It also accepts a bare integer; the pipeline's allocation is
 #: written in named levels, and an integer here would be a number nobody could compare to a table.
 LEVELS = ("low", "medium", "high", "xhigh", "max")
@@ -352,4 +356,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

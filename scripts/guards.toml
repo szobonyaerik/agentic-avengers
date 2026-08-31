@@ -815,6 +815,66 @@ replace = '''
     hops, attr = parts[1:-1], parts[-1]'''
 
 
+# --- the scope statements themselves ---------------------------------------------------------------
+#
+# A guard that stopped saying what it does not cover is the defect of issue #97 restored, and it
+# would look exactly like a guard that covers everything.
+
+[[guard]]
+id = "guard-scope.clean-results-carry-their-limits"
+implements = "scripts/guard_scope.py"
+defect = "Four guards reported CLEAN while missing something real, and three of the four had their limitation written down - in a module docstring. A later stage reads OUTPUT, not source, so the reader who needed it never saw it."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+    if code != ok:
+        return code'''
+replace = '''
+    if code != ok or True:
+        return code'''
+
+[[guard]]
+id = "guard-scope.emission-never-moves-a-verdict"
+implements = "scripts/guard_scope.py"
+defect = "A guard whose exit code could be moved by its own documentation is a guard weakened to make a rule easier to satisfy, which is the one remedy issue #97 puts out of scope."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+    return clean(name, code, ok=ok)'''
+replace = '''
+    return ok'''
+
+[[guard]]
+id = "guard-scope.no-limits-is-not-a-declaration"
+implements = "scripts/guard_scope.py"
+defect = "A statement with an empty `limits` claims total coverage. Accepted silently, the inventory would fill with entries that assert exactly the thing this file exists to stop being asserted by silence."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+        if (
+            not isinstance(limits, list)
+            or not limits'''
+replace = '''
+        if (
+            not isinstance(limits, list)
+            or False'''
+
+[[guard]]
+id = "guard-scope.a-guard-that-never-emits-is-a-finding"
+implements = "scripts/guard_scope.py"
+defect = "A statement in the inventory that no guard emits is a limitation nobody is told about - the same invisible-in-source failure, one level up, wearing the costume of the fix."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+        if "guard_scope" not in text:'''
+replace = '''
+        if False:'''
+
+
 # --- the harness itself -----------------------------------------------------------------------------------------------------------------------
 #
 # A harness that could not tell a red run from a green one would report every guard `proven` and be

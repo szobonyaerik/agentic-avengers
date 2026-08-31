@@ -1,0 +1,343 @@
+# What a CLEAN result from each guard does NOT establish.
+#
+# Read by `scripts/guard_scope.py`, emitted by each guard on its own clean result, because a later
+# stage reads OUTPUT and not source (issue #97). One file, not thirty-odd sentences at thirty-odd
+# clean branches: a second statement of a fact drifts, and a stale scope statement is worse than
+# none, since it is read as current.
+#
+# Each entry is keyed by the guard's FILE NAME and carries:
+#   proves  - the positive claim a clean result supports, in one sentence ending in a full stop
+#   limits  - what that clean result does NOT establish. At least one, always; a guard claiming no
+#             limits is claiming total coverage, which is the assertion this file exists to stop
+#             being made by silence.
+#
+# `guard_scope.py check` holds both ends: a declared guard with runtime output and no entry is a
+# finding, and an entry no guard emits is a finding.
+
+# --- the applicability boundary and the ledgers ---------------------------------------------------
+
+[guard."applicability.py"]
+proves = "that a rule bound only what this change is responsible for, and that every exception on a phase's ledger names one rule, one subject, a reason and an audited record."
+limits = [
+  "that an exception was JUSTIFIED - the ledger records a disclosure, it does not weigh one",
+  "anything about findings outside the change's scope, which are counted and named rather than cleared",
+  "anything at all when git could not say what changed: an unknowable scope enforces nothing",
+]
+
+[guard."amendments.py"]
+proves = "that a post-verification change to a verified phase named the requirement ids it touched, and that a security amendment or one against an already-passing verdict is owed re-verification now rather than at the batch."
+limits = [
+  "that the ids named are the RIGHT ones - the naming is the author's claim, not a derivation from the diff",
+  "that the re-verification the amendment owes has happened",
+  "anything about a change for which nobody recorded an amendment at all",
+]
+
+# --- phase obligations ----------------------------------------------------------------------------
+
+[guard."breaker_gate.py"]
+proves = "that every phase declaring `criticality: critical` carries a breaker.json naming what it attacked, or the counterexample it found."
+limits = [
+  "that the attack was adversarial, adequate, or aimed at the phase's real risk",
+  "that the counterexamples found are all of them",
+  "anything about a phase whose criticality is misdeclared, which owes no record here",
+]
+
+[guard."carried_items.py"]
+proves = "that a card states what it carries or an explicit `none`, that every row on the prior card is answered, and that each `built`/`tested` discharge names a requirement id or path that still resolves."
+limits = [
+  "whether a claim NOBODY wrote down was worth carrying - silence is the state the original defect was written in",
+  "a card that OVER-claims, asserting a protection its own phase deleted",
+  "that a named test actually pins the claim it was named for; only that it exists",
+]
+
+[guard."verdict_currency.py"]
+proves = "that the feature owes no amendment for production code changed after its newest verdict."
+limits = [
+  "WHICH phase owes the correction - the pipeline does not know which production file belongs to which phase",
+  "anything when git cannot answer: it fails OPEN and says so, rather than passing invisibly",
+  "anything about `docs/` or the feature's own e2e tree, which are excluded by design",
+]
+
+[guard."verifier_attempts.py"]
+proves = "that no fourth verification attempt follows a failing verdict at the cap."
+limits = [
+  "that a route-back was BUNDLED rather than trickled - no script can know what a model could already see",
+  "that carried findings were fixed: a waived remainder clears the cap by design, and `resolved` includes `carried`",
+]
+
+[guard."verifier_evidence.py"]
+proves = "that the verdict's chain matches recorded runs whose logs hash to their stored digests, over specs and tests that have not changed since."
+limits = [
+  "that the runs were HONEST - there is no secret here, so an agent determined to fabricate a log and its digest still can",
+  "that a committed log carries no secret: redaction is by pattern, a reduction of risk and never a guarantee",
+  "anything about a phase outside the change's scope, which is counted and named rather than read for a verdict",
+]
+
+[guard."verifier_precheck.py"]
+proves = "that every requirement id owed a trace has a row, that each row names a test which exists and is not skipped, and that every spec's gate stamp is fresh."
+limits = [
+  "that a row's PROSE matches the test it names - a row asserting the opposite of its own running test passes",
+  "anything about a test tree it cannot read: definition and skip detection are Python-specific, and an unreadable tree is not held at all",
+  "anything about coverage or correctness, which it deliberately never judges",
+]
+
+[guard."emission_gate.py"]
+proves = "that a closing phase records at least as many defects as its own verdicts describe, and that a landed phase carries a close stamp."
+limits = [
+  "any defect described only in a PR body, a status log, a chat transcript or a commit message - it reads the Verifier's `findings[]` and nothing else",
+  "any other stage's conclusions, none of which are compared to the record",
+  "equality: one finding may describe two defects and still pass. This is a floor",
+]
+
+# --- the spec wall ---------------------------------------------------------------------------------
+
+[guard."spec_gate_triage.py"]
+proves = "that the verdict was derived by arithmetic from a CLOSED blocking set, with no model deciding it and no invented category surviving."
+limits = [
+  "anything about observations the observe pass never made - it classifies what it was given",
+  "that a note is harmless: a note is an UNBLOCKED finding, not a non-issue",
+]
+
+[guard."spec_gate_context.py"]
+proves = "that the contracts block the reviewer reads is present, or that its degradation is announced inside the block the reviewer actually receives."
+limits = [
+  "a heading present with genuinely nothing under it, which is ordinary early-planning absence and not degradation",
+  "whether the spec CONTRADICTS the contracts it carries - it assembles the block and never judges against it",
+]
+
+[guard."spec_gate_cache.py"]
+proves = "that an already-approved body is not re-judged, and that a rejection never becomes the approved reference."
+limits = [
+  "that the approval it replays was RIGHT - it hashes a body, it does not review one",
+  "anything about a change confined to workflow bookkeeping, which by construction cannot move a verdict",
+]
+
+[guard."requirement_cap.py"]
+proves = "that a spec still open declares no more requirements than the cap."
+limits = [
+  "anything about a shipped spec, which is counted and named because the SPLIT remedy does not exist for it",
+  "a layout the parser cannot read, which is UNDECIDABLE and never reported as within the cap",
+  "whether the requirements are the RIGHT ones - it counts declarations",
+]
+
+[guard."spec_done_guard.py"]
+proves = "that a stamp newly written into `status: done` is backed by a real mapping row and a green phase suite, and is reverted when it is not."
+limits = [
+  "a stamp written through Bash (`sed -i`, a heredoc, `python3 -c`): this is a PostToolUse hook and only tool writes reach it",
+  "a spec already `done` at HEAD, which has shipped and is never rewritten",
+  "any of the pipeline's other stamps - it binds `status: done` and does not generalise",
+]
+
+# --- the read path and the documents --------------------------------------------------------------
+
+[guard."doc_read_path.py"]
+proves = "that artifacts in scope declare their readers, that a contract card stays under its byte cap, and that no stage instruction re-acquired a read the table removed."
+limits = [
+  "a stage instructed to read something the table never declared - the source check is ONE-DIRECTIONAL",
+  "a document class named only as a bare filename in prose, which it cannot see",
+  "anything downstream: in a repository that merely installed the pipeline neither direction of `--contract` runs, and it says so",
+]
+
+[guard."interface_drift.py"]
+proves = "that every call signature a spec's Interfaces block NAMES exists somewhere in the source tree."
+limits = [
+  "order of operations - the instance this was written for is invisible to it, since both names exist",
+  "behaviour, schemas and error modes: a function that exists and does the opposite passes",
+  "a dotted call into a dependency, which is skipped, and a block written as pure prose, which names nothing",
+  "that a definition is in the right place - a call site counts as an existence proof",
+]
+
+[guard."fixture_shapes.py"]
+proves = "that every literal fixture in scope satisfies the shapes the project declared for it."
+limits = [
+  "that a declaration is MISSING - an identifier nobody declared is not checked, and guessing a shape would be worse than not checking",
+  "a computed fixture: only literals are judged",
+  "the overflow itself - it reads fixtures, not columns, and a project with no declaration is clean because nothing was compared",
+]
+
+# --- cost, lint and process -------------------------------------------------------------------------
+
+[guard."subprocess_check.py"]
+proves = "that every spawner reachable through an import alias or a declared attribute chain, in the files in scope, carries a justification."
+limits = [
+  "a spawner reached through an OBJECT (`self.runner.run(...)`) or a name assembled at runtime, which resolve to no module this owns",
+  "a process spawned from a non-Python helper the scan never reads",
+  "anything about files out of the diff's scope, or about a project whose test root is not where it looked",
+  "cost in wall clock: it counts spawners deliberately, because a runtime budget failed green suites at random",
+]
+
+[guard."lint_gate.py"]
+proves = "that ruff's DECLARED rule set passes, and that the files this change touched are formatted."
+limits = [
+  "any rule the repository did not enable - the verdict is against `ruff.toml`, not against ruff's defaults",
+  "formatting of files this change did not touch, which are counted and named",
+  "anything at all when ruff is absent, which is recorded as a failed check and never as clean code",
+]
+
+[guard."suite_outcome.py"]
+proves = "that a suite run backing a pass exited on its own and printed a runner summary."
+limits = [
+  "whether that suite was GREEN - it decides RAN versus STOPPED, and nothing else",
+  "a runner whose summary shape nobody declared, which is not held",
+]
+
+[guard."implementer_liveness.py"]
+proves = "that no second implementer was spawned into a working copy already holding a live one, read from the stage's own SubagentStop."
+limits = [
+  "anything that is not a verdict - no jq, no python3, an unreadable payload or no activity log lets the spawn through and says so",
+  "a stage started any way other than the spawn tool this hook sees",
+  "what a live implementer is DOING: only that it started and has not stopped",
+]
+
+# --- the gates' own machinery -----------------------------------------------------------------------
+
+[guard."gate_runner.py"]
+proves = "that the verdict came from a resolvable model of a declared family over a named transport, inside its budget, with the call and any failure cause recorded."
+limits = [
+  "that the verdict is CORRECT - this is transport and attribution, never review",
+  "cross-family independence when a same-family waiver is in force: that is an audited override, not a gate that passed",
+  "anything an attribution recorded as `unrecorded` would have named",
+]
+
+[guard."gate_plausibility.py"]
+proves = "that a reached verdict took at least the minimum wall clock a real provider call needs."
+limits = [
+  "that a call above the floor did any reasoning - it refuses the impossible, it does not certify the plausible",
+  "any refusal that never reached a provider, which records its near-zero latency on purpose",
+  "anything when the floor is set to 0, which disables it and says so on every call",
+]
+
+[guard."gate_timeouts.py"]
+proves = "that a hook's configured budget exceeds the calls it must contain, plus headroom for what measurement spends inside it."
+limits = [
+  "anything about a REAL run - this is an arithmetic relation between declared numbers, never an observation",
+  "a runner invoked inside a loop, which it cannot count",
+]
+
+[guard."model_vendors.py"]
+proves = "that a model id resolves to exactly one known vendor family, and that an unknown vendor is a loud refusal."
+limits = [
+  "that two DIFFERENT families do not share a blind spot, which is the whole reason cross-family is asked for",
+  "anything about a model whose id nobody mapped",
+]
+
+[guard."mutation_score.py"]
+proves = "that the killed fraction of the mutants actually built and tested met the threshold."
+limits = [
+  "anything about mutants the scope filter never ran - they are excluded from the denominator, not passed",
+  "that no survivor exists: the threshold is deliberately not 100%, so a passing score still leaves behaviours no test catches",
+  "that the suite has no gamed tests - this is partial cover and there is no dedicated reader",
+]
+
+[guard."mutation_scope.py"]
+proves = "that at least one mutant lies on a line this change is responsible for, counting modified, staged AND untracked files."
+limits = [
+  "anything about code the change did not touch, which is out of scope by design",
+  "a defect no mutation operator generates a mutant for",
+  "whether the suite KILLS what remains in scope, which is the scorer's question and not this one's",
+]
+
+[guard."plugin_release.py"]
+proves = "that the plugin copy executing right now hashes identical to the source repository's committed HEAD."
+limits = [
+  "anything when no source repository is resolvable: UNKNOWN is reported and never enforced",
+  "behaviour - it compares shipped CONTENT, so an in-progress edit reads as `dirty` rather than stale",
+]
+
+[guard."required_skills.py"]
+proves = "that every skill a stage's own `Required skills` line names has an observed load recorded for it."
+limits = [
+  "a skill an agent names only in PROSE, which is not a requirement",
+  "that the stage READ what it loaded, or acted on it",
+  "the ponytail ladder, which is evidenced but deliberately never required, so its absence is a NOTE and never a gap",
+]
+
+[guard."stage_effort.py"]
+proves = "that every stage declares an effort where the harness reads it, and that no document states a level the definitions do not."
+limits = [
+  "what any stage actually RAN at - a declared effort is not an observed one, and no retrospective may read this as a measurement",
+  "a model silently downgraded because it does not support a level, which only the harness sees",
+]
+
+[guard."guard_proof.py"]
+proves = "that a named test set NOTICES a named defect, and that every file the enforcement surfaces invoke is declared or exempt."
+limits = [
+  "that the guard is CORRECT, or that its declared mutation is the only route back to the defect - one hole, closed",
+  "a check that is neither declared NOR invoked from an enforcement surface, which is invisible to a harness that discovers guards by what the pipeline runs",
+  "anything about guards outside the change's scope, which are counted by name",
+]
+
+# --- the shell guards --------------------------------------------------------------------------------
+
+[guard."guard_scope.py"]
+proves = "that every guard with runtime output declares what a clean result does not establish, and emits it."
+limits = [
+  "that a declared limit is COMPLETE or accurate - it holds a statement against a guard, never a statement against reality",
+  "anything downstream: `guards.toml` is not vendored, so outside this repository the check does not run and says so rather than half-running",
+  "anything about a guard that is neither declared in guards.toml nor invoked from an enforcement surface",
+]
+
+[guard."hook_mutation.sh"]
+proves = "that the mutation gate ran over the phase's own changed lines, or that its absence was recorded as `did-not-run` where a later reader looks."
+limits = [
+  "that a passing score is a quality bar: advisory never blocks, and that is a decision rather than a defect",
+  "that survivors above the threshold are harmless - each is still a behaviour no test catches",
+  "anything about tests written to pass rather than to discriminate, for which there is no dedicated reader",
+]
+
+[guard."hook_implementer_lock.sh"]
+proves = "that no second implementer was spawned into a working copy already holding a live one."
+limits = [
+  "anything that is not a verdict - an unreadable payload, a missing interpreter or an unusable pattern lets the spawn through and says so",
+  "a crashed agent past its age-out, whose lock is deliberately released rather than held forever",
+]
+
+[guard."hook_plugin_release.sh"]
+proves = "that no avenger stage was spawned while the executing plugin copy is STALE against its source repository."
+limits = [
+  "anything when the checker could not run: every non-verdict fails OPEN and says so, because `cut a release` is the wrong remedy for a crash",
+  "an UNKNOWN release state, which is reported and never enforced",
+]
+
+[guard."hook_autoapprove.sh"]
+proves = "that while auto is armed, a command matching the hard-deny set was refused."
+limits = [
+  "intent: the regex matches the whole command STRING, so free text that merely NAMES a denied command is denied too, and prose belongs in a file the command reads",
+  "a command spelled a way the pattern does not cover",
+]
+
+[guard."bypass_log.sh"]
+proves = "that an override reached `gate-overrides.log` as one normalised, tab-separated record, or was not recorded at all."
+limits = [
+  "whether the override was WARRANTED - it records a disclosure and never weighs one",
+  "that anybody reads the log: an audited bypass nobody reviews is still an unreviewed bypass",
+]
+
+# --- allowlists: growth is a signal, never routine maintenance ------------------------------------
+#
+# A drift guard was once quietened with NINE allowlist entries instead of a fix to its extraction
+# layer (issue #97). Any allowlist-based guard invites exactly that, because adding an entry looks
+# like maintenance and reads as one line of diff. These are counted and their growth is REPORTED -
+# deliberately not gated, because growth is often legitimate and a blocking check would be answered
+# with a bypass rather than with a reviewer's attention, which is the whole thing being bought.
+
+[[allowlist]]
+id = "guard-exemptions"
+file = "scripts/guards.toml"
+marker = "[[exempt]]"
+guard = "guard_proof.py"
+what = "files an enforcement surface invokes that are declared to decide nothing"
+
+[[allowlist]]
+id = "subprocess-declarations"
+glob = "tests/**/*.py"
+marker = "pytest.mark.subprocess"
+guard = "subprocess_check.py"
+what = "tests declared to need a real process"
+
+[[allowlist]]
+id = "read-path-named-only-by"
+file = "scripts/doc_read_path.py"
+marker = "named_only_by"
+guard = "doc_read_path.py"
+what = "stage instructions permitted to name a document that left the read path"

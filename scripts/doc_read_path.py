@@ -78,6 +78,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
+
 # The diff scope is ONE mechanism and `applicability.py` owns it — this check was simply the first to
 # need it. Imported rather than kept here, and re-exported for the callers that already ask this
 # module for it: a second copy of a rule is the copy that goes blind.
@@ -983,4 +985,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(guard_scope.run(__file__, main))
