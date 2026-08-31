@@ -100,6 +100,33 @@ class TestChangedLines:
         assert scope is not None
         assert 2 in scope[target.resolve()]
 
+    @pytest.mark.parametrize("setting", ["diff.mnemonicPrefix", "diff.noprefix"])
+    def test_the_operators_git_config_cannot_narrow_the_scope(self, repo, setting):
+        """`git diff` is porcelain and its header prefix is configurable.
+
+        Under `diff.mnemonicPrefix=true` a tracked file arrives as `+++ w/<path>`, so a parser
+        anchored on `+++ b/` dropped every hunk. With one untracked file keeping the scope
+        non-empty, the gate exited OK having measured a fraction of the change - a wrong result
+        with no error, from the module written to stop exactly that.
+        """
+        git(repo, "config", setting, "true")
+        target = repo / "pkg" / "existing.py"
+        target.write_text("def a():\n    return 99\n", encoding="utf-8")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert 2 in scope[target.resolve()]
+
+    def test_a_deleted_file_lands_in_no_other_files_scope(self, repo):
+        """`+++ /dev/null` names no file; attributing its hunks to the previous one would be worse."""
+        git(repo, "rm", "-q", "pkg/existing.py")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert (repo / "pkg" / "existing.py").resolve() not in scope
+
     def test_an_untouched_file_is_not_in_scope(self, repo):
         (repo / "pkg" / "added.py").write_text(
             "def b():\n    return 2\n", encoding="utf-8"

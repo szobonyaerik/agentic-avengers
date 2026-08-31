@@ -54,6 +54,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
+
 OK = 0
 ERROR = 2
 NOTHING_IN_SCOPE = 3
@@ -76,20 +78,26 @@ def _git(root: Path, *args: str) -> list[str] | None:
 
 
 def _diff_lines(root: Path, ref: str) -> dict[Path, set[int]] | None:
-    """New-side line numbers per file for `git diff -U0 <ref>`, over the working tree."""
-    output = _git(root, "diff", "--no-relative", "-U0", ref, "--")
+    """New-side line numbers per file for `git diff -U0 <ref>`, over the working tree.
+
+    `--no-prefix` is not cosmetic. `git diff` is porcelain and honours `diff.noprefix` and
+    `diff.mnemonicPrefix`, so a header this parser recognised was a property of the operator's own
+    git config: under `diff.mnemonicPrefix=true` every tracked file arrives as `+++ w/<path>`, no
+    header matches, and every hunk is dropped. With one untracked file keeping the scope non-empty
+    that failed SILENTLY NARROW - an OK verdict over a fraction of the change, from the module
+    written to stop exactly that. Pinning the prefix on the invocation makes the parser and the
+    output agree by construction rather than by luck.
+    """
+    output = _git(root, "diff", "--no-prefix", "--no-relative", "-U0", ref, "--")
     if output is None:
         return None
     found: dict[Path, set[int]] = {}
     current: Path | None = None
     for line in output:
-        if line.startswith("+++ b/"):
-            current = (root / line[6:]).resolve()
-            continue
-        if line.startswith(
-            "+++ "
-        ):  # /dev/null: the file was deleted, nothing to mutate
-            current = None
+        if line.startswith("+++ "):
+            target = line[4:]
+            # /dev/null: the file was deleted, so it holds nothing to mutate.
+            current = None if target == "/dev/null" else (root / target).resolve()
             continue
         match = HUNK.match(line)
         if not match or current is None:
@@ -258,4 +266,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

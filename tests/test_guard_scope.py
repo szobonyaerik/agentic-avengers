@@ -48,6 +48,13 @@ def write_inventory(root: Path, body: str) -> Path:
     return target
 
 
+#: A guard body that genuinely reaches `guard_scope`, spelled the way every wired guard here does.
+EMITTING = (
+    "import guard_scope\n"
+    'if __name__ == "__main__":\n'
+    "    raise SystemExit(guard_scope.run(__file__, main))\n"
+)
+
 ONE_GUARD = """
 [guard."thing.py"]
 proves = "that the thing is fine."
@@ -233,21 +240,53 @@ class TestCheck:
         assert any("never emits it" in line for line in findings)
 
     def test_a_guard_that_declares_and_emits_is_clean(self, tmp_path):
-        root = self.synthetic(
-            tmp_path,
-            body='import guard_scope\nif __name__ == "__main__":\n    pass\n',
-            statement=True,
-        )
+        root = self.synthetic(tmp_path, body=EMITTING, statement=True)
 
         assert check(root) == (guard_scope.OK, [])
 
-    def test_a_statement_no_guard_emits_is_a_finding(self, tmp_path):
-        """A statement nothing emits is not a statement; it is the same invisibility one level up."""
+    def test_a_guard_that_only_MENTIONS_the_module_is_not_emitting(self, tmp_path):
+        """A docstring naming this module reaches no reader. `mutation_scope.py` was exactly this.
+
+        The check that was supposed to catch it asked `"guard_scope" in text`, so the mention
+        satisfied it and the pipeline's own flagship guard false-cleaned - issue #97's class inside
+        issue #97's fix. The extraction layer has to follow what it claims to check.
+        """
         root = self.synthetic(
             tmp_path,
-            body='import guard_scope\nif __name__ == "__main__":\n    pass\n',
+            body=(
+                '"""A guard whose limits are stated in scripts/guard_scope.py and nowhere a\n'
+                'later stage can read them."""\n'
+                "# see guard_scope for the inventory\n"
+                'if __name__ == "__main__":\n    raise SystemExit(main())\n'
+            ),
             statement=True,
         )
+
+        code, findings = check(root)
+
+        assert code == guard_scope.FINDINGS
+        assert any("never emits it" in line for line in findings)
+
+    def test_an_unused_import_is_not_emitting_either(self, tmp_path):
+        root = self.synthetic(
+            tmp_path,
+            body=(
+                "import guard_scope  # noqa: F401\n"
+                'if __name__ == "__main__":\n    raise SystemExit(main())\n'
+            ),
+            statement=True,
+        )
+
+        assert check(root)[0] == guard_scope.FINDINGS
+
+    def test_every_spelling_a_real_guard_uses_counts_as_emitting(self):
+        """A closed set, so a shape in use here can never quietly stop counting."""
+        for spelling in guard_scope.CALL_SPELLINGS:
+            assert guard_scope.emits(f"prefix {spelling} suffix"), spelling
+
+    def test_a_statement_no_guard_emits_is_a_finding(self, tmp_path):
+        """A statement nothing emits is not a statement; it is the same invisibility one level up."""
+        root = self.synthetic(tmp_path, body=EMITTING, statement=True)
         (root / "scripts" / "guard_scope.toml").write_text(
             '[guard."thing.py"]\nproves = "x."\nlimits = ["y"]\n'
             '[guard."ghost.py"]\nproves = "x."\nlimits = ["y"]\n',
@@ -361,12 +400,45 @@ class TestAllowlists:
         assert "UNKNOWABLE" in lines[0]
         assert "no growth" not in lines[0]
 
-    def test_it_never_gates(self, tmp_path):
-        """Growth is a REPORT. A blocking check would be answered with a bypass, not attention."""
-        proc = subprocess.run(
-            [sys.executable, str(MODULE), "allowlists", "--root", str(ROOT)],
-            capture_output=True,
-            text=True,
+    def test_an_excluded_path_is_not_counted(self, tmp_path):
+        """The reported number has to mean what the entry's `what` says, or it buys no attention."""
+        (tmp_path / "real.py").write_text("MARK\nMARK\n", encoding="utf-8")
+        (tmp_path / "fixtures.py").write_text("MARK\nMARK\nMARK\n", encoding="utf-8")
+        inventory = guard_scope.load(
+            write_inventory(
+                tmp_path,
+                ONE_GUARD
+                + '\n[[allowlist]]\nid = "x"\nglob = "*.py"\nmarker = "MARK"\n'
+                'exclude = ["fixtures.py"]\n'
+                'guard = "thing.py"\nwhat = "things waved through"\n',
+            )
         )
 
-        assert proc.returncode == guard_scope.OK
+        assert guard_scope.sizes(tmp_path, inventory) == {"x": 2}
+
+    def test_an_exclusion_that_is_not_a_list_of_globs_is_refused(self, tmp_path):
+        """A silently narrowed count is worse than a wide one: it under-reports the thing watched."""
+        body = (
+            ONE_GUARD + '\n[[allowlist]]\nid = "x"\nglob = "*.py"\nmarker = "MARK"\n'
+            'exclude = "fixtures.py"\nguard = "thing.py"\nwhat = "waved through"\n'
+        )
+
+        with pytest.raises(guard_scope.GuardScopeError, match="exclude"):
+            guard_scope.load(write_inventory(tmp_path, body))
+
+    def test_the_subprocess_allowlist_skips_the_guards_own_fixture_corpus(self):
+        """Those markers are source under test, not declarations, and editing them is not growth."""
+        inventory = guard_scope.load(guard_scope.inventory_path(ROOT / "scripts"))
+        entry = next(
+            item
+            for item in inventory.allowlists
+            if item.id == "subprocess-declarations"
+        )
+
+        counted = {path.name for path in entry.paths(ROOT)}
+        assert "test_subprocess_check.py" not in counted
+        assert "test_phase_artifacts.py" in counted
+
+    def test_it_never_gates(self):
+        """Growth is a REPORT. A blocking check would be answered with a bypass, not attention."""
+        assert guard_scope.main(["allowlists", "--root", str(ROOT)]) == guard_scope.OK

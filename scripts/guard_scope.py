@@ -76,7 +76,7 @@ UNAVAILABLE = "unavailable"
 INVENTORY = "guard_scope.toml"
 
 _GUARD_KEYS = {"proves", "limits"}
-_ALLOWLIST_KEYS = {"id", "file", "glob", "marker", "guard", "what"}
+_ALLOWLIST_KEYS = {"id", "file", "glob", "marker", "guard", "what", "exclude"}
 
 
 class GuardScopeError(Exception):
@@ -109,12 +109,28 @@ class Allowlist:
     guard: str
     file: str | None = None
     glob: str | None = None
+    #: Globs whose matches are NOT counted, so the reported number means what `what` says. A guard's
+    #: own test corpus carries its marker as fixture source under test, not as a declaration, and
+    #: counting it both inflates the size and makes editing the corpus read as ALLOWLIST GREW -
+    #: noise in exactly the signal this exists to buy. Declared here rather than special-cased in
+    #: code, so the count stays a property of the inventory.
+    exclude: tuple[str, ...] = ()
 
     def paths(self, root: Path) -> list[Path]:
         if self.file:
             target = root / self.file
-            return [target] if target.is_file() else []
-        return sorted(p for p in root.glob(self.glob or "") if p.is_file())
+            found = [target] if target.is_file() else []
+        else:
+            found = sorted(p for p in root.glob(self.glob or "") if p.is_file())
+        if not self.exclude:
+            return found
+        skipped = {
+            p.resolve()
+            for pattern in self.exclude
+            for p in root.glob(pattern)
+            if p.is_file()
+        }
+        return [p for p in found if p.resolve() not in skipped]
 
 
 @dataclass(frozen=True)
@@ -197,6 +213,14 @@ def load(path: Path) -> Inventory:
             raise GuardScopeError(
                 f"allowlist {entry['id']!r} must name a `file` or a `glob` to count in"
             )
+        exclude = entry.get("exclude", [])
+        if not isinstance(exclude, list) or not all(
+            isinstance(item, str) and item.strip() for item in exclude
+        ):
+            raise GuardScopeError(
+                f"allowlist {entry['id']!r} has an `exclude` that is not a list of non-empty "
+                f"globs; an unreadable exclusion would silently narrow the count it governs"
+            )
         allowlists.append(
             Allowlist(
                 id=str(entry["id"]),
@@ -205,6 +229,7 @@ def load(path: Path) -> Inventory:
                 guard=str(entry["guard"]),
                 file=entry.get("file"),
                 glob=entry.get("glob"),
+                exclude=tuple(item.strip() for item in exclude),
             )
         )
     return Inventory(statements=statements, allowlists=tuple(allowlists))
@@ -286,13 +311,31 @@ def run(name: str, entry, *, ok: int = OK) -> int:
     return clean(name, code, ok=ok)
 
 
+#: Every spelling that actually REACHES this module, as a closed named set rather than a loose
+#: regex - the same construction as `subprocess_check.SUBMODULES` and `guard_proof._REFERENCE_PREFIXES`.
+#: A bare `"guard_scope" in text` was satisfied by a docstring, a comment or an unused import, and it
+#: false-cleaned on `mutation_scope.py`, which mentioned this module and never called it. That is a
+#: guard whose extraction layer does not follow what it claims to check - issue #97's own class,
+#: reproduced inside its fix. A new call shape is a deliberate edit here.
+CALL_SPELLINGS = (
+    "guard_scope.run(",
+    "guard_scope.clean(",
+    "guard_scope.statement(",
+    'guard_scope.py" emit',
+    "guard_scope.py' emit",
+    "guard_scope.py emit",
+)
+
+
 def emits(text: str) -> bool:
     """Whether a guard's source actually reaches this module, however it spells the call.
 
     Asked of the SOURCE because the alternative is running every guard to see whether it printed,
-    and a guard whose clean branch nothing exercised would then read as compliant.
+    and a guard whose clean branch nothing exercised would then read as compliant. What it asks for
+    is a CALL: a mention is not an emission, and the reader who needs the statement gets nothing
+    from a module that merely names this file.
     """
-    return "guard_scope" in text
+    return any(spelling in text for spelling in CALL_SPELLINGS)
 
 
 # --- allowlists: growth as a signal ---------------------------------------------------------------

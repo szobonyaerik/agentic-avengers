@@ -275,6 +275,7 @@ limits = [
   "that a declared limit is COMPLETE or accurate - it holds a statement against a guard, never a statement against reality",
   "anything downstream: `guards.toml` is not vendored, so outside this repository the check does not run and says so rather than half-running",
   "anything about a guard that is neither declared in guards.toml nor invoked from an enforcement surface",
+  "that the emission is REACHED at runtime: the call is found in the source, so a call on a branch nothing executes, or spelled outside the closed CALL_SPELLINGS set, reads the same as none",
 ]
 
 [guard."gate_ci.sh"]
@@ -339,6 +340,10 @@ what = "files an enforcement surface invokes that are declared to decide nothing
 [[allowlist]]
 id = "subprocess-declarations"
 glob = "tests/**/*.py"
+# The guard's own test corpus carries this marker as FIXTURE SOURCE inside synthetic modules under
+# test, not as a declaration by any test. Counted, it inflated the reported size and made any edit
+# to that corpus read as ALLOWLIST GREW - noise in the one signal this is meant to buy attention for.
+exclude = ["tests/test_subprocess_check.py"]
 marker = "pytest.mark.subprocess"
 guard = "subprocess_check.py"
 what = "tests declared to need a real process"
