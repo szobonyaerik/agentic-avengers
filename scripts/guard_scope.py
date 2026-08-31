@@ -174,7 +174,9 @@ def load(path: Path) -> Inventory:
                 f"issue #97 exists to stop being made by silence."
             )
         statements[_name(key)] = Statement(
-            name=_name(key), proves=proves.strip(), limits=tuple(s.strip() for s in limits)
+            name=_name(key),
+            proves=proves.strip(),
+            limits=tuple(s.strip() for s in limits),
         )
 
     allowlists: list[Allowlist] = []
@@ -188,7 +190,9 @@ def load(path: Path) -> Inventory:
             )
         for key in ("id", "marker", "what", "guard"):
             if not isinstance(entry.get(key), str) or not str(entry[key]).strip():
-                raise GuardScopeError(f"every [[allowlist]] entry needs a non-empty {key!r}")
+                raise GuardScopeError(
+                    f"every [[allowlist]] entry needs a non-empty {key!r}"
+                )
         if not (entry.get("file") or entry.get("glob")):
             raise GuardScopeError(
                 f"allowlist {entry['id']!r} must name a `file` or a `glob` to count in"
@@ -322,7 +326,9 @@ def sizes(root: Path, inventory: Inventory) -> dict[str, int]:
     return found
 
 
-def growth(root: Path, inventory: Inventory, base: str) -> dict[str, tuple[int, int]] | None:
+def growth(
+    root: Path, inventory: Inventory, base: str
+) -> dict[str, tuple[int, int]] | None:
     """(before, now) per allowlist against `base`, or None when git cannot answer.
 
     None is UNKNOWABLE and the caller says so. Read as "no growth" it would report every quietening
@@ -387,8 +393,12 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("list", help="every declared statement")
 
-    lists = sub.add_parser("allowlists", help="allowlist sizes, and growth against a base")
-    lists.add_argument("--base", default=None, help="compare against the merge-base with REF")
+    lists = sub.add_parser(
+        "allowlists", help="allowlist sizes, and growth against a base"
+    )
+    lists.add_argument(
+        "--base", default=None, help="compare against the merge-base with REF"
+    )
     lists.add_argument("--root", default=None)
 
     args = parser.parse_args(argv)

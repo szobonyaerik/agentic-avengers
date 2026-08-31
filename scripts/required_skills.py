@@ -143,7 +143,9 @@ def ponytail_expected(stage: str) -> bool:
     if os.environ.get("PONYTAIL_OFF", "").strip() == "1":
         return False
     try:
-        pattern = re.compile(os.environ.get("PONYTAIL_AGENTS") or PONYTAIL_AGENTS_DEFAULT, re.I)
+        pattern = re.compile(
+            os.environ.get("PONYTAIL_AGENTS") or PONYTAIL_AGENTS_DEFAULT, re.I
+        )
     except re.error:
         return False
     return bool(stage) and bool(pattern.search(stage))
@@ -166,10 +168,14 @@ def ponytail_notes(record: dict | None, stage: str | None = None) -> list[str]:
     seen = {
         entry.get("stage")
         for entry in loads
-        if isinstance(entry, dict) and entry.get("skill") == "ponytail" and entry.get("loaded")
+        if isinstance(entry, dict)
+        and entry.get("skill") == "ponytail"
+        and entry.get("loaded")
     }
     stages_in_record = {
-        entry.get("stage") for entry in loads if isinstance(entry, dict) and entry.get("stage")
+        entry.get("stage")
+        for entry in loads
+        if isinstance(entry, dict) and entry.get("stage")
     }
     if stage:
         # A stage-scoped audit answers about one stage; another stage's note there is noise, and a
@@ -196,7 +202,9 @@ def required_for(agent_type: str, root: Path | None = None) -> tuple[str, ...]:
 
 def to_deliver(agent_type: str, root: Path | None = None) -> tuple[str, ...]:
     """What THIS hook delivers: the contract, minus what another hook already owns."""
-    return tuple(s for s in required_for(agent_type, root) if s not in DELIVERED_ELSEWHERE)
+    return tuple(
+        s for s in required_for(agent_type, root) if s not in DELIVERED_ELSEWHERE
+    )
 
 
 def skill_path(root: Path, skill: str) -> Path:
@@ -226,7 +234,9 @@ def inject_max_bytes() -> int:
 
 def delivery_for(size: int, limit: int | None = None) -> str:
     """`inject` for a body at or under the ceiling, `pointer` above it."""
-    return INJECT if size <= (inject_max_bytes() if limit is None else limit) else POINTER
+    return (
+        INJECT if size <= (inject_max_bytes() if limit is None else limit) else POINTER
+    )
 
 
 def stages(root: Path | None = None) -> list[str]:
@@ -305,7 +315,11 @@ def undeclared(root: Path) -> list[str]:
     nothing. That silence is exactly the shape the derivation replaced, so it is said out loud here
     rather than guessed at by scanning the agent's prose.
     """
-    return [stage for stage in stages(root) if skill_contract.contract_line(stage, root) is None]
+    return [
+        stage
+        for stage in stages(root)
+        if skill_contract.contract_line(stage, root) is None
+    ]
 
 
 def missing(root: Path) -> list[tuple[str, str]]:
@@ -327,7 +341,10 @@ def _audit(all_phases: bool, stage: str | None = None) -> int:
     if os.environ.get("SKILLS_OFF", "").strip() == "1":
         # Delivery is off, so nothing was ever handed to a stage to load. Auditing the residue of
         # earlier runs would block a phase for a mechanism the operator switched off.
-        print("  (skill delivery is off, SKILLS_OFF=1 — nothing to audit)", file=sys.stderr)
+        print(
+            "  (skill delivery is off, SKILLS_OFF=1 — nothing to audit)",
+            file=sys.stderr,
+        )
         return OK
     if not sink.enabled():
         # No writer means no observations were ever taken, so there is nothing to have missed. Said
@@ -385,9 +402,13 @@ def main(argv: list[str] | None = None) -> int:
     p_for = sub.add_parser("for")
     p_for.add_argument("agent_type")
     p_table = sub.add_parser("table")
-    p_table.add_argument("--root", default=Path(__file__).resolve().parent.parent, type=Path)
+    p_table.add_argument(
+        "--root", default=Path(__file__).resolve().parent.parent, type=Path
+    )
     p_verify = sub.add_parser("verify")
-    p_verify.add_argument("--root", default=Path(__file__).resolve().parent.parent, type=Path)
+    p_verify.add_argument(
+        "--root", default=Path(__file__).resolve().parent.parent, type=Path
+    )
     p_audit = sub.add_parser("audit")
     p_audit.add_argument("--all", action="store_true", help="every phase with a record")
     p_audit.add_argument(
@@ -430,7 +451,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         for stage in silent:
-            print(f"  ✗ agents/{stage}.md has no `Required skills` line", file=sys.stderr)
+            print(
+                f"  ✗ agents/{stage}.md has no `Required skills` line", file=sys.stderr
+            )
     if gaps:
         print(
             "required_skills: a stage requires a skill that is missing or empty. A required skill "

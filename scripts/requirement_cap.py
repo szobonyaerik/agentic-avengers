@@ -296,11 +296,15 @@ def unenforceable(spec: Path) -> str | None:
             "and prior handovers already point at"
         )
     try:
-        phase_dir = spec.resolve().parents[2]   # specs/<n>.<k>-<sub>/spec.md -> the phase directory
+        phase_dir = spec.resolve().parents[
+            2
+        ]  # specs/<n>.<k>-<sub>/spec.md -> the phase directory
     except IndexError:
         return None
     try:
-        record = applicability.excepted(phase_dir, "requirement-cap", spec.resolve().parent.name)
+        record = applicability.excepted(
+            phase_dir, "requirement-cap", spec.resolve().parent.name
+        )
     except applicability.ApplicabilityError as exc:
         print(
             f"[requirement_cap] {phase_dir.name} has an exception ledger this cannot read ({exc}). "
@@ -314,7 +318,9 @@ def unenforceable(spec: Path) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("spec", type=Path)
-    parser.add_argument("--max", type=int, default=None, help="override SPEC_REQUIREMENT_MAX")
+    parser.add_argument(
+        "--max", type=int, default=None, help="override SPEC_REQUIREMENT_MAX"
+    )
     parser.add_argument("--count", action="store_true", help="print the count alone")
     args = parser.parse_args(argv)
 

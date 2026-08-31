@@ -103,7 +103,9 @@ _TOKEN = re.compile(r"^[\w.:-]+$")
 #: `effort=high` are already code voice whether or not anyone marked them up.
 UNOBEYABLE = (
     re.compile(r"\b(?:pass|passing|supply|set|give)\s+(?:an?\s+)?`effort`", re.I),
-    re.compile(r"\S[ \t]+`?effort`?[ \t]*[:=][ \t]*`?(?:" + "|".join(LEVELS) + r")\b", re.I),
+    re.compile(
+        r"\S[ \t]+`?effort`?[ \t]*[:=][ \t]*`?(?:" + "|".join(LEVELS) + r")\b", re.I
+    ),
 )
 
 
@@ -169,11 +171,14 @@ def render_table(root: Path | None = None) -> str:
     """The allocation, rendered from the definitions — the one place a reader should look."""
     lines = ["| stage | effort |", "|---|---|"]
     for stage, level in declared(root).items():
-        lines.append(f"| `{stage}` | " + (f"`{level}` |" if level else "**undeclared** |"))
+        lines.append(
+            f"| `{stage}` | " + (f"`{level}` |" if level else "**undeclared** |")
+        )
     return "\n".join(lines)
 
 
 # --- check ---------------------------------------------------------------------------------------
+
 
 def _effort_rows(text: str) -> list[tuple[int, str]]:
     """Table rows sitting under a heading about effort, with their line numbers.
@@ -220,7 +225,9 @@ def _check_documents(root: Path) -> list[str]:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*.md")):
-            problems += _check_document(path.relative_to(root).as_posix(), path, known, root)
+            problems += _check_document(
+                path.relative_to(root).as_posix(), path, known, root
+            )
     for name in SOURCE_FILES:
         path = root / name
         if path.is_file():
@@ -253,7 +260,9 @@ def _check_rows(rel: str, text: str, known: set[str], root: Path) -> list[str]:
     for lineno, row in _effort_rows(text):
         tokens = _row_tokens(row)
         names = [_QUALIFIER.sub("", t) for t in tokens]
-        stages = list(dict.fromkeys(n for n in names if n in known or n.startswith("avenger-")))
+        stages = list(
+            dict.fromkeys(n for n in names if n in known or n.startswith("avenger-"))
+        )
         levels = [t for t in tokens if t.lower() in LEVELS]
         if not stages:
             continue
@@ -314,6 +323,7 @@ def check(root: Path | None = None) -> list[str]:
 
 
 # --- CLI -----------------------------------------------------------------------------------------
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

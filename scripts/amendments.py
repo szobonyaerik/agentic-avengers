@@ -87,7 +87,11 @@ def load(phase_dir: Path) -> dict:
     """
     target = path_for(phase_dir)
     if not target.is_file():
-        return {"phase": Path(phase_dir).name, "readers": list(READERS), "amendments": []}
+        return {
+            "phase": Path(phase_dir).name,
+            "readers": list(READERS),
+            "amendments": [],
+        }
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -122,7 +126,9 @@ def open_amendment(
         )
     bad = [r for r in ids if not REQUIREMENT_ID.match(r)]
     if bad:
-        raise AmendmentError(f"not requirement ids: {', '.join(bad)} (expected R<n>.<k>.<m>)")
+        raise AmendmentError(
+            f"not requirement ids: {', '.join(bad)} (expected R<n>.<k>.<m>)"
+        )
     if not reason.strip():
         raise AmendmentError("an amendment must say why it was made")
 
@@ -169,7 +175,9 @@ def verdict_passes(phase_dir: Path) -> bool:
     """True when the phase carries a passing verdict. Unreadable or absent counts as not passing."""
     try:
         return (
-            json.loads((Path(phase_dir) / "verdict.json").read_text(encoding="utf-8")).get("verdict")
+            json.loads(
+                (Path(phase_dir) / "verdict.json").read_text(encoding="utf-8")
+            ).get("verdict")
             == "pass"
         )
     except (OSError, ValueError, AttributeError):
@@ -217,7 +225,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_open = sub.add_parser("open")
     p_open.add_argument("phase_dir", type=Path)
-    p_open.add_argument("--requirements", required=True, help="comma-separated R<n>.<k>.<m> ids")
+    p_open.add_argument(
+        "--requirements", required=True, help="comma-separated R<n>.<k>.<m> ids"
+    )
     p_open.add_argument(
         "--reason-file",
         required=True,
@@ -230,7 +240,9 @@ def main(argv: list[str] | None = None) -> int:
     p_close = sub.add_parser("close")
     p_close.add_argument("phase_dir", type=Path)
     p_close.add_argument("amendment_id")
-    p_close.add_argument("--evidence", required=True, help="path to the evidence that re-verified it")
+    p_close.add_argument(
+        "--evidence", required=True, help="path to the evidence that re-verified it"
+    )
 
     for name in ("pending", "due", "scope", "ids"):
         p = sub.add_parser(name)
@@ -243,7 +255,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 reason = Path(args.reason_file).read_text(encoding="utf-8")
             except OSError as exc:
-                print(f"[amendments] cannot read the reason file: {exc}", file=sys.stderr)
+                print(
+                    f"[amendments] cannot read the reason file: {exc}", file=sys.stderr
+                )
                 return ERROR
             record = open_amendment(
                 args.phase_dir,
@@ -272,7 +286,9 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(scope(args.phase_dir)))
             return OK
 
-        records = pending(args.phase_dir) if args.action == "pending" else due(args.phase_dir)
+        records = (
+            pending(args.phase_dir) if args.action == "pending" else due(args.phase_dir)
+        )
     except AmendmentError as exc:
         print(f"[amendments] {exc}", file=sys.stderr)
         return ERROR
@@ -280,7 +296,10 @@ def main(argv: list[str] | None = None) -> int:
     if not records:
         return OK
     if args.action == "pending":
-        print(f"{len(records)} amendment(s) pending re-verification at phase close:", file=sys.stderr)
+        print(
+            f"{len(records)} amendment(s) pending re-verification at phase close:",
+            file=sys.stderr,
+        )
     else:
         print(
             f"{len(records)} amendment(s) OWE re-verification now — a security amendment is never "

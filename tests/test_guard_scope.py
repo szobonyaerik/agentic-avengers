@@ -82,7 +82,9 @@ class TestStatement:
             guard_scope.load(inventory)
 
     def test_an_entry_with_no_limits_key_at_all_is_refused(self, tmp_path):
-        inventory = write_inventory(tmp_path, '[guard."thing.py"]\nproves = "everything."\n')
+        inventory = write_inventory(
+            tmp_path, '[guard."thing.py"]\nproves = "everything."\n'
+        )
 
         with pytest.raises(guard_scope.GuardScopeError):
             guard_scope.load(inventory)
@@ -136,7 +138,9 @@ class TestEmission:
         assert "MISSING declaration" in err
         assert "not a claim of full coverage" in err
 
-    def test_an_emission_that_blows_up_never_becomes_a_verdict(self, monkeypatch, capsys):
+    def test_an_emission_that_blows_up_never_becomes_a_verdict(
+        self, monkeypatch, capsys
+    ):
         def explode(_name, root=None):
             raise RuntimeError("inventory on fire")
 
@@ -186,12 +190,12 @@ class TestCheck:
         (scripts / "sync_opencode.py").write_text("", encoding="utf-8")
         (scripts / "thing.py").write_text(body, encoding="utf-8")
         (scripts / "guards.toml").write_text(
-            '[[guard]]\n'
+            "[[guard]]\n"
             'id = "thing.one"\n'
             'implements = "scripts/thing.py"\n'
             'defect = "it stopped guarding"\n'
             'tests = ["tests/test_thing.py"]\n'
-            '[[guard.mutation]]\n'
+            "[[guard.mutation]]\n"
             'file = "scripts/thing.py"\n'
             'find = "a"\n'
             'replace = "b"\n',
@@ -215,7 +219,9 @@ class TestCheck:
         assert code == guard_scope.FINDINGS
         assert any("declares no scope statement" in line for line in findings)
 
-    def test_a_guard_that_declares_a_statement_and_never_emits_it_is_a_finding(self, tmp_path):
+    def test_a_guard_that_declares_a_statement_and_never_emits_it_is_a_finding(
+        self, tmp_path
+    ):
         """A limitation only the inventory carries is invisible to a later stage, which reads output."""
         root = self.synthetic(
             tmp_path, body='if __name__ == "__main__":\n    pass\n', statement=True
@@ -254,21 +260,34 @@ class TestCheck:
         assert any("ghost.py" in line for line in findings)
 
     def test_the_obligated_set_is_the_guards_that_actually_print(self):
-        duty = guard_proof.obligated(ROOT, guard_proof.load(ROOT / 'scripts' / 'guards.toml'))
+        duty = guard_proof.obligated(
+            ROOT, guard_proof.load(ROOT / "scripts" / "guards.toml")
+        )
 
         assert "scripts/interface_drift.py" in duty
         assert "scripts/hook_mutation.sh" in duty
-        assert "scripts/proc_group.py" not in duty, "a library module prints no result of its own"
+        assert "scripts/proc_group.py" not in duty, (
+            "a library module prints no result of its own"
+        )
         assert not any(name.startswith("tests/") for name in duty)
 
 
-@pytest.mark.subprocess("the subject is a guard's real process output, which only a process has")
+@pytest.mark.subprocess(
+    "the subject is a guard's real process output, which only a process has"
+)
 class TestRealGuards:
     def guard_run(self, tmp_path: Path) -> subprocess.CompletedProcess:
         """A real guard, run to a genuinely clean verdict over a tree of its own."""
-        (tmp_path / "app.py").write_text("def poll_once():\n    return 1\n", encoding="utf-8")
+        (tmp_path / "app.py").write_text(
+            "def poll_once():\n    return 1\n", encoding="utf-8"
+        )
         return subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "interface_drift.py"), "--root", str(tmp_path)],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "interface_drift.py"),
+                "--root",
+                str(tmp_path),
+            ],
             capture_output=True,
             text=True,
         )
@@ -279,13 +298,17 @@ class TestRealGuards:
         assert proc.returncode == 0, proc.stderr
         assert guard_scope.SCOPE_MARKER in proc.stderr
 
-    def test_the_statement_goes_to_stderr_so_machine_readable_stdout_is_untouched(self, tmp_path):
+    def test_the_statement_goes_to_stderr_so_machine_readable_stdout_is_untouched(
+        self, tmp_path
+    ):
         assert guard_scope.SCOPE_MARKER not in self.guard_run(tmp_path).stdout
 
     def test_emit_always_exits_zero_so_a_shell_guard_cannot_be_failed_by_it(self):
         for name in ("hook_mutation.sh", "not-a-guard-at-all.sh"):
             proc = subprocess.run(
-                [sys.executable, str(MODULE), "emit", name], capture_output=True, text=True
+                [sys.executable, str(MODULE), "emit", name],
+                capture_output=True,
+                text=True,
             )
             assert proc.returncode == 0
             assert guard_scope.SCOPE_MARKER in proc.stderr
@@ -328,7 +351,9 @@ class TestAllowlists:
 
         assert "no growth" in lines[0]
 
-    def test_an_unknowable_comparison_says_so_and_never_reports_no_growth(self, tmp_path):
+    def test_an_unknowable_comparison_says_so_and_never_reports_no_growth(
+        self, tmp_path
+    ):
         inventory = guard_scope.load(write_inventory(tmp_path, ONE_GUARD))
 
         lines = guard_scope._render_growth(inventory, None, "main")

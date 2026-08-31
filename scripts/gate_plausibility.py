@@ -95,8 +95,13 @@ def provider_floor_ms(env: dict[str, str] | None = None) -> int:
     return value
 
 
-def implausible(latency_ms: int | float | None, *, floor: int | None = None,
-                model: str | None = None, provider: str | None = None) -> str | None:
+def implausible(
+    latency_ms: int | float | None,
+    *,
+    floor: int | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+) -> str | None:
     """Why this measured latency cannot be a real call, or None when it can be.
 
     An unmeasured latency (`None`) is NOT implausible: `gate_runner` measures every call it makes, so
@@ -137,7 +142,10 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        print("usage: gate_plausibility.py <latency-ms> [model] [provider]", file=sys.stderr)
+        print(
+            "usage: gate_plausibility.py <latency-ms> [model] [provider]",
+            file=sys.stderr,
+        )
         return 2
     try:
         floor = provider_floor_ms()
@@ -147,11 +155,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         latency = float(args[0])
     except ValueError:
-        print(f"[gate_plausibility] {args[0]!r} is not a number of milliseconds", file=sys.stderr)
+        print(
+            f"[gate_plausibility] {args[0]!r} is not a number of milliseconds",
+            file=sys.stderr,
+        )
         return 2
-    reason = implausible(latency, floor=floor,
-                         model=args[1] if len(args) > 1 else None,
-                         provider=args[2] if len(args) > 2 else None)
+    reason = implausible(
+        latency,
+        floor=floor,
+        model=args[1] if len(args) > 1 else None,
+        provider=args[2] if len(args) > 2 else None,
+    )
     if reason is None:
         print(f"plausible ({latency:.0f} ms >= {floor} ms floor)")
         return 0

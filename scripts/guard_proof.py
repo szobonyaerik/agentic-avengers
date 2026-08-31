@@ -1227,7 +1227,8 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     common(listing)
 
     scope = sub.add_parser(
-        "scope", help="every guard with runtime output declares and emits what it does not cover"
+        "scope",
+        help="every guard with runtime output declares and emits what it does not cover",
     )
     common(scope)
 

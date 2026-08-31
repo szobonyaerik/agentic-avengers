@@ -89,7 +89,9 @@ def _record(phase_dir: str) -> dict | None:
     """
     phase = metrics.resolve_phase(phase_dir)
     if phase is None:
-        raise Undecidable(f"{phase_dir}: no phase number could be derived from this path")
+        raise Undecidable(
+            f"{phase_dir}: no phase number could be derived from this path"
+        )
     if not sink.enabled():
         return None
     record = sink.show(phase)
@@ -128,7 +130,9 @@ def recorded_verifier_defects(record: dict) -> set[str]:
     return {
         str(defect.get("id"))
         for defect in record.get("defects") or []
-        if isinstance(defect, dict) and defect.get("found_by") == VERIFIER and defect.get("id")
+        if isinstance(defect, dict)
+        and defect.get("found_by") == VERIFIER
+        and defect.get("id")
     }
 
 
@@ -237,9 +241,15 @@ def check_close(root: Path) -> tuple[int, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    defects = sub.add_parser("defects", help="the record carries every defect this phase concluded")
-    defects.add_argument("phase_dir", nargs="?", help="one phase; omit with --root to sweep")
-    defects.add_argument("--root", default=None, help="sweep the phases this change touches")
+    defects = sub.add_parser(
+        "defects", help="the record carries every defect this phase concluded"
+    )
+    defects.add_argument(
+        "phase_dir", nargs="?", help="one phase; omit with --root to sweep"
+    )
+    defects.add_argument(
+        "--root", default=None, help="sweep the phases this change touches"
+    )
     close = sub.add_parser("close", help="no landed phase carries a null `closed`")
     close.add_argument("--root", default=".")
     args = parser.parse_args(argv)
