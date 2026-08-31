@@ -638,7 +638,15 @@ def scope_findings(root: Path, inventory: Inventory) -> list[str]:
             text = (root / path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if not guard_scope.emits(text):
+        try:
+            emitting = guard_scope.emits(text, shell=path.endswith(".sh"))
+        except guard_scope.GuardScopeError as exc:
+            findings.append(
+                f"{path} declares a scope statement and cannot be read to decide whether it emits "
+                f"it: {exc}"
+            )
+            continue
+        if not emitting:
             if path not in EMISSION_EXCEPTIONS:
                 findings.append(
                     f"{path} has a scope statement and never emits it. A limitation only the "

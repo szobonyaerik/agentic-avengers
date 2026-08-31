@@ -148,13 +148,15 @@ class TestEmission:
     def test_an_emission_that_blows_up_never_becomes_a_verdict(
         self, monkeypatch, capsys
     ):
+        """Patched on the function `clean()` ACTUALLY calls, or the handler is never reached."""
+
         def explode(_name, root=None):
             raise RuntimeError("inventory on fire")
 
-        monkeypatch.setattr(guard_scope, "statement", explode)
+        monkeypatch.setattr(guard_scope, "resolve", explode)
 
         assert guard_scope.clean("interface_drift.py", 0) == 0
-        capsys.readouterr()
+        assert guard_scope.SCOPE_MARKER not in capsys.readouterr().err
 
 
 class TestRun:
@@ -279,10 +281,15 @@ class TestCheck:
 
         assert check(root)[0] == guard_scope.FINDINGS
 
-    def test_every_spelling_a_real_guard_uses_counts_as_emitting(self):
-        """A closed set, so a shape in use here can never quietly stop counting."""
-        for spelling in guard_scope.CALL_SPELLINGS:
-            assert guard_scope.emits(f"prefix {spelling} suffix"), spelling
+    def test_a_real_call_counts_however_the_import_is_spelled(self):
+        """Renaming an import must not defeat the check, the way an alias would defeat a substring."""
+        for body in (
+            "import guard_scope\nguard_scope.run(__file__, main)\n",
+            "import guard_scope as gs\ngs.clean(__file__, 0)\n",
+            "from guard_scope import run\nrun(__file__, main)\n",
+            "from guard_scope import clean as done\ndone(__file__, 0)\n",
+        ):
+            assert guard_scope.emits(body), body
 
     def test_a_call_that_only_RETURNS_the_text_is_not_emitting(self):
         """`statement()` and `notice()` hand back a string; a caller may print none of it.
@@ -290,8 +297,55 @@ class TestCheck:
         Accepting them was the same mention-is-not-an-emission defect one notch narrower - a guard
         that never writes a line reading as one that does.
         """
-        for spelling in ("guard_scope.statement(", "guard_scope.notice("):
-            assert not guard_scope.emits(f'x = {spelling}"thing.py")'), spelling
+        for call in ("guard_scope.statement(", "guard_scope.notice("):
+            body = f'import guard_scope\nx = {call}"thing.py")\n'
+            assert not guard_scope.emits(body), call
+
+    def test_the_call_must_be_a_CALL_and_not_a_mention(self):
+        """The defect that false-cleaned `guard_scope.py` itself, on its own list of spellings.
+
+        Its only matching lines were a docstring and the tuple the search was made of, so the module
+        defining "a mention is not an emission" satisfied itself by mentioning.
+        """
+        for body in (
+            '"""Wired with guard_scope.run(__file__, main) one day."""\nimport guard_scope\n',
+            "import guard_scope\n# guard_scope.run(__file__, main)\n",
+            'import guard_scope\nSPELLINGS = ("guard_scope.run(", "guard_scope.clean(")\n',
+        ):
+            assert not guard_scope.emits(body), body
+
+    def test_python_source_that_will_not_parse_is_UNDECIDABLE_not_clean(self):
+        """Read as 'does not emit' it prescribes wiring; read as emitting it is a false clean."""
+        with pytest.raises(guard_scope.GuardScopeError, match="UNDECIDABLE"):
+            guard_scope.emits("def broken(:\n")
+
+    def test_a_shell_guard_is_decided_on_its_UNCOMMENTED_lines(self):
+        """bash has no AST here, so the one thing a scanner can say is that a comment runs nothing."""
+        assert guard_scope.emits(
+            'python3 "$SD/guard_scope.py" emit hook_thing.sh >/dev/null || true\n',
+            shell=True,
+        )
+        assert not guard_scope.emits(
+            '# python3 "$SD/guard_scope.py" emit hook_thing.sh\n', shell=True
+        )
+
+    def test_a_shell_guard_is_not_decided_as_python(self):
+        """A `.sh` body is not parseable source; asking for one as Python would raise, not decide."""
+        body = 'python3 "$SD/guard_scope.py" emit hook_thing.sh\nif [ -z "$x" ]; then :; fi\n'
+
+        assert guard_scope.emits(body, shell=True)
+        with pytest.raises(guard_scope.GuardScopeError):
+            guard_scope.emits(body)
+
+    def test_a_guard_that_cannot_be_read_is_a_finding_not_a_silent_pass(self, tmp_path):
+        root = self.synthetic(
+            tmp_path, body='if __name__ == "__main__"\n    pass\n', statement=True
+        )
+
+        code, findings = check(root)
+
+        assert code == guard_scope.FINDINGS
+        assert any("cannot be read to decide" in line for line in findings)
 
     def test_a_declared_exception_is_not_a_finding_but_is_NAMED(self, tmp_path, capsys):
         """An exception recorded only in a data file is the invisibility this issue is about."""
@@ -509,6 +563,79 @@ class TestAllowlists:
         assert step["env"]["GUARD_SCOPE_BASE"] == step["env"]["MUTATION_BASE"], (
             "the growth base follows the mutation base, from the same source"
         )
+
+    @pytest.mark.subprocess(
+        "git is the authority for what a file list looked like at a ref; a stubbed git would "
+        "only test the stub"
+    )
+    def test_a_rename_is_not_reported_as_growth(self, tmp_path):
+        """`before` built from TODAY's file list counted a renamed file as N brand-new entries.
+
+        A false GREW line is noise in exactly the signal this exists to buy attention for, so the
+        base side is enumerated from the merge-base tree instead.
+        """
+        root = tmp_path / "repo"
+        (root / "tests").mkdir(parents=True)
+        run = lambda *a: subprocess.run(  # noqa: E731
+            ["git", *a], cwd=str(root), check=True, capture_output=True
+        )
+        run("init", "-q", "-b", "main")
+        run("config", "user.email", "p@example.com")
+        run("config", "user.name", "p")
+        (root / "tests" / "test_old.py").write_text("MARK\nMARK\n", encoding="utf-8")
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        (root / "tests" / "test_old.py").unlink()
+        (root / "tests" / "test_new.py").write_text("MARK\nMARK\n", encoding="utf-8")
+        run("add", "-A")
+        run("commit", "-q", "-m", "rename")
+        inventory = guard_scope.load(
+            write_inventory(
+                root,
+                ONE_GUARD
+                + '\n[[allowlist]]\nid = "x"\nglob = "tests/**/*.py"\nmarker = "MARK"\n'
+                'guard = "thing.py"\nwhat = "things waved through"\n',
+            )
+        )
+        run("add", "-A")
+        run("commit", "-q", "-m", "inventory")
+
+        measured = guard_scope.growth(root, inventory, "HEAD~2")
+
+        assert measured is not None
+        assert measured["x"] == (2, 2)
+
+    @pytest.mark.subprocess(
+        "git is the authority for what a file list looked like at a ref; a stubbed git would "
+        "only test the stub"
+    )
+    def test_a_deletion_reads_as_a_shrink_rather_than_no_growth(self, tmp_path):
+        root = tmp_path / "repo"
+        (root / "tests").mkdir(parents=True)
+        run = lambda *a: subprocess.run(  # noqa: E731
+            ["git", *a], cwd=str(root), check=True, capture_output=True
+        )
+        run("init", "-q", "-b", "main")
+        run("config", "user.email", "p@example.com")
+        run("config", "user.name", "p")
+        (root / "tests" / "test_gone.py").write_text("MARK\nMARK\n", encoding="utf-8")
+        write_inventory(
+            root,
+            ONE_GUARD
+            + '\n[[allowlist]]\nid = "x"\nglob = "tests/**/*.py"\nmarker = "MARK"\n'
+            'guard = "thing.py"\nwhat = "things waved through"\n',
+        )
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        inventory = guard_scope.load(guard_scope.inventory_path(root / "scripts"))
+        (root / "tests" / "test_gone.py").unlink()
+        run("add", "-A")
+        run("commit", "-q", "-m", "delete")
+
+        measured = guard_scope.growth(root, inventory, "HEAD~1")
+
+        assert measured is not None
+        assert measured["x"] == (2, 0)
 
     def test_it_never_gates(self):
         """Growth is a REPORT. A blocking check would be answered with a bypass, not attention."""

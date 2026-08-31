@@ -1472,7 +1472,8 @@ If a guard's claim and its coverage cannot be reconciled, **narrow the claim, ne
 **Where it cannot be closed, declare it in the output.** In this repository that is
 `scripts/guard_scope.toml` (one statement per guard: what it proves, and what a clean result does
 not establish) emitted by `scripts/guard_scope.py` on every clean result, held against the guard
-inventory by `guard_proof.py scope`. Two properties are fixed and both are tested: **an emission may
+inventory by `guard_proof.py scope`. A guard whose clean result genuinely cannot carry the line is a
+declared, single-guard exception, and that check names it and its reason in its own clean output. Two properties are fixed and both are tested: **an emission may
 never move an exit code**, because a guard weakened by its own documentation is the one remedy this
 rule puts out of scope; and **an absent statement is a named notice**, never silence, since silence
 reads as "no limits".

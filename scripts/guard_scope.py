@@ -54,8 +54,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -311,43 +314,114 @@ def run(name: str, entry, *, ok: int = OK) -> int:
     return clean(name, code, ok=ok)
 
 
-#: Every spelling that actually WRITES A LINE, as a closed named set rather than a loose regex - the
-#: same construction as `subprocess_check.SUBMODULES` and `guard_proof._REFERENCE_PREFIXES`.
-#: A bare `"guard_scope" in text` was satisfied by a docstring, a comment or an unused import, and it
-#: false-cleaned on `mutation_scope.py`, which mentioned this module and never called it. That is a
-#: guard whose extraction layer does not follow what it claims to check - issue #97's own class,
-#: reproduced inside its fix. `statement()` and `notice()` are deliberately absent: they only RETURN
-#: text, so a caller may hold one and print nothing, which is the same mention-is-not-an-emission
-#: defect one notch narrower. A guard that legitimately cannot emit is a declared exception in
-#: `guard_proof.EMISSION_EXCEPTIONS`, named in that check's own output - never a wider set here.
-#: A new call shape is a deliberate edit.
-CALL_SPELLINGS = (
-    "guard_scope.run(",
-    "guard_scope.clean(",
-    'guard_scope.py" emit',
-    "guard_scope.py' emit",
-    "guard_scope.py emit",
+#: This module's own name, as an importer spells it.
+MODULE = "guard_scope"
+
+#: The functions here that actually WRITE A LINE. `statement()` and `notice()` are deliberately
+#: absent: they only RETURN text, so a caller may hold one and print nothing, which is the same
+#: mention-is-not-an-emission defect one notch narrower. A guard that legitimately cannot emit is a
+#: declared exception in `guard_proof.EMISSION_EXCEPTIONS`, named in that check's own output - never
+#: a wider set here. A new emitting function is a deliberate edit.
+EMITTING_CALLS = frozenset({"run", "clean"})
+
+#: How a SHELL guard spells the invocation, in the three forms `scripts/` actually uses.
+SHELL_CALL_SPELLINGS = (
+    f'{MODULE}.py" emit',
+    f"{MODULE}.py' emit",
+    f"{MODULE}.py emit",
 )
 
 
-def emits(text: str) -> bool:
-    """Whether a guard's source actually reaches this module, however it spells the call.
+def _emitting_names(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """Local names that reach an emitting call: (module aliases, bare function names).
+
+    `import guard_scope as gs` puts `gs` in the first; `from guard_scope import run as go` puts `go`
+    in the second. Without this, renaming an import would silently defeat the check - the same
+    resolution `subprocess_check.spawner_aliases` performs for the same reason.
+    """
+    modules: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".", 1)[0] == MODULE:
+                    modules.add(alias.asname or MODULE)
+        elif isinstance(node, ast.ImportFrom) and (node.module or "") == MODULE:
+            for alias in node.names:
+                if alias.name in EMITTING_CALLS:
+                    functions.add(alias.asname or alias.name)
+    return modules, functions
+
+
+def _python_emits(text: str) -> bool:
+    """Whether a Python guard makes a real CALL to an emitting function, decided by parsing.
+
+    A substring test cannot answer this, and the proof is that it false-cleaned on THIS module: the
+    only lines matching the old spelling list were its own docstring and the tuple of spellings the
+    search was made of, so the file defining "a mention is not an emission" satisfied itself by
+    mentioning. Under `ast` a name inside a string, a docstring or a comment is not a `Call` node
+    and is invisible by construction.
+    """
+    tree = ast.parse(text)
+    modules, functions = _emitting_names(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        if isinstance(target, ast.Attribute) and target.attr in EMITTING_CALLS:
+            owner = target.value
+            if isinstance(owner, ast.Name) and owner.id in modules:
+                return True
+        elif isinstance(target, ast.Name) and target.id in functions:
+            return True
+    return False
+
+
+def _shell_emits(text: str) -> bool:
+    """Whether a shell guard invokes `guard_scope.py emit`. A TEXT match, because bash has no AST here.
+
+    What it can say is that a line which is ONLY a comment runs nothing - the same deny-list, and the
+    same reason, as `guard_proof._uncommented_tokens`. What it CANNOT decide is said rather than
+    implied: an invocation assembled at runtime, spelled through a variable holding the path, or
+    reached from a `.sh` this never opens, all read as no emission at all.
+    """
+    body = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    return any(spelling in body for spelling in SHELL_CALL_SPELLINGS)
+
+
+def emits(text: str, *, shell: bool = False) -> bool:
+    """Whether a guard's source actually CALLS this module, however it spells the call.
 
     Asked of the SOURCE because the alternative is running every guard to see whether it printed,
-    and a guard whose clean branch nothing exercised would then read as compliant. What it asks for
-    is a CALL: a mention is not an emission, and the reader who needs the statement gets nothing
-    from a module that merely names this file.
+    and a guard whose clean branch nothing exercised would then read as compliant. Python source
+    that will not parse raises: UNDECIDABLE is a state its caller must report, never one it may read
+    as emitting.
     """
-    return any(spelling in text for spelling in CALL_SPELLINGS)
+    if shell:
+        return _shell_emits(text)
+    try:
+        return _python_emits(text)
+    except SyntaxError as exc:
+        raise GuardScopeError(
+            f"the source could not be parsed ({exc}), so whether it emits is UNDECIDABLE. That is "
+            f"not the same as not emitting, and it is not a clean result either."
+        ) from exc
 
 
 # --- allowlists: growth as a signal ---------------------------------------------------------------
 
 
-def _git(root: Path, *args: str) -> str | None:
+def _git(root: Path, *args: str, env: dict[str, str] | None = None) -> str | None:
     try:
         proc = subprocess.run(
-            ["git", *args], cwd=str(root), capture_output=True, text=True, check=False
+            ["git", *args],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
         )
     except OSError:
         return None
@@ -372,6 +446,32 @@ def sizes(root: Path, inventory: Inventory) -> dict[str, int]:
     return found
 
 
+def _base_paths(root: Path, ref: str, entry: Allowlist) -> list[str] | None:
+    """The files this allowlist covers AS THEY WERE at `ref`, so `before` means what `now` means.
+
+    Enumerating today's paths and asking `git show` for each made `before` a count over the CURRENT
+    file list: a file renamed since the merge-base contributed 0 to `before` while its markers were
+    counted under the new name, so a pure rename reported `ALLOWLIST GREW +N` with nothing added,
+    and deleting a file with N markers read as "no growth" rather than a shrink. A false GREW line
+    is noise in precisely the signal this exists to buy attention for.
+
+    git does the matching, through a THROWAWAY index holding the base tree: `ls-files` accepts
+    pathspec magic where `ls-tree` does not, and `:(glob)` gives `**` the same "any number of
+    directories" meaning `Path.glob` does. So the two sides agree without a second matcher written
+    here to imitate the first, and the repository's own index is never touched.
+    """
+    spec = [f":(glob){entry.glob}"] if entry.glob else [f":(literal){entry.file}"]
+    spec += [f":(exclude,glob){pattern}" for pattern in entry.exclude]
+    with tempfile.TemporaryDirectory() as work:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(work) / "index")}
+        if _git(root, "read-tree", ref, env=env) is None:
+            return None
+        raw = _git(root, "ls-files", "-z", "--", *spec, env=env)
+    if raw is None:
+        return None
+    return [name for name in raw.split("\0") if name]
+
+
 def growth(
     root: Path, inventory: Inventory, base: str
 ) -> dict[str, tuple[int, int]] | None:
@@ -387,10 +487,12 @@ def growth(
     now = sizes(root, inventory)
     before: dict[str, int] = {}
     for entry in inventory.allowlists:
+        names = _base_paths(root, ref, entry)
+        if names is None:
+            return None
         total = 0
-        for path in entry.paths(root):
-            relative = path.relative_to(root).as_posix()
-            text = _git(root, "show", f"{ref}:{relative}")
+        for name in names:
+            text = _git(root, "show", f"{ref}:{name}")
             if text:
                 total += _count(text, entry.marker)
         before[entry.id] = total
@@ -482,4 +584,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Imported under its own name so the call is the same shape every other guard makes, and so the
+    # extraction layer sees it by construction rather than by this file being special-cased.
+    import guard_scope
+
+    # `emit` delivers ANOTHER guard's statement, and the guard emitting there is the caller that
+    # asked for it; adding this module's own line would put a second, wrong statement on every
+    # shell guard's clean branch.
+    if len(sys.argv) > 1 and sys.argv[1] == "emit":
+        raise SystemExit(guard_scope.main())
+    raise SystemExit(guard_scope.run(__file__, guard_scope.main))

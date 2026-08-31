@@ -539,7 +539,8 @@ and three of the four had the limitation written down - in a module docstring. *
 output, not source**, so the reader who needed it never saw it.
 
 Every guard with runtime output emits, on a clean result, one line naming what it proves and what
-that clean result does not establish. The statements live in `scripts/guard_scope.toml`, one per
+that clean result does not establish - except where a declared, single-guard exception says why it
+cannot, which `guard_proof.py scope` names in its own clean output so the exception is never silent. The statements live in `scripts/guard_scope.toml`, one per
 guard, because thirty-odd sentences maintained at thirty-odd clean branches drift, and a stale scope
 statement is worse than none - it is read as current. Two properties are fixed: **an emission may
 never move an exit code**, and **an absent statement is a named notice**, never silence, since

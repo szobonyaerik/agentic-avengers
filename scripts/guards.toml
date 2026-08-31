@@ -890,7 +890,7 @@ tests = ["tests/test_guard_scope.py"]
 [[guard.mutation]]
 file = "scripts/guard_proof.py"
 find = '''
-        if not guard_scope.emits(text):'''
+        if not emitting:'''
 replace = '''
         if False:'''
 

@@ -1367,7 +1367,14 @@ old behaviour:
 statement per guard - `proves`, and `limits`, what a clean result does not establish - and
 `scripts/guard_scope.py` emits it. Every declared guard with runtime output calls
 `guard_scope.run(__file__, main)` at its entry point, or `guard_scope.py emit <name>` on its clean
-branch; the statement is **one line** on **stderr**, on a **clean result only** (a failing guard
+branch, **except where a declared, single-guard exception says why it cannot** - today exactly one,
+`hook_autoapprove.sh`, whose clean result is a per-tool-call ALLOW emitted thousands of times in one
+run, so it rides the DENY reason instead. An exception is never silent: `guard_proof.py scope` names
+it and its reason beside its own clean line, so "N guards declare and emit" can never be read as
+"every guard emits". **Whether a guard emits is decided by PARSING, not by matching text** - a real
+`ast` call to `run`/`clean` for Python (following an aliased import), the invocation shape on
+uncommented lines for shell - because a substring test false-cleaned on `guard_scope.py` itself,
+which matched the very list of spellings the search was made of; the statement is **one line** on **stderr**, on a **clean result only** (a failing guard
 already tells the reader what it found; it is the clean one that gets over-read), so machine-readable
 stdout is untouched. Two properties are non-negotiable and both are tested: **an emission may never
 move an exit code** - a guard weakened by its own documentation is the one remedy this issue puts out

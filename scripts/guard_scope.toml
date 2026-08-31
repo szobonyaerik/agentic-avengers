@@ -276,7 +276,9 @@ limits = [
   "that a declared limit is COMPLETE or accurate - it holds a statement against a guard, never a statement against reality",
   "anything downstream: `guards.toml` is not vendored, so outside this repository the check does not run and says so rather than half-running",
   "anything about a guard that is neither declared in guards.toml nor invoked from an enforcement surface",
-  "that the emission is REACHED at runtime: the call is found in the source, so a call on a branch nothing executes, or spelled outside the closed CALL_SPELLINGS set, reads the same as none",
+  "that the emission is REACHED at runtime: the call is found in the SOURCE, so one on a branch nothing executes counts, and one assembled at runtime does not",
+  "that every guard emits: a declared exception is skipped here and named beside the clean result instead",
+  "anything a shell guard spells indirectly - that half is a text match over uncommented lines, so an invocation built from a variable is invisible to it",
 ]
 
 [guard."gate_ci.sh"]
