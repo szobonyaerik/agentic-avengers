@@ -1,9 +1,16 @@
 # cosmic-ray mutation config (replaces mutmut). One session per phase.
 #
 # This is the BASE config. The gate does not run it as-is: scripts/hook_mutation.sh (and gate_ci.sh
-# --full) copy it, append a [cosmic-ray.filters.git-filter] section naming the diff base, and run
-# `cr-filter-git` so mutants outside the phase's changed lines are skipped. Every mode is diff-scoped
-# now — a phase is judged on the code it changed, not on the whole package.
+# --full) copy it and then run scripts/mutation_scope.py, which skips mutants outside the lines this
+# change is responsible for. Every mode is diff-scoped — a phase is judged on the code it changed,
+# not on the whole package.
+#
+# It scopes over the WORKING TREE, not `git diff` against a branch. `cr-filter-git`, which this
+# replaced, scopes with `git diff --relative -U0 <branch> .`, and git diff reports nothing about an
+# UNTRACKED file — while the pipeline verifies uncommitted work. A phase whose contribution was new
+# files therefore had every mutant skipped and the scorer returned GO over zero measured lines
+# (issue #97). Nothing in scope is now `did-not-run`, recorded where a later reader looks, and never
+# a pass.
 #
 # Point module-path at the package under test and test-command at how to run the suite.
 # module-path accepts a string OR a list of paths/files.
@@ -22,6 +29,7 @@
 # Sanity check once:
 #   cosmic-ray baseline cosmic-ray.toml \
 #     && cosmic-ray init cosmic-ray.toml session.sqlite \
+#     && python3 scripts/mutation_scope.py session.sqlite \
 #     && cosmic-ray exec cosmic-ray.toml session.sqlite \
 #     && python3 scripts/mutation_score.py --json session.sqlite
 [cosmic-ray]

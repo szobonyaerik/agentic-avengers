@@ -277,6 +277,14 @@ limits = [
   "anything about a guard that is neither declared in guards.toml nor invoked from an enforcement surface",
 ]
 
+[guard."gate_ci.sh"]
+proves = "that every gate on this floor which could run, ran and passed - the artifact checks, the cross-family assertion, lint in both dimensions, the suite, and under --full the mutation gate."
+limits = [
+  "any step that was SKIPPED rather than run: the --full-only checks, a mutation gate with no config, and every step that said NOT CHECKED are not part of this pass",
+  "anything a model judges - no model runs here by design; the spec gate and the Verifier are in chat",
+  "that the suite is adequate: a green suite proves the tests pass, never that any of them would notice the defect its guard exists for",
+]
+
 [guard."hook_mutation.sh"]
 proves = "that the mutation gate ran over the phase's own changed lines, or that its absence was recorded as `did-not-run` where a later reader looks."
 limits = [

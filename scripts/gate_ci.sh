@@ -621,4 +621,7 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "✓ pipeline gates passed"
+# What that pass does NOT establish, beside the pass itself (issue #97). A later stage reads output,
+# not source, and "pipeline gates passed" is exactly the line that gets read as more than it is.
+python3 "$SCRIPT_DIR/guard_scope.py" emit gate_ci.sh >/dev/null || true
 exit 0

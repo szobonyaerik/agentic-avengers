@@ -621,7 +621,9 @@ tests = ["tests/test_gate_timeouts.py"]
 [[guard.mutation]]
 file = "scripts/gate_timeouts.py"
 find = '''
-    return max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S'''
+    return (
+        max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S
+    )'''
 replace = '''
     return call_timeout() if call_s is None else call_s'''
 
@@ -722,6 +724,10 @@ tests = ["tests/test_hook_implementer_lock.py"]
 file = "scripts/hook_implementer_lock.sh"
 find = '''
 if [ "$RC" -eq 0 ]; then
+  # The clean result is emitted with what it does NOT establish beside it: a later stage reads
+  # output, not source (issue #97). Only here - the early exits above are "not applicable", which
+  # is a different answer from "checked, and nothing was running".
+  python3 "$SD/guard_scope.py" emit hook_implementer_lock.sh >/dev/null || true
   exit 0
 fi'''
 replace = '''
@@ -756,6 +762,20 @@ find = '''
     if score.score < min_score:'''
 replace = '''
     if False:'''
+
+
+[[guard]]
+id = "gate-ci.cross-family-assertion"
+implements = "scripts/gate_ci.sh"
+defect = "The gate floor's own cross-family assertion. A spec gate judging on the implementers' own family is same-family verification wearing an independence claim, and the refusal is the only thing that says so - `glm-5.1` and `glm-5.2` once read as different families for exactly this reason."
+tests = ["tests/test_gate_ci_cross_family.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2'''
+replace = '''
+      return 0
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2'''
 
 
 # --- what a clean result does NOT establish (issue #97) --------------------------------------------
@@ -864,13 +884,13 @@ replace = '''
 
 [[guard]]
 id = "guard-scope.a-guard-that-never-emits-is-a-finding"
-implements = "scripts/guard_scope.py"
+implements = "scripts/guard_proof.py"
 defect = "A statement in the inventory that no guard emits is a limitation nobody is told about - the same invisible-in-source failure, one level up, wearing the costume of the fix."
 tests = ["tests/test_guard_scope.py"]
 [[guard.mutation]]
-file = "scripts/guard_scope.py"
+file = "scripts/guard_proof.py"
 find = '''
-        if "guard_scope" not in text:'''
+        if not guard_scope.emits(text):'''
 replace = '''
         if False:'''
 
