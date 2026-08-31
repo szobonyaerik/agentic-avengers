@@ -77,6 +77,14 @@ SPAWNERS: dict[str, frozenset[str]] = {
     "asyncio": frozenset({"create_subprocess_exec", "create_subprocess_shell"}),
 }
 
+# Submodules of a spawning module that an attribute chain may legitimately pass through, so
+# `asyncio.subprocess.create_subprocess_exec(...)` resolves to the same spawner as
+# `asyncio.create_subprocess_exec(...)`. A CLOSED map, not a wildcard: following any attribute
+# whatsoever would flag `subprocess.foo.run(...)`, which names nothing this owns. Issue #97's first
+# instance is exactly what a scan that stops at the first dot misses — the ccxt-containment guard
+# reported CLEAN over two live call sites for that reason, and this scan had the same shape.
+SUBMODULES: dict[str, frozenset[str]] = {"asyncio": frozenset({"subprocess"})}
+
 MARKER = "subprocess"
 
 # Where to look when no path is given. The env override exists because a project whose tests are at
@@ -109,29 +117,73 @@ def spawner_aliases(tree: ast.Module) -> tuple[dict[str, str], dict[str, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in SPAWNERS:
-                    modules[alias.asname or alias.name] = alias.name
+                # `import asyncio.subprocess` binds the name `asyncio`, not the dotted path, so the
+                # ROOT is what a later attribute chain starts from. Matching `alias.name` whole left
+                # that form unresolvable and every call through it unseen.
+                root = alias.name.split(".", 1)[0]
+                if root in SPAWNERS:
+                    modules[alias.asname or root] = root
         elif isinstance(node, ast.ImportFrom):
-            owned = SPAWNERS.get(node.module or "")
+            owner = node.module or ""
+            owned = SPAWNERS.get(owner)
             if owned:
                 for alias in node.names:
                     if alias.name in owned:
-                        functions[alias.asname or alias.name] = node.module or ""
+                        functions[alias.asname or alias.name] = owner
+                    elif alias.name in SUBMODULES.get(owner, frozenset()):
+                        # `from asyncio import subprocess as aio` binds a MODULE, not a function.
+                        modules[alias.asname or alias.name] = owner
     return modules, functions
 
 
-def spawner_name(call: ast.Call, modules: dict[str, str], functions: dict[str, str]) -> str | None:
-    """The `module.function` a call resolves to, or None when it is not a spawner."""
-    func = call.func
-    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-        module = modules.get(func.value.id)
-        if module and func.attr in SPAWNERS[module]:
-            return f"{func.value.id}.{func.attr}"
-    elif isinstance(func, ast.Name):
-        module = functions.get(func.id)
-        if module:
-            return f"{module}.{func.id}"
-    return None
+def dotted_name(func: ast.expr) -> list[str] | None:
+    """The dotted path a call target spells, root first, or None when it is not one.
+
+    `asyncio.subprocess.create_subprocess_exec` -> `["asyncio", "subprocess",
+    "create_subprocess_exec"]`. Anything whose root is not a plain name — a subscript, a call, a
+    literal — is not a dotted path and is not resolvable here.
+    """
+    parts: list[str] = []
+    node: ast.expr = func
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    parts.reverse()
+    return parts
+
+
+def spawner_name(
+    call: ast.Call, modules: dict[str, str], functions: dict[str, str]
+) -> str | None:
+    """The spawner a call resolves to, or None when it is not one.
+
+    It follows the WHOLE attribute chain, through the submodules `SUBMODULES` declares. The earlier
+    version read only `<name>.<attr>(` and stopped at the first dot, so every call reached through
+    one hop passed as clean — issue #97's first instance, whose remedy is at the extraction layer
+    rather than in a per-call-site exemption.
+
+    What it still cannot see is stated in this guard's runtime scope statement, not only here: a
+    spawner reached through an OBJECT (`self.runner.run(...)`) names nothing this module owns, and a
+    name assembled at runtime resolves to no path at all.
+    """
+    parts = dotted_name(call.func)
+    if parts is None:
+        return None
+    if len(parts) == 1:
+        module = functions.get(parts[0])
+        return f"{module}.{parts[0]}" if module else None
+    module = modules.get(parts[0])
+    if module is None:
+        return None
+    hops, attr = parts[1:-1], parts[-1]
+    if any(hop not in SUBMODULES.get(module, frozenset()) for hop in hops):
+        return None
+    if attr not in SPAWNERS[module]:
+        return None
+    return ".".join(parts)
 
 
 def justified(decorator: ast.expr) -> bool | None:
@@ -164,7 +216,9 @@ def pytestmark_marker(body: list[ast.stmt]) -> bool | None:
     for node in body:
         if not isinstance(node, ast.Assign):
             continue
-        if not any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
+        if not any(
+            isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
+        ):
             continue
         value = node.value
         marks = value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value]
@@ -238,7 +292,7 @@ def scan_source(source: str, path: Path) -> list[Violation]:
                                     "one sentence why a real process is required"
                                     if declared is False
                                     else f"{name}() spawns a process. Drive the behaviour in-process, "
-                                    f"or mark the test @pytest.mark.{MARKER}(\"<why a real process "
+                                    f'or mark the test @pytest.mark.{MARKER}("<why a real process '
                                     'is required>")'
                                 ),
                             )

@@ -758,6 +758,63 @@ replace = '''
     if False:'''
 
 
+# --- what a clean result does NOT establish (issue #97) --------------------------------------------
+
+[[guard]]
+id = "mutation-scope.new-files-are-in-scope"
+implements = "scripts/mutation_scope.py"
+defect = "The gate diff-scoped through `cr-filter-git`, whose whole mechanism is `git diff --relative -U0 <branch> .`. `git diff` reports nothing about an UNTRACKED file and this pipeline verifies uncommitted work, so a phase whose contribution was NEW FILES had every mutant skipped and the scorer returned GO over zero measured lines."
+tests = ["tests/test_mutation_scope.py"]
+[[guard.mutation]]
+file = "scripts/mutation_scope.py"
+find = '''
+        _untracked_lines(root),'''
+replace = '''
+        {},'''
+
+[[guard]]
+id = "mutation-scope.nothing-in-scope-is-not-a-pass"
+implements = "scripts/mutation_scope.py"
+defect = "A session where nothing survived filtering is the ABSENCE of a measurement. Reported as OK it is indistinguishable from a gate that ran and found nothing, which is how a phase with no mutation score at all read as clean."
+tests = ["tests/test_mutation_scope.py"]
+[[guard.mutation]]
+file = "scripts/mutation_scope.py"
+find = '''
+    if kept == 0:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "mutation-score.did-not-run-is-not-a-pass"
+implements = "scripts/mutation_score.py"
+defect = "An all-filtered session returned GO with the line `all N mutants fall outside the diff`. That is the reading half of the same defect: a scorer that reports a pass for a session it never measured is wrong whatever the filter did."
+tests = ["tests/test_mutation_score.py"]
+[[guard.mutation]]
+file = "scripts/mutation_score.py"
+find = '''
+        if score.skipped == score.total:
+            return (
+                DID_NOT_RUN,'''
+replace = '''
+        if score.skipped == score.total:
+            return (
+                GO,'''
+
+[[guard]]
+id = "subprocess-check.attribute-chain"
+implements = "scripts/subprocess_check.py"
+defect = "The AST walk read only `<name>.<attr>(` and stopped at the first dot, so `asyncio.subprocess.create_subprocess_exec(...)` - a real spawner one submodule hop away - passed as clean. Issue #97's first instance is the same shape in another repository's containment guard, which reported CLEAN over two live call sites."
+tests = ["tests/test_subprocess_check.py"]
+[[guard.mutation]]
+file = "scripts/subprocess_check.py"
+find = '''
+    hops, attr = parts[1:-1], parts[-1]'''
+replace = '''
+    if len(parts) > 2:
+        return None
+    hops, attr = parts[1:-1], parts[-1]'''
+
+
 # --- the harness itself -----------------------------------------------------------------------------------------------------------------------
 #
 # A harness that could not tell a red run from a green one would report every guard `proven` and be

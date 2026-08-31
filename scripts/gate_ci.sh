@@ -523,14 +523,13 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
   else
     WORK=$(mktemp -d); SESSION="$WORK/session.sqlite"; TMP="$WORK/report.txt"; SCOPED="$WORK/cosmic-ray.toml"
     cp "$COSMIC_CFG" "$SCOPED"
-    # Diff-scope to the branch's changes when a base is resolvable; otherwise mutate everything
-    # rather than silently scoping to nothing.
+    # Diff-scope over the WORKING TREE plus the branch, through scripts/mutation_scope.py. The
+    # `cr-filter-git` this replaces scopes with `git diff --relative -U0 <branch> .`, which reports
+    # nothing about an UNTRACKED file — so a change whose contribution was new files had every
+    # mutant skipped and the scorer returned GO over zero measured lines (issue #97). In CI nothing
+    # is uncommitted, which is what --base is for: it widens the same scope to the branch.
     CI_BASE="${MUTATION_BASE:-$(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)}"
-    if [ -n "$CI_BASE" ]; then
-      printf '\n[cosmic-ray.filters.git-filter]\nbranch = "%s"\n' "$CI_BASE" >>"$SCOPED"
-    else
-      echo "  (no diff base resolvable — mutating the full module-path)"
-    fi
+    [ -n "$CI_BASE" ] || echo "  (no diff base resolvable — scoping on the working tree alone)"
     # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
     # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
     # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
@@ -542,20 +541,37 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
       echo "  ✗ mutation baseline FAILED — suite is not green on unmutated code (fail closed):" >&2
       tail -5 "$TMP" >&2
       mutation_fail "mutation:baseline-failed"
-    elif cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1 \
-       && { [ -z "$CI_BASE" ] || cr-filter-git --config "$SCOPED" "$SESSION" >>"$TMP" 2>&1; } \
-       && cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
-      # Deterministic verdict: 0 = GO (no model call), 1 = below threshold, 2 = cannot score.
-      python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" "$SESSION"
-      msc=$?
-      if [ "$msc" -eq 1 ]; then
-        { echo "---- mutation score (deterministic gate verdict: NO-GO) ----"
-          python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" --json "$SESSION" 2>&1
-          echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>&1; } >>"$TMP"
-        cat "$TMP" >&2   # survivors; the Verifier interprets them in chat, no model here
-        mutation_fail "mutation"
-      elif [ "$msc" -ne 0 ]; then
-        mutation_fail "mutation:unscorable"
+    elif cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+      # Scope, then exec. Exit 3 from the scope filter is NOTHING IN SCOPE: reported as
+      # `did-not-run`, never as a pass, because the absence of a measurement is not a clean gate.
+      python3 "$SCRIPT_DIR/mutation_scope.py" ${CI_BASE:+--base "$CI_BASE"} --root "$ROOT" "$SESSION" >>"$TMP" 2>&1
+      mfc=$?
+      if [ "$mfc" -eq 3 ]; then
+        echo "  ⓘ mutation: nothing in scope — the gate did not run. This is NOT a score." >&2
+        tail -3 "$TMP" >&2
+        mutation_fail "mutation:did-not-run"
+      elif [ "$mfc" -ne 0 ]; then
+        echo "  ✗ mutation scope filter errored (fail closed):" >&2; tail -5 "$TMP" >&2
+        mutation_fail "mutation:filter-errored"
+      elif ! cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+        echo "  ✗ cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
+        mutation_fail "mutation:errored"
+      else
+        # Deterministic verdict: 0 = GO (no model call), 1 = below threshold, 2 = cannot score,
+        # 3 = nothing tested, which is the absence of a measurement rather than a score.
+        python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" "$SESSION"
+        msc=$?
+        if [ "$msc" -eq 1 ]; then
+          { echo "---- mutation score (deterministic gate verdict: NO-GO) ----"
+            python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" --json "$SESSION" 2>&1
+            echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>&1; } >>"$TMP"
+          cat "$TMP" >&2   # survivors; the Verifier interprets them in chat, no model here
+          mutation_fail "mutation"
+        elif [ "$msc" -eq 3 ]; then
+          mutation_fail "mutation:did-not-run"
+        elif [ "$msc" -ne 0 ]; then
+          mutation_fail "mutation:unscorable"
+        fi
       fi
     else
       echo "  ✗ cosmic-ray run errored (fail closed):" >&2; tail -5 "$TMP" >&2

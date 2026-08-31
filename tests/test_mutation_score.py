@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mutation_score import (  # noqa: E402
+    DID_NOT_RUN,
     FAIL_CLOSED,
     GO,
     NO_GO,
@@ -88,11 +89,23 @@ class TestFailsClosed:
         )
         assert code == FAIL_CLOSED
 
-    def test_everything_filtered_out_of_the_diff_is_a_pass(self):
-        """A phase that changed no mutable code has nothing to answer for."""
+    def test_everything_filtered_out_of_the_diff_is_not_a_pass(self):
+        """Issue #97's second instance, at the scorer.
+
+        This used to return GO with the line "all N mutants fall outside the diff". Combined with a
+        filter blind to untracked files (`scripts/mutation_scope.py`), that is exactly how a phase
+        whose contribution was NEW FILES got a clean mutation gate over zero measured lines. A
+        session where nothing was tested has no verdict to give, so it reports the ABSENCE of a
+        measurement and the caller records it as `did-not-run`.
+        """
         code, msg = verdict(make_score(total=5, skipped=5, tested=0), 0.85)
-        assert code == GO
-        assert "outside the diff" in msg
+        assert code == DID_NOT_RUN
+        assert code != GO
+        assert "did not run" in msg
+
+    def test_did_not_run_is_its_own_code_and_not_an_error(self):
+        """`2` already means "cannot score honestly"; the two have different remedies."""
+        assert DID_NOT_RUN not in (GO, NO_GO, FAIL_CLOSED)
 
     @pytest.mark.parametrize("bad", ["", "abc", "-0.1", "1.1", "nan"])
     def test_invalid_thresholds_are_rejected(self, bad):

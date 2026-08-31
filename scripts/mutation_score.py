@@ -18,9 +18,18 @@ This scorer counts only mutants that were actually built and tested, and fails c
 cannot reach a verdict stops; it does not pass.
 
 Exit codes:
-    0  GO      — score >= --min-score, or every mutant fell outside the diff.
-    1  NO-GO   — survivors pushed the score below --min-score. Caller reports and routes back.
-    2  ERROR   — cannot score (no mutants, unreadable session, bad threshold). Fail closed.
+    0  GO           — score >= --min-score over at least one tested mutant.
+    1  NO-GO        — survivors pushed the score below --min-score. Caller reports and routes back.
+    2  ERROR        — cannot score (unreadable session, bad threshold). Fail closed.
+    3  DID_NOT_RUN  — nothing was tested. NEVER a pass: the gate has no verdict, and the caller
+                      records the ABSENCE of a measurement rather than a score.
+
+`3` used to be `0`. A session whose every mutant was filtered returned GO with the line "all N
+mutants fall outside the diff", and `cr-filter-git` - the filter that produced that state - cannot
+see an untracked file at all, so a phase whose contribution was NEW FILES got a clean mutation gate
+over zero measured lines and nothing said so (issue #97). `scripts/mutation_scope.py` closed the
+filter; this closes the reading of the result, because the two failures are independent: a scorer
+that reports a pass for a session it never measured is wrong whatever the filter did.
 """
 
 from __future__ import annotations
@@ -41,6 +50,7 @@ except ImportError as exc:  # cosmic-ray absent -> the gate cannot run -> fail c
 GO = 0
 NO_GO = 1
 FAIL_CLOSED = 2
+DID_NOT_RUN = 3
 
 
 @dataclass(frozen=True)
@@ -122,6 +132,10 @@ def parse_min_score(raw: str) -> float:
 def verdict(score: Score, min_score: float) -> tuple[int, str]:
     """Map a score to (exit code, human-readable line). Fails closed on degenerate sessions."""
     if score.total == 0:
+        # Deliberately FAIL_CLOSED rather than DID_NOT_RUN: this branch already stops loudly, and a
+        # session with no work items at all means a broken `module-path`, whose remedy is config
+        # repair. `did-not-run` prescribes a different remedy - widen the scope - so the two are
+        # kept apart. Only the branch that used to return GO moved.
         return (
             FAIL_CLOSED,
             "no mutants were generated — check cosmic-ray module-path. Refusing to pass a "
@@ -130,9 +144,9 @@ def verdict(score: Score, min_score: float) -> tuple[int, str]:
     if score.tested == 0:
         if score.skipped == score.total:
             return (
-                GO,
-                f"all {score.total} mutants fall outside the diff (filtered) — nothing to "
-                "mutate in this phase.",
+                DID_NOT_RUN,
+                f"all {score.total} mutants were filtered out of scope, so the gate did not run "
+                f"over a single line. This is NOT a pass and NOT a score.",
             )
         return (
             FAIL_CLOSED,

@@ -59,19 +59,25 @@ def git_repo(root: Path) -> Path:
         ("config", "user.name", "pipeline"),
         ("commit", "-q", "--allow-empty", "-m", "root"),
     ):
-        subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", *args], cwd=str(root), check=True, capture_output=True, text=True
+        )
     return root
 
 
 @pytest.mark.subprocess("commits the fixture so a later edit is what the diff reports")
 def git_commit(root: Path) -> None:
     for args in (("add", "-A"), ("commit", "-q", "-m", "fixture")):
-        subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", *args], cwd=str(root), check=True, capture_output=True, text=True
+        )
 
 
 class TestDetection:
     def test_subprocess_run_is_flagged(self):
-        assert violations("import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n")
+        assert violations(
+            "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n"
+        )
 
     @pytest.mark.parametrize(
         "call", ["run", "Popen", "check_output", "check_call", "call"]
@@ -80,16 +86,24 @@ class TestDetection:
         source = f"import subprocess\n\ndef test_a():\n    subprocess.{call}(['ls'])\n"
         assert violations(source)
 
-    @pytest.mark.parametrize("call", ["create_subprocess_exec", "create_subprocess_shell"])
+    @pytest.mark.parametrize(
+        "call", ["create_subprocess_exec", "create_subprocess_shell"]
+    )
     def test_asyncio_spawners(self, call):
-        source = f"import asyncio\n\nasync def test_a():\n    await asyncio.{call}('ls')\n"
+        source = (
+            f"import asyncio\n\nasync def test_a():\n    await asyncio.{call}('ls')\n"
+        )
         assert violations(source)
 
     def test_module_alias_does_not_hide_the_call(self):
-        assert violations("import subprocess as sp\n\ndef test_a():\n    sp.run(['ls'])\n")
+        assert violations(
+            "import subprocess as sp\n\ndef test_a():\n    sp.run(['ls'])\n"
+        )
 
     def test_from_import_does_not_hide_the_call(self):
-        assert violations("from subprocess import run\n\ndef test_a():\n    run(['ls'])\n")
+        assert violations(
+            "from subprocess import run\n\ndef test_a():\n    run(['ls'])\n"
+        )
 
     def test_from_import_alias_does_not_hide_the_call(self):
         assert violations(
@@ -98,10 +112,58 @@ class TestDetection:
 
     def test_a_helper_outside_a_test_function_is_still_flagged(self):
         """The nested-pytest case lived in a module-level helper, not in the test body."""
-        assert violations("import subprocess\n\ndef _run():\n    subprocess.run(['ls'])\n")
+        assert violations(
+            "import subprocess\n\ndef _run():\n    subprocess.run(['ls'])\n"
+        )
 
     def test_unrelated_call_named_run_is_not_flagged(self):
         assert not violations("def test_a():\n    runner.run(['ls'])\n")
+
+    def test_an_attribute_chain_does_not_hide_the_call(self):
+        """Issue #97's first instance, in this pipeline's own AST scan.
+
+        The ccxt-containment guard reported CLEAN over two live call sites because its AST walk
+        read only `<name>.<attr>(` and stopped at the first dot. This scan had the same shape:
+        `asyncio.subprocess.create_subprocess_exec` is a real spawner reached through one submodule
+        hop, and `isinstance(func.value, ast.Name)` is False for it, so it passed as clean.
+        """
+        source = (
+            "import asyncio\n\n"
+            "async def test_a():\n"
+            "    await asyncio.subprocess.create_subprocess_exec('ls')\n"
+        )
+        assert violations(source)
+
+    def test_a_dotted_import_binds_its_root(self):
+        """`import asyncio.subprocess` binds the name `asyncio`, not `asyncio.subprocess`."""
+        source = (
+            "import asyncio.subprocess\n\n"
+            "async def test_a():\n"
+            "    await asyncio.subprocess.create_subprocess_shell('ls')\n"
+        )
+        assert violations(source)
+
+    def test_a_submodule_alias_does_not_hide_the_call(self):
+        source = (
+            "from asyncio import subprocess as aio\n\n"
+            "async def test_a():\n"
+            "    await aio.create_subprocess_exec('ls')\n"
+        )
+        assert violations(source)
+
+    def test_a_chain_through_something_that_is_not_a_submodule_is_not_flagged(self):
+        """The fix follows chains; it does not start guessing. `subprocess.foo.run` is not a spawner."""
+        source = "import subprocess\n\ndef test_a():\n    subprocess.foo.run(['ls'])\n"
+        assert not violations(source)
+
+    def test_an_object_attribute_chain_is_not_flagged(self):
+        """Named in the runtime scope statement: a spawner reached through an OBJECT is invisible."""
+        source = (
+            "import subprocess\n\n"
+            "def test_a():\n"
+            "    self.helper.subprocess.run(['ls'])\n"
+        )
+        assert not violations(source)
 
     def test_a_bare_name_that_was_never_imported_from_subprocess(self):
         assert not violations("def run(x):\n    pass\n\ndef test_a():\n    run(1)\n")
@@ -237,7 +299,9 @@ class TestMarker:
         )
         found = scan_source(source, Path("tests/test_x.py"))
         assert len(found) == 1
-        assert found[0].line == 10  # test_b, falling back to the unjustified class marker
+        assert (
+            found[0].line == 10
+        )  # test_b, falling back to the unjustified class marker
 
     def test_a_class_marker_overrides_an_unjustified_module_marker(self):
         source = (
@@ -273,7 +337,9 @@ class TestCli:
 
     def test_violation_exits_one_and_names_the_file(self, tmp_path, capsys):
         self.write(
-            tmp_path, "tests/test_a.py", "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n"
+            tmp_path,
+            "tests/test_a.py",
+            "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n",
         )
         assert main([str(tmp_path / "tests")]) == VIOLATIONS
         assert "test_a.py" in capsys.readouterr().err
@@ -312,10 +378,14 @@ class TestCli:
         monkeypatch.setenv("SUBPROC_CHECK_PATHS", "packages/api/tests")
         assert main([str(tmp_path / "tests")]) == CLEAN
 
-    def test_without_the_override_the_default_root_is_tests(self, tmp_path, monkeypatch):
+    def test_without_the_override_the_default_root_is_tests(
+        self, tmp_path, monkeypatch
+    ):
         git_repo(tmp_path)
         self.write(
-            tmp_path, "tests/test_a.py", "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n"
+            tmp_path,
+            "tests/test_a.py",
+            "import subprocess\n\ndef test_a():\n    subprocess.run(['ls'])\n",
         )
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("SUBPROC_CHECK_PATHS", raising=False)
@@ -353,7 +423,9 @@ class TestScope:
         path.write_text(source, encoding="utf-8")
         return path
 
-    def test_a_spawner_in_an_untouched_file_does_not_block(self, tmp_path, monkeypatch, capsys):
+    def test_a_spawner_in_an_untouched_file_does_not_block(
+        self, tmp_path, monkeypatch, capsys
+    ):
         """The measured defect: 17 spawners in locked phases refused every spec write."""
         git_repo(tmp_path)
         self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)
@@ -365,7 +437,7 @@ class TestScope:
     def test_a_spawner_in_a_touched_file_still_blocks(self, tmp_path, monkeypatch):
         """The reason the check exists. Scoping must not become "never enforce"."""
         git_repo(tmp_path)
-        self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)   # untracked = touched
+        self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)  # untracked = touched
         monkeypatch.chdir(tmp_path)
         assert main([]) == VIOLATIONS
 
@@ -376,7 +448,9 @@ class TestScope:
         monkeypatch.chdir(tmp_path)
         assert main(["--all"]) == VIOLATIONS
 
-    def test_an_unknowable_scope_enforces_nothing_and_says_so(self, tmp_path, monkeypatch, capsys):
+    def test_an_unknowable_scope_enforces_nothing_and_says_so(
+        self, tmp_path, monkeypatch, capsys
+    ):
         """Not a git repository: falling back to enforcing everything is the hostage failure."""
         self.write(tmp_path, "tests/test_a.py", SPAWNER)
         monkeypatch.chdir(tmp_path)
@@ -384,7 +458,9 @@ class TestScope:
         err = capsys.readouterr().err
         assert "unknowable" in err and "--all" in err
 
-    def test_an_unreadable_untouched_file_does_not_fail_the_gate(self, tmp_path, monkeypatch):
+    def test_an_unreadable_untouched_file_does_not_fail_the_gate(
+        self, tmp_path, monkeypatch
+    ):
         """A syntax error in a locked phase's test is fail-closed for whoever changes THAT file."""
         git_repo(tmp_path)
         self.write(tmp_path, "tests/locked/test_broken.py", "def test_a(:\n")
@@ -398,7 +474,9 @@ class TestScope:
         monkeypatch.chdir(tmp_path)
         assert main([]) == ERROR
 
-    def test_paths_named_on_the_command_line_are_enforced_whole(self, tmp_path, monkeypatch):
+    def test_paths_named_on_the_command_line_are_enforced_whole(
+        self, tmp_path, monkeypatch
+    ):
         """An explicit path is a caller asking for that path, not for the diff."""
         git_repo(tmp_path)
         self.write(tmp_path, "tests/locked/test_old.py", SPAWNER)

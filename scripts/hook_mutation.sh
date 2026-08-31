@@ -8,8 +8,9 @@
 #                                                  turns each one into the missing test case, then
 #                                                  we stop and route back to the implementer
 #   cannot score                                -> stop (fail closed)
-# Mutation is diff-scoped: cr-filter-git skips mutants outside the phase's diff vs MUTATION_BASE,
-# so a phase is judged on the code it actually changed, not the whole package.
+# Mutation is diff-scoped over the WORKING TREE (scripts/mutation_scope.py): mutants outside the
+# lines this change is responsible for - modified, staged AND untracked - are skipped, so a phase is
+# judged on the code it actually changed. Nothing in scope is `did-not-run`, never a pass.
 #
 # MUTATION_POLICY selects how much authority the verdict has (pipeline-conventions: "Gates"):
 #   off            - skipped entirely; no mutation tool runs anywhere.
@@ -176,13 +177,15 @@ stop_or_report() {
   exit 2
 }
 
-# Scoped config = the project's config plus a git-filter section naming the diff base.
+# Scoped config = the project's config, unchanged. The `[cosmic-ray.filters.git-filter]` section
+# this used to append is gone with the filter that read it: scoping is now
+# scripts/mutation_scope.py, over the working tree. The base is still resolved, because it WIDENS
+# the working-tree scope to the branch for a run with nothing uncommitted (CI).
 cp "$CFG" "$SCOPED"
 if BASE=$(resolve_base) && [ -n "$BASE" ]; then
-  printf '\n[cosmic-ray.filters.git-filter]\nbranch = "%s"\n' "$BASE" >>"$SCOPED"
   FILTER_BASE="$BASE"
 else
-  echo "mutation: no diff base resolvable — mutating the full module-path (unscoped)" >&2
+  echo "mutation: no diff base resolvable — scoping on the working tree alone" >&2
   FILTER_BASE=""
 fi
 
@@ -201,11 +204,25 @@ if ! run_child cosmic-ray init "$SCOPED" "$SESSION"; then
   echo "cosmic-ray init errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray init errored"
 fi
-# Diff-scope: mark every mutant outside the phase's diff as skipped. mutation_score.py excludes
-# skipped mutants from the denominator (cosmic-ray's own cr-rate would count them as kills).
-if [ -n "$FILTER_BASE" ] && ! run_child cr-filter-git --config "$SCOPED" "$SESSION"; then
-  echo "cr-filter-git errored (fail closed) — refusing to mutate unscoped:" >&2; tail -5 "$TMP" >&2
-  stop_or_report "mutation:filter-errored" "cr-filter-git errored, scope unknown"
+# Diff-scope over the WORKING TREE, not `git diff` against a branch. `cr-filter-git` scopes with
+# `git diff --relative -U0 <branch> .`, which reports nothing about an UNTRACKED file - and this
+# pipeline verifies uncommitted work, so a phase whose contribution was NEW FILES had every mutant
+# marked skipped and the scorer returned GO over zero measured lines (issue #97).
+# scripts/mutation_scope.py asks the same question `applicability.changed_paths` asks everywhere
+# else here - modified, staged, untracked - at line granularity. mutation_score.py excludes skipped
+# mutants from the denominator (cosmic-ray's own cr-rate would count them as kills).
+#
+# Exit 3 is NOTHING IN SCOPE. It is routed through `stop_or_report` rather than treated as a pass,
+# so advisory records `did-not-run` durably and enforce stops. That distinction IS the fix: the
+# absence of a measurement must never arrive looking like a clean gate.
+run_child python3 "$SD/mutation_scope.py" ${FILTER_BASE:+--base "$FILTER_BASE"} --root "$CLAUDE_PROJECT_DIR" "$SESSION"
+fc=$?
+if [ "$fc" -eq 3 ]; then
+  tail -5 "$TMP" >&2
+  stop_or_report "mutation:did-not-run" "no mutant fell inside this phase's changed lines - the gate did not run, and this is NOT a score"
+elif [ "$fc" -ne 0 ]; then
+  echo "the working-tree scope filter errored (fail closed) - refusing to mutate unscoped:" >&2; tail -5 "$TMP" >&2
+  stop_or_report "mutation:filter-errored" "the working-tree scope filter errored, scope unknown"
 fi
 if ! run_child cosmic-ray exec "$SCOPED" "$SESSION"; then
   echo "cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
@@ -225,6 +242,9 @@ python3 "$SD/pipeline_metrics.py" mutation-survivors "$FILE" "$WORK/score.json" 
 
 if [ "$sc" -eq 0 ]; then
   exit 0
+fi
+if [ "$sc" -eq 3 ]; then
+  stop_or_report "mutation:did-not-run" "nothing was tested - the gate did not run, and this is NOT a score"
 fi
 if [ "$sc" -ne 1 ]; then
   stop_or_report "mutation:unscorable" "session could not be scored honestly"

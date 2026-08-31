@@ -1,0 +1,252 @@
+"""Tests for the mutation gate's working-tree scope.
+
+## The defect
+
+Issue #97's second instance, and the sharpest one: the mutation gate diff-scoped through
+`cr-filter-git`, whose whole mechanism is `git diff --relative -U0 <branch> .`. `git diff` reports
+nothing about an UNTRACKED file, and the pipeline verifies uncommitted work — so a phase whose
+contribution is new files had every mutant marked skipped, `tested` came out zero, and the scorer
+returned GO. Nothing anywhere said the gate had not run.
+
+So the dangerous direction here is a scope that is too NARROW, and most of these pin "must still be
+in scope" cases — a brand-new file above all. The other direction is pinned too: a file the change
+never touched must stay out, or the gate mutates the whole package on every run.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import mutation_scope  # noqa: E402
+
+pytestmark = pytest.mark.subprocess(
+    "git is the authority for what the working tree changed; a stubbed git would only test the stub"
+)
+
+
+def git(root: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=str(root), check=True, capture_output=True, text=True
+    )
+    return proc.stdout
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for args in (
+        ("init", "-q", "-b", "main"),
+        ("config", "user.email", "pipeline@example.com"),
+        ("config", "user.name", "pipeline"),
+    ):
+        git(root, *args)
+    (root / "pkg").mkdir()
+    (root / "pkg" / "existing.py").write_text(
+        "def a():\n    return 1\n", encoding="utf-8"
+    )
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "root")
+    return root
+
+
+class TestChangedLines:
+    def test_a_brand_new_untracked_file_is_entirely_in_scope(self, repo):
+        """The instance itself. `git diff` says nothing about a file git has never seen."""
+        new = repo / "pkg" / "added.py"
+        new.write_text("def b():\n    return 2\n", encoding="utf-8")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert scope[new.resolve()] == {1, 2}
+
+    def test_the_query_the_old_filter_made_cannot_see_a_new_file(self, repo):
+        """Pins the MECHANISM, so the reason this module exists is measured rather than asserted.
+
+        `cr-filter-git` scopes with exactly `git diff --relative -U0 <branch> .`. Run against a
+        brand-new file that query is empty, so every mutant in it was marked skipped and the scorer
+        reported GO. This asserts both halves in one place: the old query is blind, this one is not.
+        """
+        new = repo / "pkg" / "added.py"
+        new.write_text("def b():\n    return 2\n", encoding="utf-8")
+
+        old_query = git(repo, "diff", "--relative", "-U0", "HEAD", ".")
+
+        assert "added.py" not in old_query
+        scope = mutation_scope.changed_lines(repo)
+        assert scope is not None and new.resolve() in scope
+
+    def test_a_new_file_that_is_staged_but_not_committed_is_in_scope(self, repo):
+        new = repo / "pkg" / "staged.py"
+        new.write_text("def c():\n    return 3\n", encoding="utf-8")
+        git(repo, "add", "pkg/staged.py")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert scope[new.resolve()] == {1, 2}
+
+    def test_an_uncommitted_edit_to_a_tracked_file_is_in_scope(self, repo):
+        target = repo / "pkg" / "existing.py"
+        target.write_text("def a():\n    return 99\n", encoding="utf-8")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert 2 in scope[target.resolve()]
+
+    def test_an_untouched_file_is_not_in_scope(self, repo):
+        (repo / "pkg" / "added.py").write_text(
+            "def b():\n    return 2\n", encoding="utf-8"
+        )
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert (repo / "pkg" / "existing.py").resolve() not in scope
+
+    def test_a_base_widens_the_scope_to_the_branch(self, repo):
+        """In CI nothing is uncommitted, so the working tree alone reports an empty change."""
+        git(repo, "checkout", "-q", "-b", "feature")
+        (repo / "pkg" / "committed.py").write_text(
+            "def d():\n    return 4\n", encoding="utf-8"
+        )
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "feature work")
+
+        assert mutation_scope.changed_lines(repo) == {}
+
+        scope = mutation_scope.changed_lines(repo, base="main")
+        assert scope is not None
+        assert (repo / "pkg" / "committed.py").resolve() in scope
+
+    def test_no_git_answer_is_none_and_never_an_empty_scope(self, tmp_path):
+        """None is 'unknowable'. Read as 'nothing changed' it would skip every mutant silently."""
+        assert mutation_scope.changed_lines(tmp_path) is None
+
+    def test_an_unresolvable_base_is_unknowable(self, repo):
+        assert mutation_scope.changed_lines(repo, base="no-such-ref") is None
+
+
+class TestSelection:
+    def test_a_mutant_on_a_changed_line_is_kept(self, repo):
+        target = (repo / "pkg" / "added.py").resolve()
+        scope = {target: {2, 3}}
+        assert mutation_scope.in_scope(target, 2, 2, scope)
+
+    def test_a_mutant_spanning_into_a_changed_line_is_kept(self, repo):
+        target = (repo / "pkg" / "added.py").resolve()
+        assert mutation_scope.in_scope(target, 1, 3, {target: {2}})
+
+    def test_a_mutant_outside_every_changed_line_is_dropped(self, repo):
+        target = (repo / "pkg" / "added.py").resolve()
+        assert not mutation_scope.in_scope(target, 7, 8, {target: {2, 3}})
+
+    def test_a_mutant_in_an_untouched_file_is_dropped(self, repo):
+        target = (repo / "pkg" / "added.py").resolve()
+        other = (repo / "pkg" / "existing.py").resolve()
+        assert not mutation_scope.in_scope(other, 1, 1, {target: {1}})
+
+
+class TestVerdict:
+    def test_nothing_in_scope_is_not_a_pass(self):
+        """The whole instance in one assertion: an empty scope must never read as a clean gate."""
+        code, message = mutation_scope.verdict(kept=0, skipped=12, total=12)
+        assert code == mutation_scope.NOTHING_IN_SCOPE
+        assert code != mutation_scope.OK
+        assert "did not run" in message
+
+    def test_an_empty_session_is_not_a_pass(self):
+        code, _ = mutation_scope.verdict(kept=0, skipped=0, total=0)
+        assert code == mutation_scope.NOTHING_IN_SCOPE
+
+    def test_at_least_one_mutant_in_scope_is_ok(self):
+        code, message = mutation_scope.verdict(kept=3, skipped=9, total=12)
+        assert code == mutation_scope.OK
+        assert "3" in message
+
+
+class TestFilterSession:
+    """Against a REAL cosmic-ray session, because the filter's whole job is what the DB holds."""
+
+    def session_with(self, path: Path, items: list[tuple[str, Path, int]]):
+        from cosmic_ray.work_db import WorkDB, use_db
+        from cosmic_ray.work_item import MutationSpec, WorkItem
+
+        with use_db(str(path), WorkDB.Mode.create) as db:
+            for job_id, module_path, line in items:
+                db.add_work_item(
+                    WorkItem.single(
+                        job_id,
+                        MutationSpec(
+                            module_path=module_path,
+                            operator_name="core/NumberReplacer",
+                            occurrence=0,
+                            start_pos=(line, 4),
+                            end_pos=(line, 8),
+                        ),
+                    )
+                )
+
+    def test_a_mutant_in_a_brand_new_file_survives_the_filter(self, repo, tmp_path):
+        """The instance, end to end: the old filter skipped this one and the gate reported GO."""
+        new = repo / "pkg" / "added.py"
+        new.write_text("def b():\n    return 2\n", encoding="utf-8")
+        session = tmp_path / "s.sqlite"
+        self.session_with(session, [("new", new.resolve(), 2)])
+
+        code = mutation_scope.main([str(session), "--root", str(repo)])
+
+        assert code == mutation_scope.OK
+
+    def test_a_mutant_in_an_untouched_file_is_marked_skipped(self, repo, tmp_path):
+        from cosmic_ray.work_db import WorkDB, use_db
+        from cosmic_ray.work_item import WorkerOutcome
+
+        new = repo / "pkg" / "added.py"
+        new.write_text("def b():\n    return 2\n", encoding="utf-8")
+        session = tmp_path / "s.sqlite"
+        self.session_with(
+            session,
+            [
+                ("keep", new.resolve(), 2),
+                ("drop", (repo / "pkg" / "existing.py").resolve(), 2),
+            ],
+        )
+
+        assert (
+            mutation_scope.main([str(session), "--root", str(repo)])
+            == mutation_scope.OK
+        )
+
+        with use_db(str(session), WorkDB.Mode.open) as db:
+            outcomes = {job: result.worker_outcome for job, result in db.results}
+        assert outcomes == {"drop": WorkerOutcome.SKIPPED}
+
+    def test_a_session_with_nothing_in_scope_exits_loudly(self, repo, tmp_path, capsys):
+        """The acceptance criterion: it can no longer report a null score in silence."""
+        session = tmp_path / "s.sqlite"
+        self.session_with(
+            session, [("drop", (repo / "pkg" / "existing.py").resolve(), 2)]
+        )
+
+        code = mutation_scope.main([str(session), "--root", str(repo)])
+
+        assert code == mutation_scope.NOTHING_IN_SCOPE
+        assert "did not run" in capsys.readouterr().err
+
+    def test_an_unknowable_scope_is_an_error_and_never_an_empty_one(
+        self, tmp_path, capsys
+    ):
+        session = tmp_path / "s.sqlite"
+        self.session_with(session, [("x", tmp_path / "a.py", 1)])
+
+        code = mutation_scope.main([str(session), "--root", str(tmp_path)])
+
+        assert code == mutation_scope.ERROR
+        assert "UNKNOWABLE" in capsys.readouterr().err
