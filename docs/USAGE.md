@@ -90,7 +90,105 @@ pre-commit install
 # 4) point cosmic-ray at the package under test, and generate the codemap
 $EDITOR cosmic-ray.toml                       # module-path = "<your package dir>", test-command = "pytest -x -q"
 python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebase/MOC.md
+
+# 4a) ignore what step 5 is about to write, BEFORE it can write it. Two rules, and this route
+#     reaches neither of the other lists that carry them: install.sh vendors no .gitignore and
+#     .opencode/ ships no pipeline-init command, so this block is the only one a section-C
+#     operator runs. `.env` is the primary rule — step 5 CREATES it, holding a live
+#     OPENROUTER_API_KEY, every single time. `.env-assemble.*.tmp` is the derived one: the write
+#     is atomic (temp file beside the destination, then rename), so a crash cannot truncate a live
+#     .env, but SIGKILL and power loss cannot be caught, and the leftover matches no `.env`
+#     pattern. Without either rule `git add -A` commits real credentials. Both go through ONE
+#     append form that terminates .gitignore first: a bare `>>` onto a file whose last line has no
+#     newline FUSES the two patterns into one, destroying both — the same byte-joining defect the
+#     `cat` this whole section replaces was retired for.
+for pattern in '.env' '.env-assemble.*.tmp'; do
+  grep -qxF "$pattern" .gitignore 2>/dev/null && continue
+  if [ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ]; then printf '\n' >> .gitignore; fi
+  printf '%s\n' "$pattern" >> .gitignore
+done
+
+# 5) assemble .env. `pipeline_init.py survey` prints the exact command for THIS repository —
+#    which example files exist decides both the template's target and the source list, so run
+#    what it printed rather than a path copied from here. The commands below are this repo's
+#    shape: it owns .env.example, so the pipeline's template lands beside it.
+python3 "$AV/scripts/pipeline_init.py" survey            # <- the authority for the two paths below
+cp -n "$AV/docs/templates/env.example" .env.pipeline.example   # -n: an earlier init's copy is kept
+
+#    (a) no .env yet — build it from the two examples. An example still byte-identical to the
+#        shipped template is named first and only fills in what nothing else declares; an edited
+#        one is operator-owned and goes after it. Run what survey printed — it knows which is which.
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env.example
+
+#    (b) this worktree ALREADY has a live .env (grid-bot-platform has one on every worktree) —
+#        merge in place by naming it as its OWN LAST SOURCE. (a) refuses here, by design.
+#        Note what (b) does NOT name: .env.example. A merge imports the pipeline's template and
+#        your own file, and nothing else.
+python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env --force
 ```
+
+Form **(b)** is not the destructive `--force` it looks like: `assemble` reads every source before it
+writes anything, so the live `.env` is read first and the read-back then proves every credential it
+declared survived into the result. **The order is the point** — the last source to declare a key
+wins, so the live file goes LAST and every value you already chose beats the template's default for
+that key, while every pipeline key you do not have yet is still added. Name it first instead and the
+template's `OPENROUTER_API_KEY=sk-or-v1-REPLACE_ME` and its default `GATE_MODEL`, `GATE_PROVIDER`,
+`AUTHOR_FAMILY` and `MUTATION_POLICY` overwrite yours.
+
+**The more operator-owned file goes later, and CONTENT is what decides which that is** — that is the
+principle both forms obey. An example still byte-identical to `docs/templates/env.example` carries
+nobody's decision: it is named first and supplies only what nothing else declares. One that has been
+edited is operator-owned and goes after it. Content and not presence, because the `cp -n` above is
+what changes presence — a presence rule printed one order before that copy and the reverse after it,
+so the survey gave one repository two answers. Content is stable across the copy. It decides only
+which source wins a key; never-overwrite is untouched and never asks who wrote a file.
+
+Both halves are load-bearing. Named last, form (a) did the opposite: if an earlier init wrote your `.env.example` and
+your team then filled it in and committed it, the target is `.env.pipeline.example`, `cp -n` writes
+the SHIPPED template there unmodified, and it would revert your committed `GATE_MODEL`,
+`GATE_PROVIDER` and `MUTATION_POLICY` to its defaults. Named first unconditionally it failed the
+mirror case: an already filled-in `.env.pipeline.example` lost every key it shares with
+`.env.example`, and since both derive from the same template that is all of them. Either way the
+values parse, survive the read-back and carry no `REPLACE_ME`, so nothing reports them.
+
+**Form (b) names the pipeline's example and your live file, and no other example** — while form
+(a), which is CREATING the file, names every example that exists, because one left out there is one
+whose values revert to another file's. That asymmetry is in the SOURCE SET, not the principle, and
+it is deliberate.
+
+The one example (b) names is **the file carrying YOUR pipeline configuration**: an edited
+`.env.pipeline.example` when you have one, otherwise whichever file holds the shipped template (a
+greenfield init writes it to `.env.example`, and there that file is the pipeline's own), otherwise
+the target the survey named. Form (a) asks a different question of the same disk — which file HOLDS the
+template, since there it supplies only what nothing else declares. Answering both with that first
+question dropped your decisions: a pristine `.env.example` beside the `.env.pipeline.example` you
+filled in made the merge name the pristine one, and your live `.env` came back with the shipped
+`GATE_MODEL` and `MUTATION_POLICY`, parsing cleanly and carrying no `REPLACE_ME` to catch it.
+
+Last-wins protects every key
+your live `.env` already declares; it does nothing for a key your `.env` OMITS, and that key would
+arrive carrying the project example's value — and an example's values are dummies and defaults by
+construction (`your_api_key_here`, a `DRY_RUN=false` default). A committed `.env.example` that has
+drifted ahead of your worktree's `.env` would write those into it where the app had been falling
+back to its own in-code default, with nothing reporting it: syntactically valid, the read-back
+passes because the example declared it and it survived, and a dummy carries no `REPLACE_ME` for the
+run-time refusal to catch. A live `.env` is already your chosen configuration; the project's example
+says what the app's config should CONTAIN. Re-merging appends the template's text again
+rather than replacing it, which parses correctly because the last declaration still wins. Assembling
+anywhere else configures nothing: every gate reads `.env` and no other path.
+
+**Never `cat` those two files together.** A source with no trailing newline fuses its last key onto
+the first line of the next, and the parser reads the merged line as a different value — on this very
+repository that turned `DRY_RUN=true` into `DRY_RUN=false` on every worktree, silently, for the life
+of a task (issue #108). `env_assemble.py` joins with an explicit separator and reads every declared
+key back out of the result; a key that did not survive stops the step and nothing is written. Fill in
+every `REPLACE_ME` before the first gate call — a run is refused while one is left, naming the key.
+The refusal is scoped to what your run actually reads: every key your own `.env` declares, plus the
+pipeline's own variables (`GATE_*`, `OPENROUTER_*`, `AUTHOR_FAMILY`, `MUTATION_*`, `SPEC_*`) from the
+environment, so an unrelated tool's scaffold variable can never wedge a gate. `OPENROUTER_API_KEY`
+counts under **both** providers — opencode inherits it from the environment, which is one of the two
+documented ways to authenticate it. Ask on demand with
+`python3 "$AV/scripts/env_assemble.py" check`.
 
 Re-running `install.sh <target> --check` later classifies each file NEW / UPDATE / SAME / **DRIFT**
 (your local edits — skipped, never clobbered) / **GONE**. `--prune` removes upstream-deleted files you

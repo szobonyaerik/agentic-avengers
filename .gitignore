@@ -25,6 +25,13 @@ __pycache__/
 .avenger-auto
 .env
 
+# scripts/env_assemble.py writes the assembled config to a temp file beside the destination and
+# renames it over, so a crash cannot truncate a live .env. That temp file holds the fully merged
+# result — on the merge-in-place path, live credentials — and an interruption git cannot be asked
+# about (SIGKILL, power loss) leaves it behind. The name is fixed rather than derived from --out
+# precisely so one pattern can cover it (env_assemble.TEMP_GITIGNORE_PATTERN).
+.env-assemble.*.tmp
+
 # lavish scratch: HTML review surfaces for the plan stop and the retrospective triage
 .lavish/
 
