@@ -42,4 +42,8 @@ jobs:
           # Scope mutants to this PR's diff; on a push to main there is no PR base, so gate_ci.sh
           # falls back to the merge-base with the default branch.
           MUTATION_BASE: ${{ github.event.pull_request.base.sha }}
+          # Allowlist growth, from the same source as the mutation base. Without it gate_ci.sh
+          # prints absolute sizes and never a delta, so the signal that exists to make a quietening
+          # visible never fires. A report, never a gate.
+          GUARD_SCOPE_BASE: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/gate_ci.sh --full

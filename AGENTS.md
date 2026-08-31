@@ -327,7 +327,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `gate_runner.py` announces model, family and transport for every reached verdict, and the spec
    gate stamps them onto the spec as `<gate>_gated_by` beside the hash and the verdict; no
    attribution is recorded as `unrecorded`, a named state rather than an absent key.
-8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via `cr-filter-git`.
+8. **Mutation score, not coverage.** cosmic-ray, once per phase, **diff-scoped** via
+   `scripts/mutation_scope.py`, over the working tree the pipeline verifies (modified, staged and
+   untracked); nothing in scope is `did-not-run` and never a pass.
    The verdict is **deterministic** (`scripts/mutation_score.py`, not a model): score `>=
    MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors are named as
    missing cases and the phase routes back to the implementer. Not 100% on purpose. Baseline-guarded:

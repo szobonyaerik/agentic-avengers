@@ -912,8 +912,9 @@ test is whether an author could have phrased the value differently — a templat
 and keywords substituted is not prose and stays inline. Canonical statement in
 `skills/pipeline-conventions`.
 
-**Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
-phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
+**Mutation = cosmic-ray**, once per phase, **diff-scoped** (`scripts/mutation_scope.py` skips mutants
+outside the WORKING TREE's changed lines - modified, staged and untracked - and nothing in scope is
+`did-not-run`, never a pass; §11). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
 score `>= MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors go to the
 gate model to be named as missing cases, and the phase routes back to the implementer. The threshold is
 **not 100%** on purpose — chasing zero survivors is what multiplies narrow tests. Runs
@@ -938,7 +939,7 @@ anywhere). It was off; it is on because it is deterministic, diff-scoped, needs 
 threshold, and every non-discriminating test this project has caught was caught by it. Advisory never
 blocks, so the cost of that default being wrong is a line of output. It is still an *extra* signal,
 **not** a replacement for a dedicated reader — there is none, and that gap is stated in §4 rather than implied. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
-`cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
+`scripts/mutation_scope.py`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
 
 **The lint gate has TWO dimensions, and it used to have one.** It ran `ruff check .`, which judges
 rules and says nothing about formatting, so drift passed it untouched — two consecutive measured

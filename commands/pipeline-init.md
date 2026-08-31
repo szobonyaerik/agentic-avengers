@@ -177,8 +177,8 @@ write no production code.
    `python "${CLAUDE_PLUGIN_ROOT}/scripts/codemap.py" . --lang <python|java|c> --output codebase`
    → `codebase/MOC.md` (the Solution Architect and implementers read it).
 
-6. **Prereq check.** Report the status of `python3`, `pytest`, `cosmic-ray` (incl. `cr-filter-git` on
-   PATH — the mutation gate diff-scopes with it), `jq`, `tree-sitter` (for codemap), a
+6. **Prereq check.** Report the status of `python3`, `pytest`, `cosmic-ray` (the mutation gate
+   diff-scopes with `scripts/mutation_scope.py`, which needs no extra binary), `jq`, `tree-sitter` (for codemap), a
    cross-family provider (`OPENROUTER_API_KEY` set, or `opencode` on PATH), and
    **`lavish-axi`** (the plan-approval stop `/avenger-run` §3 and the retrospective triage §4b;
    interactive runs only). List anything missing with its fix (`pip install cosmic-ray tree-sitter

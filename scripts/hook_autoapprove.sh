@@ -92,8 +92,9 @@ def scope_statement() -> str:
         sys.path.insert(0, str(Path(SCRIPT_DIR)))
         import guard_scope
 
-        found = guard_scope.statement("hook_autoapprove.sh")
-        return f" {found.render()}" if found else ""
+        found, why = guard_scope.resolve("hook_autoapprove.sh")
+        rendered = found.render() if found else guard_scope.notice("hook_autoapprove.sh", why)
+        return f" {rendered}"
     except Exception:
         return ""
 

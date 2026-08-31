@@ -517,6 +517,38 @@ mutation_fail() {
   record_fail "$1"
 }
 
+# Whether a comparison base can EXIST at all, decided explicitly and named rather than inferred
+# from an empty string. On a push to the default branch there is no PR base sha AND the merge-base
+# with the default branch is HEAD itself, so `unknowable` is not the same shape as "resolved to
+# nothing" — it is `scripts/applicability.py`'s word for a scope git cannot state, used here for
+# the same reason.
+mutation_base_state() {
+  mbs_head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$1" ] || { [ -n "$mbs_head" ] && [ "$1" = "$mbs_head" ]; }; then
+    echo "unknowable"
+  else
+    echo "known"
+  fi
+}
+
+# Route the scope filter's NOTHING IN SCOPE exit. `did-not-run` is REPORTED in both states — that
+# honesty is the whole of issue #97 and is not softened here — and the only question is whether it
+# BLOCKS. With no base to compare against, in a CI checkout where nothing is uncommitted either, an
+# empty scope has no remedy an author could apply, and CLAUDE.md §3a says a rule whose remedy is
+# unavailable is a wedge rather than a gate. With a base, an empty scope is an ordinary result an
+# author can act on, so it still blocks under enforce.
+mutation_nothing_in_scope() {
+  if [ "$1" = "unknowable" ]; then
+    echo "  ⓘ mutation: NO COMPARISON BASE EXISTS — the gate did not run. This is NOT a score," >&2
+    echo "    and NOT a failure: with nothing to compare against there is no remedy to apply, so" >&2
+    echo "    it is counted and named rather than blocking (CLAUDE.md §3a)." >&2
+    return 0
+  fi
+  echo "  ⓘ mutation: a base EXISTS and nothing in it is in scope — the gate did not run." >&2
+  echo "    This is NOT a score. A remedy exists, so it still blocks under enforce." >&2
+  mutation_fail "mutation:did-not-run"
+}
+
 if [ "$FULL" -eq 1 ] && [ "$MUTATION_POLICY" = "off" ]; then
   echo "• mutation: skipped (MUTATION_POLICY=off)"
 fi
@@ -545,6 +577,7 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
     # is uncommitted, which is what --base is for: it widens the same scope to the branch.
     CI_BASE="${MUTATION_BASE:-$(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)}"
     [ -n "$CI_BASE" ] || echo "  (no diff base resolvable — scoping on the working tree alone)"
+    MUTATION_BASE_STATE="$(mutation_base_state "$CI_BASE")"
     # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
     # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
     # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
@@ -562,9 +595,8 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
       python3 "$SCRIPT_DIR/mutation_scope.py" ${CI_BASE:+--base "$CI_BASE"} --root "$ROOT" "$SESSION" >>"$TMP" 2>&1
       mfc=$?
       if [ "$mfc" -eq 3 ]; then
-        echo "  ⓘ mutation: nothing in scope — the gate did not run. This is NOT a score." >&2
         tail -3 "$TMP" >&2
-        mutation_fail "mutation:did-not-run"
+        mutation_nothing_in_scope "$MUTATION_BASE_STATE"
       elif [ "$mfc" -ne 0 ]; then
         echo "  ✗ mutation scope filter errored (fail closed):" >&2; tail -5 "$TMP" >&2
         mutation_fail "mutation:filter-errored"

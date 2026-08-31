@@ -320,7 +320,7 @@ def run(name: str, entry, *, ok: int = OK) -> int:
 CALL_SPELLINGS = (
     "guard_scope.run(",
     "guard_scope.clean(",
-    "guard_scope.statement(",
+    "guard_scope.notice(",
     'guard_scope.py" emit',
     "guard_scope.py' emit",
     "guard_scope.py emit",

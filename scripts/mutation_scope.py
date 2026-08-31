@@ -64,8 +64,8 @@ NOTHING_IN_SCOPE = 3
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
-def _git(root: Path, *args: str) -> list[str] | None:
-    """git's answer as lines, or None when it has none. None is UNKNOWABLE, never 'nothing'."""
+def _git_text(root: Path, *args: str) -> str | None:
+    """git's answer verbatim, or None when it has none. None is UNKNOWABLE, never 'nothing'."""
     try:
         proc = subprocess.run(
             ["git", *args], cwd=str(root), capture_output=True, text=True, check=False
@@ -74,37 +74,68 @@ def _git(root: Path, *args: str) -> list[str] | None:
         return None
     if proc.returncode != 0:
         return None
-    return proc.stdout.splitlines()
+    return proc.stdout
+
+
+def _git(root: Path, *args: str) -> list[str] | None:
+    """git's answer as lines, or None when it has none. None is UNKNOWABLE, never 'nothing'."""
+    raw = _git_text(root, *args)
+    return None if raw is None else raw.splitlines()
+
+
+def _changed_files(root: Path, ref: str) -> list[str] | None:
+    """The paths `ref` differs from, asked for as data rather than recovered from diff text.
+
+    `-z` rather than a newline list, so `core.quotePath` and a path holding a newline or a quote
+    cannot turn one file into two names or into a name that joins to nothing.
+    """
+    raw = _git_text(root, "diff", "--name-only", "-z", "--no-relative", ref, "--")
+    if raw is None:
+        return None
+    return [name for name in raw.split("\0") if name]
+
+
+def _file_lines(root: Path, ref: str, name: str) -> set[int] | None:
+    """New-side line numbers for ONE file. The path is known from the request, never parsed back."""
+    output = _git(root, "diff", "--no-relative", "-U0", ref, "--", name)
+    if output is None:
+        return None
+    lines: set[int] = set()
+    for line in output:
+        match = HUNK.match(line)
+        if not match:
+            continue
+        start = int(match.group(1))
+        length = int(match.group(2)) if match.group(2) is not None else 1
+        lines.update(range(start, start + length))
+    return lines
 
 
 def _diff_lines(root: Path, ref: str) -> dict[Path, set[int]] | None:
     """New-side line numbers per file for `git diff -U0 <ref>`, over the working tree.
 
-    `--no-prefix` is not cosmetic. `git diff` is porcelain and honours `diff.noprefix` and
-    `diff.mnemonicPrefix`, so a header this parser recognised was a property of the operator's own
-    git config: under `diff.mnemonicPrefix=true` every tracked file arrives as `+++ w/<path>`, no
-    header matches, and every hunk is dropped. With one untracked file keeping the scope non-empty
-    that failed SILENTLY NARROW - an OK verdict over a fraction of the change, from the module
-    written to stop exactly that. Pinning the prefix on the invocation makes the parser and the
-    output agree by construction rather than by luck.
+    Asked ONE FILE AT A TIME, and that is the whole construction. A combined diff has to be
+    attributed back to a file by reading its `+++ ` headers, and under `-U0` no line can be
+    classified by its own prefix: an ADDED CONTENT line beginning `++ ` renders as `+++ <rest>`,
+    which is indistinguishable from a header, repoints the parser at a path that does not exist and
+    drops every later hunk of the real file. With any other file keeping the scope non-empty that
+    failed SILENTLY NARROW - an OK verdict over a fraction of the change, from the module written to
+    stop exactly that. The header prefix is also configurable (`diff.noprefix`,
+    `diff.mnemonicPrefix`), so what the parser recognised was a property of the operator's own git
+    config. Asking git which files changed first removes both: the path comes from the request, so
+    a hunk cannot be attributed to the wrong file at all, and a deleted file simply reports no
+    new-side lines rather than needing `+++ /dev/null` to be spotted.
     """
-    output = _git(root, "diff", "--no-prefix", "--no-relative", "-U0", ref, "--")
-    if output is None:
+    names = _changed_files(root, ref)
+    if names is None:
         return None
     found: dict[Path, set[int]] = {}
-    current: Path | None = None
-    for line in output:
-        if line.startswith("+++ "):
-            target = line[4:]
-            # /dev/null: the file was deleted, so it holds nothing to mutate.
-            current = None if target == "/dev/null" else (root / target).resolve()
-            continue
-        match = HUNK.match(line)
-        if not match or current is None:
-            continue
-        start = int(match.group(1))
-        length = int(match.group(2)) if match.group(2) is not None else 1
-        found.setdefault(current, set()).update(range(start, start + length))
+    for name in names:
+        lines = _file_lines(root, ref, name)
+        if lines is None:
+            return None
+        if lines:
+            found[(root / name).resolve()] = lines
     return found
 
 

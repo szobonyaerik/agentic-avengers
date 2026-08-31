@@ -439,6 +439,30 @@ class TestAllowlists:
         assert "test_subprocess_check.py" not in counted
         assert "test_phase_artifacts.py" in counted
 
+    def test_ci_supplies_a_comparison_base_so_the_delta_is_actually_computed(self):
+        """A signal that never fires is the same defect class as a guard that never runs.
+
+        `gate_ci.sh` calls `allowlists` with `${GUARD_SCOPE_BASE:+--base ...}`, so with nothing
+        supplying that variable every CI run printed absolute sizes and no growth. The workflow is
+        the machine-consumed artifact that supplies it; this parses it and asserts the meaning.
+        """
+        yaml = pytest.importorskip("yaml")
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "pipeline-gates.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        step = next(
+            step
+            for job in workflow["jobs"].values()
+            for step in job["steps"]
+            if "gate_ci.sh" in str(step.get("run", ""))
+        )
+
+        assert step["env"]["GUARD_SCOPE_BASE"] == step["env"]["MUTATION_BASE"], (
+            "the growth base follows the mutation base, from the same source"
+        )
+
     def test_it_never_gates(self):
         """Growth is a REPORT. A blocking check would be answered with a bypass, not attention."""
         assert guard_scope.main(["allowlists", "--root", str(ROOT)]) == guard_scope.OK

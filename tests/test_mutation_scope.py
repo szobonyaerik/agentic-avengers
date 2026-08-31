@@ -118,6 +118,33 @@ class TestChangedLines:
         assert scope is not None
         assert 2 in scope[target.resolve()]
 
+    def test_added_content_that_looks_like_a_diff_header_cannot_narrow_the_scope(
+        self, repo
+    ):
+        """Under `-U0` an added line beginning `++ ` renders as `+++ <rest>`.
+
+        Parsed as a file header that repointed the scope at a path which does not exist, and every
+        LATER hunk of the real file was attributed to it and dropped. Another changed line kept the
+        scope non-empty, so the gate exited OK over a fraction of the change - the silent-narrowing
+        class this module exists to stop, reproduced inside it.
+        """
+        target = repo / "pkg" / "existing.py"
+        target.write_text(
+            "".join(f"x{i} = {i}\n" for i in range(1, 12)), encoding="utf-8"
+        )
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "wide")
+        rows = target.read_text(encoding="utf-8").splitlines()
+        rows[2] = "++ hack"
+        rows[9] = "x10 = 999"
+        target.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert scope[target.resolve()] == {3, 10}
+        assert not [path for path in scope if path.name == "hack"]
+
     def test_a_deleted_file_lands_in_no_other_files_scope(self, repo):
         """`+++ /dev/null` names no file; attributing its hunks to the previous one would be worse."""
         git(repo, "rm", "-q", "pkg/existing.py")
