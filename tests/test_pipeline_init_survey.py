@@ -9,6 +9,7 @@ This is a REPORT, never a gate: it always exits 0. What it must never do is answ
 """
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -219,13 +220,17 @@ class TestTheAssembleCommandNamesFilesThatExist:
     to a template default, with no placeholder anywhere for the gate refusal to catch.
     """
 
-    def command(self, found):
+    def argv(self, found):
         line = next(line for line in report_lines(found) if line.startswith(".env:"))
-        return line.split("`")[1].split("--out .env ")[1].split("--force")[0].split()
+        return shlex.split(line.split("`")[1])
+
+    def command(self, found):
+        argv = self.argv(found)
+        after_out = argv[argv.index("--out") + 2 :]
+        return [arg for arg in after_out if arg != "--force"]
 
     def assembler(self, found):
-        line = next(line for line in report_lines(found) if line.startswith(".env:"))
-        return line.split("`")[1].split()[1]
+        return self.argv(found)[1]
 
     @pytest.mark.parametrize("live_env", [False, True], ids=["create", "merge"])
     def test_the_printed_assembler_is_a_path_that_exists(self, tmp_path, live_env):
@@ -249,6 +254,32 @@ class TestTheAssembleCommandNamesFilesThatExist:
         assert Path(named).is_file()
         # Beside this survey, which is what makes it resolve in every install shape.
         assert Path(named).parent == SCRIPT.parent
+
+    @pytest.mark.parametrize("live_env", [False, True], ids=["create", "merge"])
+    def test_an_install_path_containing_a_space_still_survives_a_shell(
+        self, tmp_path, monkeypatch, live_env
+    ):
+        """The Claude Code plugin install puts the pipeline under `$HOME/.claude/plugins/`, and a
+        home directory such as `/Users/Erik Smith` is ordinary. Interpolated raw, the printed
+        command splits at that space and python answers `can't open file '/Users/Erik'` - the same
+        end state as the bare relative path, one variant over.
+        """
+        vendored = tmp_path / "Erik Smith" / "scripts"
+        vendored.mkdir(parents=True)
+        assembler = vendored / "env_assemble.py"
+        assembler.write_bytes((SCRIPT.parent / "env_assemble.py").read_bytes())
+        monkeypatch.setattr(pipeline_init, "ASSEMBLER", assembler)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        if live_env:
+            (repo / ".env").write_text("OPENROUTER_API_KEY=sk-live\n", encoding="utf-8")
+
+        named = self.assembler(survey(repo))
+
+        assert " " in named
+        assert Path(named) == assembler
+        assert Path(named).is_file()
 
     def test_no_example_at_all_names_the_target_step_2a_creates(self, tmp_path):
         found = survey(tmp_path)

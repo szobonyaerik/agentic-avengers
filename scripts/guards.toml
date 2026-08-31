@@ -1009,6 +1009,18 @@ replace = '''
 ASSEMBLER = "scripts/env_assemble.py"'''
 
 [[guard]]
+id = "pipeline-init.printed-assembler-survives-a-shell"
+implements = "scripts/pipeline_init.py"
+defect = "Resolving the assembler to an absolute path is only half of making the printed command runnable: it was then interpolated RAW into the command `commands/pipeline-init.md` tells the operator IN BOLD to run verbatim. Under the Claude Code plugin install the path sits under `$HOME/.claude/plugins/`, so a home directory containing a space - `/Users/Erik Smith` - splits the command at that space and python answers `can't open file '/Users/Erik'`. That is the same end state as the bare relative path, one variant over: the pipeline's keys never reach the `.env` every gate reads."
+tests = ["tests/test_pipeline_init_survey.py::TestTheAssembleCommandNamesFilesThatExist::test_an_install_path_containing_a_space_still_survives_a_shell"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+    assembler = shlex.quote(str(ASSEMBLER))'''
+replace = '''
+    assembler = str(ASSEMBLER)'''
+
+[[guard]]
 id = "env-assemble.symlinked-destination"
 implements = "scripts/env_assemble.py"
 defect = "`os.replace` replaces the SYMLINK at the destination where the `write_text` it took over from followed it. A worktree whose `.env` links to a shared canonical file - the pattern this repository's own multi-worktree setup uses - was silently detached: the command reported success, the link became a private regular file holding the merged credentials, the shared file kept its old contents, and later edits there stopped applying. `stat()` follows a link too, so the mode carried onto the replacement was the target's rather than the link's."

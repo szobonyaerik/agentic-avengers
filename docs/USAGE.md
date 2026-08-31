@@ -91,6 +91,18 @@ pre-commit install
 $EDITOR cosmic-ray.toml                       # module-path = "<your package dir>", test-command = "pytest -x -q"
 python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebase/MOC.md
 
+# 4a) ignore the assembler's temp file, BEFORE step 5 can create one — it holds the FULLY MERGED
+#     config, credentials included. The write is atomic (temp file beside the destination, then
+#     rename), so a crash cannot truncate a live .env; but SIGKILL and power loss cannot be caught,
+#     and the leftover matches no `.env` pattern, so without this rule `git add -A` commits live
+#     credentials. The append terminates .gitignore first: a bare `>>` onto a file whose last line
+#     has no newline FUSES the two patterns into one, destroying both — the same byte-joining
+#     defect the `cat` this whole section replaces was retired for.
+if ! grep -qxF '.env-assemble.*.tmp' .gitignore 2>/dev/null; then
+  if [ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ]; then printf '\n' >> .gitignore; fi
+  printf '%s\n' '.env-assemble.*.tmp' >> .gitignore
+fi
+
 # 5) assemble .env. `pipeline_init.py survey` prints the exact command for THIS repository —
 #    which example files exist decides both the template's target and the source list, so run
 #    what it printed rather than a path copied from here. The commands below are this repo's
@@ -108,12 +120,6 @@ python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example 
 #        Note what (b) does NOT name: .env.example. A merge imports the pipeline's template and
 #        your own file, and nothing else.
 python3 "$AV/scripts/env_assemble.py" assemble --out .env .env.pipeline.example .env --force
-
-# 5a) ignore the assembler's temp file — it holds the FULLY MERGED config, credentials included.
-#     The write is atomic (temp file beside the destination, then rename), so a crash cannot
-#     truncate a live .env; but SIGKILL and power loss cannot be caught, and the leftover matches
-#     no `.env` pattern, so without this line `git add -A` commits live credentials.
-grep -qxF '.env-assemble.*.tmp' .gitignore || echo '.env-assemble.*.tmp' >> .gitignore
 ```
 
 Form **(b)** is not the destructive `--force` it looks like: `assemble` reads every source before it

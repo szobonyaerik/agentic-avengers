@@ -21,6 +21,7 @@ overwrite happened.
 from __future__ import annotations
 
 import argparse
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -335,6 +336,7 @@ def survey(root: Path | str = ".") -> Survey:
 
 
 def report_lines(found: Survey) -> list[str]:
+    assembler = shlex.quote(str(ASSEMBLER))
     lines = [f"greenfield: {'yes' if found.greenfield else 'no'}"]
 
     if found.env_example_exists:
@@ -361,7 +363,7 @@ def report_lines(found: Survey) -> list[str]:
         lines.append(
             f"{ENV_FILE}: EXISTS and holds live credentials, so merge IN PLACE rather than "
             f"replacing it: "
-            f"`python3 {ASSEMBLER} assemble --out {ENV_FILE} "
+            f"`python3 {assembler} assemble --out {ENV_FILE} "
             f"{' '.join(found.merge_sources)} --force`. The live file is named as its OWN LAST "
             f"SOURCE, because the last source to declare a key wins - so every value you already "
             f"chose beats the template's default for that key, and every pipeline key you do not "
@@ -379,7 +381,7 @@ def report_lines(found: Survey) -> list[str]:
     else:
         lines.append(
             f"{ENV_FILE}: absent - assemble it: "
-            f"`python3 {ASSEMBLER} assemble --out {ENV_FILE} "
+            f"`python3 {assembler} assemble --out {ENV_FILE} "
             f"{' '.join(found.assemble_sources)}`. The last source to declare a key wins, and what "
             f"decides the order is CONTENT: an example still byte-identical to the shipped template "
             f"carries nobody's decision, so it is named first and only fills in what nothing else "
