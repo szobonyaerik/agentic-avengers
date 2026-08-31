@@ -284,6 +284,53 @@ class TestCheck:
         for spelling in guard_scope.CALL_SPELLINGS:
             assert guard_scope.emits(f"prefix {spelling} suffix"), spelling
 
+    def test_a_call_that_only_RETURNS_the_text_is_not_emitting(self):
+        """`statement()` and `notice()` hand back a string; a caller may print none of it.
+
+        Accepting them was the same mention-is-not-an-emission defect one notch narrower - a guard
+        that never writes a line reading as one that does.
+        """
+        for spelling in ("guard_scope.statement(", "guard_scope.notice("):
+            assert not guard_scope.emits(f'x = {spelling}"thing.py")'), spelling
+
+    def test_a_declared_exception_is_not_a_finding_but_is_NAMED(self, tmp_path, capsys):
+        """An exception recorded only in a data file is the invisibility this issue is about."""
+        root = self.synthetic(
+            tmp_path,
+            body='if __name__ == "__main__":\n    raise SystemExit(main())\n',
+            statement=True,
+        )
+        (root / "scripts" / "sync_opencode.py").write_text("", encoding="utf-8")
+        inventory = guard_proof.load(root / "scripts" / "guards.toml")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setitem(
+                guard_proof.EMISSION_EXCEPTIONS,
+                "scripts/thing.py",
+                "it answers on the deny only",
+            )
+            assert guard_proof.scope_findings(root, inventory) == []
+            assert guard_proof._do_scope(root, inventory) == guard_scope.OK
+
+        err = capsys.readouterr().err
+        assert "DECLARED EXCEPTION" in err
+        assert "scripts/thing.py" in err
+        assert "it answers on the deny only" in err
+        assert "does not mean every guard emits" in err
+
+    def test_an_exception_whose_guard_now_emits_is_a_finding(self, tmp_path):
+        """A recorded exception nothing needs is one nobody has re-read."""
+        root = self.synthetic(tmp_path, body=EMITTING, statement=True)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setitem(
+                guard_proof.EMISSION_EXCEPTIONS, "scripts/thing.py", "stale reason"
+            )
+            code, findings = check(root)
+
+        assert code == guard_scope.FINDINGS
+        assert any("emits after all" in line for line in findings)
+
     def test_a_statement_no_guard_emits_is_a_finding(self, tmp_path):
         """A statement nothing emits is not a statement; it is the same invisibility one level up."""
         root = self.synthetic(tmp_path, body=EMITTING, statement=True)

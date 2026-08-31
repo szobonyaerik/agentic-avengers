@@ -265,6 +265,7 @@ limits = [
   "that the guard is CORRECT, or that its declared mutation is the only route back to the defect - one hole, closed",
   "a check that is neither declared NOR invoked from an enforcement surface, which is invisible to a harness that discovers guards by what the pipeline runs",
   "anything about guards outside the change's scope, which are counted by name",
+  "that EVERY guard emits its scope statement: `scope` names each declared emission exception beside its own clean line, and a guard listed there emits nowhere a later stage reads",
 ]
 
 # --- the shell guards --------------------------------------------------------------------------------
@@ -282,6 +283,7 @@ limits = [
 proves = "that every gate on this floor which could run, ran and passed - the artifact checks, the cross-family assertion, lint in both dimensions, the suite, and under --full the mutation gate."
 limits = [
   "any step that was SKIPPED rather than run: the --full-only checks, a mutation gate with no config, and every step that said NOT CHECKED are not part of this pass",
+  "that the mutation gate MEASURED anything: with no comparison base resolvable it reports `did-not-run` and is counted rather than blocking, even under enforce, because no remedy exists there (CLAUDE.md 3a)",
   "anything a model judges - no model runs here by design; the spec gate and the Verifier are in chat",
   "that the suite is adequate: a green suite proves the tests pass, never that any of them would notice the defect its guard exists for",
 ]
@@ -313,6 +315,7 @@ proves = "that while auto is armed, a command matching the hard-deny set was ref
 limits = [
   "intent: the regex matches the whole command STRING, so free text that merely NAMES a denied command is denied too, and prose belongs in a file the command reads",
   "a command spelled a way the pattern does not cover",
+  "anything on an ALLOW, which is this guard's clean result and deliberately carries no statement: it is emitted per tool call and would bury every other line, so this rides the deny (a declared exception in `guard_proof.EMISSION_EXCEPTIONS`)",
 ]
 
 [guard."bypass_log.sh"]

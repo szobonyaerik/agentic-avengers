@@ -1349,8 +1349,16 @@ old behaviour:
   `scripts/mutation_scope.py` replaces that filter and scopes over the working tree the pipeline
   actually verifies - modified, staged AND untracked, at line granularity, with `--base` widening to
   the branch for CI, which has nothing uncommitted. **Nothing in scope is exit 3**, routed to the
-  same `did-not-run` record a gate that could not run already leaves, never a pass; advisory still
-  never blocks, and `enforce` stops. `mutation_score.py` gains `DID_NOT_RUN` for the same reason at
+  same `did-not-run` record a gate that could not run already leaves, never a pass. It is REPORTED
+  and recorded in every case - that is the whole point and it is not softened - and only the
+  BLOCKING is narrowed, on the applicability boundary (§3a): advisory never blocks, and `enforce`
+  stops **wherever a comparison base exists and the scope is merely empty**, because an author has
+  a remedy there. Where no base can exist at all - a push to the default branch, where there is no
+  pull-request base and `git merge-base HEAD origin/HEAD` is HEAD itself, in a checkout with
+  nothing uncommitted - `gate_ci.sh` counts and names it instead, since a rule whose remedy is
+  unavailable is a wedge rather than a gate. The two states are distinguishable in the output, not
+  only in the exit code. `hook_verifier.sh`'s in-session gate has no such carve-out: a working copy
+  always has HEAD to compare against. `mutation_score.py` gains `DID_NOT_RUN` for the same reason at
   the reading layer, because **the two failures are independent**: a scorer reporting a pass for a
   session it never measured is wrong whatever the filter did. `total == 0` deliberately stays
   `FAIL_CLOSED` - it already stops loudly, and its remedy is config repair, not a wider scope.

@@ -311,16 +311,19 @@ def run(name: str, entry, *, ok: int = OK) -> int:
     return clean(name, code, ok=ok)
 
 
-#: Every spelling that actually REACHES this module, as a closed named set rather than a loose
-#: regex - the same construction as `subprocess_check.SUBMODULES` and `guard_proof._REFERENCE_PREFIXES`.
+#: Every spelling that actually WRITES A LINE, as a closed named set rather than a loose regex - the
+#: same construction as `subprocess_check.SUBMODULES` and `guard_proof._REFERENCE_PREFIXES`.
 #: A bare `"guard_scope" in text` was satisfied by a docstring, a comment or an unused import, and it
 #: false-cleaned on `mutation_scope.py`, which mentioned this module and never called it. That is a
 #: guard whose extraction layer does not follow what it claims to check - issue #97's own class,
-#: reproduced inside its fix. A new call shape is a deliberate edit here.
+#: reproduced inside its fix. `statement()` and `notice()` are deliberately absent: they only RETURN
+#: text, so a caller may hold one and print nothing, which is the same mention-is-not-an-emission
+#: defect one notch narrower. A guard that legitimately cannot emit is a declared exception in
+#: `guard_proof.EMISSION_EXCEPTIONS`, named in that check's own output - never a wider set here.
+#: A new call shape is a deliberate edit.
 CALL_SPELLINGS = (
     "guard_scope.run(",
     "guard_scope.clean(",
-    "guard_scope.notice(",
     'guard_scope.py" emit',
     "guard_scope.py' emit",
     "guard_scope.py emit",

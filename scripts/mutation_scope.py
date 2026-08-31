@@ -83,21 +83,35 @@ def _git(root: Path, *args: str) -> list[str] | None:
     return None if raw is None else raw.splitlines()
 
 
-def _changed_files(root: Path, ref: str) -> list[str] | None:
-    """The paths `ref` differs from, asked for as data rather than recovered from diff text.
+def _git_paths(root: Path, *args: str) -> list[str] | None:
+    """Paths from git, NUL-separated. The ONE spelling every path-listing call site uses.
 
-    `-z` rather than a newline list, so `core.quotePath` and a path holding a newline or a quote
-    cannot turn one file into two names or into a name that joins to nothing.
+    `-z` rather than a newline list, so `core.quotePath` - on by default - cannot C-quote a name
+    holding a non-ASCII byte, a quote, a backslash, a tab or a newline into one that joins to
+    nothing, and a name containing a newline cannot become two. Both callers go through here so a
+    third cannot reacquire it by asking git directly.
     """
-    raw = _git_text(root, "diff", "--name-only", "-z", "--no-relative", ref, "--")
+    raw = _git_text(root, *args)
     if raw is None:
         return None
     return [name for name in raw.split("\0") if name]
 
 
+def _changed_files(root: Path, ref: str) -> list[str] | None:
+    """The paths `ref` differs from, asked for as data rather than recovered from diff text."""
+    return _git_paths(root, "diff", "--name-only", "-z", "--no-relative", ref, "--")
+
+
 def _file_lines(root: Path, ref: str, name: str) -> set[int] | None:
-    """New-side line numbers for ONE file. The path is known from the request, never parsed back."""
-    output = _git(root, "diff", "--no-relative", "-U0", ref, "--", name)
+    """New-side line numbers for ONE file. The path is known from the request, never parsed back.
+
+    `:(literal)` because the trailing argument is a git PATHSPEC, which is fnmatch-matched: `*`, `?`
+    and `[...]` are wildcards there, so `app/[slug]/page.tsx` - an ordinary frontend filename -
+    matched other files and folded THEIR new-side line numbers into this file's set. A widening
+    union cannot hide a change, but it puts mutants on unchanged lines into scope and reports a
+    scope that is not the truth.
+    """
+    output = _git(root, "diff", "--no-relative", "-U0", ref, "--", f":(literal){name}")
     if output is None:
         return None
     lines: set[int] = set()
@@ -140,19 +154,40 @@ def _diff_lines(root: Path, ref: str) -> dict[Path, set[int]] | None:
 
 
 def _untracked_lines(root: Path) -> dict[Path, set[int]] | None:
-    """Every line of every untracked file. This is the half `git diff` cannot report at all."""
-    names = _git(root, "ls-files", "--others", "--exclude-standard", "--full-name")
+    """Every line of every untracked file. This is the half `git diff` cannot report at all.
+
+    The two read failures are DIFFERENT answers and only one is safely ignorable. Content that is
+    not UTF-8 text is genuinely binary and holds no mutants a source operator could generate, so it
+    is skipped - out loud, never in silence. A path git has just reported as untracked that cannot
+    be opened AT ALL is a scope this module could not compute, and that belongs with UNKNOWABLE:
+    folded into the skip it read as "no mutants here", which is how a brand-new source file left
+    the scope with no error and no message.
+    """
+    names = _git_paths(
+        root, "ls-files", "--others", "--exclude-standard", "--full-name", "-z"
+    )
     if names is None:
         return None
     found: dict[Path, set[int]] = {}
     for name in names:
-        if not name.strip():
-            continue
         target = (root / name).resolve()
         try:
             text = target.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue  # a binary or unreadable file holds no mutants either way
+        except UnicodeDecodeError:
+            print(
+                f"[mutation_scope] skipped untracked {name}: not UTF-8 text, so it holds no "
+                f"mutants a source mutation operator could generate.",
+                file=sys.stderr,
+            )
+            continue
+        except OSError as exc:
+            print(
+                f"[mutation_scope] git reported {name} as untracked and it cannot be opened "
+                f"({exc}), so what this change is responsible for is UNKNOWABLE. Refusing to "
+                f"filter: read as 'no mutants here' this drops a whole new file in silence.",
+                file=sys.stderr,
+            )
+            return None
         count = len(text.splitlines())
         if count:
             found[target] = set(range(1, count + 1))

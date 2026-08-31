@@ -145,6 +145,65 @@ class TestChangedLines:
         assert scope[target.resolve()] == {3, 10}
         assert not [path for path in scope if path.name == "hack"]
 
+    def test_an_untracked_path_git_has_to_quote_is_still_in_scope(self, repo):
+        """`core.quotePath` is ON by default, and the untracked half is what this module exists for.
+
+        Without `-z`, `git ls-files --others` returns `"pkg/caf\\303\\251.py"` verbatim, the join
+        resolves to a path that does not exist, `read_text` raises OSError and the swallow labelled
+        it "a binary or unreadable file holds no mutants either way". A brand-new source file left
+        the scope with no error and no message, while another changed file kept `kept > 0` so the
+        gate reported a normal pass over a scope missing a whole file.
+        """
+        new = repo / "pkg" / "caf\u00e9.py"
+        new.write_text("def b():\n    return 2\n", encoding="utf-8")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert scope[new.resolve()] == {1, 2}
+
+    def test_a_name_with_pathspec_wildcards_does_not_absorb_another_file(self, repo):
+        """The per-file query passes a git PATHSPEC, which is fnmatch-matched.
+
+        `app/[slug]/page.tsx` is an ordinary frontend filename, and unquoted it matched OTHER files
+        and folded their new-side line numbers into this one's set - a scope that is not the truth,
+        putting mutants on unchanged lines.
+        """
+        bracket = repo / "pkg" / "a[bc].py"
+        plain = repo / "pkg" / "ab.py"
+        for target in (bracket, plain):
+            target.write_text("x = 1\ny = 2\nz = 3\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "both")
+        bracket.write_text("x = 1\ny = 99\nz = 3\n", encoding="utf-8")
+        plain.write_text("x = 42\ny = 2\nz = 3\n", encoding="utf-8")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert scope[bracket.resolve()] == {2}
+        assert scope[plain.resolve()] == {1}
+
+    def test_an_untracked_path_that_cannot_be_opened_is_unknowable_not_empty(
+        self, repo
+    ):
+        """A path git just reported that will not open is a scope this module could not compute."""
+        broken = repo / "pkg" / "gone.py"
+        broken.symlink_to(repo / "pkg" / "does-not-exist.py")
+
+        assert mutation_scope.changed_lines(repo) is None
+
+    def test_content_that_is_not_utf8_is_skipped_out_loud(self, repo, capsys):
+        """Binary holds no mutants a source operator generates - skippable, but never in silence."""
+        blob = repo / "pkg" / "image.py"
+        blob.write_bytes(b"\xff\xfe\x00\x01binary")
+
+        scope = mutation_scope.changed_lines(repo)
+
+        assert scope is not None
+        assert blob.resolve() not in scope
+        assert "not UTF-8 text" in capsys.readouterr().err
+
     def test_a_deleted_file_lands_in_no_other_files_scope(self, repo):
         """`+++ /dev/null` names no file; attributing its hunks to the previous one would be worse."""
         git(repo, "rm", "-q", "pkg/existing.py")

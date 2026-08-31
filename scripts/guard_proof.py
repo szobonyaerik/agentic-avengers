@@ -97,6 +97,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
+import doc_read_path  # noqa: E402
 import guard_scope  # noqa: E402
 from proc_group import run_bounded  # noqa: E402
 
@@ -601,6 +602,20 @@ def obligated(root: Path, inventory: Inventory) -> dict[str, str]:
     return found
 
 
+#: The CLOSED set of guards whose clean result deliberately carries no scope statement, each with
+#: the reason it cannot carry one. Not an escape hatch: an entry here is a deliberate edit, its
+#: reason is printed beside every clean `scope` result so a reader is never left with "N guards
+#: declare and emit" to interpret, and an entry whose guard has since started emitting is a finding
+#: exactly as a stale exemption is - an exception nobody needs is one nobody has re-read.
+EMISSION_EXCEPTIONS = {
+    "scripts/hook_autoapprove.sh": (
+        "its clean result is a per-tool-call ALLOW, emitted thousands of times in one run, and a "
+        "scope statement there would bury every other line the pipeline prints; it renders the "
+        "statement onto the DENY reason instead, which is where somebody is being told a verdict"
+    ),
+}
+
+
 def scope_findings(root: Path, inventory: Inventory) -> list[str]:
     """Every guard with runtime output declares a statement AND emits it, and no statement is idle."""
     findings: list[str] = []
@@ -624,9 +639,15 @@ def scope_findings(root: Path, inventory: Inventory) -> list[str]:
         except (OSError, UnicodeDecodeError):
             continue
         if not guard_scope.emits(text):
+            if path not in EMISSION_EXCEPTIONS:
+                findings.append(
+                    f"{path} has a scope statement and never emits it. A limitation only the "
+                    f"source carries is invisible to a later stage, which reads OUTPUT."
+                )
+        elif path in EMISSION_EXCEPTIONS:
             findings.append(
-                f"{path} has a scope statement and never emits it. A limitation only the source "
-                f"carries is invisible to a later stage, which reads OUTPUT."
+                f"{path} is a declared emission exception and now emits after all. A recorded "
+                f"exception nothing needs is one nobody has re-read; delete the entry."
             )
 
     names = {Path(path).name for path in duty}
@@ -647,7 +668,7 @@ def scope_findings(root: Path, inventory: Inventory) -> list[str]:
 
 
 def _do_scope(root: Path, inventory: Inventory) -> int:
-    if not (root / "scripts" / "sync_opencode.py").is_file():
+    if not doc_read_path.is_canonical_repo(root):
         print(
             "[guard-proof] scope NOT CHECKED: this is not the pipeline's own repository, and the "
             f"inventory the statements are held against ({INVENTORY}) is not vendored. A "
@@ -660,11 +681,20 @@ def _do_scope(root: Path, inventory: Inventory) -> int:
         print(f"[guard-proof] {line}", file=sys.stderr)
     if findings:
         return FINDINGS
+    duty = obligated(root, inventory)
+    excepted = sorted(path for path in duty if path in EMISSION_EXCEPTIONS)
     print(
-        f"[guard-proof] scope clean - {len(obligated(root, inventory))} guard(s) with runtime "
-        f"output declare and emit what a clean result does not establish.",
+        f"[guard-proof] scope clean - {len(duty) - len(excepted)} of {len(duty)} guard(s) with "
+        f"runtime output declare and emit what a clean result does not establish.",
         file=sys.stderr,
     )
+    for path in excepted:
+        print(
+            f"[guard-proof] DECLARED EXCEPTION: {path} declares a statement and does NOT emit it "
+            f"on its clean result - {EMISSION_EXCEPTIONS[path]}. So this clean result does not "
+            f"mean every guard emits.",
+            file=sys.stderr,
+        )
     return OK
 
 
