@@ -511,6 +511,10 @@ case "$V" in
         "verifier: whether this phase's defects were recorded could not be DECIDED (cause above) —" \
         "this is not an unrecorded defect, and emitting one will not repair it. Fix what it named."
     fi
+    # What this pass does NOT establish, beside the pass itself (issue #97). A later stage reads
+    # output, not source, and a clean handover gate is exactly the result that gets read as more
+    # than it is.
+    python3 "$SD/guard_scope.py" emit hook_verifier.sh >/dev/null || true
     exit 0 ;;
   fail)
     # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts

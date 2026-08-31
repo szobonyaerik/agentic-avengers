@@ -281,6 +281,30 @@ limits = [
   "anything a shell guard spells indirectly - that half is a text match over uncommented lines, so an invocation built from a variable is invisible to it",
 ]
 
+[guard."hook_verifier.sh"]
+proves = "that at this phase's handover every precheck, required-skill audit, execution-evidence record, Breaker obligation, carried-items row, amendment and defect emission was asked for and answered, and that verdict.json reads `pass`."
+limits = [
+  "that the VERDICT is right - this hook checks that the Verifier's artifact exists, is fresh and passes; no model runs here and the judging happens in chat",
+  "anything about a phase whose trigger never fired: this is a PostToolUse hook on a spec stamp and a handover write, so work landed any other way is unseen",
+  "that the phase is free of defects - it holds a floor on what was RECORDED, never a ceiling on what exists",
+]
+
+[guard."pipeline_init.py"]
+proves = "what state a repository is actually in before `/pipeline-init` writes anything - which files it already owns, and which the pipeline still owes it."
+limits = [
+  "nothing at all about correctness: this is a REPORT and always exits 0, because a non-greenfield repository is a normal repository and not a defect",
+  "that a file it found is USABLE - it reads presence, never content or fitness for the step that will consume it",
+  "that acting on the survey is safe: what the command then does with this answer is the command's decision, not this one's",
+]
+
+[guard."env_assemble.py"]
+proves = "that a project `.env` was assembled with every key on its own line, and that no placeholder value survived into a run."
+limits = [
+  "that the VALUES are right - it refuses a placeholder and a fused key, and cannot tell a wrong-but-plausible setting from a correct one",
+  "anything about a key the templates do not carry, or about a `.env` edited by hand after assembly",
+  "that the assembled configuration suits this project: it guarantees the SHAPE of the file, never its meaning",
+]
+
 [guard."gate_ci.sh"]
 proves = "that every gate on this floor which could run, ran and passed - the artifact checks, the cross-family assertion, lint in both dimensions, the suite, and under --full the mutation gate."
 limits = [
