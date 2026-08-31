@@ -159,7 +159,7 @@ it is deliberate.
 The one example (b) names is **the file carrying YOUR pipeline configuration**: an edited
 `.env.pipeline.example` when you have one, otherwise whichever file holds the shipped template (a
 greenfield init writes it to `.env.example`, and there that file is the pipeline's own), otherwise
-the target step 0 named. Form (a) asks a different question of the same disk — which file HOLDS the
+the target the survey named. Form (a) asks a different question of the same disk — which file HOLDS the
 template, since there it supplies only what nothing else declares. Answering both with that first
 question dropped your decisions: a pristine `.env.example` beside the `.env.pipeline.example` you
 filled in made the merge name the pristine one, and your live `.env` came back with the shipped
