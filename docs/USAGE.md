@@ -91,17 +91,22 @@ pre-commit install
 $EDITOR cosmic-ray.toml                       # module-path = "<your package dir>", test-command = "pytest -x -q"
 python "$AV/scripts/codemap.py" . --lang python --output codebase   # -> codebase/MOC.md
 
-# 4a) ignore the assembler's temp file, BEFORE step 5 can create one — it holds the FULLY MERGED
-#     config, credentials included. The write is atomic (temp file beside the destination, then
-#     rename), so a crash cannot truncate a live .env; but SIGKILL and power loss cannot be caught,
-#     and the leftover matches no `.env` pattern, so without this rule `git add -A` commits live
-#     credentials. The append terminates .gitignore first: a bare `>>` onto a file whose last line
-#     has no newline FUSES the two patterns into one, destroying both — the same byte-joining
-#     defect the `cat` this whole section replaces was retired for.
-if ! grep -qxF '.env-assemble.*.tmp' .gitignore 2>/dev/null; then
+# 4a) ignore what step 5 is about to write, BEFORE it can write it. Two rules, and this route
+#     reaches neither of the other lists that carry them: install.sh vendors no .gitignore and
+#     .opencode/ ships no pipeline-init command, so this block is the only one a section-C
+#     operator runs. `.env` is the primary rule — step 5 CREATES it, holding a live
+#     OPENROUTER_API_KEY, every single time. `.env-assemble.*.tmp` is the derived one: the write
+#     is atomic (temp file beside the destination, then rename), so a crash cannot truncate a live
+#     .env, but SIGKILL and power loss cannot be caught, and the leftover matches no `.env`
+#     pattern. Without either rule `git add -A` commits real credentials. Both go through ONE
+#     append form that terminates .gitignore first: a bare `>>` onto a file whose last line has no
+#     newline FUSES the two patterns into one, destroying both — the same byte-joining defect the
+#     `cat` this whole section replaces was retired for.
+for pattern in '.env' '.env-assemble.*.tmp'; do
+  grep -qxF "$pattern" .gitignore 2>/dev/null && continue
   if [ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ]; then printf '\n' >> .gitignore; fi
-  printf '%s\n' '.env-assemble.*.tmp' >> .gitignore
-fi
+  printf '%s\n' "$pattern" >> .gitignore
+done
 
 # 5) assemble .env. `pipeline_init.py survey` prints the exact command for THIS repository —
 #    which example files exist decides both the template's target and the source list, so run

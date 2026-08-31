@@ -207,15 +207,15 @@ def assemble(sources: list[Path], out: Path, force: bool = False) -> dict[str, s
 #: committed live credentials. `--out` is arbitrary, so no pattern derived from it could be written
 #: down in advance; this one can. It is carried by every documented path that RUNS this writer, and
 #: that is the rule rather than a count: this repository's own `.gitignore`, the step-2 list
-#: `commands/pipeline-init.md` makes every project write, and step 5a of `docs/USAGE.md`'s
+#: `commands/pipeline-init.md` makes every project write, and step 4a of `docs/USAGE.md`'s
 #: `install.sh` + opencode route - which reaches neither of the first two, since `install.sh`
 #: vendors no `.gitignore` and `.opencode/` ships no `pipeline-init` command.
 TEMP_PREFIX = ".env-assemble."
 TEMP_SUFFIX = ".tmp"
-#: What those two places must carry, derived from the name above rather than restated. It is the
-#: thing under test: `tests/test_env_assemble.py` builds a probe out of THIS pattern, asks git
+#: What every path named above must carry, derived from the name here rather than restated. It is
+#: the thing under test: `tests/test_env_assemble.py` builds a probe out of THIS pattern, asks git
 #: whether it is ignored, and separately asserts a name the writer really produces matches it. So
-#: the two copies on disk are held to this one, and this one is held to the writer.
+#: every copy on disk is held to this one, and this one is held to the writer.
 TEMP_GITIGNORE_PATTERN = f"{TEMP_PREFIX}*{TEMP_SUFFIX}"
 
 
