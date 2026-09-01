@@ -621,7 +621,9 @@ tests = ["tests/test_gate_timeouts.py"]
 [[guard.mutation]]
 file = "scripts/gate_timeouts.py"
 find = '''
-    return max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S'''
+    return (
+        max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S
+    )'''
 replace = '''
     return call_timeout() if call_s is None else call_s'''
 
@@ -722,6 +724,10 @@ tests = ["tests/test_hook_implementer_lock.py"]
 file = "scripts/hook_implementer_lock.sh"
 find = '''
 if [ "$RC" -eq 0 ]; then
+  # The clean result is emitted with what it does NOT establish beside it: a later stage reads
+  # output, not source (issue #97). Only here - the early exits above are "not applicable", which
+  # is a different answer from "checked, and nothing was running".
+  python3 "$SD/guard_scope.py" emit hook_implementer_lock.sh >/dev/null || true
   exit 0
 fi'''
 replace = '''
@@ -756,6 +762,137 @@ find = '''
     if score.score < min_score:'''
 replace = '''
     if False:'''
+
+
+[[guard]]
+id = "gate-ci.cross-family-assertion"
+implements = "scripts/gate_ci.sh"
+defect = "The gate floor's own cross-family assertion. A spec gate judging on the implementers' own family is same-family verification wearing an independence claim, and the refusal is the only thing that says so - `glm-5.1` and `glm-5.2` once read as different families for exactly this reason."
+tests = ["tests/test_gate_ci_cross_family.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2'''
+replace = '''
+      return 0
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2'''
+
+
+# --- what a clean result does NOT establish (issue #97) --------------------------------------------
+
+[[guard]]
+id = "mutation-scope.new-files-are-in-scope"
+implements = "scripts/mutation_scope.py"
+defect = "The gate diff-scoped through `cr-filter-git`, whose whole mechanism is `git diff --relative -U0 <branch> .`. `git diff` reports nothing about an UNTRACKED file and this pipeline verifies uncommitted work, so a phase whose contribution was NEW FILES had every mutant skipped and the scorer returned GO over zero measured lines."
+tests = ["tests/test_mutation_scope.py"]
+[[guard.mutation]]
+file = "scripts/mutation_scope.py"
+find = '''
+        _untracked_lines(root),'''
+replace = '''
+        {},'''
+
+[[guard]]
+id = "mutation-scope.nothing-in-scope-is-not-a-pass"
+implements = "scripts/mutation_scope.py"
+defect = "A session where nothing survived filtering is the ABSENCE of a measurement. Reported as OK it is indistinguishable from a gate that ran and found nothing, which is how a phase with no mutation score at all read as clean."
+tests = ["tests/test_mutation_scope.py"]
+[[guard.mutation]]
+file = "scripts/mutation_scope.py"
+find = '''
+    if kept == 0:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "mutation-score.did-not-run-is-not-a-pass"
+implements = "scripts/mutation_score.py"
+defect = "An all-filtered session returned GO with the line `all N mutants fall outside the diff`. That is the reading half of the same defect: a scorer that reports a pass for a session it never measured is wrong whatever the filter did."
+tests = ["tests/test_mutation_score.py"]
+[[guard.mutation]]
+file = "scripts/mutation_score.py"
+find = '''
+        if score.skipped == score.total:
+            return (
+                DID_NOT_RUN,'''
+replace = '''
+        if score.skipped == score.total:
+            return (
+                GO,'''
+
+[[guard]]
+id = "subprocess-check.attribute-chain"
+implements = "scripts/subprocess_check.py"
+defect = "The AST walk read only `<name>.<attr>(` and stopped at the first dot, so `asyncio.subprocess.create_subprocess_exec(...)` - a real spawner one submodule hop away - passed as clean. Issue #97's first instance is the same shape in another repository's containment guard, which reported CLEAN over two live call sites."
+tests = ["tests/test_subprocess_check.py"]
+[[guard.mutation]]
+file = "scripts/subprocess_check.py"
+find = '''
+    hops, attr = parts[1:-1], parts[-1]'''
+replace = '''
+    if len(parts) > 2:
+        return None
+    hops, attr = parts[1:-1], parts[-1]'''
+
+
+# --- the scope statements themselves ---------------------------------------------------------------
+#
+# A guard that stopped saying what it does not cover is the defect of issue #97 restored, and it
+# would look exactly like a guard that covers everything.
+
+[[guard]]
+id = "guard-scope.clean-results-carry-their-limits"
+implements = "scripts/guard_scope.py"
+defect = "Four guards reported CLEAN while missing something real, and three of the four had their limitation written down - in a module docstring. A later stage reads OUTPUT, not source, so the reader who needed it never saw it."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+    if code != ok:
+        return code'''
+replace = '''
+    if code != ok or True:
+        return code'''
+
+[[guard]]
+id = "guard-scope.emission-never-moves-a-verdict"
+implements = "scripts/guard_scope.py"
+defect = "A guard whose exit code could be moved by its own documentation is a guard weakened to make a rule easier to satisfy, which is the one remedy issue #97 puts out of scope."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+    return clean(name, code, ok=ok)'''
+replace = '''
+    return ok'''
+
+[[guard]]
+id = "guard-scope.no-limits-is-not-a-declaration"
+implements = "scripts/guard_scope.py"
+defect = "A statement with an empty `limits` claims total coverage. Accepted silently, the inventory would fill with entries that assert exactly the thing this file exists to stop being asserted by silence."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+        if (
+            not isinstance(limits, list)
+            or not limits'''
+replace = '''
+        if (
+            not isinstance(limits, list)
+            or False'''
+
+[[guard]]
+id = "guard-scope.a-guard-that-never-emits-is-a-finding"
+implements = "scripts/guard_proof.py"
+defect = "A statement in the inventory that no guard emits is a limitation nobody is told about - the same invisible-in-source failure, one level up, wearing the costume of the fix."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        if not emitting:'''
+replace = '''
+        if False:'''
 
 
 # --- the harness itself -----------------------------------------------------------------------------------------------------------------------

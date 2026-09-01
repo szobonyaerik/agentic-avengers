@@ -29,6 +29,11 @@ Stdlib only — this is imported by gate_runner.py, which ships vendored.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
 
 #: Routing prefixes that carry no vendor information. A router in front of a model must never hide
 #: the family behind it: `opencode-go/claude-x` is anthropic, not "opencode-go".
@@ -201,4 +206,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

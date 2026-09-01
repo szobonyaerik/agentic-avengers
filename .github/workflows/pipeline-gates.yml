@@ -32,6 +32,23 @@ jobs:
           [ -f requirements.txt ] && pip install -r requirements.txt || true
           [ -f pyproject.toml ] && pip install -e . || true
 
+      # The base every diff-scoped step here compares against, resolved ONCE. `base.sha` alone is
+      # the base branch as it stood when the pull request was opened or last synchronised, while
+      # actions/checkout leaves HEAD on `refs/pull/N/merge` - the base branch's CURRENT tip merged
+      # with this branch - so every commit the base branch gained in between reads as this pull
+      # request's doing. `.github/workflows/guard-proof.yml` carries the full account of that trap;
+      # this is the same resolution and deliberately not a third statement of the reasoning.
+      # On a push there is no pull request and no `HEAD^2`, so this is empty and gate_ci.sh falls
+      # back to the merge-base with the default branch exactly as before.
+      - name: Resolve the comparison base
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
+            echo "PR_BASE=$(git rev-parse 'HEAD^1')" >> "$GITHUB_ENV"
+          else
+            echo "PR_BASE=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
+          fi
+
       - name: Run pipeline gates (full)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -39,7 +56,10 @@ jobs:
           AUTHOR_FAMILY: anthropic
           # Mutation gate threshold. Override repo-wide with the MUTATION_MIN_SCORE variable.
           MUTATION_MIN_SCORE: ${{ vars.MUTATION_MIN_SCORE || '0.85' }}
-          # Scope mutants to this PR's diff; on a push to main there is no PR base, so gate_ci.sh
-          # falls back to the merge-base with the default branch.
-          MUTATION_BASE: ${{ github.event.pull_request.base.sha }}
+          # Scope mutants to this pull request's own diff.
+          MUTATION_BASE: ${{ env.PR_BASE }}
+          # Allowlist growth, from the same base. Without it gate_ci.sh prints absolute sizes and
+          # never a delta, so the signal that exists to make a quietening visible never fires.
+          # A report, never a gate.
+          GUARD_SCOPE_BASE: ${{ env.PR_BASE }}
         run: bash scripts/gate_ci.sh --full

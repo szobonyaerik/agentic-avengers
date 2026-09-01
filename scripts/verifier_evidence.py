@@ -86,6 +86,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
@@ -173,7 +177,9 @@ def budget_s() -> int:
             f"{BUDGET_ENV}={raw!r} is not an integer number of seconds"
         ) from exc
     if value <= 0:
-        raise EvidenceError(f"{BUDGET_ENV}={raw!r} must be a positive number of seconds")
+        raise EvidenceError(
+            f"{BUDGET_ENV}={raw!r} must be a positive number of seconds"
+        )
     return value
 
 
@@ -236,16 +242,20 @@ def subject_digest(phase_dir: Path, root: Path | None = None) -> str:
     return digest.hexdigest()
 
 
-def partition_by_currency(runs: list[dict], phase_dir: Path,
-                          root: Path) -> tuple[list[dict], list[dict]]:
+def partition_by_currency(
+    runs: list[dict], phase_dir: Path, root: Path
+) -> tuple[list[dict], list[dict]]:
     """(runs recorded against the content that is here now, runs recorded against something else).
 
     The split is the whole reason evidence is bound to a digest: a transcript stays on the record
     forever, and only the part of it that is still about this code may carry a verdict.
     """
     current_subject = subject_digest(phase_dir, root)
-    current = [e for e in runs
-               if isinstance(e, dict) and e.get("subject_digest") == current_subject]
+    current = [
+        e
+        for e in runs
+        if isinstance(e, dict) and e.get("subject_digest") == current_subject
+    ]
     stale = [e for e in runs if isinstance(e, dict) and e not in current]
     return current, stale
 
@@ -261,7 +271,12 @@ def load(phase_dir: Path) -> dict:
     """
     path = record_path(phase_dir)
     if not path.is_file():
-        return {"schema": SCHEMA, "phase": Path(phase_dir).name, "readers": list(READERS), "runs": []}
+        return {
+            "schema": SCHEMA,
+            "phase": Path(phase_dir).name,
+            "readers": list(READERS),
+            "runs": [],
+        }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -337,8 +352,14 @@ def elapsed_ms(seconds: float) -> int:
     return max(math.ceil(seconds * 1000), 0)
 
 
-def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = None,
-           root: Path | None = None) -> tuple[dict, int]:
+def record(
+    phase_dir: Path,
+    kind: str,
+    argv: list[str],
+    *,
+    note: str | None = None,
+    root: Path | None = None,
+) -> tuple[dict, int]:
     """Run `argv`, capture what it did, and append it to the phase's record.
 
     The child's exit code is passed straight back to the caller: the Verifier must see the real
@@ -356,7 +377,9 @@ def record(phase_dir: Path, kind: str, argv: list[str], *, note: str | None = No
             f"one is a run that stops counting."
         )
     if not argv:
-        raise EvidenceError("no command given - `record` needs a command to run after `--`")
+        raise EvidenceError(
+            "no command given - `record` needs a command to run after `--`"
+        )
 
     base = Path(root).resolve() if root else Path.cwd().resolve()
     data = load(phase)
@@ -425,10 +448,14 @@ def _entry_problems(entry: object, phase: Path) -> list[str]:
     problems: list[str] = []
 
     if entry.get("kind") not in KINDS:
-        problems.append(f"{label}: kind {entry.get('kind')!r} is not one of {', '.join(KINDS)}")
+        problems.append(
+            f"{label}: kind {entry.get('kind')!r} is not one of {', '.join(KINDS)}"
+        )
     argv = entry.get("argv")
     if not isinstance(argv, list) or not argv:
-        problems.append(f"{label}: records no command - a run with no argv names nothing that ran")
+        problems.append(
+            f"{label}: records no command - a run with no argv names nothing that ran"
+        )
 
     elapsed = entry.get("elapsed_ms")
     if not isinstance(elapsed, int) or elapsed < PROCESS_FLOOR_MS:
@@ -439,7 +466,9 @@ def _entry_problems(entry: object, phase: Path) -> list[str]:
 
     log_rel = entry.get("log")
     if not isinstance(log_rel, str) or not log_rel:
-        problems.append(f"{label}: names no output log, so nothing can be checked against it")
+        problems.append(
+            f"{label}: names no output log, so nothing can be checked against it"
+        )
     else:
         log_file = phase / log_rel
         if not log_file.is_file():
@@ -451,7 +480,9 @@ def _entry_problems(entry: object, phase: Path) -> list[str]:
             try:
                 actual = hashlib.sha256(log_file.read_bytes()).hexdigest()
             except OSError as exc:
-                problems.append(f"{label}: its output log {log_rel} could not be read ({exc})")
+                problems.append(
+                    f"{label}: its output log {log_rel} could not be read ({exc})"
+                )
             else:
                 if actual != entry.get("output_sha256"):
                     problems.append(
@@ -486,8 +517,9 @@ def _suite_incompleteness(entry: dict, phase: Path) -> list[str]:
         return [f"whether this run completed could not be decided ({exc})"]
 
 
-def problems(phase_dir: Path, *, verdict_path: Path | None = None,
-             root: Path | None = None) -> list[str]:
+def problems(
+    phase_dir: Path, *, verdict_path: Path | None = None, root: Path | None = None
+) -> list[str]:
     """Every reason this phase's execution evidence does not back a verdict. Empty list = it does."""
     phase = Path(phase_dir)
     path = record_path(phase)
@@ -496,10 +528,14 @@ def problems(phase_dir: Path, *, verdict_path: Path | None = None,
             f"{phase} has no {FILENAME} - the verdict rests on nothing that was observed to run. "
             f"Run each verification command through `verifier_evidence.py record`."
         ]
-    data = load(phase)  # raises EvidenceError on a malformed record; the caller reports it as ERROR
+    data = load(
+        phase
+    )  # raises EvidenceError on a malformed record; the caller reports it as ERROR
     runs = data["runs"]
     if not runs:
-        return [f"{path} records no runs at all - an empty transcript is not evidence of execution"]
+        return [
+            f"{path} records no runs at all - an empty transcript is not evidence of execution"
+        ]
 
     base = Path(root).resolve() if root else Path.cwd().resolve()
     found: list[str] = []
@@ -615,8 +651,9 @@ def _excepted(phase_dir: Path) -> applicability.Exception_ | None:
     return found
 
 
-def due(phase_dir: Path, *, verdict_path: Path | None = None,
-        root: Path | None = None) -> list[str]:
+def due(
+    phase_dir: Path, *, verdict_path: Path | None = None, root: Path | None = None
+) -> list[str]:
     """`problems`, minus a disclosed exception. What a gate actually acts on."""
     found = problems(phase_dir, verdict_path=verdict_path, root=root)
     if found and _excepted(Path(phase_dir)) is not None:
@@ -629,7 +666,9 @@ def due(phase_dir: Path, *, verdict_path: Path | None = None,
 
 def _phases(root: Path) -> list[Path]:
     """Every phase directory that has closed far enough to carry a verdict."""
-    return sorted({v.parent for v in Path(root).glob("docs/features/*/phases/*/verdict.json")})
+    return sorted(
+        {v.parent for v in Path(root).glob("docs/features/*/phases/*/verdict.json")}
+    )
 
 
 class SweepResult(NamedTuple):
@@ -667,8 +706,10 @@ def sweep(root: Path, *, enforce_all: bool = False) -> SweepResult:
     """
     phases = _phases(root)
     if not phases:
-        print(f"[verifier_evidence] no phases with a verdict under {root} - nothing to check",
-              file=sys.stderr)
+        print(
+            f"[verifier_evidence] no phases with a verdict under {root} - nothing to check",
+            file=sys.stderr,
+        )
         return SweepResult([], [])
 
     scope: set[Path] | None = None
@@ -716,7 +757,7 @@ def _split_command(argv: list[str]) -> tuple[list[str], list[str]]:
     """
     for i, token in enumerate(argv):
         if token == "--":
-            return argv[:i], argv[i + 1:]
+            return argv[:i], argv[i + 1 :]
     return list(argv), []
 
 
@@ -727,22 +768,32 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p_rec = sub.add_parser("record", help="run a command and record what it did")
     p_rec.add_argument("phase_dir", type=Path)
     p_rec.add_argument("--kind", required=True, choices=KINDS)
-    p_rec.add_argument("--note", default=None, help="why this command was run (prose, not hashed)")
+    p_rec.add_argument(
+        "--note", default=None, help="why this command was run (prose, not hashed)"
+    )
     p_rec.add_argument("--root", default=".", type=Path)
 
     p_chk = sub.add_parser("check", help="does the evidence back a verdict?")
     p_chk.add_argument("phase_dir", type=Path)
-    p_chk.add_argument("--verdict", type=Path, default=None,
-                       help="also require this verdict to name the transcript it stands on")
+    p_chk.add_argument(
+        "--verdict",
+        type=Path,
+        default=None,
+        help="also require this verdict to name the transcript it stands on",
+    )
     p_chk.add_argument("--root", default=".", type=Path)
 
     for name in ("chain", "show"):
         p = sub.add_parser(name)
         p.add_argument("phase_dir", type=Path)
 
-    p_sweep = sub.add_parser("sweep", help="the obligation across every phase with a verdict")
+    p_sweep = sub.add_parser(
+        "sweep", help="the obligation across every phase with a verdict"
+    )
     p_sweep.add_argument("--root", default=".", type=Path)
-    p_sweep.add_argument("--all", action="store_true", help="every phase, not just changed ones")
+    p_sweep.add_argument(
+        "--all", action="store_true", help="every phase, not just changed ones"
+    )
 
     head, command = _split_command(list(sys.argv[1:] if argv is None else argv))
     args = parser.parse_args(head)
@@ -752,8 +803,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
 
 def _dispatch(args: argparse.Namespace) -> int:
     if args.action == "record":
-        entry, rc = record(args.phase_dir, args.kind, list(args.command),
-                           note=args.note, root=args.root)
+        entry, rc = record(
+            args.phase_dir,
+            args.kind,
+            list(args.command),
+            note=args.note,
+            root=args.root,
+        )
         print(
             f"[verifier_evidence] recorded run {entry['seq']} ({entry['kind']}): exit "
             f"{entry['exit_code']} in {entry['elapsed_ms']} ms -> {entry['log']}",
@@ -835,7 +891,9 @@ def _print_remedy() -> None:
         "    1. Run each verification command through the recorder, e.g.\n"
         "       python3 scripts/verifier_evidence.py record <phase-dir> --kind suite -- \\\n"
         "           pytest -q tests/<feature>/<n>-<slug>\n"
-        "       (kinds: " + ", ".join(KINDS) + f"; a '{REQUIRED_KIND}' run that exits 0 is required)\n"
+        "       (kinds: "
+        + ", ".join(KINDS)
+        + f"; a '{REQUIRED_KIND}' run that exits 0 is required)\n"
         "    2. Put the transcript's identity in the verdict:\n"
         '       "execution": {"evidence": "' + FILENAME + '", "chain": "<chain>"}\n'
         "       where <chain> is `python3 scripts/verifier_evidence.py chain <phase-dir>`.\n"
@@ -857,9 +915,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[verifier_evidence] {exc}", file=sys.stderr)
         return ERROR
     except Exception as exc:  # noqa: BLE001 - an undecidable check is never a satisfied one
-        print(f"[verifier_evidence] the check could not be decided: {exc!r}", file=sys.stderr)
+        print(
+            f"[verifier_evidence] the check could not be decided: {exc!r}",
+            file=sys.stderr,
+        )
         return ERROR
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

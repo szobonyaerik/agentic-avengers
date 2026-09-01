@@ -912,8 +912,9 @@ test is whether an author could have phrased the value differently — a templat
 and keywords substituted is not prose and stays inline. Canonical statement in
 `skills/pipeline-conventions`.
 
-**Mutation = cosmic-ray**, once per phase, **diff-scoped** (`cr-filter-git` skips mutants outside the
-phase's changed lines). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
+**Mutation = cosmic-ray**, once per phase, **diff-scoped** (`scripts/mutation_scope.py` skips mutants
+outside the WORKING TREE's changed lines - modified, staged and untracked - and nothing in scope is
+`did-not-run`, never a pass; §11). The verdict is **deterministic** — `scripts/mutation_score.py`, not a model:
 score `>= MUTATION_MIN_SCORE` (default **0.85**) → GO with no model call; below → survivors go to the
 gate model to be named as missing cases, and the phase routes back to the implementer. The threshold is
 **not 100%** on purpose — chasing zero survivors is what multiplies narrow tests. Runs
@@ -938,7 +939,7 @@ anywhere). It was off; it is on because it is deterministic, diff-scoped, needs 
 threshold, and every non-discriminating test this project has caught was caught by it. Advisory never
 blocks, so the cost of that default being wrong is a line of output. It is still an *extra* signal,
 **not** a replacement for a dedicated reader — there is none, and that gap is stated in §4 rather than implied. The score itself is deterministic (`scripts/mutation_score.py`, diff-scoped via
-`cr-filter-git`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
+`scripts/mutation_scope.py`); the Verifier interprets survivors in chat using `skills/mutation-interpret`.
 
 **The lint gate has TWO dimensions, and it used to have one.** It ran `ruff check .`, which judges
 rules and says nothing about formatting, so drift passed it untouched — two consecutive measured
@@ -1321,3 +1322,84 @@ and fail the run (`tests/test_guard_proof.py`). **What it does not claim** is st
 proves a named test set NOTICES a named defect, not that the guard is correct, not that the mutation
 is the only way back to the defect, and it cannot see a check that is neither declared nor invoked
 from an enforcement surface.
+
+### 11. A guard states what a clean result does NOT establish (issue #97)
+§10 asks whether a guard would notice its defect. This asks the next question: **a guard must either
+cover what it claims, or say at the point of use what it does not cover - in its RUNTIME OUTPUT, not
+only in its source.** Four guards reported CLEAN while missing something real, and in every case the
+reader took that for a stronger claim than the check could support and was being reasonable, because
+nothing told them otherwise. Three of the four had their limitation written down - in a module
+docstring. **A later stage reads output, not source**, so the reader who needed it never saw it. That
+distinction came from an operator rather than a design review, and it is the whole of this item.
+
+**Where the gap can be closed, it closes at the EXTRACTION LAYER, never by silencing the symptom.**
+Two of the instances were pipeline-owned and both were closed with a test that goes red against the
+old behaviour:
+- **`subprocess_check.py` followed no attribute chain.** Its AST walk read `<name>.<attr>(` and
+  stopped at the first dot, so `asyncio.subprocess.create_subprocess_exec(...)` - a real spawner one
+  submodule hop away - passed as clean, the same shape as the containment guard the issue names. It
+  now follows the whole chain through a **closed** `SUBMODULES` map (following any attribute
+  whatsoever would flag `subprocess.foo.run`, which names nothing it owns) and resolves
+  `import asyncio.subprocess` and `from asyncio import subprocess as x` to the same spawner.
+- **The mutation gate was blind to new files, and reported a pass for it.** `cr-filter-git` scopes
+  with `git diff --relative -U0 <branch> .`, which says nothing about an UNTRACKED file, while this
+  pipeline verifies **uncommitted** work - so a phase whose contribution was new files had every
+  mutant marked skipped, and `mutation_score.verdict` returned **GO** with "all N mutants fall
+  outside the diff". A clean mutation gate over zero measured lines.
+  `scripts/mutation_scope.py` replaces that filter and scopes over the working tree the pipeline
+  actually verifies - modified, staged AND untracked, at line granularity, with `--base` widening to
+  the branch for CI, which has nothing uncommitted. **Nothing in scope is exit 3**, routed to the
+  same `did-not-run` record a gate that could not run already leaves, never a pass. It is REPORTED
+  and recorded in every case - that is the whole point and it is not softened - and only the
+  BLOCKING is narrowed, on the applicability boundary (§3a): advisory never blocks, and `enforce`
+  stops **wherever a comparison base exists and the scope is merely empty**, because an author has
+  a remedy there. Where no base can exist at all - a push to the default branch, where there is no
+  pull-request base and `git merge-base HEAD origin/HEAD` is HEAD itself, in a checkout with
+  nothing uncommitted - `gate_ci.sh` counts and names it instead, since a rule whose remedy is
+  unavailable is a wedge rather than a gate. The two states are distinguishable in the output, not
+  only in the exit code. `hook_verifier.sh`'s in-session gate has no such carve-out: a working copy
+  always has HEAD to compare against. `mutation_score.py` gains `DID_NOT_RUN` for the same reason at
+  the reading layer, because **the two failures are independent**: a scorer reporting a pass for a
+  session it never measured is wrong whatever the filter did. `total == 0` deliberately stays
+  `FAIL_CLOSED` - it already stops loudly, and its remedy is config repair, not a wider scope.
+
+**Where it cannot be closed, it is DECLARED, from one source.** `scripts/guard_scope.toml` holds one
+statement per guard - `proves`, and `limits`, what a clean result does not establish - and
+`scripts/guard_scope.py` emits it. Every declared guard with runtime output calls
+`guard_scope.run(__file__, main)` at its entry point, or `guard_scope.py emit <name>` on its clean
+branch, **except where a declared, single-guard exception says why it cannot** - today exactly one,
+`hook_autoapprove.sh`, whose clean result is a per-tool-call ALLOW emitted thousands of times in one
+run, so it rides the DENY reason instead. An exception is never silent: `guard_proof.py scope` names
+it and its reason beside its own clean line, so "N guards declare and emit" can never be read as
+"every guard emits". **Whether a guard emits is decided by PARSING, not by matching text** - a real
+`ast` call to `run`/`clean` for Python (following an aliased import), the invocation shape on
+uncommented lines for shell - because a substring test false-cleaned on `guard_scope.py` itself,
+which matched the very list of spellings the search was made of; the statement is **one line** on **stderr**, on a **clean result only** (a failing guard
+already tells the reader what it found; it is the clean one that gets over-read), so machine-readable
+stdout is untouched. Two properties are non-negotiable and both are tested: **an emission may never
+move an exit code** - a guard weakened by its own documentation is the one remedy this issue puts out
+of scope - and **an absent statement is a named NOTICE**, never silence, because silence reads as "no
+limits", which is the defect one layer down.
+
+The alternative was a hand-written sentence at each clean branch, and thirty-odd sentences maintained
+separately are the drift this repository refuses everywhere else. `guard_proof.py scope` holds the two
+ends together: a declared guard with runtime output and no statement is a finding, and a statement no
+guard emits is a finding. It lives beside `guards.toml` rather than beside the statements **because
+`guard_scope.py` SHIPS and `guard_proof.py` deliberately does not** - a vendored file reaching for an
+unvendored one is what `tests/test_install_manifest.py` refuses, and it refused exactly this. So it
+runs from `.github/workflows/guard-proof.yml` with the rest of the harness's own wiring, and
+downstream it says `scope NOT CHECKED` rather than half-running.
+
+**Three of the five instances are DECLARED rather than fixed, and each says why.** The
+ccxt-containment guard, the decorator that erases Protocol conformance and the drift guard blind to
+`in` / `not in` / `is` / `is not` all live in **grid-bot-platform**, a consumer repository this one
+cannot reach and must not edit; what generalises to the pipeline is the rule and its mechanism, which
+is what shipped. The one shape that recurs here is the attribute chain, and that one is fixed above.
+
+**Allowlist growth is a SIGNAL, and deliberately not a gate.** A drift guard was once quietened with
+nine allowlist entries instead of a fix to its extraction layer, and that lands as nine lines of
+routine-looking maintenance. `guard_scope.py allowlists [--base REF]` counts each declared allowlist
+now against its size at the merge-base and reports the delta from `gate_ci.sh`, where a reviewer
+reads it. It never fails a run: growth is often legitimate, and a blocking check would be answered
+with a bypass rather than with the attention this exists to buy. An unknowable comparison says so and
+is never reported as "no growth".

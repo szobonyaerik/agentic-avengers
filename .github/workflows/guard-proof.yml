@@ -115,6 +115,15 @@ jobs:
           # The step's status stays the sweep's, never the summary's.
           exit "$FAILED"
 
+      - name: Scope statements (issue #97)
+        # Every guard with runtime output declares what a clean result does NOT establish, and
+        # emits it. This runs HERE and not in gate_ci.sh for the reason stated at the top of this
+        # file: gate_ci.sh is vendored into every consumer repo and guard_proof.py is not, so a
+        # call from there is a shipped file running an absent script. Not diff-scoped - these are
+        # the pipeline's own guards, always open to change, never shipped artifacts a later rule
+        # would hold hostage.
+        run: python3 scripts/guard_proof.py scope
+
       - name: Guard proof (diff-scoped)
         if: github.event_name == 'pull_request'
         run: |

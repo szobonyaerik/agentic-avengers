@@ -42,6 +42,10 @@ import subprocess  # noqa: S404 — git is the only thing that can answer "chang
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 CURRENT = 0
 OWED = 1
 ERROR = 2
@@ -57,7 +61,10 @@ def _git(root: Path, *args: str) -> str | None:
     try:
         result = subprocess.run(  # noqa: S603 — fixed executable, list argv, no shell
             ["git", "-C", str(root), *args],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -94,7 +101,8 @@ def changed_since(root: Path, commit: str, feature: str) -> list[str] | None:
         return None
     ignored = (*IGNORED_PREFIXES, _e2e_prefix(root, feature))
     return sorted(
-        path for path in (line.strip() for line in out.splitlines())
+        path
+        for path in (line.strip() for line in out.splitlines())
         if path and not path.startswith(ignored)
     )
 
@@ -142,7 +150,9 @@ def check(root: Path, feature_dir: Path) -> str | None:
         return None
     if amended_since(root, commit, feature_dir):
         return None
-    shown = ", ".join(changed[:5]) + (f" (+{len(changed) - 5} more)" if len(changed) > 5 else "")
+    shown = ", ".join(changed[:5]) + (
+        f" (+{len(changed) - 5} more)" if len(changed) > 5 else ""
+    )
     return (
         f"{feature}: {len(changed)} tracked file(s) changed after the newest verdict landed "
         f"({commit[:8]}), and no phase in this feature has recorded an amendment: {shown}. The "
@@ -171,4 +181,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

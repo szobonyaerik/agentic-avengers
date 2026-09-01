@@ -84,6 +84,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from env_file import ENV_FILENAME, find_env_file, load_into, parse  # noqa: E402
 from env_file import read as read_env  # noqa: E402
+import guard_scope  # noqa: E402
 
 #: The marker the shipped templates put in every value the operator must fill in.
 PLACEHOLDER_MARKER = "REPLACE_ME"
@@ -382,4 +383,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

@@ -78,6 +78,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
+import guard_scope  # noqa: E402
 import subprocess_check  # noqa: E402 — one owner of "which roots hold this project's tests"
 
 CLEAN = 0
@@ -119,8 +120,12 @@ class Shape:
                 return f"{value} is above the declared maximum {self.maximum}"
             return None
         if isinstance(value, str) and self.pattern is not None:
-            return None if self.pattern.fullmatch(value) else (
-                f"{value!r} does not match the declared pattern {self.pattern.pattern!r}"
+            return (
+                None
+                if self.pattern.fullmatch(value)
+                else (
+                    f"{value!r} does not match the declared pattern {self.pattern.pattern!r}"
+                )
             )
         return None
 
@@ -145,7 +150,9 @@ def config_path(root: Path | None = None) -> Path:
     override = os.environ.get(CONFIG_ENV, "").strip()
     if override:
         return Path(override)
-    base = root if root is not None else Path(os.environ.get("CLAUDE_PROJECT_DIR") or ".")
+    base = (
+        root if root is not None else Path(os.environ.get("CLAUDE_PROJECT_DIR") or ".")
+    )
     return Path(base) / DEFAULT_CONFIG
 
 
@@ -167,7 +174,11 @@ def load(path: Path) -> dict[str, Shape]:
         if not isinstance(table, dict):
             raise ShapeError(f"{path}: [{key}] is not a table")
         names = table.get("names")
-        if not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
+        if (
+            not isinstance(names, list)
+            or not names
+            or not all(isinstance(n, str) for n in names)
+        ):
             raise ShapeError(
                 f"{path}: [{key}] declares no `names` — a shape with no identifier to check is a "
                 f"rule that binds nothing"
@@ -189,7 +200,9 @@ def load(path: Path) -> dict[str, Shape]:
         try:
             pattern = re.compile(raw_pattern) if raw_pattern is not None else None
         except re.error as exc:
-            raise ShapeError(f"{path}: [{key}] has an invalid `pattern`: {exc}") from exc
+            raise ShapeError(
+                f"{path}: [{key}] has an invalid `pattern`: {exc}"
+            ) from exc
         shapes[key] = Shape(
             key=key,
             names=frozenset(names),
@@ -263,8 +276,14 @@ def scan_source(source: str, path: Path, shapes: dict[str, Shape]) -> list[Viola
             reason = shape.violation(value)
             if reason is not None:
                 out.append(
-                    Violation(path=path, line=getattr(node, "lineno", 0), name=name,
-                              key=shape.key, reason=reason, why=shape.why)
+                    Violation(
+                        path=path,
+                        line=getattr(node, "lineno", 0),
+                        name=name,
+                        key=shape.key,
+                        reason=reason,
+                        why=shape.why,
+                    )
                 )
     return out
 
@@ -276,14 +295,18 @@ def scan_path(
     root = Path(root)
     if not root.exists():
         return [], [], [root]
-    files = [root] if root.is_file() else sorted(
-        p for p in root.rglob("*.py") if "__pycache__" not in p.parts
+    files = (
+        [root]
+        if root.is_file()
+        else sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
     )
     violations: list[Violation] = []
     unreadable: list[tuple[Path, str]] = []
     for path in files:
         try:
-            violations.extend(scan_source(path.read_text(encoding="utf-8"), path, shapes))
+            violations.extend(
+                scan_source(path.read_text(encoding="utf-8"), path, shapes)
+            )
         except (OSError, SyntaxError, ValueError) as exc:
             unreadable.append((path, str(exc)))
     return violations, unreadable, []
@@ -292,10 +315,19 @@ def scan_path(
 def main(argv: list[str] | None = None) -> int:
     """Scan the requested paths against the project's declaration and return the gate's exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paths", nargs="*", default=[], type=Path,
-                        help="files or directories (default: the project's test roots)")
-    parser.add_argument("--all", action="store_true", dest="enforce_all",
-                        help="enforce every file, not only the ones this change touches")
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        default=[],
+        type=Path,
+        help="files or directories (default: the project's test roots)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="enforce_all",
+        help="enforce every file, not only the ones this change touches",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -303,8 +335,10 @@ def main(argv: list[str] | None = None) -> int:
         shapes = load(declaration)
     except ShapeError as exc:
         print(f"{PREFIX} {exc}", file=sys.stderr)
-        print(f"{PREFIX} fail closed: a declaration this cannot read is a rule nothing can rely on.",
-              file=sys.stderr)
+        print(
+            f"{PREFIX} fail closed: a declaration this cannot read is a rule nothing can rely on.",
+            file=sys.stderr,
+        )
         return ERROR
 
     if not shapes:
@@ -332,7 +366,9 @@ def main(argv: list[str] | None = None) -> int:
         missing.extend(gone)
 
     for root in missing:
-        print(f"{PREFIX} {root} does not exist — nothing scanned there.", file=sys.stderr)
+        print(
+            f"{PREFIX} {root} does not exist — nothing scanned there.", file=sys.stderr
+        )
     for path, reason in unreadable:
         print(f"{PREFIX} {path}: could not be parsed ({reason})", file=sys.stderr)
 
@@ -340,7 +376,8 @@ def main(argv: list[str] | None = None) -> int:
     counted = len(violations) - len(enforced)
     if counted:
         applicability.report_unenforced(
-            "fixture_shapes", counted,
+            "fixture_shapes",
+            counted,
             "fixture(s) contradict a declared shape outside what this change is responsible for",
         )
     for violation in enforced:
@@ -352,4 +389,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

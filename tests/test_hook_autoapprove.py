@@ -11,6 +11,7 @@ pinned hard below:
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -74,13 +75,18 @@ def test_no_sentinel_defers(tmp_path: Path) -> None:
 def test_expired_sentinel_defers(tmp_path: Path) -> None:
     """A crashed run must not leave a permanent bypass behind."""
     arm(tmp_path, age_minutes=600)
-    assert run_hook(tmp_path, bash("pytest -q"), {"AVENGER_AUTO_TTL_MIN": "240"}) is None
+    assert (
+        run_hook(tmp_path, bash("pytest -q"), {"AVENGER_AUTO_TTL_MIN": "240"}) is None
+    )
 
 
 def test_ttl_is_configurable(tmp_path: Path) -> None:
     arm(tmp_path, age_minutes=10)
     assert run_hook(tmp_path, bash("pytest -q"), {"AVENGER_AUTO_TTL_MIN": "5"}) is None
-    assert run_hook(tmp_path, bash("pytest -q"), {"AVENGER_AUTO_TTL_MIN": "60"}) is not None
+    assert (
+        run_hook(tmp_path, bash("pytest -q"), {"AVENGER_AUTO_TTL_MIN": "60"})
+        is not None
+    )
 
 
 def test_unreadable_sentinel_defers(tmp_path: Path) -> None:
@@ -95,7 +101,10 @@ def test_garbage_payload_defers(tmp_path: Path) -> None:
         input="not json",
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "CLAUDE_PROJECT_DIR": str(tmp_path)},
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "CLAUDE_PROJECT_DIR": str(tmp_path),
+        },
         check=False,
     )
     assert result.returncode == 0
@@ -181,7 +190,9 @@ HARD_DENIED = [
 
 
 @pytest.mark.parametrize("command", HARD_DENIED)
-def test_outward_and_destructive_commands_are_denied(tmp_path: Path, command: str) -> None:
+def test_outward_and_destructive_commands_are_denied(
+    tmp_path: Path, command: str
+) -> None:
     arm(tmp_path)
     decision = run_hook(tmp_path, bash(command))
     assert decision is not None, command
@@ -201,7 +212,9 @@ def test_hard_denials_cannot_be_switched_off(tmp_path: Path, command: str) -> No
 
 def test_extra_denials_can_be_added(tmp_path: Path) -> None:
     arm(tmp_path)
-    decision = run_hook(tmp_path, bash("terraform apply"), {"AVENGER_AUTO_DENY": "terraform"})
+    decision = run_hook(
+        tmp_path, bash("terraform apply"), {"AVENGER_AUTO_DENY": "terraform"}
+    )
     assert decision is not None
     assert decision["permissionDecision"] == "deny"
 
@@ -211,6 +224,88 @@ def test_extra_denials_do_not_shadow_normal_commands(tmp_path: Path) -> None:
     decision = run_hook(tmp_path, bash("pytest -q"), {"AVENGER_AUTO_DENY": "terraform"})
     assert decision is not None
     assert decision["permissionDecision"] == "allow"
+
+
+# --- the scope statement on a deny -------------------------------------------------------------
+
+
+def _hook_copy(tmp_path: Path, inventory: str) -> Path:
+    """The real hook beside a real `guard_scope.py` and an inventory we control.
+
+    The hook resolves its scripts directory from its own location, so copying it is the only seam
+    that can drive the branch where the inventory cannot answer for this guard.
+    """
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for name in ("hook_autoapprove.sh", "guard_scope.py"):
+        (scripts / name).write_bytes((ROOT / "scripts" / name).read_bytes())
+    (scripts / "guard_scope.toml").write_text(inventory, encoding="utf-8")
+    return scripts / "hook_autoapprove.sh"
+
+
+def _deny_reason(hook: Path, project: Path) -> str:
+    result = subprocess.run(
+        ["bash", str(hook)],
+        input=json.dumps(bash("git push origin HEAD")),
+        capture_output=True,
+        text=True,
+        env={
+            # The interpreter running the suite, because `tomllib` is what reads the inventory and
+            # a 3.9 on PATH would make every one of these assert the same unreadable-inventory line.
+            "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin",
+            "CLAUDE_PROJECT_DIR": str(project),
+            "CLAUDE_PLUGIN_ROOT": str(ROOT),
+        },
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    decision = json.loads(result.stdout)["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    return decision["permissionDecisionReason"]
+
+
+def test_a_deny_carries_the_scope_statement(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    arm(project)
+    hook = _hook_copy(
+        tmp_path,
+        '[guard."hook_autoapprove.sh"]\nproves = "that the command matched no denied pattern."\n'
+        'limits = ["intent: the regex reads the whole command STRING"]\n',
+    )
+
+    reason = _deny_reason(hook, project)
+
+    assert "SCOPE OF A CLEAN RESULT" in reason
+    assert "the regex reads the whole command STRING" in reason
+
+
+def test_an_absent_statement_is_a_named_MISSING_declaration_and_never_silence(
+    tmp_path: Path,
+) -> None:
+    """Silence reads as 'this guard has no limits', which is the defect one layer down."""
+    project = tmp_path / "project"
+    project.mkdir()
+    arm(project)
+    hook = _hook_copy(
+        tmp_path, '[guard."somebody_else.py"]\nproves = "x."\nlimits = ["y"]\n'
+    )
+
+    reason = _deny_reason(hook, project)
+
+    assert "MISSING declaration" in reason
+    assert "not a claim of full coverage" in reason
+
+
+def test_an_unreadable_inventory_is_named_too(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    arm(project)
+    hook = _hook_copy(tmp_path, "this is not TOML at all [[[")
+
+    reason = _deny_reason(hook, project)
+
+    assert "MISSING declaration" in reason
 
 
 # --- disarming ---------------------------------------------------------------------------------
