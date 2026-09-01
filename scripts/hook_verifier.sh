@@ -449,7 +449,9 @@ case "$V" in
         "above) — this is not missing evidence, and recording a run will not repair it. A check" \
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
-    # A phase that declares criticality: critical routes the Breaker (commands/avenger-run.md §4) —
+    # A phase that RESOLVES TO criticality: critical routes the Breaker (commands/avenger-run.md §4;
+    # scripts/criticality.py resolves an absent, blank, unrecognised or unreadable field to critical,
+    # issue #101) —
     # and on one measured feature it was owed twice and ran neither time, with zero trace anywhere in
     # the feature's docs or tests (issue #45). A stage that emits nothing is indistinguishable from a
     # stage that never ran, so this checks for its RECORD (breaker.json), the same way the handover
@@ -474,6 +476,11 @@ case "$V" in
         "a Breaker that never ran, and neither running it nor waiving it will repair this. A check" \
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
     fi
+    # A phase that does NOT route the Breaker says so out loud at close (issue #101). The verdict
+    # reads identically whether the Breaker ran clean or never ran at all, so the skip is stated
+    # rather than left as an absence for a reader to notice. Reporting only: `skipped` always exits
+    # 0, and `|| true` keeps a reporting line from ever failing a phase.
+    python3 "$SD/breaker_gate.py" skipped "$PHASE_DIR" || true
     carried_items_gate
     # Which stage found each defect is the one field the record cannot recover afterwards (§6d).
     # It used to be emitted by `verifier_review.sh` the moment the removed cross-family reading
@@ -504,6 +511,10 @@ case "$V" in
         "verifier: whether this phase's defects were recorded could not be DECIDED (cause above) —" \
         "this is not an unrecorded defect, and emitting one will not repair it. Fix what it named."
     fi
+    # What this pass does NOT establish, beside the pass itself (issue #97). A later stage reads
+    # output, not source, and a clean handover gate is exactly the result that gets read as more
+    # than it is.
+    python3 "$SD/guard_scope.py" emit hook_verifier.sh >/dev/null || true
     exit 0 ;;
   fail)
     # At the attempt cap the loop STOPS here, and stopping is the whole point: 80% of re-attempts

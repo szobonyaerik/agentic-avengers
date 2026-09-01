@@ -53,13 +53,23 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 #: The plugin's shipped payload — mirrors CLAUDE.md §7 "canonical-source driven": edit these, and
 #: `.claude-plugin/plugin.json` for the version and identity. `docs/templates` ships too (see
 #: commands/pipeline-init.md and install.sh's own SRC_SETS) — the rest of docs/ is this repo's own
 #: documentation of itself, not runtime payload. Nothing outside this set is part of what a phase
 #: executes (tests/, examples/ are the pipeline's own development, not payload).
 PLUGIN_PATHS: tuple[str, ...] = (
-    "agents", "skills", "commands", "prompts", "scripts", "hooks", ".claude-plugin",
+    "agents",
+    "skills",
+    "commands",
+    "prompts",
+    "scripts",
+    "hooks",
+    ".claude-plugin",
     "docs/templates",
 )
 
@@ -79,7 +89,9 @@ PIN_PATH_ENV = "AVENGER_PLUGIN_PIN_PATH"
 #: registered installation actually resolves to. Read-only reference for callers deciding a default;
 #: nothing in this module writes to either on its own — `cut()` requires both paths explicitly, and
 #: `main` only falls back to these constants for the `cut` subcommand, never for `check`.
-DEFAULT_CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "erik-tools" / "plan-build-verify"
+DEFAULT_CACHE_ROOT = (
+    Path.home() / ".claude" / "plugins" / "cache" / "erik-tools" / "plan-build-verify"
+)
 DEFAULT_PIN_PATH = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
 
 
@@ -99,7 +111,9 @@ def executing_root() -> Path:
 def plugin_manifest(root: Path) -> dict | None:
     """The parsed `.claude-plugin/plugin.json` at `root`, or None when it is missing or unreadable."""
     try:
-        data = json.loads((Path(root) / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (Path(root) / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -191,7 +205,10 @@ def _git(root: Path, *args: str) -> str | None:
     """
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), *args], capture_output=True, timeout=10, check=False,
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            timeout=10,
+            check=False,
         )
     except _GIT_UNAVAILABLE:
         return None
@@ -218,7 +235,9 @@ def _git_batch_blobs(root: Path, shas: list[str]) -> list[bytes] | None:
         proc = subprocess.run(
             ["git", "-C", str(root), "cat-file", "--batch"],
             input=("\n".join(shas) + "\n").encode("utf-8"),
-            capture_output=True, timeout=10, check=False,
+            capture_output=True,
+            timeout=10,
+            check=False,
         )
     except _GIT_UNAVAILABLE:
         return None
@@ -241,7 +260,7 @@ def _git_batch_blobs(root: Path, shas: list[str]) -> list[bytes] | None:
             return None
         start = eol + 1
         end = start + size
-        if end + 1 > len(out) or out[end:end + 1] != b"\n":
+        if end + 1 > len(out) or out[end : end + 1] != b"\n":
             return None
         blobs.append(out[start:end])
         pos = end + 1
@@ -329,7 +348,9 @@ def source_root(executing: Path | None = None) -> Path | None:
     project = os.environ.get("CLAUDE_PROJECT_DIR")
     if not project:
         return None
-    executing_name = plugin_name(executing if executing is not None else executing_root())
+    executing_name = plugin_name(
+        executing if executing is not None else executing_root()
+    )
     project_name = plugin_name(Path(project))
     if executing_name and project_name and executing_name == project_name:
         return Path(project)
@@ -379,14 +400,22 @@ def check(executing: Path | None = None, source: Path | None = None) -> DriftRes
 
     if src_root is None:
         return DriftResult(
-            "unknown", exe_version, None, exe_root, None,
+            "unknown",
+            exe_version,
+            None,
+            exe_root,
+            None,
             f"no source repository resolvable — set {SOURCE_ROOT_ENV} to your checkout of this "
             "plugin's own repository to enable drift detection.",
         )
 
     if exe_root.resolve() == src_root.resolve():
         return DriftResult(
-            "fresh", exe_version, exe_version, exe_root, src_root,
+            "fresh",
+            exe_version,
+            exe_version,
+            exe_root,
+            src_root,
             "executing directly from the source repository — nothing cached to drift.",
         )
 
@@ -398,24 +427,37 @@ def check(executing: Path | None = None, source: Path | None = None) -> DriftRes
     dirty_note = (
         " (the source repo also has uncommitted changes under the shipped payload — not "
         "reflected in this comparison, which reads its committed HEAD)"
-        if dirty else ""
+        if dirty
+        else ""
     )
     if exe_hash is None or src_hash is None:
         return DriftResult(
-            "unknown", exe_version, src_version, exe_root, src_root,
+            "unknown",
+            exe_version,
+            src_version,
+            exe_root,
+            src_root,
             f"could not hash one side (executing readable={exe_hash is not None}, "
             f"source readable={src_hash is not None}).",
             dirty=dirty,
         )
     if exe_hash == src_hash:
         return DriftResult(
-            "fresh", exe_version, src_version, exe_root, src_root,
+            "fresh",
+            exe_version,
+            src_version,
+            exe_root,
+            src_root,
             f"executing copy (version {exe_version}) matches the source repository's committed "
             f"content.{dirty_note}",
             dirty=dirty,
         )
     return DriftResult(
-        "stale", exe_version, src_version, exe_root, src_root,
+        "stale",
+        exe_version,
+        src_version,
+        exe_root,
+        src_root,
         f"executing copy is version {exe_version} at {exe_root}, but the source repository at "
         f"{src_root} (version {src_version}) has different COMMITTED content. Merged fixes are NOT "
         f"in effect for this run. Release: `python3 scripts/plugin_release.py cut` from the source "
@@ -455,7 +497,9 @@ def _git_head_sha(repo: Path) -> str | None:
     return sha or None
 
 
-def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, repo: Path) -> int:
+def update_pin(
+    pin_path: Path, cache_root: Path, target: Path, version: str, repo: Path
+) -> int:
     """Point every registered installation of this plugin at the just-released version.
 
     A `cut` that copies files into a new cache directory but leaves the install registry pinning the
@@ -493,7 +537,9 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
     except ValueError as exc:
         raise ValueError(f"{pin_path} is not valid JSON: {exc}") from exc
     if not isinstance(registry, dict) or not isinstance(registry.get("plugins"), dict):
-        raise ValueError(f"{pin_path} is not an installed-plugins registry (no 'plugins' object)")
+        raise ValueError(
+            f"{pin_path} is not an installed-plugins registry (no 'plugins' object)"
+        )
 
     key = _plugin_registry_key(cache_root)
     entries = registry["plugins"].get(key)
@@ -514,8 +560,10 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
         if not isinstance(entry, dict):
             continue
         try:
-            under = Path(str(entry.get("installPath") or "")).resolve().is_relative_to(
-                cache_root_resolved
+            under = (
+                Path(str(entry.get("installPath") or ""))
+                .resolve()
+                .is_relative_to(cache_root_resolved)
             )
         except (OSError, ValueError):
             under = False
@@ -540,7 +588,8 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
 
     reread = json.loads(pin_path.read_text(encoding="utf-8"))
     confirmed = [
-        e for e in (reread.get("plugins", {}).get(key) or [])
+        e
+        for e in (reread.get("plugins", {}).get(key) or [])
         if isinstance(e, dict) and e.get("installPath") == str(target)
     ]
     if len(confirmed) != updated:
@@ -559,7 +608,9 @@ def update_pin(pin_path: Path, cache_root: Path, target: Path, version: str, rep
     return updated
 
 
-def _pin_after_copy(pin_path: Path, cache_root: Path, target: Path, version: str, repo: Path) -> int:
+def _pin_after_copy(
+    pin_path: Path, cache_root: Path, target: Path, version: str, repo: Path
+) -> int:
     """`update_pin`, with EVERY failure re-raised as one that SAYS the payload already landed.
 
     The registry update is the last step of `cut`, so anything that fails here fails after the
@@ -586,7 +637,10 @@ def _pin_after_copy(pin_path: Path, cache_root: Path, target: Path, version: str
 
 
 def cut(
-    repo: Path, cache_root: Path, version: str | None = None, pin_path: Path | None = None
+    repo: Path,
+    cache_root: Path,
+    version: str | None = None,
+    pin_path: Path | None = None,
 ) -> Path:
     """The one release step: copy `repo`'s shipped payload into `<cache_root>/<version>/`.
 
@@ -606,7 +660,9 @@ def cut(
     repo = Path(repo)
     version = version or plugin_version(repo)
     if not version:
-        raise ValueError(f"{repo} has no version in .claude-plugin/plugin.json — nothing to cut")
+        raise ValueError(
+            f"{repo} has no version in .claude-plugin/plugin.json — nothing to cut"
+        )
     missing = _missing_shipped_paths(repo)
     if missing:
         raise ValueError(
@@ -637,7 +693,9 @@ def cut(
             continue
         dst = tmp / rel
         if src.is_dir():
-            shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*IGNORED_DIR_NAMES, "*.pyc"))
+            shutil.copytree(
+                src, dst, ignore=shutil.ignore_patterns(*IGNORED_DIR_NAMES, "*.pyc")
+            )
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -653,19 +711,30 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_check = sub.add_parser("check", help="is the executing copy stale against the source repo?")
+    p_check = sub.add_parser(
+        "check", help="is the executing copy stale against the source repo?"
+    )
     p_check.add_argument("--executing", type=Path, default=None)
     p_check.add_argument("--source", type=Path, default=None)
 
-    p_cut = sub.add_parser("cut", help="the one release step: copy the repo into the plugin cache")
+    p_cut = sub.add_parser(
+        "cut", help="the one release step: copy the repo into the plugin cache"
+    )
     p_cut.add_argument("--repo", type=Path, default=None)
     p_cut.add_argument("--cache-root", type=Path, default=None)
     p_cut.add_argument("--version", default=None)
-    p_cut.add_argument("--pin-path", type=Path, default=None,
-                       help="the install registry to re-point at the release (default: "
-                            f"${PIN_PATH_ENV} or {DEFAULT_PIN_PATH})")
-    p_cut.add_argument("--no-pin", action="store_true",
-                       help="copy the payload only; do not touch the install registry")
+    p_cut.add_argument(
+        "--pin-path",
+        type=Path,
+        default=None,
+        help="the install registry to re-point at the release (default: "
+        f"${PIN_PATH_ENV} or {DEFAULT_PIN_PATH})",
+    )
+    p_cut.add_argument(
+        "--no-pin",
+        action="store_true",
+        help="copy the payload only; do not touch the install registry",
+    )
 
     sub.add_parser("version", help="print the executing copy's version and root")
     return parser
@@ -683,7 +752,10 @@ def main(argv: list[str] | None = None) -> int:
             f"[plugin-release] executing version={result.executing_version} root={result.executing_root}",
             file=sys.stderr,
         )
-        print(f"[plugin-release] {result.status.upper()}: {result.detail}", file=sys.stderr)
+        print(
+            f"[plugin-release] {result.status.upper()}: {result.detail}",
+            file=sys.stderr,
+        )
         if result.dirty:
             print(
                 "[plugin-release] NOTE: the source repo has uncommitted changes under the shipped "
@@ -694,11 +766,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "cut":
         repo = args.repo or Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-        cache_root = args.cache_root or Path(os.environ.get(CACHE_ROOT_ENV) or DEFAULT_CACHE_ROOT)
+        cache_root = args.cache_root or Path(
+            os.environ.get(CACHE_ROOT_ENV) or DEFAULT_CACHE_ROOT
+        )
         if args.no_pin:
             pin_path = None
         elif args.pin_path is not None:
-            pin_path = args.pin_path  # explicit — errors loudly below if it cannot be used
+            pin_path = (
+                args.pin_path
+            )  # explicit — errors loudly below if it cannot be used
         else:
             default_pin = Path(os.environ.get(PIN_PATH_ENV) or DEFAULT_PIN_PATH)
             pin_path = default_pin if default_pin.is_file() else None
@@ -734,4 +810,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

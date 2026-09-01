@@ -86,6 +86,8 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
+
 # The diff-scope mechanism every check on this boundary shares, and the one line every such check
 # prints when it counted a finding instead of enforcing it.
 from applicability import changed_paths, report_unenforced, touched  # noqa: E402
@@ -549,4 +551,4 @@ def _run(args: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

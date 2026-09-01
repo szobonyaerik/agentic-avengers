@@ -51,7 +51,7 @@ one it does not is *counted on stderr and never blocked*. The rule is **you are 
 you change** - it is the applicability boundary (`scripts/applicability.py`, which owns the
 `changed_paths` mechanism this imports), and the same rule `scripts/verifier_evidence.py` (execution
 evidence), `scripts/spec_gate_cache.py` (spec re-gates) and the mutation gate
-(`cr-filter-git`) already run on.
+(`scripts/mutation_scope.py`) already run on.
 A further mechanism in one system does not get to invent a different one, and unlike a
 grandfathering list or a marker file it needs no maintenance and cannot rot as new artifact kinds
 appear. It is also what lets a repository upgrade: history it has not touched is visible without
@@ -77,6 +77,8 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
 
 # The diff scope is ONE mechanism and `applicability.py` owns it — this check was simply the first to
 # need it. Imported rather than kept here, and re-exported for the callers that already ask this
@@ -983,4 +985,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

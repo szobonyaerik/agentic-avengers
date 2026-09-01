@@ -223,13 +223,14 @@ mutation gate and from the per-edit verifier hook; they run at feature close and
 ### I. Swap mutmut → cosmic-ray
 - Prereqs: add `cosmic-ray`, drop `mutmut`.
 - Add a repo-root `cosmic-ray.toml` (template in §9). **Every mode is diff-scoped** (not just
-  refactor): the gate appends a `[cosmic-ray.filters.git-filter]` section naming the diff base and runs
-  `cr-filter-git`, which skips mutants outside the phase's changed **lines**.
+  refactor): the gate runs `scripts/mutation_scope.py`, which skips mutants outside the working
+  tree's changed **lines** - modified, staged and untracked, because this pipeline verifies
+  uncommitted work. Nothing in scope is `did-not-run`, never a pass.
 - The session flow in `scripts/hook_mutation.sh` / `.opencode/plugin/pipeline-gates.ts` / `gate_ci.sh`:
   ```
   cosmic-ray baseline <scoped.toml>                  # suite must be green FIRST — see below
   cosmic-ray init     <scoped.toml> session.sqlite
-  cr-filter-git --config <scoped.toml> session.sqlite # skip mutants outside the diff
+  python3 scripts/mutation_scope.py [--base <ref>] session.sqlite  # skip mutants outside the working tree's changed lines
   cosmic-ray exec     <scoped.toml> session.sqlite
   python3 scripts/mutation_score.py --min-score $MUTATION_MIN_SCORE session.sqlite
   cosmic-ray dump session.sqlite                     # survivors → model, only when below threshold
@@ -369,9 +370,9 @@ cosmic-ray baseline cosmic-ray.toml \
   && cosmic-ray exec cosmic-ray.toml s.sqlite \
   && python3 scripts/mutation_score.py --json s.sqlite
 ```
-This is the **base** config; the gate never runs it as-is. For **every** work_kind it copies this file,
-appends a `[cosmic-ray.filters.git-filter]` section naming the diff base, and runs `cr-filter-git` so
-only mutants on the phase's changed lines are scored.
+This is the **base** config; the gate never runs it as-is. For **every** work_kind it copies this file
+and runs `scripts/mutation_scope.py` so only mutants on the working tree's changed lines are scored -
+`--base` widens the same scope to the branch for CI, where nothing is uncommitted.
 
 Score with `scripts/mutation_score.py`, not `cr-rate` — `cr-rate` counts skipped mutants as kills,
 reports 0% survival for an empty session, and ignores `--fail-over 0`. Tune with `MUTATION_MIN_SCORE`

@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import amendments  # noqa: E402
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
+import criticality as criticality_mod  # noqa: E402
 import spec_gate_state  # noqa: E402
 import verdict_currency  # noqa: E402
 
@@ -60,7 +61,9 @@ FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 LEADING_NUMBERS = re.compile(r"\d+")
 # The planner's contractual heading (docs/templates/plan.template.md): `### Phase <n> — <slug>`.
 # Tolerate the dash variants people type; nothing else in a plan looks like this.
-PLAN_PHASE_HEADING = re.compile(r"^###\s*Phase\s+(\d+)\s*[—–-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+PLAN_PHASE_HEADING = re.compile(
+    r"^###\s*Phase\s+(\d+)\s*[—–-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE
+)
 
 
 class PipelineStateError(Exception):
@@ -81,20 +84,41 @@ class State:
     phase: str | None = None
     spec: str | None = None
     spec_path: Path | None = None
-    criticality: str = "standard"
+    criticality: str = criticality_mod.STANDARD
+    #: Criticality-gated stages that do NOT run on this phase, each with its reason (issue #101).
+    #: A list of sentences rather than a boolean because a reader has to be able to tell a skipped
+    #: Breaker from a clean one, and the verdict reads identically in both cases.
+    #:
+    #: **Populated only on a phase-level state** - one whose specs are all written, gated and
+    #: implemented, which is the first moment the phase's criticality is settled. On a state returned
+    #: while the phase is still writing specs, empty means NOT YET DETERMINED, never "nothing is
+    #: skipped": a phase whose specs are still being written has no final criticality, so a skip
+    #: claim there would assert something the pipeline cannot know.
+    skipped_stages: tuple[str, ...] = ()
 
     def as_json(self) -> str:
         """Serialise for the orchestrator, which reads this over Bash."""
         payload = asdict(self)
         payload["spec_path"] = str(self.spec_path) if self.spec_path else None
+        payload["skipped_stages"] = list(self.skipped_stages)
         return json.dumps(payload, indent=2)
 
 
 def _frontmatter(path: Path) -> dict[str, str]:
-    """Parse a markdown artifact's YAML frontmatter as flat key/value strings."""
+    """Parse a markdown artifact's YAML frontmatter as flat key/value strings.
+
+    Unreadable is empty frontmatter, and it has the same two shapes here as in
+    `criticality.resolve_spec_file`: the file cannot be OPENED (`OSError`), and its bytes cannot be
+    DECODED (`UnicodeDecodeError`). The two readers must agree, because this one runs FIRST — every
+    spec goes through `_spec_state` before any phase reaches the criticality resolver — so an
+    `OSError`-only handler here propagated a decode failure out of `next_stage`, which routes every
+    stage rather than only the Breaker. A spec that crashes the resolver is strictly worse than one
+    that resolves to `critical`. Nothing wider is caught: any other failure is a defect, not a
+    document this cannot read.
+    """
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
 
     match = FRONTMATTER.match(text)
@@ -170,7 +194,7 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
         "phase": phase.name,
         "spec": spec.name,
         "spec_path": spec_file,
-        "criticality": fields.get("criticality", "standard"),
+        "criticality": criticality_mod.resolve(fields).value,
     }
 
     gate = spec_gate_state.status(fields)
@@ -229,12 +253,39 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
     return None
 
 
-def _phase_criticality(phase: Path) -> str:
-    """`critical` when any spec in the phase declares it — that is what the Breaker keys on."""
-    for spec in _ordered_dirs(phase / "specs"):
-        if _frontmatter(spec / "spec.md").get("criticality") == "critical":
-            return "critical"
-    return "standard"
+def _phase_criticality(phase: Path) -> criticality_mod.PhaseCriticality:
+    """`critical` when any spec in the phase resolves to it — that is what the Breaker keys on.
+
+    The resolution lives in `scripts/criticality.py`, which `breaker_gate` reads too: the stage this
+    routes and the gate that enforces it must not disagree about whether a phase is critical. An
+    absent, malformed or unreadable `criticality` resolves to `critical` there (issue #101) — it used
+    to resolve to `standard` here, which deleted the Breaker from a phase with no author involved and
+    nothing said so.
+
+    Returns the whole resolution rather than its value so the one caller can hand it to
+    `_skipped_stages` too; both readers otherwise parsed every spec.md in the phase separately.
+    """
+    resolved = criticality_mod.phase(phase)
+    criticality_mod.announce(phase, resolved)
+    return resolved
+
+
+def _skipped_stages(
+    phase: Path, resolved: criticality_mod.PhaseCriticality
+) -> tuple[str, ...]:
+    """The criticality-gated stages that will not run on this phase, each with its reason.
+
+    Issue #101's second half, and the half that has to hold whichever way the default is decided: a
+    phase whose Breaker never ran and a phase whose Breaker ran clean produce the same passing
+    verdict, so the difference is stated rather than left to be inferred from an absence. Each gated
+    stage answers for itself — `breaker_gate.skipped` knows about the exception ledger, which this
+    resolver has no business re-deriving.
+
+    The phase is resolved once by the caller and handed to both readers: every spec.md in it was
+    otherwise read and parsed twice per state resolution, on every phase `next_stage` walks.
+    """
+    reason = breaker_gate.skipped(phase, resolved)
+    return (reason,) if reason is not None else ()
 
 
 def _verdict(phase: Path) -> str | None:
@@ -262,8 +313,13 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         if pending is not None:
             return pending
 
-    criticality = _phase_criticality(phase)
-    common = {"feature": feature, "phase": phase.name, "criticality": criticality}
+    resolved = _phase_criticality(phase)
+    common = {
+        "feature": feature,
+        "phase": phase.name,
+        "criticality": resolved.value,
+        "skipped_stages": _skipped_stages(phase, resolved),
+    }
 
     verdict = _verdict(phase)
     if verdict != "pass" and not _excepted(phase, "verdict", phase.name):
@@ -298,7 +354,7 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         )
 
     if not (phase / "handover.md").is_file():
-        # A phase that declares `criticality: critical` routes the Breaker (commands/avenger-run.md
+        # A phase that RESOLVES TO `criticality: critical` routes the Breaker (commands/avenger-run.md
         # §4), and "the resolver reports criticality: critical" used to be the only signal anyone
         # acted on — nothing enforced it, and it was owed twice on one feature and ran neither time
         # (issue #45). A stage that emits nothing is indistinguishable from a stage that never ran,
@@ -315,7 +371,7 @@ def _phase_state(feature: str, phase: Path) -> State | None:
         # reach the phase in flight at all, which is the first wedge `applicability.py`'s own
         # docstring names. Enforcement loses nothing: `hook_verifier.sh` fires on the handover WRITE,
         # which is this same open moment, and `gate_ci.sh` backs it up diff-scoped.
-        if breaker_gate.owed(phase):
+        if breaker_gate.owed(phase, resolved):
             reason = breaker_gate.satisfied(phase)
             if reason is not None and not _excepted(phase, "breaker", phase.name):
                 return State(stage="breaker", reason=reason, **common)
@@ -480,7 +536,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        print(next_stage(Path(args.root), args.feature, args.from_phase).as_json())
+        state = next_stage(Path(args.root), args.feature, args.from_phase)
+        print(state.as_json())
+        # stdout is the JSON the orchestrator parses; a human reading the run sees the skip here.
+        for line in state.skipped_stages:
+            print(f"pipeline-state: {state.phase} — {line}", file=sys.stderr)
     except FeatureNotFoundError as exc:
         print(f"pipeline-state: {exc}", file=sys.stderr)
         return 1

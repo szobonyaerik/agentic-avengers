@@ -98,7 +98,9 @@ What it does beyond the flow above:
   and at each `/spec-review`. `--auto` removes both and sets `SPEC_REVIEW_MODE=auto`.
 - **2 retries per stage**, then halts with the artifact, verdict and route-back reason. Mutation halts
   on the second bounce of the same phase.
-- **Breaker only on `criticality: critical`** (a spec frontmatter field) — and such a phase does not
+- **Breaker only on a phase resolving to `criticality: critical`** (a spec frontmatter field;
+  `scripts/criticality.py` resolves an absent, blank, unrecognised or unreadable one to `critical`,
+  issue #101) — and such a phase does not
   close without the Breaker's `breaker.json` record beside `verdict.json`, so the resolver reports
   `stage: breaker` until one exists and the handover hook refuses the card without it
   (`scripts/breaker_gate.py`); mutation only per `MUTATION_POLICY`.

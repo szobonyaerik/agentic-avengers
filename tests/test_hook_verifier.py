@@ -441,6 +441,33 @@ def test_a_standard_phase_closes_with_no_breaker_record(project: Path) -> None:
     assert run_hook(project).returncode == 0
 
 
+def test_a_closing_standard_phase_names_the_breaker_as_a_skipped_stage(
+    project: Path,
+) -> None:
+    """Issue #101: a Breaker that never ran and one that ran clean close the phase identically, so
+    the close says which criticality-gated stages did not run and why. Reporting only - it must
+    never fail the phase."""
+    write_spec(project, criticality="standard")
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 0
+    assert "criticality-gated stage skipped" in result.stderr
+    assert "breaker: not run" in result.stderr
+
+
+def test_a_closing_critical_phase_names_no_skipped_stage(project: Path) -> None:
+    write_spec(project, criticality="critical")
+    write_breaker(project, {"verdict": "clean", "attacked": ["the credential path"]})
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 0
+    assert "criticality-gated stage skipped" not in result.stderr
+
+
 def test_an_undecidable_breaker_check_is_not_reported_as_a_breaker_that_never_ran(
     project: Path,
 ) -> None:

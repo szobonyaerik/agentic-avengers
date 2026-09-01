@@ -163,7 +163,7 @@ elif [ "$evidence_rc" -ne 0 ]; then
   record_fail "verifier:execution-evidence-undecidable"
 fi
 
-# 1bf) Breaker — a phase that declares criticality: critical does not close without a Breaker record
+# 1bf) Breaker — a phase that resolves to criticality: critical does not close without a Breaker record
 #      (breaker.json). It was owed twice on one measured feature and ran neither time, with zero
 #      trace anywhere (issue #45): a stage that emits nothing is indistinguishable from one that never
 #      ran. Enforced here as well as in scripts/hook_verifier.sh, for the same reason the carried-items
@@ -377,6 +377,21 @@ if ! python3 "$SCRIPT_DIR/spec_gate_context.py" check "$ROOT"; then
   record_fail "overview-contracts-heading"
 fi
 
+# 1bcy) Allowlist growth, REPORTED and never gated (issue #97). A drift guard was once quietened
+#       with NINE allowlist entries instead of a fix to its extraction layer, and that landed as
+#       nine lines of routine-looking maintenance. This puts the delta where a reviewer sees it, in
+#       the CI log beside the checks those allowlists quieten. Deliberately not a failure: growth is
+#       often legitimate, and a blocking check would be answered with a bypass rather than with the
+#       attention this exists to buy.
+#
+#       The other half of issue #97 - that every guard with runtime output declares AND emits what
+#       a clean result does not establish - is `guard_proof.py scope`, and it is NOT called here:
+#       this file ships into every consumer repo and `guard_proof.py` deliberately does not, so it
+#       runs from .github/workflows/guard-proof.yml with the rest of the harness's own wiring.
+echo "• allowlists: growth is a signal, not routine maintenance"
+python3 "$SCRIPT_DIR/guard_scope.py" allowlists --root "$ROOT" \
+  ${GUARD_SCOPE_BASE:+--base "$GUARD_SCOPE_BASE"} || true
+
 # 1bd) Per-stage reasoning effort — declared where the harness reads it, and nowhere else claimed.
 #      The runbook carried an effort table for ten phases and told the orchestrator to PASS effort at
 #      spawn; the delegation tool has no such parameter, so nothing could obey it and every stage ran
@@ -502,6 +517,38 @@ mutation_fail() {
   record_fail "$1"
 }
 
+# Whether a comparison base can EXIST at all, decided explicitly and named rather than inferred
+# from an empty string. On a push to the default branch there is no PR base sha AND the merge-base
+# with the default branch is HEAD itself, so `unknowable` is not the same shape as "resolved to
+# nothing" — it is `scripts/applicability.py`'s word for a scope git cannot state, used here for
+# the same reason.
+mutation_base_state() {
+  mbs_head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$1" ] || { [ -n "$mbs_head" ] && [ "$1" = "$mbs_head" ]; }; then
+    echo "unknowable"
+  else
+    echo "known"
+  fi
+}
+
+# Route the scope filter's NOTHING IN SCOPE exit. `did-not-run` is REPORTED in both states — that
+# honesty is the whole of issue #97 and is not softened here — and the only question is whether it
+# BLOCKS. With no base to compare against, in a CI checkout where nothing is uncommitted either, an
+# empty scope has no remedy an author could apply, and CLAUDE.md §3a says a rule whose remedy is
+# unavailable is a wedge rather than a gate. With a base, an empty scope is an ordinary result an
+# author can act on, so it still blocks under enforce.
+mutation_nothing_in_scope() {
+  if [ "$1" = "unknowable" ]; then
+    echo "  ⓘ mutation: NO COMPARISON BASE EXISTS — the gate did not run. This is NOT a score," >&2
+    echo "    and NOT a failure: with nothing to compare against there is no remedy to apply, so" >&2
+    echo "    it is counted and named rather than blocking (CLAUDE.md §3a)." >&2
+    return 0
+  fi
+  echo "  ⓘ mutation: a base EXISTS and nothing in it is in scope — the gate did not run." >&2
+  echo "    This is NOT a score. A remedy exists, so it still blocks under enforce." >&2
+  mutation_fail "mutation:did-not-run"
+}
+
 if [ "$FULL" -eq 1 ] && [ "$MUTATION_POLICY" = "off" ]; then
   echo "• mutation: skipped (MUTATION_POLICY=off)"
 fi
@@ -523,14 +570,14 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
   else
     WORK=$(mktemp -d); SESSION="$WORK/session.sqlite"; TMP="$WORK/report.txt"; SCOPED="$WORK/cosmic-ray.toml"
     cp "$COSMIC_CFG" "$SCOPED"
-    # Diff-scope to the branch's changes when a base is resolvable; otherwise mutate everything
-    # rather than silently scoping to nothing.
+    # Diff-scope over the WORKING TREE plus the branch, through scripts/mutation_scope.py. The
+    # `cr-filter-git` this replaces scopes with `git diff --relative -U0 <branch> .`, which reports
+    # nothing about an UNTRACKED file — so a change whose contribution was new files had every
+    # mutant skipped and the scorer returned GO over zero measured lines (issue #97). In CI nothing
+    # is uncommitted, which is what --base is for: it widens the same scope to the branch.
     CI_BASE="${MUTATION_BASE:-$(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)}"
-    if [ -n "$CI_BASE" ]; then
-      printf '\n[cosmic-ray.filters.git-filter]\nbranch = "%s"\n' "$CI_BASE" >>"$SCOPED"
-    else
-      echo "  (no diff base resolvable — mutating the full module-path)"
-    fi
+    [ -n "$CI_BASE" ] || echo "  (no diff base resolvable — scoping on the working tree alone)"
+    MUTATION_BASE_STATE="$(mutation_base_state "$CI_BASE")"
     # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
     # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
     # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
@@ -542,20 +589,36 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
       echo "  ✗ mutation baseline FAILED — suite is not green on unmutated code (fail closed):" >&2
       tail -5 "$TMP" >&2
       mutation_fail "mutation:baseline-failed"
-    elif cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1 \
-       && { [ -z "$CI_BASE" ] || cr-filter-git --config "$SCOPED" "$SESSION" >>"$TMP" 2>&1; } \
-       && cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
-      # Deterministic verdict: 0 = GO (no model call), 1 = below threshold, 2 = cannot score.
-      python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" "$SESSION"
-      msc=$?
-      if [ "$msc" -eq 1 ]; then
-        { echo "---- mutation score (deterministic gate verdict: NO-GO) ----"
-          python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" --json "$SESSION" 2>&1
-          echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>&1; } >>"$TMP"
-        cat "$TMP" >&2   # survivors; the Verifier interprets them in chat, no model here
-        mutation_fail "mutation"
-      elif [ "$msc" -ne 0 ]; then
-        mutation_fail "mutation:unscorable"
+    elif cosmic-ray init "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+      # Scope, then exec. Exit 3 from the scope filter is NOTHING IN SCOPE: reported as
+      # `did-not-run`, never as a pass, because the absence of a measurement is not a clean gate.
+      python3 "$SCRIPT_DIR/mutation_scope.py" ${CI_BASE:+--base "$CI_BASE"} --root "$ROOT" "$SESSION" >>"$TMP" 2>&1
+      mfc=$?
+      if [ "$mfc" -eq 3 ]; then
+        tail -3 "$TMP" >&2
+        mutation_nothing_in_scope "$MUTATION_BASE_STATE"
+      elif [ "$mfc" -ne 0 ]; then
+        echo "  ✗ mutation scope filter errored (fail closed):" >&2; tail -5 "$TMP" >&2
+        mutation_fail "mutation:filter-errored"
+      elif ! cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+        echo "  ✗ cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
+        mutation_fail "mutation:errored"
+      else
+        # Deterministic verdict: 0 = GO (no model call), 1 = below threshold, 2 = cannot score,
+        # 3 = nothing tested, which is the absence of a measurement rather than a score.
+        python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" "$SESSION"
+        msc=$?
+        if [ "$msc" -eq 1 ]; then
+          { echo "---- mutation score (deterministic gate verdict: NO-GO) ----"
+            python3 "$SCRIPT_DIR/mutation_score.py" --min-score "${MUTATION_MIN_SCORE:-0.85}" --json "$SESSION" 2>&1
+            echo "---- survivors (cosmic-ray dump) ----"; cosmic-ray dump "$SESSION" 2>&1; } >>"$TMP"
+          cat "$TMP" >&2   # survivors; the Verifier interprets them in chat, no model here
+          mutation_fail "mutation"
+        elif [ "$msc" -eq 3 ]; then
+          mutation_fail "mutation:did-not-run"
+        elif [ "$msc" -ne 0 ]; then
+          mutation_fail "mutation:unscorable"
+        fi
       fi
     else
       echo "  ✗ cosmic-ray run errored (fail closed):" >&2; tail -5 "$TMP" >&2
@@ -590,4 +653,7 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "✓ pipeline gates passed"
+# What that pass does NOT establish, beside the pass itself (issue #97). A later stage reads output,
+# not source, and "pipeline gates passed" is exactly the line that gets read as more than it is.
+python3 "$SCRIPT_DIR/guard_scope.py" emit gate_ci.sh >/dev/null || true
 exit 0

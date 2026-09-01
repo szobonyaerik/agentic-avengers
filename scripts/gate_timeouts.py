@@ -64,8 +64,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import metrics_sink  # noqa: E402
 from gate_errors import GateError  # noqa: E402
+import guard_scope  # noqa: E402
+import metrics_sink  # noqa: E402
 
 #: Seconds the provider call gets, and the value `gate_runner.py` passes to the child runner.
 #: Overridable so a slow model can be given room — the relation below is checked against whatever
@@ -141,7 +142,8 @@ METRICS_CLI = "pipeline_metrics.py"
 #: How a shipped script spawns that CLI — pinned to the same three reference forms as `REFERENCE`,
 #: for the same reason: a spawn this cannot see is a process whose timeout goes uncounted.
 METRICS_SPAWN = re.compile(
-    r"(?:\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts|\$SD|\$SCRIPT_DIR)/" + METRICS_CLI.replace(".", r"\.")
+    r"(?:\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts|\$SD|\$SCRIPT_DIR)/"
+    + METRICS_CLI.replace(".", r"\.")
 )
 
 #: The metrics subcommands that size the suite, and so spawn `pytest --collect-only`. Narrower than
@@ -167,7 +169,9 @@ METRICS_MODULE = re.compile(r"\b(?:from|import)\s+(?:pipeline_metrics|metrics_si
 METRICS_RECORD = re.compile(r"\brecord_[a-z][a-z_]*\(")
 
 #: A shell function definition, `name () {` … `}` with the brace back at column 0.
-SHELL_FUNCTION = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([ \t]*\)[ \t]*\{$", re.MULTILINE)
+SHELL_FUNCTION = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([ \t]*\)[ \t]*\{$", re.MULTILINE
+)
 
 
 def _function_bodies(text: str) -> dict[str, tuple[int, int]]:
@@ -203,8 +207,11 @@ def _invocations(text: str) -> int:
     total = 0
     for name, (start, end) in sorted(bodies.items(), key=lambda kv: -kv[1][0]):
         body = text[start:end]
-        outside = outside[: outside.find(body)] + outside[outside.find(body) + len(body) :] \
-            if body in outside else outside
+        outside = (
+            outside[: outside.find(body)] + outside[outside.find(body) + len(body) :]
+            if body in outside
+            else outside
+        )
         inner = len(GATE_INVOCATION.findall(body))
         if inner:
             total += inner * max(1, _call_sites(outside, name))
@@ -236,7 +243,9 @@ def gate_calls(script: Path, scripts_dir: Path, seen: set[str] | None = None) ->
 
 def required_hook_timeout(call_s: int | None = None, calls: int = 1) -> int:
     """The smallest hooks.json timeout that can outlive the calls it wraps."""
-    return max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S
+    return (
+        max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S
+    )
 
 
 def references(script: Path) -> set[str]:
@@ -245,10 +254,14 @@ def references(script: Path) -> set[str]:
         text = script.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
-    return {plugin or sd or script_dir for plugin, sd, script_dir in REFERENCE.findall(text)}
+    return {
+        plugin or sd or script_dir for plugin, sd, script_dir in REFERENCE.findall(text)
+    }
 
 
-def reaches_gate_runner(script: Path, scripts_dir: Path, seen: set[str] | None = None) -> bool:
+def reaches_gate_runner(
+    script: Path, scripts_dir: Path, seen: set[str] | None = None
+) -> bool:
     """True when `script` can reach gate_runner.py, directly or through what it calls."""
     seen = set() if seen is None else seen
     if script.name in seen:
@@ -264,7 +277,9 @@ def reaches_gate_runner(script: Path, scripts_dir: Path, seen: set[str] | None =
     )
 
 
-def metrics_processes(script: Path, scripts_dir: Path, seen: set[str] | None = None) -> int:
+def metrics_processes(
+    script: Path, scripts_dir: Path, seen: set[str] | None = None
+) -> int:
     """How many separate processes on `script`'s path can each pay the metrics timeout once.
 
     Derived, never listed. The sink's breaker is per-process state, so a blocked writer costs one
@@ -303,7 +318,9 @@ def collect_timeout() -> int:
     return COLLECT_TIMEOUT_S
 
 
-def collect_processes(script: Path, scripts_dir: Path, seen: set[str] | None = None) -> int:
+def collect_processes(
+    script: Path, scripts_dir: Path, seen: set[str] | None = None
+) -> int:
     """How many suite collections one invocation of `script` can spawn.
 
     Derived from the subcommands the scripts actually run, exactly like `metrics_processes`: a hook
@@ -349,11 +366,15 @@ def gate_hooks(hooks_json: Path, scripts_dir: Path) -> list[tuple[str, str, int,
                 script = scripts_dir / match.group(1)
                 if script.is_file() and reaches_gate_runner(script, scripts_dir):
                     calls = max(1, gate_calls(script, scripts_dir))
-                    found.append((event, script.name, int(hook.get("timeout", 0)), calls))
+                    found.append(
+                        (event, script.name, int(hook.get("timeout", 0)), calls)
+                    )
     return found
 
 
-def violations(hooks_json: Path, scripts_dir: Path, call_s: int | None = None) -> list[str]:
+def violations(
+    hooks_json: Path, scripts_dir: Path, call_s: int | None = None
+) -> list[str]:
     """Every gate hook whose harness budget cannot outlive what runs inside it.
 
     Two ways to lose the same way: a budget that cannot outlive the provider calls the hook makes
@@ -412,7 +433,9 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: gate_timeouts.py verify [hooks.json]", file=sys.stderr)
         return 2
     here = Path(__file__).resolve().parent
-    hooks_json = Path(args[1]) if len(args) == 2 else here.parent / "hooks" / "hooks.json"
+    hooks_json = (
+        Path(args[1]) if len(args) == 2 else here.parent / "hooks" / "hooks.json"
+    )
     if not hooks_json.is_file():
         # Fail closed: the relation is what keeps a gate answerable, and an unverifiable relation is
         # exactly the state that produced a day of misread failures.
@@ -435,4 +458,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

@@ -12,7 +12,8 @@ was removed and nothing inherits it, so this gate is named as *partial cover* al
 `skills/tdd` and the human spec-review, never as a replacement (`skills/verifier-triage`).
 
 It used to be off by default. It is on because it is deterministic (`scripts/mutation_score.py`,
-never a model), diff-scoped (`cr-filter-git`), costs no model call below the threshold, and **every
+never a model), diff-scoped (`scripts/mutation_scope.py`, over the working
+tree), costs no model call below the threshold, and **every
 non-discriminating test this project has caught was caught by it** — including two in one phase that
 neither the spec gate nor a green 281-test suite surfaced. Advisory never blocks, so the cost of that
 default being wrong is a line of output.

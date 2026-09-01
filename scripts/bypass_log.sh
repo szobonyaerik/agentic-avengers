@@ -90,4 +90,6 @@ else
   echo "⚠ BYPASSED gate '$GATE' — reason: ${GATE_BYPASS:-}" >&2
 fi
 echo "  logged to $LOG. Record this in the phase handover.md." >&2
+# An audited override is not a warranted one, and this says so where the override is announced.
+python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/guard_scope.py" emit bypass_log.sh >/dev/null || true
 exit 0

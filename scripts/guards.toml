@@ -340,6 +340,64 @@ find = '''
 replace = '''
         if False:'''
 
+# --- the handover gate's own enforcement ------------------------------------------------------------
+
+[[guard]]
+id = "hook-verifier.breaker-obligation"
+implements = "scripts/hook_verifier.sh"
+defect = "The handover hook is the AUTHORITATIVE point at which a phase's Breaker obligation is asked (issue #45): `gate_ci.sh` is diff-scoped and `pipeline_state.py` is routing, so a hook that swallowed `breaker_gate.py due` would let a critical phase close with no record and no signal anywhere. Declared when issue #101 put the skipped-stage report in this file and found the hook itself carried no proof it guards anything."
+tests = ["tests/test_hook_verifier.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = """
+    python3 "$SD/breaker_gate.py" due "$PHASE_DIR"; breaker_rc=$?"""
+replace = """
+    breaker_rc=0"""
+
+# --- the CI gate floor's own enforcement --------------------------------------------------------
+
+[[guard]]
+id = "gate-ci.cross-family-refusal"
+implements = "scripts/gate_ci.sh"
+defect = "`gate_ci.sh` IS the CI gate floor, so a branch of it that stopped refusing would remove an invariant everywhere the pipeline is driven outside a session hook, with a green build as the only signal. The cross-family assertion is the sharpest case: state 3 (an unset GATE_MODEL) deliberately passes and says nothing was checked, so state 2 still biting is what keeps that a scope reduction rather than a silent deletion. Declared when issue #101's wording fix touched this file and found the CI floor itself carried no proof it guards anything."
+tests = ["tests/test_gate_ci_cross_family.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+      echo "    AUTHOR_FAMILY, which drops the invariant silently instead of disclosing it." >&2
+      return 1"""
+replace = """
+      echo "    AUTHOR_FAMILY, which drops the invariant silently instead of disclosing it." >&2
+      return 0"""
+
+# --- criticality resolution ------------------------------------------------------------------------
+
+[[guard]]
+id = "criticality.absent-defaults-critical"
+implements = "scripts/criticality.py"
+defect = "Issue #101: `criticality` was read as `fields.get(\"criticality\", \"standard\")` in both readers, so a spec that never wrote the line resolved to the WEAKER pipeline and the Breaker was silently deleted from the phase. Caught by hand in grid-bot-platform phase 4 - that feature's highest-risk phase - and nothing in the pipeline would have flagged it."
+tests = ["tests/test_criticality.py", "tests/test_breaker_gate.py", "tests/test_pipeline_state.py"]
+[[guard.mutation]]
+file = "scripts/criticality.py"
+find = """
+        return Resolution(value=DEFAULT, source=ABSENT, raw=raw)"""
+replace = """
+        return Resolution(value=STANDARD, source=ABSENT, raw=raw)"""
+
+[[guard]]
+id = "criticality.skipped-stage-reported"
+implements = "scripts/breaker_gate.py"
+defect = "Issue #101's second half: a phase that never routed the Breaker and one whose Breaker ran clean produce the same passing verdict, so the skip was invisible. `breaker_gate.skipped` names every criticality-gated stage that did not run, with its reason."
+tests = ["tests/test_breaker_gate.py", "tests/test_pipeline_state.py", "tests/test_hook_verifier.py"]
+[[guard.mutation]]
+file = "scripts/breaker_gate.py"
+find = """
+    if not resolved.critical:
+        return f"breaker: not run - {resolved.reason()}""""
+replace = """
+    if not resolved.critical:
+        return None"""
+
 # --- interface drift ----------------------------------------------------------------------------------------------
 
 [[guard]]
@@ -563,7 +621,9 @@ tests = ["tests/test_gate_timeouts.py"]
 [[guard.mutation]]
 file = "scripts/gate_timeouts.py"
 find = '''
-    return max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S'''
+    return (
+        max(calls, 1) * (call_timeout() if call_s is None else call_s) + HOOK_HEADROOM_S
+    )'''
 replace = '''
     return call_timeout() if call_s is None else call_s'''
 
@@ -664,6 +724,10 @@ tests = ["tests/test_hook_implementer_lock.py"]
 file = "scripts/hook_implementer_lock.sh"
 find = '''
 if [ "$RC" -eq 0 ]; then
+  # The clean result is emitted with what it does NOT establish beside it: a later stage reads
+  # output, not source (issue #97). Only here - the early exits above are "not applicable", which
+  # is a different answer from "checked, and nothing was running".
+  python3 "$SD/guard_scope.py" emit hook_implementer_lock.sh >/dev/null || true
   exit 0
 fi'''
 replace = '''
@@ -698,6 +762,137 @@ find = '''
     if score.score < min_score:'''
 replace = '''
     if False:'''
+
+
+[[guard]]
+id = "gate-ci.cross-family-assertion"
+implements = "scripts/gate_ci.sh"
+defect = "The gate floor's own cross-family assertion. A spec gate judging on the implementers' own family is same-family verification wearing an independence claim, and the refusal is the only thing that says so - `glm-5.1` and `glm-5.2` once read as different families for exactly this reason."
+tests = ["tests/test_gate_ci_cross_family.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2'''
+replace = '''
+      return 0
+      echo "  ✗ GATE_MODEL '$gate' (family '$gfam') is the implementer's own family." >&2'''
+
+
+# --- what a clean result does NOT establish (issue #97) --------------------------------------------
+
+[[guard]]
+id = "mutation-scope.new-files-are-in-scope"
+implements = "scripts/mutation_scope.py"
+defect = "The gate diff-scoped through `cr-filter-git`, whose whole mechanism is `git diff --relative -U0 <branch> .`. `git diff` reports nothing about an UNTRACKED file and this pipeline verifies uncommitted work, so a phase whose contribution was NEW FILES had every mutant skipped and the scorer returned GO over zero measured lines."
+tests = ["tests/test_mutation_scope.py"]
+[[guard.mutation]]
+file = "scripts/mutation_scope.py"
+find = '''
+        _untracked_lines(root),'''
+replace = '''
+        {},'''
+
+[[guard]]
+id = "mutation-scope.nothing-in-scope-is-not-a-pass"
+implements = "scripts/mutation_scope.py"
+defect = "A session where nothing survived filtering is the ABSENCE of a measurement. Reported as OK it is indistinguishable from a gate that ran and found nothing, which is how a phase with no mutation score at all read as clean."
+tests = ["tests/test_mutation_scope.py"]
+[[guard.mutation]]
+file = "scripts/mutation_scope.py"
+find = '''
+    if kept == 0:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "mutation-score.did-not-run-is-not-a-pass"
+implements = "scripts/mutation_score.py"
+defect = "An all-filtered session returned GO with the line `all N mutants fall outside the diff`. That is the reading half of the same defect: a scorer that reports a pass for a session it never measured is wrong whatever the filter did."
+tests = ["tests/test_mutation_score.py"]
+[[guard.mutation]]
+file = "scripts/mutation_score.py"
+find = '''
+        if score.skipped == score.total:
+            return (
+                DID_NOT_RUN,'''
+replace = '''
+        if score.skipped == score.total:
+            return (
+                GO,'''
+
+[[guard]]
+id = "subprocess-check.attribute-chain"
+implements = "scripts/subprocess_check.py"
+defect = "The AST walk read only `<name>.<attr>(` and stopped at the first dot, so `asyncio.subprocess.create_subprocess_exec(...)` - a real spawner one submodule hop away - passed as clean. Issue #97's first instance is the same shape in another repository's containment guard, which reported CLEAN over two live call sites."
+tests = ["tests/test_subprocess_check.py"]
+[[guard.mutation]]
+file = "scripts/subprocess_check.py"
+find = '''
+    hops, attr = parts[1:-1], parts[-1]'''
+replace = '''
+    if len(parts) > 2:
+        return None
+    hops, attr = parts[1:-1], parts[-1]'''
+
+
+# --- the scope statements themselves ---------------------------------------------------------------
+#
+# A guard that stopped saying what it does not cover is the defect of issue #97 restored, and it
+# would look exactly like a guard that covers everything.
+
+[[guard]]
+id = "guard-scope.clean-results-carry-their-limits"
+implements = "scripts/guard_scope.py"
+defect = "Four guards reported CLEAN while missing something real, and three of the four had their limitation written down - in a module docstring. A later stage reads OUTPUT, not source, so the reader who needed it never saw it."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+    if code != ok:
+        return code'''
+replace = '''
+    if code != ok or True:
+        return code'''
+
+[[guard]]
+id = "guard-scope.emission-never-moves-a-verdict"
+implements = "scripts/guard_scope.py"
+defect = "A guard whose exit code could be moved by its own documentation is a guard weakened to make a rule easier to satisfy, which is the one remedy issue #97 puts out of scope."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+    return clean(name, code, ok=ok)'''
+replace = '''
+    return ok'''
+
+[[guard]]
+id = "guard-scope.no-limits-is-not-a-declaration"
+implements = "scripts/guard_scope.py"
+defect = "A statement with an empty `limits` claims total coverage. Accepted silently, the inventory would fill with entries that assert exactly the thing this file exists to stop being asserted by silence."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_scope.py"
+find = '''
+        if (
+            not isinstance(limits, list)
+            or not limits'''
+replace = '''
+        if (
+            not isinstance(limits, list)
+            or False'''
+
+[[guard]]
+id = "guard-scope.a-guard-that-never-emits-is-a-finding"
+implements = "scripts/guard_proof.py"
+defect = "A statement in the inventory that no guard emits is a limitation nobody is told about - the same invisible-in-source failure, one level up, wearing the costume of the fix."
+tests = ["tests/test_guard_scope.py"]
+[[guard.mutation]]
+file = "scripts/guard_proof.py"
+find = '''
+        if not emitting:'''
+replace = '''
+        if False:'''
 
 
 # --- the harness itself -----------------------------------------------------------------------------------------------------------------------
@@ -834,6 +1029,174 @@ find = '''
             return Proof(guard.id, ERRORED, f"the tree could not be copied: {exc}")'''
 replace = '''
         tree = Path(root)'''
+
+
+# --- .env assembly: the join, the read-back, and the placeholder refusal (issue #108) -------------
+
+[[guard]]
+id = "env-assemble.explicit-separator"
+implements = "scripts/env_assemble.py"
+defect = "`cat .env.example .env.pipeline.example > .env` joins BYTES. The first file had no trailing newline, so its last key fused onto the first line of the second and the parser read the merged line as a different value: `DRY_RUN=true` was read as `DRY_RUN=false` on every worktree assembled that way, silently, for the life of the task, and was found only during live-fire checks."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = '''
+    return "".join(
+        text if text.endswith("\n") else text + "\n" for text in texts if text
+    )'''
+replace = '''
+    return "".join(texts)'''
+
+[[guard]]
+id = "env-assemble.read-back"
+implements = "scripts/env_assemble.py"
+defect = "The separator alone is a claim about bytes nobody re-reads. Without the read-back, an assembled `.env` that does not hold what its sources declared - a fused key, a key that vanished with it - is written anyway and discovered, if at all, by whatever the wrong value does next."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = """
+    problems = verify(assembled, expected)
+    if problems:"""
+replace = """
+    problems = verify(assembled, expected)
+    if False:"""
+
+[[guard]]
+id = "env-assemble.placeholder-refusal"
+implements = "scripts/env_assemble.py"
+defect = "The shipped templates put `REPLACE_ME` in every value the operator must fill in, and an unfilled `.env` became the run's configuration - reaching the provider as a credential, answered with an authentication error that says nothing about the file that caused it."
+tests = ["tests/test_env_assemble.py", "tests/test_gate_runner_failures.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = """
+    return sorted(
+        key
+        for key, value in values.items()
+        if key not in PROSE_VALUED_KEYS and PLACEHOLDER_MARKER in value
+    )"""
+replace = """
+    return []"""
+
+
+[[guard]]
+id = "pipeline-init.created-template-first"
+implements = "scripts/pipeline_init.py"
+defect = "The create branch named an unedited shipped template LAST, so a FRESHLY COPIED template beat an example the operator had already configured. A repository whose `.env.example` an earlier init wrote and the team then filled in and committed got `.env.pipeline.example` as its target; step 2a's `cp -n` wrote the shipped template there unmodified, and last-wins handed the assembled `.env` the shipped `GATE_MODEL`, `GATE_PROVIDER` and `MUTATION_POLICY` instead of the team's choices - values that parse, survive the read-back and carry no `REPLACE_ME`, so nothing reported them."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        return fresh[:1] + tuple(name for name in ordered if name not in fresh)'''
+replace = '''
+        return tuple(name for name in ordered if name not in fresh) + fresh[:1]'''
+
+[[guard]]
+id = "pipeline-init.order-by-content-not-presence"
+implements = "scripts/pipeline_init.py"
+defect = "Ordering by PRESENCE let step 2a's own `cp -n` change the answer. `template_target` names the pipeline's example whether that file is about to be created or was filled in long ago, so the survey printed one order before the copy and the reverse after it - and the second answer let a freshly written, unmodified shipped template beat a team's committed `.env.example`, reverting `GATE_MODEL` and `MUTATION_POLICY` with nothing reporting it. Content is stable across the copy; presence is exactly what the copy changes."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        return name in self.fresh_examples or name not in self.existing_examples'''
+replace = '''
+        return name not in self.existing_examples'''
+
+[[guard]]
+id = "pipeline-init.source-set-by-content"
+implements = "scripts/pipeline_init.py"
+defect = "Content decided the ORDER but the SOURCE SET still folded in `template_target`, which is decided purely by presence - and step 2a's own `cp -n` is what changes presence. A repository with no examples printed `--out .env .env.example` before the copy and `--out .env .env.example .env.pipeline.example` after it, the second naming a file nothing ever created, so `assemble` refused with `cannot read .env.pipeline.example` and init finished with the pipeline's keys in no file any gate reads. The merge branch had the same shape."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        for name in self.existing_examples:
+            if name in self.fresh_examples:
+                return name
+        return self.template_target'''
+replace = '''
+        return self.template_target'''
+
+[[guard]]
+id = "pipeline-init.merge-names-the-operators-config"
+implements = "scripts/pipeline_init.py"
+defect = "A merge names exactly two files, and its one non-live source was resolved with `which file HOLDS the shipped template` - the right question for the create branch and the wrong one here. With `.env.example` byte-identical to the shipped template and `.env.pipeline.example` the copy the operator had filled in, the merge named the PRISTINE one and the assembled live `.env` came back carrying `GATE_MODEL=google/gemini-3.1-pro-preview` and `MUTATION_POLICY=advisory` instead of the chosen `deepseek/deepseek-chat` and `enforce`. Nothing reported it: the values parse, the read-back passes because a source declared them, and a default carries no `REPLACE_ME`. The create branch got that state right, so the two branches disagreed about one file in one repository."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+        if PIPELINE_EXAMPLE in self.existing_examples and not self.is_fresh_template(
+            PIPELINE_EXAMPLE
+        ):
+            return PIPELINE_EXAMPLE
+        return self.pipeline_example'''
+replace = '''
+        return self.pipeline_example'''
+
+[[guard]]
+id = "pipeline-init.printed-assembler-resolves"
+implements = "scripts/pipeline_init.py"
+defect = "The survey printed the bare relative `scripts/env_assemble.py`, and `commands/pipeline-init.md` tells the operator IN BOLD to run the command step 0 printed rather than a path written elsewhere. Under the Claude Code plugin install - the primary runtime - the pipeline lives at `$CLAUDE_PLUGIN_ROOT` and nothing puts `scripts/` in the operator's repository, so running it verbatim answered `can't open file` and the pipeline's keys never reached the `.env` every gate reads. The report is the authority both documents defer to, and it named a path that resolved in neither install shape it is read in."
+tests = ["tests/test_pipeline_init_survey.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+ASSEMBLER = Path(__file__).resolve().parent / "env_assemble.py"'''
+replace = '''
+ASSEMBLER = "scripts/env_assemble.py"'''
+
+[[guard]]
+id = "pipeline-init.printed-assembler-survives-a-shell"
+implements = "scripts/pipeline_init.py"
+defect = "Resolving the assembler to an absolute path is only half of making the printed command runnable: it was then interpolated RAW into the command `commands/pipeline-init.md` tells the operator IN BOLD to run verbatim. Under the Claude Code plugin install the path sits under `$HOME/.claude/plugins/`, so a home directory containing a space - `/Users/Erik Smith` - splits the command at that space and python answers `can't open file '/Users/Erik'`. That is the same end state as the bare relative path, one variant over: the pipeline's keys never reach the `.env` every gate reads."
+tests = ["tests/test_pipeline_init_survey.py::TestTheAssembleCommandNamesFilesThatExist::test_an_install_path_containing_a_space_still_survives_a_shell"]
+[[guard.mutation]]
+file = "scripts/pipeline_init.py"
+find = '''
+    assembler = shlex.quote(str(ASSEMBLER))'''
+replace = '''
+    assembler = str(ASSEMBLER)'''
+
+[[guard]]
+id = "env-assemble.symlinked-destination"
+implements = "scripts/env_assemble.py"
+defect = "`os.replace` replaces the SYMLINK at the destination where the `write_text` it took over from followed it. A worktree whose `.env` links to a shared canonical file - the pattern this repository's own multi-worktree setup uses - was silently detached: the command reported success, the link became a private regular file holding the merged credentials, the shared file kept its old contents, and later edits there stopped applying. `stat()` follows a link too, so the mode carried onto the replacement was the target's rather than the link's."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = '''
+    target = Path(os.path.realpath(out)) if out.is_symlink() else out'''
+replace = '''
+    target = out'''
+
+[[guard]]
+id = "env-assemble.temp-file-cleanup"
+implements = "scripts/env_assemble.py"
+defect = "The temp file holding the FULLY MERGED result - on the merge-in-place path, the operator's real credentials - was unlinked only in `except OSError`. `KeyboardInterrupt` and `SystemExit` are `BaseException`, and a Ctrl-C or a hook-budget SIGTERM between `mkstemp` and `os.replace` is the exact scenario the atomic write exists for, so the fix traded a truncated `.env` for a credential file left in the working tree."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = '''
+    finally:
+        if tmp is not None and not replaced:
+            tmp.unlink(missing_ok=True)'''
+replace = '''
+    finally:
+        if tmp is not None and not replaced and not isinstance(out, Path):
+            tmp.unlink(missing_ok=True)'''
+
+
+[[guard]]
+id = "env-assemble.atomic-write"
+implements = "scripts/env_assemble.py"
+defect = "On the merge-in-place path the destination IS the live `.env` - the operator's real credentials, gitignored, no backup - and it is also one of its own sources. `write_text` opens it in truncate mode, so a full disk or a signal between the truncate and the completed write leaves a partial file that can no longer be re-merged, because one of the sources WAS it."
+tests = ["tests/test_env_assemble.py"]
+[[guard.mutation]]
+file = "scripts/env_assemble.py"
+find = """
+    _write_atomically(out, assembled)"""
+replace = """
+    out.write_text(assembled, encoding="utf-8")"""
 
 
 # --- exempt: on the enforcement path, but deciding nothing ------------------------------------------------------------

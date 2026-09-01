@@ -94,6 +94,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import applicability  # noqa: E402
+import guard_scope  # noqa: E402
 
 # The same-or-shallower-level section slice, owned in one place. Four modules here read a named
 # markdown section; four copies of the rule is the shape that drifted twice already.
@@ -295,11 +296,15 @@ def unenforceable(spec: Path) -> str | None:
             "and prior handovers already point at"
         )
     try:
-        phase_dir = spec.resolve().parents[2]   # specs/<n>.<k>-<sub>/spec.md -> the phase directory
+        phase_dir = spec.resolve().parents[
+            2
+        ]  # specs/<n>.<k>-<sub>/spec.md -> the phase directory
     except IndexError:
         return None
     try:
-        record = applicability.excepted(phase_dir, "requirement-cap", spec.resolve().parent.name)
+        record = applicability.excepted(
+            phase_dir, "requirement-cap", spec.resolve().parent.name
+        )
     except applicability.ApplicabilityError as exc:
         print(
             f"[requirement_cap] {phase_dir.name} has an exception ledger this cannot read ({exc}). "
@@ -313,7 +318,9 @@ def unenforceable(spec: Path) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("spec", type=Path)
-    parser.add_argument("--max", type=int, default=None, help="override SPEC_REQUIREMENT_MAX")
+    parser.add_argument(
+        "--max", type=int, default=None, help="override SPEC_REQUIREMENT_MAX"
+    )
     parser.add_argument("--count", action="store_true", help="print the count alone")
     args = parser.parse_args(argv)
 
@@ -357,4 +364,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

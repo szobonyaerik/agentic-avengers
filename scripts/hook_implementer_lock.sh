@@ -63,6 +63,10 @@ REPORT=$(python3 "$SD/implementer_liveness.py" live --stage "$STAGE" \
 RC=$?
 
 if [ "$RC" -eq 0 ]; then
+  # The clean result is emitted with what it does NOT establish beside it: a later stage reads
+  # output, not source (issue #97). Only here - the early exits above are "not applicable", which
+  # is a different answer from "checked, and nothing was running".
+  python3 "$SD/guard_scope.py" emit hook_implementer_lock.sh >/dev/null || true
   exit 0
 fi
 

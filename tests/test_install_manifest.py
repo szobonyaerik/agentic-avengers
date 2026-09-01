@@ -79,9 +79,14 @@ REFERENCE = re.compile("|".join(prefix + _SCRIPT_NAME for prefix in _SCRIPT_PREF
 # A vendored install that ships the importer without the imported module fails at import time — on
 # the gate path, where a missing module is a hook that dies with no verdict. Same class of defect as
 # the shell references above, one layer down, and previously invisible to this test.
+# The bare-import alternative is anchored, so it MUST tolerate a trailing comment: every sibling
+# import under `scripts/` carries `# noqa: E402`, because the `sys.path.insert` preamble puts it
+# after code. Anchored without that, this alternative matched none of them and only the `from X
+# import Y` spelling was ever checked — which is how a new module shipped unvendored with a green
+# suite. A guard that matches nothing cannot fail.
 PY_IMPORT = re.compile(
     r"^\s*(?:from\s+([A-Za-z0-9_]+)\s+import\s"
-    r"|import\s+([A-Za-z0-9_]+)\s*(?:as\s+[A-Za-z0-9_]+\s*)?$)",
+    r"|import\s+([A-Za-z0-9_]+)\s*(?:as\s+[A-Za-z0-9_]+\s*)?(?:#.*)?$)",
     re.M,
 )
 

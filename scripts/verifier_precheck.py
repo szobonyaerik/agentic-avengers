@@ -57,6 +57,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import guard_scope  # noqa: E402
+
 CLEAN = 0
 FINDINGS = 1
 ERROR = 2
@@ -84,7 +88,9 @@ ACCEPTANCE_HEADING = re.compile(
 )
 
 
-def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
+def bound_requirements(
+    spec: Path, text: str | None = None
+) -> tuple[list[str], list[str]]:
     """(requirements owed a trace, requirements exempt) for one spec.
 
     A requirement whose declaration says `binding: none` is exempt. One that declares no binding at
@@ -95,11 +101,15 @@ def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
     them. This module used to re-derive the second half from the declaration line alone, so widening
     the shared regex to accept headings and ordered lists silently moved a block later and gave it a
     wronger message.
+
+    `text` is the already-decoded body when the caller has one, so the spec is read once per check
+    rather than once here and again for its heading.
     """
-    try:
-        text = spec.read_text(encoding="utf-8")
-    except OSError:
-        return [], []
+    if text is None:
+        body, finding = read_artifact(spec)
+        if finding is not None:
+            return [], []
+        text = body or ""
     owed: list[str] = []
     exempt: list[str] = []
     for rid, binding in declared_bindings(text):
@@ -109,20 +119,63 @@ def bound_requirements(spec: Path) -> tuple[list[str], list[str]]:
     return owed, exempt
 
 
-def traced_ids(phase_dir: Path) -> set[str]:
+def read_artifact(path: Path) -> tuple[str | None, str | None]:
+    """(decoded text, finding) for one artifact this module reads — exactly one is not None.
+
+    The decision an unreadable artifact forces is made HERE, at the read, once. The readers below
+    used to skip what they could not decode, which is right for THEM - a mapping that yields no rows
+    and one that could not be opened both contribute nothing to a set - and wrong for the phase's
+    verdict: an unreadable `test-mapping.md` made `traced_ids` return nothing, so a spec whose
+    requirements are all `binding: none` produced a fully CLEAN precheck over an artifact nothing
+    could read, and a spec with owed ids produced the misattributed finding "appears in no
+    test-mapping.md row" whose remedy is to add a row that is already there. An unreadable test file
+    does the mirror, hiding real definitions so a live row reads as naming a missing test.
+
+    So: an unreadable artifact is an UNDECIDABLE check, never an absent obligation. **Every** way a
+    path that exists can fail to be read answers here, not only a decode failure — a dangling
+    symlink and a mode-000 file raise `OSError`, and swallowing those restored the exact
+    misattribution above. The one distinction that stays real is ABSENT vs UNDECIDABLE: a path that
+    does not exist is never yielded by the globs below and keeps its own semantics (a phase that
+    legitimately owes no mapping is clean), while a path the glob DID yield and the read then
+    refused is named.
+    """
+    try:
+        return path.read_text(encoding="utf-8"), None
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, (
+            f"{path}: unreadable ({exc}). Nothing this check derives from it can be trusted, "
+            f"so the phase is not clean - it is undecided."
+        )
+
+
+def read_mappings(phase_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """[(spec directory name, body)] for the phase's mappings, plus a finding per unreadable one.
+
+    Read once and handed to `traced_ids` and `named_tests`, which both used to open the same files
+    themselves, after a preliminary sweep had already opened them a third time.
+    """
+    texts: list[tuple[str, str]] = []
+    unreadable: list[str] = []
+    for mapping in sorted(phase_dir.glob("specs/*/test-mapping.md")):
+        if mapping.is_dir():
+            continue
+        text, finding = read_artifact(mapping)
+        if finding is not None:
+            unreadable.append(finding)
+            continue
+        texts.append((mapping.parent.name, text or ""))
+    return texts, unreadable
+
+
+def traced_ids(mappings: list[tuple[str, str]]) -> set[str]:
     """Every requirement id mentioned anywhere in the phase's `test-mapping.md` tables.
 
     Mentioned, not parsed into columns: a journey row lists several ids in one cell, and a mapping
     format this over-fits would fail on a table that is perfectly legible to the reader.
     """
     found: set[str] = set()
-    for mapping in phase_dir.glob("specs/*/test-mapping.md"):
-        try:
-            found.update(
-                re.findall(r"R\d+\.\d+\.\d+", mapping.read_text(encoding="utf-8"))
-            )
-        except OSError:
-            continue
+    for _spec_name, text in mappings:
+        found.update(re.findall(r"R\d+\.\d+\.\d+", text))
     return found
 
 
@@ -147,31 +200,30 @@ def _test_root(phase_dir: Path) -> Path | None:
         return None
     root = phase.parents[3] if len(phase.parents) >= 4 else Path.cwd()
     feature = phase.parents[1].name
-    for candidate in (root / "tests" / feature / phase.name, root / "tests" / phase.name):
+    for candidate in (
+        root / "tests" / feature / phase.name,
+        root / "tests" / phase.name,
+    ):
         if candidate.is_dir():
             return candidate
     return None
 
 
-def named_tests(phase_dir: Path) -> list[tuple[str, str]]:
+def named_tests(mappings: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """(test name, the mapping that names it) for every test a row points at.
 
     Only `test_*` tokens count. A cell holding `n/a`, a dash or the template's own placeholder names
     no test, and inventing one out of prose would report findings nobody could act on.
     """
     out: list[tuple[str, str]] = []
-    for mapping in sorted(phase_dir.glob("specs/*/test-mapping.md")):
-        try:
-            text = mapping.read_text(encoding="utf-8")
-        except OSError:
-            continue
+    for spec_name, text in mappings:
         for name in TEST_NAME.findall(text):
-            out.append((name, mapping.parent.name))
+            out.append((name, spec_name))
     return out
 
 
-def _defined_tests(tests: Path) -> dict[str, bool]:
-    """Every test defined under `tests`, mapped to whether it is skipped.
+def _defined_tests(tests: Path) -> tuple[dict[str, bool], list[str]]:
+    """(every test defined under `tests` mapped to whether it is skipped, unreadable findings).
 
     Definition and skip detection are Python-specific, and that is the honest bound of this check:
     a project whose tests are written in another language resolves no definitions here, so every
@@ -179,46 +231,53 @@ def _defined_tests(tests: Path) -> dict[str, bool]:
     yielded at least one definition — the scope is unreadable otherwise, not violated.
     """
     found: dict[str, bool] = {}
+    unreadable: list[str] = []
     for path in sorted(tests.rglob("*.py")):
-        if "__pycache__" in path.parts:
+        if "__pycache__" in path.parts or path.is_dir():
             continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
+        text, finding = read_artifact(path)
+        if finding is not None:
+            unreadable.append(finding)
             continue
-        lines = text.splitlines()
+        lines = (text or "").splitlines()
         for index, line in enumerate(lines):
             match = re.match(r"[ \t]*(?:async +)?def +(test_[A-Za-z0-9_]+)", line)
             if not match:
                 continue
-            above = "\n".join(lines[max(0, index - 6):index])
+            above = "\n".join(lines[max(0, index - 6) : index])
             found[match.group(1)] = bool(SKIP_DECORATOR.search(above))
-    return found
+    return found, unreadable
 
 
-def trace_claims(phase_dir: Path) -> list[str]:
-    """Findings for rows whose named test does not exist, or exists and is skipped (issue #52).
+def trace_claims(
+    phase_dir: Path, mappings: list[tuple[str, str]]
+) -> tuple[list[str], list[str]]:
+    """(findings for rows whose named test does not exist or is skipped, unreadable findings).
 
     The precheck used to confirm only that a requirement id appeared in SOME row, never that the
     row's claim matched the test it names — so a row was free to assert anything and the trace was
     decorative. One measured row asserted the exact opposite of its own test and every check passed.
 
+    The phase's test tree is read whatever the rows say, because an unreadable test file is a
+    finding in its own right: it is the artifact whose absence from `defined` makes a live row read
+    as naming a missing test.
+
     **What this does NOT do, said rather than implied:** it does not read a row's prose against a
     test's assertions. Generating the claim from the test is the better fix and this is not it; a
     row whose words contradict its existing, running test still passes here.
     """
-    rows = named_tests(phase_dir)
-    if not rows:
-        return []
+    rows = named_tests(mappings)
     tests = _test_root(phase_dir)
-    defined = _defined_tests(tests) if tests is not None else {}
+    defined, unreadable = _defined_tests(tests) if tests is not None else ({}, [])
+    if not rows:
+        return [], unreadable
     if not defined:
         print(
             f"[verifier_precheck] {phase_dir.name}: no readable test definitions under its test "
             f"tree — trace-row claims not checked",
             file=sys.stderr,
         )
-        return []
+        return [], unreadable
     out: list[str] = []
     for name, spec_name in sorted(set(rows)):
         if name not in defined:
@@ -232,7 +291,7 @@ def trace_claims(phase_dir: Path) -> list[str]:
                 f"{spec_name}/test-mapping.md names {name}, which is SKIPPED. A skipped test is "
                 f"green output over a requirement nothing exercises."
             )
-    return out
+    return out, unreadable
 
 
 def stamp_fresh(spec: Path) -> bool | None:
@@ -273,16 +332,34 @@ def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:
 
 
 def check_phase(phase_dir: Path) -> list[str]:
-    """Every mechanical finding for one phase, as lines. Empty means clean."""
+    """Every mechanical finding for one phase, as lines. Empty means clean.
+
+    The mappings here and the phase's test files inside `trace_claims` are opened once each: there
+    is deliberately no preliminary sweep re-reading them to discover unreadable ones — the reader
+    that opens an artifact is the one that decides what its unreadability means, which is also the
+    only shape in which that decision cannot be forgotten. A spec is opened **twice**, and that is
+    stated rather than rounded down: once below, and once inside `spec_gate_state.freshness`, which
+    owns the stamp question and reads the file itself. Threading a decoded body through that owner
+    is a larger change than this check warrants.
+    """
     out: list[str] = []
     specs = sorted(phase_dir.glob("specs/*/spec.md"))
     if not specs:
         return out
-    traced = traced_ids(phase_dir)
-    out.extend(trace_claims(phase_dir))
+    mappings, unreadable = read_mappings(phase_dir)
+    out.extend(unreadable)
+    traced = traced_ids(mappings)
+    claims, unreadable_tests = trace_claims(phase_dir, mappings)
+    out.extend(unreadable_tests)
+    out.extend(claims)
 
     for spec in specs:
-        owed, _exempt = bound_requirements(spec)
+        body, finding = read_artifact(spec)
+        if finding is not None:
+            out.append(finding)
+            continue
+        body = body or ""
+        owed, _exempt = bound_requirements(spec, body)
         untraced = [rid for rid in owed if rid not in traced]
         if untraced:
             out.append(
@@ -290,11 +367,6 @@ def check_phase(phase_dir: Path) -> list[str]:
                 f"this phase: {', '.join(untraced)}. (binding: none ids are exempt and not counted.)"
             )
 
-        try:
-            body = spec.read_text(encoding="utf-8")
-        except OSError as exc:
-            out.append(f"{spec}: unreadable ({exc})")
-            continue
         if not ACCEPTANCE_HEADING.search(body):
             out.append(
                 f"{spec}: no `## Acceptance criteria` heading. Nothing parses it, which is exactly "
@@ -405,4 +477,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

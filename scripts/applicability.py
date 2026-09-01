@@ -73,6 +73,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
 import spec_gate_state  # noqa: E402
 
 OK = 0
@@ -100,7 +101,7 @@ RULES: dict[str, str] = {
     "spec-review": "the human spec-review sign-off on a spec",
     "verdict": "the Verifier's passing verdict for a phase",
     "requirement-cap": "the requirement cap's split trigger on a spec",
-    "breaker": "a Breaker record owed by a phase that declares criticality: critical",
+    "breaker": "a Breaker record owed by a phase that resolves to criticality: critical",
     "execution-evidence": "the recorded transcript proving a phase's verification actually ran",
 }
 
@@ -518,4 +519,4 @@ def _git_user(phase_dir: Path) -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

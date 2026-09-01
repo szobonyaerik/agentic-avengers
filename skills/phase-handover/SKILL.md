@@ -68,7 +68,9 @@ determined and `discharge` cannot repair it. Rewrite that card's section as the 
 before continuing.
 
 **A phase that owes a Breaker run has a record of one.** `python3 scripts/breaker_gate.py due
-<phase-dir>` must exit 0. Any spec declaring `criticality: critical` routes the Breaker, and the
+<phase-dir>` must exit 0. Any spec **resolving to** `criticality: critical` routes the Breaker
+(`scripts/criticality.py` - an absent, blank, unrecognised or unreadable field resolves to
+`critical`, issue #101), and the
 phase does not close without its `breaker.json` beside `verdict.json` - a `clean` verdict naming what
 it attacked, or a `found` verdict naming its counterexample; a vacuous record is refused the same as
 a missing one, because a stage that emits nothing is indistinguishable from one that never ran. If it

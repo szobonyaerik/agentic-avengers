@@ -193,7 +193,7 @@ This pipeline is the sibling of `klm-agentic-pipeline` and deliberately shares i
 intended differences: this one runs on **Claude Code + opencode** rather than GitHub Copilot; it adds
 the automated **spec gate**; it keeps a **feature-level e2e** stage and **spec-isolation-review**;
 and its mutation gate has a **deterministic, diff-scoped scorer** (`scripts/mutation_score.py` +
-`cr-filter-git`).
+`scripts/mutation_scope.py`).
 
 Two further mechanisms live here whose status against the sibling is **unconfirmed**: the mechanical
 **subprocess cost gate** (`scripts/subprocess_check.py`, run from the spec-gate hook in both modes)
@@ -268,7 +268,7 @@ agentic-avengers/
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
 │   │                          the phase does not close
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
-│   ├── breaker_gate.py        the Breaker's record: a phase declaring `criticality: critical` does
+│   ├── breaker_gate.py        the Breaker's record: a phase resolving to `criticality: critical` does
 │   │                          not close without a valid breaker.json (a vacuous one is refused like
 │   │                          a missing one). Authoritative at the handover hook, diff-scoped in CI
 │   │                          (`check --all` audits), and the `stage: breaker` the resolver reports

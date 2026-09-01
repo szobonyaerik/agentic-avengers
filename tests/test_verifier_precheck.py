@@ -10,6 +10,7 @@ the tiered-binding rule removed: a `binding: none` requirement is never owed a t
 an untraced id.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -26,7 +27,13 @@ pytestmark = pytest.mark.subprocess(
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from verifier_precheck import bound_requirements, check_phase, main, traced_ids  # noqa: E402
+from verifier_precheck import (  # noqa: E402
+    bound_requirements,
+    check_phase,
+    main,
+    read_mappings,
+    traced_ids,
+)
 
 SPEC = """---
 feature: demo
@@ -79,7 +86,8 @@ def stale_spec(phase: Path, name: str = "1.1-a") -> Path:
     spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n", name=name)
     stamp(spec)
     spec.write_text(
-        spec.read_text() + "\n\nan edit made after the gate judged it\n", encoding="utf-8"
+        spec.read_text() + "\n\nan edit made after the gate judged it\n",
+        encoding="utf-8",
     )
     return spec
 
@@ -251,7 +259,9 @@ def test_traced_ids_reads_every_mapping_in_the_phase(phase: Path) -> None:
     write_spec(phase, "- R1.2.1 — `binding: integration` — b\n", name="1.2-b")
     write_mapping(phase, "| R1.1.1 | t | integration |\n")
     write_mapping(phase, "| R1.2.1 | t | integration |\n", name="1.2-b")
-    assert traced_ids(phase) == {"R1.1.1", "R1.2.1"}
+    mappings, unreadable = read_mappings(phase)
+    assert unreadable == []
+    assert traced_ids(mappings) == {"R1.1.1", "R1.2.1"}
 
 
 # ── structure and stamp freshness ────────────────────────────────────────────
@@ -519,11 +529,180 @@ def test_a_phase_with_no_test_tree_is_not_held(phase: Path, capsys) -> None:
     assert "not checked" in capsys.readouterr().err
 
 
-def test_a_row_whose_test_cell_names_nothing_is_not_invented_into_a_finding(phase: Path) -> None:
+def test_a_row_whose_test_cell_names_nothing_is_not_invented_into_a_finding(
+    phase: Path,
+) -> None:
     """`n/a`, a dash, or the template's own placeholder are not test names."""
     spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
     stamp(spec)
     write_mapping(phase, "| R1.1.1 | n/a | none |\n| R1.1.1 | — | none |\n")
     write_phase_tests(phase, "def test_unrelated():\n    assert True\n")
 
+    assert check_phase(phase) == []
+
+
+def test_an_undecodable_spec_is_reported_by_name_not_raised(phase: Path) -> None:
+    """A spec.md carrying non-UTF-8 bytes must produce a FINDING, not a traceback.
+
+    `hook_verifier.sh` runs this on the handover write and turns a non-zero exit into the phase
+    failure, so an escaping `UnicodeDecodeError` (a `ValueError`, not an `OSError`) made the stop
+    name a Python traceback instead of the spec and its remedy. It still fails closed either way;
+    what this pins is that the stop says which.
+    """
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    spec.write_bytes(
+        b"---\nphase: 1-core\n---\n\n## Acceptance criteria\n\n- R1.1.1 caf\xe9\n"
+    )
+
+    findings = check_phase(phase)
+
+    assert any("unreadable" in line for line in findings)
+    assert any(str(spec) in line for line in findings)
+
+
+def test_an_undecodable_test_mapping_is_reported_by_name(phase: Path) -> None:
+    """Same class, the sibling artifact this module also reads on the same call.
+
+    "No exception escaped" is not evidence about what the check DECIDED: the readers skip what they
+    cannot decode, so without this the phase reported clean over an artifact nothing could read.
+    """
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.write_bytes(
+        b"| requirement | test | level |\n|---|---|---|\n| R1.1.1 | caf\xe9 | integration |\n"
+    )
+
+    findings = check_phase(phase)
+
+    assert any(str(mapping) in line and "unreadable" in line for line in findings)
+
+
+def test_an_undecodable_mapping_is_never_a_clean_pass(phase: Path) -> None:
+    """The silent-clean-pass shape exactly: every requirement is `binding: none`, so no id is owed
+    and nothing else can produce a finding. The unreadable artifact must still be reported."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
+    stamp(spec)
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.write_bytes(
+        b"| requirement | test | level |\n|---|---|---|\n| caf\xe9 | x | none |\n"
+    )
+
+    findings = check_phase(phase)
+
+    assert findings != []
+    assert any(str(mapping) in line for line in findings)
+
+
+def test_an_undecodable_phase_test_file_is_reported_rather_than_hiding_its_tests(
+    phase: Path,
+) -> None:
+    """The mirror direction: an undecodable test file makes its real definitions invisible, so a
+    live row reads as naming a missing test. The unreadable file is named instead."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_real | integration |\n")
+    write_phase_tests(phase, "def test_real():\n    assert True\n")
+    broken = phase.parents[3] / "tests" / "demo" / "1-core" / "test_broken.py"
+    broken.write_bytes(b"# caf\xe9\ndef test_other():\n    assert True\n")
+
+    findings = check_phase(phase)
+
+    assert any(str(broken) in line and "unreadable" in line for line in findings)
+
+
+# --- unreadable is UNDECIDABLE for every way a read can fail, not only for a decode failure ------
+#
+# `read_artifact` was added to stop a check reporting a clean pass over an artifact it could not
+# read, and it stated that invariant while `except OSError: continue` still delivered exactly that
+# outcome for a dangling symlink or a mode-000 file. The one distinction that stays real is ABSENT
+# vs UNDECIDABLE: a path that does not exist is never yielded by the globs and owes nothing, while a
+# path the glob DID yield and the read then refused is named.
+
+
+def test_an_unopenable_test_mapping_is_reported_by_name_not_passed_clean(
+    phase: Path,
+) -> None:
+    """A dangling symlink is yielded by the phase's own glob and then refuses to open. Every
+    requirement here is `binding: none`, so no id is owed and nothing else can produce a finding:
+    without this the phase reports fully clean over an artifact nothing could read."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
+    stamp(spec)
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.symlink_to(phase / "specs" / "1.1-a" / "gone.md")
+
+    findings = check_phase(phase)
+
+    assert any(str(mapping) in line and "unreadable" in line for line in findings)
+
+
+def test_an_unopenable_mapping_is_named_beside_the_untraced_id_it_explains(
+    phase: Path,
+) -> None:
+    """An owed id plus an unopenable mapping emits BOTH findings, and that is the decided behaviour.
+
+    The untraced-id line on its own was the misattribution - its remedy is to add a row that may
+    already be there. It is not suppressed here, because this check cannot tell a mapping that was
+    missing the row from one that carried it; what it can do is name the unreadable artifact beside
+    it, so the reader is told the gap is UNDECIDED rather than established. This pins that pairing,
+    not the absence of the untraced line.
+    """
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.symlink_to(phase / "specs" / "1.1-a" / "gone.md")
+
+    findings = check_phase(phase)
+
+    assert any(str(mapping) in line and "unreadable" in line for line in findings)
+    assert any(
+        "R1.1.1" in line and "appear in no test-mapping.md row" in line
+        for line in findings
+    )
+
+
+@pytest.mark.skipif(
+    getattr(os, "getuid", lambda: 1)() == 0,
+    reason="root reads a mode-000 file, so the unreadable state cannot be produced",
+)
+def test_a_mode_000_test_mapping_is_reported_by_name(phase: Path) -> None:
+    """The sibling shape of the same class: the file exists and its permissions refuse the read."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | n/a | none |\n")
+    mapping = phase / "specs" / "1.1-a" / "test-mapping.md"
+    mapping.chmod(0o000)
+
+    try:
+        findings = check_phase(phase)
+    finally:
+        mapping.chmod(0o644)
+
+    assert any(str(mapping) in line and "unreadable" in line for line in findings)
+
+
+def test_an_unopenable_phase_test_file_is_reported_rather_than_hiding_its_tests(
+    phase: Path,
+) -> None:
+    """The mirror direction for an OSError: an unopenable test file hides its real definitions, so
+    a live row reads as naming a missing test."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_real | integration |\n")
+    write_phase_tests(phase, "def test_real():\n    assert True\n")
+    broken = phase.parents[3] / "tests" / "demo" / "1-core" / "test_broken.py"
+    broken.symlink_to(phase.parents[3] / "tests" / "demo" / "1-core" / "gone.py")
+
+    findings = check_phase(phase)
+
+    assert any(str(broken) in line and "unreadable" in line for line in findings)
+
+
+def test_a_phase_that_owes_no_mapping_at_all_is_still_clean(phase: Path) -> None:
+    """ABSENT keeps its own semantics: a `binding: none` spec owes no row, so a phase with no
+    test-mapping.md on disk must not acquire a finding from the widened read."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — structural\n")
+    stamp(spec)
+
+    assert not (phase / "specs" / "1.1-a" / "test-mapping.md").exists()
     assert check_phase(phase) == []
