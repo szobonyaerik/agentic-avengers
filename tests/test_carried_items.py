@@ -30,6 +30,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import carried_items  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _metrics_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`defer`/`recarry` emit a measurement through whatever writer is on PATH. A unit test must
+    never reach the operator's live firstmate store, so emission is off here; the emission itself
+    is tested against the stub sink in tests/test_pipeline_metrics.py."""
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+
+
 CARD = """---
 feature: demo
 phase: {phase}
@@ -849,3 +858,499 @@ def test_declining_needs_no_artifact(tmp_path: Path) -> None:
     nxt = phase(root, "9-b", "none")
     carried_items.discharge(nxt, "FWD-1", "declined", reason="phases 10-12; re-carried")
     assert carried_items.stale_discharges(nxt) == []
+
+
+# --- deferred findings: the fourth disposition, in the same slot (issue #115) ---------------------
+
+PLAN = """---
+feature: demo
+readers: x
+---
+### Phase 8 — poller
+- **Done when**: the poller polls.
+
+  | done-when | outcome |
+  |-----------|---------|
+  | DW-1 | the poller polls exactly once per cycle |
+
+### Phase 9 — writer
+- **Done when**: a name reaches the store.
+
+  | done-when | outcome |
+  |-----------|---------|
+  | DW-1 | a caller-supplied name lands in the store |
+
+### Phase 10 — reader
+- **Done when**: prose only here.
+
+### Phase 12 — staging
+- **Done when**: props are drawn.
+
+  | done-when | outcome |
+  |-----------|---------|
+  | DW-1 | every prop is drawn where the athlete touches it |
+"""
+
+SPEC = """---
+feature: demo
+phase: {phase}
+spec: {spec}
+readers: x
+---
+## Requirements
+{requirements}
+
+## Acceptance criteria
+Done.
+"""
+
+RECORD = "`dips` renders one bar through the torso\nspan 66 frames before and after A3, unchanged; bar axis through the torso at every frame\n"
+
+DEFERRED_ROW = "| id | kind | one-line title | where the detail lives |\n|----|------|----------------|------------------------|\n| FWD-1 | deferred-finding | `dips` renders one bar through the torso | carried.json#deferrals (owner 12-staging) |"
+
+
+def plan(root: Path) -> None:
+    (root.parent / "plan.md").write_text(PLAN, encoding="utf-8")
+
+
+def spec(phase_dir: Path, name: str, requirements: str) -> None:
+    directory = phase_dir / "specs" / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "spec.md").write_text(
+        SPEC.format(phase=phase_dir.name, spec=name, requirements=requirements),
+        encoding="utf-8",
+    )
+
+
+def bound_phase(root: Path, slug: str = "8-poller", items: str = "none") -> Path:
+    """A phase whose Done when is structured and fully carried: R<n>.1.1 carries DW-1, R<n>.1.2 does not."""
+    plan(root)
+    directory = phase(root, slug, items)
+    n = slug.split("-")[0]
+    spec(
+        directory,
+        f"{n}.1-a",
+        f"- R{n}.1.1 — `binding: e2e` — `done_when: DW-1` — the bound one\n"
+        f"- R{n}.1.2 — `binding: integration` — the unbound one\n",
+    )
+    return directory
+
+
+def record_file(tmp_path: Path, text: str = RECORD) -> Path:
+    path = tmp_path / "record.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_a_deferral_records_the_owner_the_measurement_and_the_done_when_it_was_checked_against(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    record = carried_items.defer(
+        eight, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.2"]
+    )
+    assert record["owner"] == "12-staging"
+    assert record["title"] == "`dips` renders one bar through the torso"
+    assert record["measurement"].startswith(
+        "span 66 frames before and after A3, unchanged"
+    )
+    assert record["done_when"] == {"phase": "8-poller", "checked": ["DW-1"]}
+    assert record["origin"] == "8-poller"
+    assert json.loads((eight / "carried.json").read_text())["deferrals"][0] == record
+
+
+def test_a_finding_that_blocks_the_done_when_is_refused_with_exit_1(
+    tmp_path: Path, capsys
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    rc = run(
+        "defer",
+        str(eight),
+        "FWD-1",
+        "--to",
+        "12-staging",
+        "--record-file",
+        str(record_file(tmp_path)),
+        "--spec-id",
+        "R8.1.1",
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "blocks this phase's *Done when*" in err and "DW-1" in err
+    assert not (eight / "carried.json").exists()
+
+
+def test_a_prose_only_done_when_cannot_defer_and_says_so_with_exit_2(
+    tmp_path: Path, capsys
+) -> None:
+    root = feature(tmp_path)
+    plan(root)
+    ten = phase(root, "10-reader", "none")
+    spec(ten, "10.1-a", "- R10.1.1 — `binding: e2e` — x\n")
+    rc = run(
+        "defer",
+        str(ten),
+        "FWD-1",
+        "--to",
+        "12-staging",
+        "--record-file",
+        str(record_file(tmp_path)),
+        "--spec-id",
+        "R10.1.1",
+    )
+    assert rc == 2
+    assert "prose only" in capsys.readouterr().err
+
+
+def test_an_owner_that_is_not_a_later_planned_phase_is_refused(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    nine = bound_phase(root, "9-writer")
+    with pytest.raises(carried_items.CarriedError, match="not later than"):
+        carried_items.defer(nine, "FWD-1", "8-poller", RECORD, spec_ids=["R9.1.2"])
+    with pytest.raises(carried_items.CarriedError, match="not later than"):
+        carried_items.defer(nine, "FWD-1", "9-writer", RECORD, spec_ids=["R9.1.2"])
+    with pytest.raises(carried_items.CarriedError, match="does not declare"):
+        carried_items.defer(nine, "FWD-1", "11-nowhere", RECORD, spec_ids=["R9.1.2"])
+
+
+def test_a_bare_phase_number_resolves_to_the_plans_slug(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    record = carried_items.defer(eight, "FWD-1", "12", RECORD, spec_ids=["R8.1.2"])
+    assert record["owner"] == "12-staging"
+
+
+def test_a_record_with_no_measurement_is_refused(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    with pytest.raises(carried_items.CarriedError, match="no measurement"):
+        carried_items.defer(
+            eight, "FWD-1", "12-staging", "title only\n", spec_ids=["R8.1.2"]
+        )
+
+
+def test_silence_about_the_requirement_is_refused(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    with pytest.raises(carried_items.CarriedError, match="Silence is not either"):
+        carried_items.defer(eight, "FWD-1", "12-staging", RECORD)
+    record = carried_items.defer(
+        eight, "FWD-1", "12-staging", RECORD, no_requirement=True
+    )
+    assert record["spec_ids"] == []
+
+
+def test_a_deferral_is_never_edited(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    carried_items.defer(eight, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.2"])
+    with pytest.raises(carried_items.CarriedError, match="already deferred"):
+        carried_items.defer(
+            eight, "FWD-1", "12-staging", "other\nnumbers\n", spec_ids=["R8.1.2"]
+        )
+
+
+def test_a_verdict_finding_is_deferred_by_its_id_and_its_spec_id_is_read_off_the_verdict(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    (eight / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [
+                    {"id": "abc123def456", "spec_id": "R8.1.2", "status": "open"}
+                ],
+            }
+        )
+    )
+    record = carried_items.defer(
+        eight, "abc123def456", "12-staging", RECORD, finding="abc123def456"
+    )
+    assert record["finding"] == "abc123def456" and record["spec_ids"] == ["R8.1.2"]
+    assert carried_items.backed_deferrals(eight) == {"abc123def456"}
+
+
+def test_a_verdict_finding_the_verifier_never_raised_cannot_be_deferred(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    with pytest.raises(carried_items.CarriedError, match="no verdict record"):
+        carried_items.defer(eight, "x1", "12-staging", RECORD, finding="nope")
+
+
+def test_a_verdict_finding_against_a_bound_requirement_is_refused_even_when_the_caller_names_none(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    (eight / "verdict.json").write_text(
+        json.dumps({"verdict": "fail", "findings": [{"id": "f1", "spec_id": "R8.1.1"}]})
+    )
+    with pytest.raises(carried_items.DeferralRefused):
+        carried_items.defer(eight, "f1", "12-staging", RECORD, finding="f1")
+
+
+# --- the row and the record are checked against each other -----------------------------------------
+
+
+def test_a_deferral_with_no_row_on_the_card_fails_declared(
+    tmp_path: Path, capsys
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    carried_items.defer(eight, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.2"])
+    assert run("declared", str(eight)) == 1
+    assert "no `deferred-finding` row" in capsys.readouterr().err
+    assert run("deferred", str(eight)) == 1
+
+
+def test_a_deferred_row_with_no_record_fails_declared(tmp_path: Path, capsys) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW)
+    assert run("declared", str(eight)) == 1
+    assert "no record in carried.json" in capsys.readouterr().err
+
+
+def test_row_and_record_together_are_clean(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW)
+    carried_items.defer(eight, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.2"])
+    assert run("declared", str(eight)) == 0
+    assert run("deferred", str(eight)) == 0
+    assert carried_items.phase_problems(eight) == []
+
+
+def test_a_deferred_stamp_nothing_backs_is_named(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    (eight / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "findings": [{"id": "f1", "spec_id": "R8.1.2", "status": "deferred"}],
+            }
+        )
+    )
+    problems = carried_items.deferral_problems(eight)
+    assert (
+        len(problems) == 1
+        and "f1" in problems[0]
+        and "nothing behind it" in problems[0]
+    )
+    assert run("deferred", str(eight)) == 1
+
+
+def test_a_stamp_that_disagrees_with_the_ledger_about_the_owner_is_named(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW)
+    (eight / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "findings": [
+                    {
+                        "id": "f1",
+                        "spec_id": "R8.1.2",
+                        "status": "deferred",
+                        "deferred_to": "9-writer",
+                    }
+                ],
+            }
+        )
+    )
+    carried_items.defer(eight, "FWD-1", "12-staging", RECORD, finding="f1")
+    problems = carried_items.deferral_problems(eight)
+    assert len(problems) == 1 and "disagree" in problems[0]
+
+
+def test_a_pre_rule_ledger_with_no_deferrals_key_is_a_ledger_with_no_deferrals(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    eight = phase(root, "8-poller", "none")
+    (eight / "carried.json").write_text(
+        json.dumps({"phase": "8-poller", "discharges": []})
+    )
+    assert carried_items.deferrals(eight) == []
+    assert carried_items.backed_deferrals(eight) == set()
+    assert carried_items.deferral_problems(eight) == []
+
+
+def test_an_unreadable_ledger_backs_nothing(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    eight = phase(root, "8-poller", "none")
+    (eight / "carried.json").write_text("{not json")
+    assert carried_items.backed_deferrals(eight) == set()
+
+
+# --- the next phase inherits it with its owner, and carries it on unchanged ------------------------
+
+
+def deferring_eight(tmp_path: Path) -> Path:
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW)
+    carried_items.defer(eight, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.2"])
+    return root
+
+
+def test_the_next_phase_sees_the_row_with_its_owner(tmp_path: Path) -> None:
+    root = deferring_eight(tmp_path)
+    nine = bound_phase(root, "9-writer")
+    [item] = carried_items.owed(nine)
+    assert item.id == "FWD-1" and item.is_deferred() and item.owner == "12-staging"
+    assert "owned by 12-staging" in item.describe()
+
+
+def test_a_deferred_row_with_no_record_behind_it_is_undecidable_for_the_next_phase(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    plan(root)
+    phase(root, "8-poller", DEFERRED_ROW)
+    nine = phase(root, "9-writer", "none")
+    with pytest.raises(carried_items.CarriedError, match="records no deferral"):
+        carried_items.owed(nine)
+    assert run("due", str(nine)) == 2
+
+
+def test_declining_a_deferred_finding_owned_by_a_later_phase_is_refused(
+    tmp_path: Path,
+) -> None:
+    root = deferring_eight(tmp_path)
+    nine = bound_phase(root, "9-writer")
+    with pytest.raises(carried_items.CarriedError, match="RE-CARRIED"):
+        carried_items.discharge(nine, "FWD-1", "declined", reason="not ours")
+
+
+def test_recarry_copies_the_record_byte_for_byte_and_records_the_discharge(
+    tmp_path: Path,
+) -> None:
+    root = deferring_eight(tmp_path)
+    nine = bound_phase(root, "9-writer")
+    source = carried_items.deferrals(root / "8-poller")[0]
+    carried = carried_items.recarry(nine, "FWD-1")
+    for key in (
+        "id",
+        "finding",
+        "spec_ids",
+        "title",
+        "owner",
+        "measurement",
+        "origin",
+        "at",
+    ):
+        assert carried[key] == source[key]
+    assert carried["recarried_by"] == "9-writer"
+    ledger = json.loads((nine / "carried.json").read_text())
+    [discharge] = ledger["discharges"]
+    assert discharge["item"] == "FWD-1" and discharge["as"] == "declined"
+    assert discharge["reason"] == carried_items.RECARRY_REASON.format(
+        owner="12-staging"
+    )
+    assert carried_items.undischarged(nine) == []
+
+
+def test_recarry_still_owes_the_row_on_this_phases_own_card(tmp_path: Path) -> None:
+    root = deferring_eight(tmp_path)
+    nine = bound_phase(root, "9-writer")
+    carried_items.recarry(nine, "FWD-1")
+    problems = carried_items.deferral_problems(nine)
+    assert len(problems) == 1 and "no `deferred-finding` row" in problems[0]
+    (nine / "handover.md").write_text(
+        CARD.format(phase="9-writer", items=DEFERRED_ROW), encoding="utf-8"
+    )
+    assert carried_items.phase_problems(nine) == []
+
+
+def test_recarry_re_asks_the_done_when_gate_against_this_phase(tmp_path: Path) -> None:
+    """A finding clear of phase 8's Done when may still be phase 9's to fix."""
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW.replace("FWD-1", "F9"))
+    carried_items.defer(eight, "F9", "12-staging", RECORD, spec_ids=["R9.1.1"])
+    nine = bound_phase(root, "9-writer")
+    with pytest.raises(carried_items.DeferralRefused, match="DW-1"):
+        carried_items.recarry(nine, "F9")
+
+
+def test_recarry_is_refused_where_the_done_when_cannot_be_read(tmp_path: Path) -> None:
+    root = deferring_eight(tmp_path)
+    plan(root)
+    ten_like_nine = phase(
+        root, "9-writer", "none"
+    )  # phase 9 has a table but no spec carries DW-1
+    with pytest.raises(carried_items.CarriedError, match="NO requirement"):
+        carried_items.recarry(ten_like_nine, "FWD-1")
+
+
+def test_the_owner_answers_it_like_any_row_and_cannot_recarry(tmp_path: Path) -> None:
+    root = deferring_eight(tmp_path)
+    nine = bound_phase(root, "9-writer", items=DEFERRED_ROW)
+    carried_items.recarry(nine, "FWD-1")
+    twelve = bound_phase(root, "12-staging")
+    [item] = carried_items.owed(twelve)
+    assert item.owner == "12-staging"
+    with pytest.raises(carried_items.CarriedError, match="This phase answers it"):
+        carried_items.recarry(twelve, "FWD-1")
+    carried_items.discharge(
+        twelve, "FWD-1", "declined", reason="props redesign lands in 13"
+    )
+    assert carried_items.undischarged(twelve) == []
+
+
+def test_fixing_a_deferred_finding_early_is_allowed(tmp_path: Path) -> None:
+    root = deferring_eight(tmp_path)
+    nine = bound_phase(root, "9-writer")
+    carried_items.discharge(nine, "FWD-1", "built", by="R9.1.2 in the writer spec")
+    assert carried_items.undischarged(nine) == []
+
+
+def test_a_forward_claim_is_not_recarried(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    plan(root)
+    phase(root, "8-poller", TABLE)
+    nine = phase(root, "9-writer", "none")
+    with pytest.raises(carried_items.CarriedError, match="not a `deferred-finding`"):
+        carried_items.recarry(nine, "FWD-1")
+
+
+def test_a_deferred_finding_on_the_last_card_must_name_an_issue(tmp_path: Path) -> None:
+    root = feature(tmp_path)
+    last = bound_phase(root, items=DEFERRED_ROW)
+    carried_items.defer(last, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.2"])
+    card = last / "handover.md"
+    card.write_text(
+        card.read_text().replace("stage: handover", "stage: handover\nnext: ship")
+    )
+    assert [i.id for i in carried_items.unfiled(last)] == ["FWD-1"]
+    card.write_text(
+        card.read_text().replace("(owner 12-staging)", "(owner 12-staging) #115")
+    )
+    assert carried_items.unfiled(last) == []
+
+
+def test_the_cli_prints_the_row_to_paste(tmp_path: Path, capsys) -> None:
+    root = feature(tmp_path)
+    eight = bound_phase(root)
+    rc = run(
+        "defer",
+        str(eight),
+        "FWD-1",
+        "--to",
+        "12-staging",
+        "--record-file",
+        str(record_file(tmp_path)),
+        "--spec-id",
+        "R8.1.2",
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "FWD-1 deferred to 12-staging" in captured.out
+    assert "| FWD-1 | deferred-finding |" in captured.err

@@ -10,10 +10,11 @@ re-verification.
 Two things follow, and this module is both of them.
 
 **The cap.** Three attempts per phase. At the cap the loop stops: whatever is still open is carried
-as a **known-open finding** in the phase `handover.md`, waived explicitly, or escalated to a human -
-all three are honest, and a fourth silent attempt is not. The cap is a real trade and it is named:
-some findings are carried rather than fixed. The measured phase already demonstrated that is
-survivable and recordable.
+as a **known-open finding** in the phase `handover.md`, **deferred** to the later phase that owns it
+(gated on the phase's *Done when*, `scripts/carried_items.py defer`), waived explicitly, or escalated
+to a human - all four are honest, and a fourth silent attempt is not. The cap is a real trade and it
+is named: some findings are carried rather than fixed. The measured phase already demonstrated that
+is survivable and recordable.
 
 **Bundled route-backs.** A gate must route back everything it can see in one bundle. A drop in new
 findings per attempt is not evidence of convergence when the same gate later produces six more, so
@@ -138,13 +139,13 @@ class Attempt(NamedTuple):
     unresolved: int
 
 
-def _attempt(number: int, data: dict) -> Attempt:
+def _attempt(number: int, data: dict, deferred: set[str] = frozenset()) -> Attempt:
     findings = [f for f in (data.get("findings") or []) if isinstance(f, dict)]
     return Attempt(
         number=number,
         findings=len(data.get("findings") or []),
         verdict=str(data.get("verdict") or "?"),
-        unresolved=len(open_findings(findings)),
+        unresolved=len(open_findings(findings, deferred)),
     )
 
 
@@ -181,6 +182,17 @@ def attempts(phase_dir: Path) -> list[Attempt]:
     one raises rather than being guessed at or skipped.
     """
     seen: dict[int, Attempt] = {}
+    # The deferrals this phase recorded, so a `status: deferred` finding is resolved only when the
+    # ledger says so. An unreadable ledger backs nothing - that fails closed as unresolved findings,
+    # and `carried_items.py deferred` names the corrupt file at the handover.
+    # `carried_items.py` owns the ledger; imported HERE and not at module scope, the same way it
+    # imports this module, because that cycle is not the only reason. `pipeline_metrics` and through
+    # it `gate_runner` import this module, and a module-level import would pull the whole
+    # carried-items chain - `doc_read_path`, `spec_gate_context`, `applicability` - into every gate
+    # call that only wanted to count an attempt.
+    import carried_items  # noqa: PLC0415 - see above
+
+    deferred = carried_items.backed_deferrals(Path(phase_dir))
     for path in sorted(Path(phase_dir).glob("verdict-attempt-*.json")):
         archived = ARCHIVE.match(path.name)
         if not archived:
@@ -197,7 +209,7 @@ def attempts(phase_dir: Path) -> list[Attempt]:
                 file=sys.stderr,
             )
             number = from_name
-        seen[number] = _attempt(number, data)
+        seen[number] = _attempt(number, data, deferred)
     live_path = Path(phase_dir) / "verdict.json"
     live = _read(live_path)
     if live is None and live_path.exists():
@@ -206,7 +218,7 @@ def attempts(phase_dir: Path) -> list[Attempt]:
         )
     if live is not None:
         number = _numbered(live, live_path, max(seen) + 1 if seen else 1)
-        seen[number] = _attempt(number, live)
+        seen[number] = _attempt(number, live, deferred)
     return [seen[n] for n in sorted(seen)]
 
 
@@ -275,10 +287,11 @@ def _check(argv: list[str] | None) -> int:
         # with nothing left open has ended the loop. Stopping it would refuse the phase for its own
         # history, with no action left that could ever clear it.
         #
-        # "Resolved" is `open_findings` — every finding either `fixed` or waived — and not "the
-        # findings array is empty", because waiving the remainder is one of the three remedies this
-        # cap's own message prescribes, and the Verifier records a waiver by leaving the finding in
-        # place with `break_glass`. A check its prescribed remedy cannot satisfy is a wedge.
+        # "Resolved" is `open_findings` — every finding either `fixed`, waived, or deferred with a
+        # ledger record behind it — and not "the findings array is empty", because waiving or
+        # deferring the remainder are two of the four remedies this cap's own message prescribes,
+        # and the Verifier records both by leaving the finding in place with `break_glass` or
+        # `status: deferred`. A check its prescribed remedy cannot satisfy is a wedge.
         #
         # The cap still binds where it matters: a verdict of `fail` at or past the cap stops here,
         # which is what refuses a further attempt.
@@ -299,9 +312,12 @@ def _check(argv: list[str] | None) -> int:
         "  routing back to ITSELF, and a per-attempt trickle of new findings is a gate disclosing a\n"
         "  subset of what it can already see. Choose one, and say which in handover.md:\n"
         "    - carry the remaining findings as KNOWN-OPEN in the phase handover, or\n"
+        "    - defer a finding that does NOT block this phase's Done when to the phase that owns\n"
+        "      it, with its measurement (scripts/carried_items.py defer <phase-dir> <id> --to\n"
+        "      <phase> ...; the Verifier then stamps it `status: deferred`), or\n"
         "    - waive them explicitly (scripts/bypass_log.sh verifier <finding-id> <who>), or\n"
         "    - escalate to a human.\n"
-        "  A fourth attempt is not one of the three.",
+        "  A fourth attempt is not one of the four.",
         file=sys.stderr,
     )
     return CAPPED

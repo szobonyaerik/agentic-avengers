@@ -266,7 +266,10 @@ agentic-avengers/
 │   ├── spec_rubric.py         the gate's rubric rendered for the WRITER, from the gate's own
 │   │                          sources - data plus verbatim prompt sections, never a second copy
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
-│   │                          the phase does not close
+│   │                          the phase does not close; and DEFERRED findings - real, not this
+│   │                          phase's Done when, owned by a later phase, measurement attached
+│   ├── done_when.py           a phase's Done when as a table beside its prose, and the one decision
+│   │                          read from it: does this finding block the phase, or may it be deferred
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
 │   ├── breaker_gate.py        the Breaker's record: a phase resolving to `criticality: critical` does
 │   │                          not close without a valid breaker.json (a vacuous one is refused like

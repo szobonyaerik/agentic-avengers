@@ -48,6 +48,7 @@ import amendments  # noqa: E402
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
 import criticality as criticality_mod  # noqa: E402
+import done_when  # noqa: E402
 import spec_gate_state  # noqa: E402
 import verdict_currency  # noqa: E402
 
@@ -61,9 +62,9 @@ FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 LEADING_NUMBERS = re.compile(r"\d+")
 # The planner's contractual heading (docs/templates/plan.template.md): `### Phase <n> — <slug>`.
 # Tolerate the dash variants people type; nothing else in a plan looks like this.
-PLAN_PHASE_HEADING = re.compile(
-    r"^###\s*Phase\s+(\d+)\s*[—–-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE
-)
+# What a phase heading in plan.md looks like is owned by `done_when.py`, which reads the same
+# section for the phase's structured *Done when*; a second copy here is the one that drifts.
+PLAN_PHASE_HEADING = done_when.PLAN_PHASE_HEADING
 
 
 class PipelineStateError(Exception):
@@ -395,12 +396,11 @@ def _planned_phases(feature_dir: Path) -> list[tuple[int, str]]:
         text = (feature_dir / "plan.md").read_text(encoding="utf-8")
     except OSError:
         return []
-    return [(int(num), title) for num, title in PLAN_PHASE_HEADING.findall(text)]
+    return done_when.planned_phases(text)
 
 
 def _slugify(title: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return slug or "phase"
+    return done_when.slugify(title)
 
 
 def _missing_planned_phase(feature_dir: Path, phases: list[Path]) -> State | None:

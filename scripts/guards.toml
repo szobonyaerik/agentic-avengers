@@ -665,9 +665,83 @@ tests = ["tests/test_verifier_attempts.py"]
 [[guard.mutation]]
 file = "scripts/verdict_findings.py"
 find = '''
-        and not f.get("break_glass")'''
+        if not isinstance(f, dict) or f.get("break_glass"):'''
 replace = '''
-        and True'''
+        if not isinstance(f, dict):'''
+
+[[guard]]
+id = "verdict-findings.deferral-must-be-backed"
+implements = "scripts/verdict_findings.py"
+defect = "A `status: deferred` finding is the fourth disposition (issue #115), and the Verifier writes the stamp. Read on sight, a stamp resolves a finding by being written - a waiver by omission with a new name - so it resolves one only when the phase's carried.json records a deferral naming it, gated on the Done when and carrying the measurement."
+tests = ["tests/test_verifier_attempts.py"]
+[[guard.mutation]]
+file = "scripts/verdict_findings.py"
+find = '''
+        elif status == DEFERRED and str(f.get("id") or "") not in backed:'''
+replace = '''
+        elif False:'''
+
+[[guard]]
+id = "done-when.blocking-finding-is-not-deferrable"
+implements = "scripts/done_when.py"
+defect = "A finding against a requirement that carries a condition of this phase's Done when is this phase's to fix. faithful-rep phase 3's amendment A3 caught a clip containing no exercise, against the cyclic cut the Done when names; a deferral gate that let it through would have shipped it, and telling stages to care less is exactly the weakening issue #115 forbids."
+tests = ["tests/test_done_when.py", "tests/test_deferral_replay.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+    if blocking:
+        return Decision(
+            BLOCKS,'''
+replace = '''
+    if False:
+        return Decision(
+            BLOCKS,'''
+
+[[guard]]
+id = "done-when.prose-only-cannot-defer"
+implements = "scripts/done_when.py"
+defect = "A Done when that is prose only, or a declared condition no requirement carries, cannot say what a finding would block. Read as clear, every finding becomes deferrable by leaving the table unwritten or one requirement untagged - the exact silent pass this whole item exists to remove."
+tests = ["tests/test_done_when.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+    if uncarried:
+        return Decision(
+            UNDECIDABLE,'''
+replace = '''
+    if False:
+        return Decision(
+            UNDECIDABLE,'''
+
+[[guard]]
+id = "carried-items.deferred-row-is-backed"
+implements = "scripts/carried_items.py"
+defect = "A `deferred-finding` row on the card with no record behind it names no owner and carries no measurement, and a record with no row is off the read path. Either one lets a deferral vanish between the phase that made it and the phase that owes it."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+        for identifier in sorted(rows - set(records)):
+            out.append('''
+replace = '''
+        for identifier in sorted(set()):
+            out.append('''
+
+[[guard]]
+id = "carried-items.deferred-is-recarried-not-declined"
+implements = "scripts/carried_items.py"
+defect = "A deferred finding owned by a later phase, declined by a phase in between, is dropped on the way: the owner is never asked. Declining it is refused; it is re-carried with its measurement byte-for-byte, which is what binds the owner."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    if (
+        how == "declined"
+        and item.is_deferred()
+        and _owner_number(item.owner or "") > _phase_number(phase_dir)
+    ):'''
+replace = '''
+    if False:'''
 
 # --- the override log --------------------------------------------------------------------------------------------------------
 
