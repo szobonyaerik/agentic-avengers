@@ -251,6 +251,14 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    reduction of risk, not a guarantee. Three modes by `work_kind`, all in `skills/tdd`: greenfield (red→green)
    · migration (parity-first, existing suite is the contract) · refactor (baseline-first, behavior
    unchanged). Plus **e2e-author**, run once per feature after the last phase is green.
+   **The last two are a contract the pipeline enforces, not a description** (issue #107): one
+   measured phase mandated zero behaviour change shipped `-` as `+` in a capacity guard and a `0`
+   balance sentinel as `1`, through verification and 283 green tests. `scripts/behaviour_drift.py`
+   compares the phase's diff against its base at `spec-done` and at handover, and diff-scoped in CI:
+   every literal, operator, membership/identity test and control-flow edge that changed cites the
+   requirement that authorised it (`# behaviour: R<n>.<k>.<m>`) or a disclosed exception, and an
+   uncited change BLOCKS. Renames, moves, reformats and extracted helpers change no atom and cite
+   nothing. A phase declaring `greenfield`, or no `work_kind` at all, is untouched.
 4c. **A `status: done` stamp is not a completion signal by itself** (issue #68). Its own implementer
    writes it and used to keep working afterwards, so a wedge guard watching it fired 24 minutes
    early and would have put two implementers in one worktree. The stamp is **self-correcting**

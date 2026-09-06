@@ -143,6 +143,17 @@ re-author it.
    into the migration.
 5. Record every ported/characterization test → requirement in `test-mapping.md`, and note gaps.
 
+**Both modes are a contract the pipeline ENFORCES, not a description.** `migration` and `refactor`
+put the phase under the zero-behaviour-change contract: at your `spec-done` stamp and again at
+handover, `scripts/behaviour_drift.py` compares the phase's diff against its base and requires every
+literal, operator, membership/identity test and control-flow edge that changed to cite the
+requirement that authorised it — `# behaviour: R<n>.<k>.<m>` on the statement (or compound-statement
+header) that carries it; for something removed, on any new line of the hunk that removed it; for a
+new file, once in its header. Renames, moves, reformats and extracted helpers change no atom and
+need no citation. An uncited change is BLOCKING, because the alternative is what happened:
+grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change and shipped `-` as `+`
+in a capacity guard and a `0` balance sentinel as `1`, through verification and 283 green tests.
+
 ### Refactor (`work_kind: refactor`) — baseline first, behavior unchanged
 Use the migration parity-first procedure, but there is no framework/stack port: capture the relevant
 suite's baseline before editing, refactor in small slices, and rerun it after each slice. Add a
