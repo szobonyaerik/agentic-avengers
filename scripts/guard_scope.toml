@@ -147,6 +147,17 @@ limits = [
   "that a definition is in the right place - a call site counts as an existence proof",
 ]
 
+[guard."behaviour_drift.py"]
+proves = "that in a phase whose specs declare `work_kind: migration` or `refactor`, every literal, operator and control-flow edge that changed against the base - definition by definition, after cancelling moves, extractions and inlinings - cites a requirement the phase declares or a disclosed exception."
+limits = [
+  "a MOVE: a block cut here and pasted there cancels when the two read alike, down to a single atom moving with its line - swapping two whole branches is a move",
+  "BOTH HALVES of a change inside one definition: an atom removed and an identical atom added there cancel, so the change still blocks on its other half but the pair is not shown",
+  "a change carried entirely by identifiers: call targets, argument order and attribute names are what a rename may change, so `fetch(a, b)` becoming `fetch(b, a)` passes",
+  "that a cited change is CORRECT or that an uncited-looking one is wrong - it asks for a citation, it does not prove or refute equivalence",
+  "anything that is not Python, which is counted and named rather than parsed",
+  "in session, anything the phase committed before its close: the comparison is against HEAD unless BEHAVIOUR_BASE names the phase's base",
+]
+
 [guard."fixture_shapes.py"]
 proves = "that every literal fixture in scope satisfies the shapes the project declared for it."
 limits = [

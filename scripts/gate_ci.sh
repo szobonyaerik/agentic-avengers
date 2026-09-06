@@ -270,6 +270,26 @@ elif [ "$drift_rc" -ne 0 ]; then
   record_fail "interface-drift:undecidable"
 fi
 
+# 1bch) Behaviour drift — a phase whose specs declare `work_kind: migration` or `refactor` has said
+#      it changes no behaviour, and one measured phase then altered three live trading guards through
+#      verification and 283 green tests (issue #107). behaviour_drift.py compares the semantic
+#      surface — literals, operators, control-flow edges, definition by definition — and holds every
+#      citation of a requirement the phase declares, or a disclosed exception. DIFF-SCOPED (§3a), and
+#      against the branch's merge-base here since a CI checkout has nothing uncommitted: it binds
+#      only when every touched phase is under the contract, because a pull request mixing greenfield
+#      and no-change phases cannot be attributed file by file, and it says NOT CHECKED rather than
+#      holding greenfield work to a contract it never declared. The authoritative point is the
+#      in-session hook, where HEAD isolates the phase; this is the backstop.
+echo "• behaviour drift: a phase declaring behaviour preserved cites every change to its semantic surface"
+BD_BASE="${BEHAVIOUR_BASE:-${MUTATION_BASE:-$(git merge-base HEAD origin/HEAD 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)}}"
+python3 "$SCRIPT_DIR/behaviour_drift.py" check --root "$ROOT" ${BD_BASE:+--base "$BD_BASE"}
+bd_rc=$?
+if [ "$bd_rc" -eq 1 ]; then
+  record_fail "behaviour-drift"
+elif [ "$bd_rc" -ne 0 ]; then
+  record_fail "behaviour-drift:undecidable"
+fi
+
 # 1bd) Verdict currency — a passing verdict must not stand over a tree that has since changed
 #      (issue #51). The feature-close ship gate owns both findings and fixes while it runs, so it
 #      changes verified production code and touches no phase artifact; verdict.json then goes on

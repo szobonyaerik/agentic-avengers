@@ -429,6 +429,7 @@ def test_the_rule_set_is_the_one_the_ledger_validates_against():
         "requirement-cap",
         "breaker",
         "execution-evidence",
+        "behaviour-change",
     }
 
 
