@@ -560,6 +560,7 @@ with nine new entries has been weakened, not maintained.
 | `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
+| `MUTATION_HOOK_BUDGET_S` | the hook's `hooks.json` timeout (600) | seconds `hook_mutation.sh` may spend in total; `cosmic-ray exec` is refused up front when the baseline's measured wall clock times the pending mutants would not fit what is left (`scripts/mutation_exec_guard.py`, issue #95) |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
 | `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
 | `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |

@@ -205,3 +205,235 @@ def test_nothing_in_scope_stops_the_phase_under_enforce(scoped_project):
 
     assert result.returncode == 2
     assert [c for c in recorded(proj[2]) if c["stage"] == "mutation"]
+
+
+# --- a killed exec must not leave a mutant in the working tree (issue #95) ------------------------
+
+REAL_SOURCE = (
+    "def add(a, b):\n"
+    "    return a + b\n"
+    "\n"
+    "\n"
+    "def capacity_ok(open_orders, limit):\n"
+    "    if open_orders < limit:\n"
+    "        return True\n"
+    "    return False\n"
+)
+
+
+@pytest.fixture
+def live_project(project):
+    """A real repository, a real cosmic-ray, and a test command slow enough to be killed mid-mutant.
+
+    `pkg/app.py` is UNTRACKED, so every line of it is in scope. The test command only sleeps: what
+    is under test is not whether a mutant is killed, but what the working tree holds when the hook
+    itself is killed while a mutant is applied - the harness's timeout path, issue #95's mechanism.
+    """
+    root, phase, store, writer, tmp = project
+    pkg = root / "pkg"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (root / "cosmic-ray.toml").write_text(
+        "[cosmic-ray]\n"
+        'module-path = "pkg"\n'
+        "timeout = 60\n"
+        "excluded-modules = []\n"
+        f"test-command = \"{sys.executable} -c 'import time; time.sleep(3)'\"\n"
+        "\n"
+        "[cosmic-ray.distributor]\n"
+        'name = "local"\n',
+        encoding="utf-8",
+    )
+    for args in (
+        ("init", "-q", "-b", "main"),
+        ("config", "user.email", "pipeline@example.com"),
+        ("config", "user.name", "pipeline"),
+        ("add", "-A"),
+        ("commit", "-q", "-m", "root"),
+    ):
+        git(root, *args)
+    target = pkg / "app.py"
+    target.write_text(REAL_SOURCE, encoding="utf-8")
+    return project, target
+
+
+def start_hook(project, **extra_env) -> subprocess.Popen:
+    root, phase, store, writer, tmp = project
+    payload = json.dumps({"tool_input": {"file_path": str(phase / "handover.md")}})
+    env = {
+        "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin",
+        "HOME": str(tmp),
+        "CLAUDE_PROJECT_DIR": str(root),
+        "MUTATION_POLICY": "advisory",
+        "AVENGER_METRICS_CMD": str(writer),
+        "AVENGER_METRICS_PROJECT": "unit-test",
+        "AVENGER_METRICS_LOG": str(tmp / "diagnostics.log"),
+        "DOUBLE_LOG": str(tmp / "calls.log"),
+        "DOUBLE_STORE": str(store),
+        **extra_env,
+    }
+    payload_file = tmp / "payload.json"
+    payload_file.write_text(payload, encoding="utf-8")
+    with payload_file.open("r", encoding="utf-8") as stdin:
+        return subprocess.Popen(
+            ["bash", str(HOOK)],
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+
+def wait_until(predicate, timeout_s: float) -> bool:
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_a_hook_killed_mid_exec_leaves_the_tree_exactly_as_it_found_it(live_project):
+    """Issue #95's reproduction, kept as the regression test.
+
+    cosmic-ray applies each mutant IN PLACE and reverts it in a `finally`. The hook's kill path
+    SIGTERMs then SIGKILLs the child's process group, and neither signal runs a `finally`, so the
+    mutant applied at that moment stayed on disk - and was committed as authored code, four times
+    in one measured phase. The harness's timeout IS the expected path on a real suite (the hook's
+    own comments cite 569s, 3818s and 4276s against 300s), so this is the path that must restore.
+    """
+    project, target = live_project
+    import signal
+
+    proc = start_hook(project, MUTATION_HOOK_BUDGET_S="600")
+    try:
+        mutated = wait_until(
+            lambda: target.read_text(encoding="utf-8") != REAL_SOURCE, timeout_s=120
+        )
+        assert mutated, (
+            "cosmic-ray never applied a mutant; the fixture is not exercising exec"
+        )
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    assert target.read_text(encoding="utf-8") == REAL_SOURCE, (
+        "a mutant is still applied in the working tree after the kill:\n"
+        + target.read_text(encoding="utf-8")
+    )
+    assert proc.returncode == 2, (
+        "a corrupted tree is a hook failure regardless of policy - advisory does not soften it"
+    )
+    assert "RESTORED" in err, "the restoration is announced, never silent"
+    assert "NOT a gate verdict" in err
+
+
+def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(project):
+    """The comparison is not only for the kill path. An exec that returns 0 and leaves a file changed
+    is the same corruption, and `advisory` says nothing about it: the policy selects how much
+    authority the SCORE has. The file is put back, the hook fails, and the run's result is void.
+    """
+    root, phase, store, writer, tmp = project
+    (root / "pkg").mkdir(parents=True, exist_ok=True)
+    target = root / "pkg" / "app.py"
+    original = "def a():\n    return 1\n"
+    (root / "cosmic-ray.toml").write_text(
+        '[cosmic-ray]\nmodule-path = "pkg"\ntimeout = 10\ntest-command = "true"\n',
+        encoding="utf-8",
+    )
+    for args in (
+        ("init", "-q", "-b", "main"),
+        ("config", "user.email", "pipeline@example.com"),
+        ("config", "user.name", "pipeline"),
+        ("add", "-A"),
+        ("commit", "-q", "-m", "root"),
+    ):
+        git(root, *args)
+    target.write_text(original, encoding="utf-8")  # untracked: every line in scope
+
+    binaries = tmp / "bin"
+    binaries.mkdir()
+    maker = binaries / "make_session.py"
+    maker.write_text(
+        "import sys\n"
+        "from cosmic_ray.work_db import WorkDB, use_db\n"
+        "from cosmic_ray.work_item import MutationSpec, WorkItem\n"
+        "with use_db(sys.argv[1], WorkDB.Mode.create) as db:\n"
+        "    db.add_work_item(WorkItem.single('m0', MutationSpec(\n"
+        f"        module_path=r'{target}', operator_name='core/NumberReplacer', occurrence=0,\n"
+        "        start_pos=(2, 4), end_pos=(2, 12))))\n",
+        encoding="utf-8",
+    )
+    stub = binaries / "cosmic-ray"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$1" in\n'
+        f'  init) exec "{sys.executable}" "{maker}" "$3" ;;\n'
+        # exec "reverts" nothing: the mutant stays, and the command still reports success.
+        f"  exec) printf 'def a():\\n    return 2\\n' > '{target}'; exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+
+    result = run_hook(project, policy="advisory", path_prefix=f"{binaries}:")
+
+    assert target.read_text(encoding="utf-8") == original, "the file is put back"
+    assert result.returncode == 2, "a corrupted tree is never advisory"
+    assert "TREE INTEGRITY FAILED" in result.stderr
+    assert "RESTORED" in result.stderr
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run"
+    assert "altered by cosmic-ray exec" in row["note"]
+
+
+def test_an_exec_that_cannot_finish_inside_the_budget_is_refused_up_front(live_project):
+    """Where the kill can be predicted, exec is not started. The baseline's measured wall clock
+    times the pending mutants is the estimate available on every run; here one test run takes 3s
+    and the budget left after the headroom is nothing, so the hook refuses rather than begin a run
+    it would have to kill mid-mutant. Nothing was mutated, and the refusal is recorded as the gate
+    not having run - never as a score.
+    """
+    project, target = live_project
+    root, phase, store, writer, tmp = project
+
+    proc = start_hook(project, MUTATION_HOOK_BUDGET_S="40")
+    _, err = proc.communicate(timeout=120)
+
+    assert target.read_text(encoding="utf-8") == REAL_SOURCE, "exec never started"
+    assert "OVER BUDGET" in err
+    assert "refused to start" in err
+    assert proc.returncode == 0, (
+        "advisory: the gate did not run, and that does not block"
+    )
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run"
+    assert "refused to start" in row["note"]
+
+
+def test_policy_off_still_exits_before_any_cosmic_ray_call(live_project):
+    """The workaround the issue names must keep working exactly as it did: `off` runs no mutation
+    tool anywhere, so neither the budget check nor the snapshot has anything to bracket.
+    """
+    project, target = live_project
+    root, phase, store, writer, tmp = project
+    calls = tmp / "cr-calls.log"
+    binaries = tmp / "bin"
+    binaries.mkdir()
+    stub = binaries / "cosmic-ray"
+    stub.write_text(
+        f'#!/usr/bin/env bash\necho "$1" >> "{calls}"\nexit 0\n', encoding="utf-8"
+    )
+    stub.chmod(0o755)
+
+    result = run_hook(project, policy="off", path_prefix=f"{binaries}:")
+
+    assert result.returncode == 0
+    assert not calls.exists(), "no cosmic-ray call of any kind under off"
+    assert recorded(store) == []

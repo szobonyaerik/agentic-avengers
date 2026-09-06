@@ -529,6 +529,19 @@ Three consequences worth stating outright:
   With the cross-family reading pass removed it is now the pipeline's **only** systematic signal
   about non-discriminating tests — still advisory, still not a wall, and named as partial cover
   rather than a replacement (see *The Verifier* below).
+  - **exec may not leave the tree changed, and that is never advisory** (issue #95). `cosmic-ray
+    exec` mutates source in place and reverts in a `finally`; the hook's kill path SIGTERMs then
+    SIGKILLs the process group and neither runs a `finally`, so a mutant stayed on disk and was
+    committed as authored code - four times in one phase, three under `verdict: pass`, in live
+    trading code. `scripts/mutation_exec_guard.py` brackets every `exec` in `hook_mutation.sh` and
+    `gate_ci.sh`: a snapshot of every file the session can write, an explicit restore-and-compare
+    after - on the kill path too - and a tree that differed fails the hook whatever the policy, since
+    the policy governs the SCORE's authority and nothing else. The restore source is the snapshot,
+    never `git checkout`: the pipeline verifies uncommitted work. Where the kill can be predicted
+    (baseline wall clock x pending mutants against `MUTATION_HOOK_BUDGET_S`, default the hook's
+    `hooks.json` timeout) exec is refused up front and recorded `did-not-run`. `off` still exits
+    before any cosmic-ray call. What it cannot do is said: nothing runs when the hook itself is
+    SIGKILLed, and a test command that rewrites source under `module-path` reads as corruption.
 - **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
   spec in the phase **resolves to** `criticality: critical`). Not optional in practice: it was owed on
   every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that

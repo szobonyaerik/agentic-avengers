@@ -549,6 +549,30 @@ mutation_nothing_in_scope() {
   mutation_fail "mutation:did-not-run"
 }
 
+# Every `cosmic-ray exec` is bracketed by scripts/mutation_exec_guard.py (issue #95): a snapshot of
+# every file the session can write before, and an explicit restore-and-compare after. exec mutates
+# source IN PLACE and reverts in a `finally`, and the in-session hook's kill path left a mutant applied
+# on disk, where it was committed as authored code. CI has no kill path of its own to guard (a runner
+# that times out discards its checkout, so no budget refusal lives here), but the comparison after a
+# clean exit is the same question, and a tree that differed is a FAILED RUN whatever the policy -
+# `record_fail`, never `mutation_fail`, because a corrupted tree is not a weak test signal.
+# $1 = scoped config · $2 = session · $3 = snapshot dir. Streams into $TMP like its neighbours.
+# Returns 0 exec finished and the tree is intact · 1 exec errored, tree intact · 3 the tree DIFFERED
+# (and was put back) · 4 no snapshot could be taken, so exec was never started.
+mutation_exec_guarded() {
+  if ! python3 "$SCRIPT_DIR/mutation_exec_guard.py" snapshot --root "$ROOT" --session "$2" "$3" >>"$TMP" 2>&1; then
+    return 4
+  fi
+  cosmic-ray exec "$1" "$2" >>"$TMP" 2>&1
+  local ec=$?
+  python3 "$SCRIPT_DIR/mutation_exec_guard.py" restore --root "$ROOT" "$3" >"$3.restore" 2>&1
+  local tc=$?
+  cat "$3.restore" >>"$TMP"
+  if [ "$tc" -ne 0 ]; then cat "$3.restore" >&2; return 3; fi
+  [ "$ec" -eq 0 ] || return 1
+  return 0
+}
+
 if [ "$FULL" -eq 1 ] && [ "$MUTATION_POLICY" = "off" ]; then
   echo "• mutation: skipped (MUTATION_POLICY=off)"
 fi
@@ -600,7 +624,20 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
       elif [ "$mfc" -ne 0 ]; then
         echo "  ✗ mutation scope filter errored (fail closed):" >&2; tail -5 "$TMP" >&2
         mutation_fail "mutation:filter-errored"
-      elif ! cosmic-ray exec "$SCOPED" "$SESSION" >>"$TMP" 2>&1; then
+      else
+        mutation_exec_guarded "$SCOPED" "$SESSION" "$WORK/tree"
+        mex=$?
+      fi
+      if [ "$mfc" -ne 0 ]; then
+        :
+      elif [ "$mex" -eq 3 ]; then
+        echo "  ✗ mutation: TREE INTEGRITY FAILED — cosmic-ray exec left the working tree changed; every" >&2
+        echo "    in-scope file was put back from the pre-exec snapshot. Never advisory (issue #95)." >&2
+        record_fail "mutation:tree-corrupted"
+      elif [ "$mex" -eq 4 ]; then
+        echo "  ✗ the in-scope files could not be snapshotted, so exec could not be guarded (fail closed):" >&2; tail -5 "$TMP" >&2
+        mutation_fail "mutation:integrity-unavailable"
+      elif [ "$mex" -ne 0 ]; then
         echo "  ✗ cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
         mutation_fail "mutation:errored"
       else

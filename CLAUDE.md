@@ -933,6 +933,27 @@ since firstmate's schema is closed — from the missing-config branch and from e
 funnel. **Advisory still does not block**: that is the deliberate decision, not the defect, and the
 change is only that stderr is no longer the sole trace.
 
+**And exec may not leave the tree it ran on changed** (issue #95). `cosmic-ray exec` mutates source IN
+PLACE and reverts each mutant in a `finally`; the hook's kill path SIGTERMs then SIGKILLs the child's
+process group, and neither signal runs a `finally`, so the mutant applied at that moment stayed on
+disk - indistinguishable from an authored edit (`-` to `+`, `0` to `1`) - and was committed as one:
+four times in one measured phase, three under `verdict: pass`, in live trading code (an order-capacity
+guard inverted, an insufficient-balance guard defeated). `cleanup()` removed a temp directory and never
+touched the tree, and the hook's own comments cite overruns of 569s, 3818s and 4276s against 300s, so
+the kill path is the EXPECTED path on a real suite. `scripts/mutation_exec_guard.py` now brackets
+**every** `exec`, in `hook_mutation.sh` and `gate_ci.sh` alike: a **snapshot** of every file the
+session can write - the set read from the session itself, never the config - a **restore-and-compare**
+after exec that runs on the **kill path too** (after the reap, so a still-live worker cannot re-apply
+over it), and a tree that differed **fails the hook whatever the policy**: a corrupted tree is not a
+weak test signal, and `advisory` selects how much authority the SCORE has. The restore source is the
+snapshot, never `git checkout`, because the pipeline verifies UNCOMMITTED work and HEAD is not the
+state the implementer left. And where the kill can be **predicted**, exec is not started: the
+baseline's measured wall clock times the pending mutants, against what `MUTATION_HOOK_BUDGET_S`
+(default: the hook's own `hooks.json` timeout) has left, refuses up front and records `did-not-run` -
+a lower bound, said so, which is why the restore on the kill path stays. `MUTATION_POLICY=off` still
+exits before any cosmic-ray call. **What it cannot do is stated**: nothing runs when the hook ITSELF is
+SIGKILLed, and a test command that rewrites source under `module-path` reads as corruption.
+
 **Mutation is `advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: runs and reports the
 score + survivors, **never blocks**) · `enforce` (fails closed) · `off` (no mutation tool runs
 anywhere). It was off; it is on because it is deterministic, diff-scoped, needs no model below the

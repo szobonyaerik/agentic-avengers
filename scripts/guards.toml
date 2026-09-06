@@ -136,6 +136,51 @@ replace = """
   *)
     exit 0 ;;"""
 
+[[guard]]
+id = "mutation-gate.tree-restore"
+implements = "scripts/hook_mutation.sh"
+defect = "cosmic-ray exec mutates source IN PLACE and reverts in a `finally`; the hook's kill path SIGTERMs then SIGKILLs the process group, and neither runs a `finally`, so the mutant applied at that moment stayed on disk and was committed as authored code - four times in one phase, three under `verdict: pass`, in live trading code (issue #95). cleanup() removed a temp directory and never touched the tree."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+restore_tree() {
+  [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0"""
+replace = """
+restore_tree() {
+  return 0"""
+
+[[guard]]
+id = "mutation-gate.tree-compare"
+implements = "scripts/mutation_exec_guard.py"
+defect = "A restore that puts the files back but reports the tree intact lets the hook read a corrupted run as a clean one: the mutant is gone from disk, and the verdict computed over a run that left it there stands. A tree that had to be restored is a tree that differed, and the caller must hear it."
+tests = ["tests/test_mutation_exec_guard.py", "tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/mutation_exec_guard.py"
+find = """
+    if not differed:
+        print(f"{TAG} tree intact: every in-scope file hashes as it did before exec")
+        return OK
+"""
+replace = """
+    print(f"{TAG} tree intact: every in-scope file hashes as it did before exec")
+    return OK
+"""
+
+[[guard]]
+id = "mutation-gate.exec-budget"
+implements = "scripts/hook_mutation.sh"
+defect = "An exec the hook could tell would not finish inside its budget was started anyway and killed mid-mutant. Where the kill can be predicted - the baseline's measured wall clock times the pending mutants, against what the budget has left - exec is refused up front and recorded as `did-not-run`, rather than begun and cut short with a mutant applied (issue #95)."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+if [ "$bc" -eq 1 ]; then
+  tail -3 "$TMP" >&2"""
+replace = """
+if false; then
+  tail -3 "$TMP" >&2"""
+
 # --- the requirement cap ---------------------------------------------------------------------------
 
 [[guard]]

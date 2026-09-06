@@ -49,6 +49,19 @@ slow; advisory keeps the loop moving for the weakest-tooled stack without preten
 strong there. The threshold is the `MUTATION_MIN_SCORE` environment variable (default `0.85`), set the
 same way as the policy; the Python tool config lives in `cosmic-ray.toml` at the repo root.
 
+## Tree integrity — never advisory
+`cosmic-ray exec` mutates source **in place** and reverts each mutant in a `finally`. A hook killed
+mid-mutant runs no `finally`, and one measured phase committed four such mutants as authored code
+(issue #95). Both readers now bracket every `exec` with `scripts/mutation_exec_guard.py`: a snapshot
+of the files the session can write before, an explicit restore-and-compare after — on the kill path
+too — and a **tree that differed fails the hook under every policy**. `advisory` governs how much
+authority the *score* has; a corrupted tree is not a score. When the hook reports
+`TREE INTEGRITY FAILED`, every in-scope file has been put back from the pre-exec snapshot and
+**nothing from that run is a verdict** — re-run it. The hook also refuses to start `exec` when the
+baseline's wall clock times the pending mutants would not fit `MUTATION_HOOK_BUDGET_S` (default: the
+hook's `hooks.json` timeout); that refusal is recorded as `did-not-run`, and the remedy is a faster
+test command, a narrower scope, or raising the budget and the hook timeout together.
+
 ## Surviving mutants
 Each survivor is a behavior no test catches. For each:
 1. Name the mutant (file, line, mutation) in the verdict.
