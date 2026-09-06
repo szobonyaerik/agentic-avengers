@@ -48,10 +48,14 @@ reverse). An edited piece never cancels against another edited piece. A rename c
 reformat changes no AST; so both are free, which is the property the contract has to keep.
 
 **A change is cited or it blocks.** An added atom is cited by a `# behaviour: R<n>.<k>.<m>` comment on
-the statement (or compound-statement header) that carries it; a removed atom is cited by that
-comment on any new line of the hunk that removed it, which is where a person would write "this
-guard is gone on purpose"; a NEW file may cite once in its header, before its first statement, for
-every atom it adds. The id must be one a spec in the phase DECLARES - `requirement_cap.declared_ids`,
+the statement (or compound-statement header) that carries it. A removed atom is cited by that
+comment on a new line of the hunk that removed it, and a citation speaks only for what it is
+attached to: on its OWN line it records a removal - "this guard is gone on purpose" - and clears the
+piece's removals, while one TRAILING a statement clears only the removals of the old line that
+statement replaced. A citation written for a rewritten line used to clear every deletion beside it
+in the same definition, which is this guard reproducing the defect it exists for. A NEW file may
+cite once in its header, before its first statement, for every atom it adds. The id must be one a
+spec in the phase DECLARES - `requirement_cap.declared_ids`,
 the reader the cap and the precheck already share - so a citation of nothing is a void citation and
 says so. The other route is the disclosed-exception ledger (`scripts/applicability.py record
 --rule behaviour-change`), subject either one atom key (`+op:Add`, `-literal:int:0`) or the phase
@@ -73,6 +77,9 @@ to be safe is the state the three guards shipped in.
 * **Semantic equivalence.** `if not x: return` inverted into `if x:` is flagged, though equivalent;
   the guard judges the surface and asks for a citation, it does not prove or refute equivalence.
 * **Anything that is not Python.** Other files in the change are counted and named, never parsed.
+* **Which removal a standalone citation meant.** A `# behaviour:` comment on its own line clears
+  every removal in its definition, because a deleted statement leaves no line to attach one to.
+  Two guards deleted from one function are cleared by one such comment.
 * **The base.** In session the comparison is against HEAD, which is the phase's base only while the
   phase commits nothing before its close (the pipeline's rule; `BEHAVIOUR_BASE` names another).
 
@@ -560,6 +567,45 @@ def _in(atom: Atom, lines: range) -> bool:
 MODULE_OWNER = "<module>"
 
 
+def _bounds(start: int, count: int) -> tuple[int, int]:
+    """(first, last) line of one side of a hunk. An EMPTY side reads `last < first`, anchored on
+    git's own convention that `@@ -3,0 +4 @@` inserts after old line 3."""
+    return (start, start + count - 1) if count else (start + 1, start)
+
+
+def _reach(pool: list[Atom], lo: int, hi: int) -> tuple[int, int]:
+    """How far the statements a hunk touches extend before and after it."""
+    before = after = 0
+    if hi >= lo:
+        for atom in pool:
+            if atom.span[0] <= hi and atom.span[1] >= lo:
+                before = max(before, lo - atom.span[0])
+                after = max(after, atom.span[1] - hi)
+    return before, after
+
+
+def _widen(lo: int, hi: int, before: int, after: int, owner: dict[int, str]) -> range:
+    """The hunk's lines widened to the statements it touches, clipped to ONE definition.
+
+    A hunk is a set of CHANGED lines, and an atom of a multi-line statement is matched by overlap -
+    so a comment or a blank line inserted inside a sum spread over four lines used to re-count that
+    statement's existing `op:Add` as newly ADDED while the old side, holding no changed line at all,
+    had nothing to cancel it with: a text-only edit reported as a behaviour change, blocking. Both
+    sides are widened by the same amount, so the statement is compared against its own former self
+    and only a real difference survives. Clipped to the anchor's own definition because the widening
+    is the MAXIMUM of the two sides: the side that did not need it must not reach into its
+    neighbour.
+    """
+    anchor = lo if hi >= lo else max(1, lo - 1)
+    who = owner.get(anchor, MODULE_OWNER)
+    start, end = max(1, lo - before), hi + after
+    while start < anchor and owner.get(start, MODULE_OWNER) != who:
+        start += 1
+    while end > anchor and owner.get(end, MODULE_OWNER) != who:
+        end -= 1
+    return range(start, max(start, end + 1) if hi >= lo else end + 1)
+
+
 def _runs(lines: range, owner: dict[int, str]) -> list[tuple[str, int, int]]:
     """The contiguous runs of one owner inside a hunk's lines: (owner, first line, count)."""
     out: list[tuple[str, int, int]] = []
@@ -624,8 +670,15 @@ def accounts(files: list[ChangedFile]) -> list[Account]:
         new_owner = owners(changed.new, changed.rel) if changed.new else {}
         for whole in changed.hunks:
             for hunk in split_by_owner(whole, old_owner, new_owner):
-                mine_old = [a for a in old_atoms if _in(a, hunk.old_lines())]
-                mine_new = [a for a in new_atoms if _in(a, hunk.new_lines())]
+                o_lo, o_hi = _bounds(hunk.old_start, hunk.old_count)
+                n_lo, n_hi = _bounds(hunk.new_start, hunk.new_count)
+                o_before, o_after = _reach(old_atoms, o_lo, o_hi)
+                n_before, n_after = _reach(new_atoms, n_lo, n_hi)
+                before, after = max(o_before, n_before), max(o_after, n_after)
+                old_span = _widen(o_lo, o_hi, before, after, old_owner)
+                new_span = _widen(n_lo, n_hi, before, after, new_owner)
+                mine_old = [a for a in old_atoms if _in(a, old_span)]
+                mine_new = [a for a in new_atoms if _in(a, new_span)]
                 old_c = Counter(a.key for a in mine_old)
                 new_c = Counter(a.key for a in mine_new)
                 out.append(
@@ -672,7 +725,17 @@ def _alike(left: list[str], right: list[str]) -> float:
         return 0.0
     # autojunk OFF: it treats any character in more than 1% of a sequence over 200 long as junk,
     # which on source text is most of the alphabet, and the ratio then says little about the code.
-    return difflib.SequenceMatcher(None, one, two, autojunk=False).ratio()
+    matcher = difflib.SequenceMatcher(None, one, two, autojunk=False)
+    # `ratio()` is quadratic and this pass is O(additions x removals): a package split with twenty
+    # whole-file additions against twenty removals, each at the cap, is minutes inside a hook with a
+    # budget. Both cheap forms are UPPER BOUNDS on `ratio()`, so a pair they reject could not have
+    # cleared the threshold and no pairing outcome changes.
+    if (
+        matcher.real_quick_ratio() < MOVE_SIMILARITY
+        or matcher.quick_ratio() < MOVE_SIMILARITY
+    ):
+        return 0.0
+    return matcher.ratio()
 
 
 def _contained(inner: Counter, outer: Counter) -> bool:
@@ -735,6 +798,53 @@ def _valid(ids: list[str], declared: set[str], void: set[str]) -> bool:
     return any(i in declared for i in ids)
 
 
+#: How alike a citing line and an old line must read for the citation to speak for that old line.
+CITE_PAIR_SIMILARITY = 0.6
+
+
+def _grants(
+    account: Account, by_line: dict[int, list[str]], marks: dict[int, int]
+) -> tuple[list[str], dict[int, list[str]]]:
+    """Which removals each citation in this piece may authorise: (piece-wide ids, ids per OLD line).
+
+    A citation used to clear EVERY removed atom in its piece, and a piece is definition-sized, so a
+    comment written for a rewritten line silently authorised the deletion of every guard beside it -
+    `rem = cap - a  # behaviour: R1.1.1 rename only` cleared an `if`/`raise` that vanished in the
+    same hunk. That is issue #107's own shape, produced by the guard for it.
+
+    So a citation speaks for what it is attached to. On its OWN line it is a record of a removal -
+    the way a person writes "this guard is gone on purpose" - and authorises the piece's removals.
+    Trailing a statement it speaks for that statement, and authorises only the removals of the OLD
+    line it replaced, found by reading the two alike (`CITE_PAIR_SIMILARITY`) with the comment
+    itself set aside, since the comment is the one part the old line cannot have carried.
+    """
+    whole: list[str] = []
+    per_line: dict[int, list[str]] = {}
+    body = (account.file.new or "").splitlines()
+    was = (account.file.old or "").splitlines()
+    for line in account.hunk.new_lines():
+        ids = by_line.get(line)
+        if not ids:
+            continue
+        text = body[line - 1] if 0 < line <= len(body) else ""
+        code = text[: marks.get(line, 0)].strip()
+        if not code:
+            whole.extend(ids)
+            continue
+        best, score = None, 0.0
+        for old_line in account.hunk.old_lines():
+            if not 0 < old_line <= len(was):
+                continue
+            ratio = difflib.SequenceMatcher(
+                None, was[old_line - 1].strip(), code
+            ).ratio()
+            if ratio > score:
+                best, score = old_line, ratio
+        if best is not None and score >= CITE_PAIR_SIMILARITY:
+            per_line.setdefault(best, []).extend(ids)
+    return whole, per_line
+
+
 def compare(
     files: list[ChangedFile], declared: set[str], excepted: set[str] = frozenset()
 ) -> Report:
@@ -747,17 +857,27 @@ def compare(
     cites = {f.rel: citations(f.new) for f in files if f.new is not None}
     for account in ledger:
         changed += sum(account.removed.values()) + sum(account.added.values())
-        by_line, header = cites.get(account.file.rel, ({}, []))
-        hunk_ids = [
-            rid for line in account.hunk.new_lines() for rid in by_line.get(line, [])
-        ]
+        by_line, header, marks = cites.get(account.file.rel, ({}, [], {}))
+        whole_ids, by_old_line = _grants(account, by_line, marks)
         if account.file.is_new:
-            hunk_ids = [*hunk_ids, *header]
+            whole_ids = [*whole_ids, *header]
         removed_uncited: list[str] = []
         for key, count in sorted(account.removed.items()):
-            if f"-{key}" in excepted or (hunk_ids and _valid(hunk_ids, declared, void)):
+            if f"-{key}" in excepted:
                 continue
-            removed_uncited.extend([key] * count)
+            if whole_ids and _valid(whole_ids, declared, void):
+                continue
+            cited = 0
+            for atom in [a for a in account.old_atoms if a.key == key]:
+                ids = [
+                    rid
+                    for line in range(atom.span[0], atom.span[1] + 1)
+                    for rid in by_old_line.get(line, [])
+                ]
+                if ids and _valid(ids, declared, void):
+                    cited += 1
+            if cited < count:
+                removed_uncited.extend([key] * (count - cited))
         added_uncited: list[str] = []
         for key, count in sorted(account.added.items()):
             if f"+{key}" in excepted:
@@ -813,7 +933,7 @@ def report_findings(report: Report, phase: str) -> None:
         f"[behaviour_drift] {phase} declares behaviour preserved and {total} change(s) to its "
         f"semantic surface in {len(report.findings)} hunk(s) cite nothing. Each is a BLOCKING "
         f"finding. Cite the requirement that authorises it with `# behaviour: R<n>.<k>.<m>` on the "
-        f"changed statement (a removal: on any new line of the hunk that removed it; a NEW file: "
+        f"changed statement (a removal: on its OWN line where the statement was; a NEW file: "
         f"once in its header), or record a disclosed exception: `scripts/applicability.py record "
         f"<phase-dir> --rule {RULE} --subject=<+key|-key|phase> --reason-file <f>`. A change "
         f"with no requirement and no exception is a behaviour change the phase said it would not "
@@ -907,16 +1027,35 @@ def _check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return CLEAN
-    if len(bound) < len(contracts) and not args.phases:
-        unbound = ", ".join(c.phase_dir.name for c in contracts if not c.declared)
+    unbound = [c for c in contracts if not c.declared]
+    if unbound and not args.phases and not args.all:
         print(
             f"[behaviour_drift] NOT CHECKED - the change also touches phase(s) that declare no "
-            f"contract ({unbound}), and a diff cannot be attributed file by file to one phase. "
-            f"Holding greenfield work to a contract it never declared would be a wedge; the "
-            f"contract binds in session, where HEAD isolates the phase.",
+            f"contract ({', '.join(c.phase_dir.name for c in unbound)}), and a diff cannot be "
+            f"attributed file by file to one phase. Holding greenfield work to a contract it never "
+            f"declared would be a wedge; the contract binds in session, where HEAD isolates the "
+            f"phase. Run with --all or name a phase to audit the phases that DID declare one.",
             file=sys.stderr,
         )
         return CLEAN
+    if unbound and args.all:
+        # The mixed-scope bail is what keeps a pull request from holding greenfield work to a
+        # contract it never declared. It must not also be what makes `--all` - the full audit this
+        # tool prescribes when the scope is unknowable - check nothing, which is what it did in
+        # every repository holding one greenfield phase. `--all` is asked for deliberately and is
+        # not wired into CI, so it audits the phases under the contract and names the rest.
+        for c in unbound:
+            print(
+                f"[behaviour_drift] --all SKIPS {c.phase_dir.name}: {c.reason()}.",
+                file=sys.stderr,
+            )
+        print(
+            "[behaviour_drift] --all audits the phases above that DID declare the contract. The "
+            "comparison cannot be attributed file by file, so a change belonging to a skipped "
+            "phase is judged here too - that is the cost of a deliberate audit, and why this is "
+            "not what CI runs.",
+            file=sys.stderr,
+        )
 
     subjects, whole = _ledger([c.phase_dir for c in bound])
     if whole:

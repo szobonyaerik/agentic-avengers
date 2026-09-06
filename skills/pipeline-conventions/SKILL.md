@@ -1532,8 +1532,10 @@ control-flow edges (`if`, `else`, loops, `try`/`except:<builtin>`/`finally`, ear
 to **atoms with no identifier in them**, so a rename can never change one. Every atom that changed
 against the base cites what authorised it: `# behaviour: R<n>.<k>.<m>` on the statement (or
 compound-statement HEADER, so a comment inside a branch never authorises the condition above it);
-for something REMOVED, on any new line of the hunk that removed it, which is where a person writes
-"this guard is gone on purpose"; for a NEW file, once in its header. The id must be one a spec in the
+for something REMOVED, on a new line of the hunk that removed it - and a citation speaks only for
+what it is attached to, so one on its OWN line is the record of a removal ("this guard is gone on
+purpose") and clears the definition's removals, while one TRAILING a surviving statement clears only
+the removals of the old line that statement replaced; for a NEW file, once in its header. The id must be one a spec in the
 phase declares - `requirement_cap.declared_ids`, the reader the cap and the precheck already share -
 so a citation of an id nobody declared authorises nothing and says so. The other route is the
 disclosed-exception ledger (`--rule behaviour-change`), subject either one atom key (`+op:Add`,

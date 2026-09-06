@@ -154,7 +154,8 @@ limits = [
   "BOTH HALVES of a change inside one definition: an atom removed and an identical atom added there cancel, so the change still blocks on its other half but the pair is not shown",
   "a change carried entirely by identifiers: call targets, argument order and attribute names are what a rename may change, so `fetch(a, b)` becoming `fetch(b, a)` passes",
   "that a cited change is CORRECT or that an uncited-looking one is wrong - it asks for a citation, it does not prove or refute equivalence",
-  "anything that is not Python, which is counted and named rather than parsed",
+  "anything that is not Python, which is counted and named rather than parsed - a `.ts`/`.js` phase is cleared by nothing here",
+  "WHICH removal a standalone citation meant: a `# behaviour:` comment on its own line clears every removal in its definition, because a deleted statement leaves no line to attach one to",
   "in session, anything the phase committed before its close: the comparison is against HEAD unless BEHAVIOUR_BASE names the phase's base",
 ]
 

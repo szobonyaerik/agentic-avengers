@@ -336,6 +336,107 @@ def test_a_deleted_guard_is_cited_on_the_hunk_that_removed_it(tmp_path: Path) ->
     assert code == behaviour_drift.CLEAN, err
 
 
+def test_a_trailing_citation_does_not_authorise_a_guard_deleted_beside_it(
+    tmp_path: Path,
+) -> None:
+    """Issue #107's own shape, produced by the guard for it: one citation written for a rewritten
+    line used to clear EVERY removed atom in its definition, so an `if`/`raise` guard could be
+    deleted under a comment that said "rename only" and the phase came back clean."""
+    root = repo(tmp_path)
+    edit(
+        root,
+        GUARD.replace(
+            "    rem = cap - open_orders\n    if rem > 10:\n        return rem\n    return 0\n",
+            "    rem = cap + open_orders  # behaviour: R1.1.1 rename only\n    return rem\n",
+        ),
+    )
+
+    code, err = check(root)
+
+    assert code == behaviour_drift.DRIFT, err
+    assert "-flow:if" in err and "-op:Gt" in err and "-literal:int:10" in err
+    # The citation still speaks for the statement it is attached to.
+    assert "-op:Sub" not in err
+
+
+def test_the_deleted_guard_is_cleared_by_a_citation_on_its_own_line(
+    tmp_path: Path,
+) -> None:
+    """The other half of the same rule: a citation written where the guard was still clears it."""
+    root = repo(tmp_path)
+    edit(
+        root,
+        GUARD.replace(
+            "    rem = cap - open_orders\n    if rem > 10:\n        return rem\n    return 0\n",
+            "    rem = cap + open_orders  # behaviour: R1.1.1 the sign is deliberate\n"
+            "    # behaviour: R1.1.1 the clamp is gone\n    return rem\n",
+        ),
+    )
+
+    code, err = check(root)
+
+    assert code == behaviour_drift.CLEAN, err
+
+
+def test_a_comment_inserted_inside_a_multiline_statement_is_not_behaviour(
+    tmp_path: Path,
+) -> None:
+    """A hunk is a set of CHANGED lines and an atom is matched by overlap, so a pure insertion
+    inside a multi-line expression used to re-count that expression's own operator as newly added,
+    with nothing on the old side to cancel it: a text-only edit reported as a behaviour change."""
+    root = repo(tmp_path)
+    spread = GUARD.replace(
+        "    rem = cap - open_orders\n",
+        "    rem = (\n        cap\n        - open_orders\n    )\n",
+    )
+    edit(root, spread)
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "spread")
+
+    edit(
+        root,
+        spread.replace(
+            "        cap\n", "        cap\n        # the capacity, as configured\n"
+        ),
+    )
+    code, err = check(root)
+    assert code == behaviour_drift.CLEAN, err
+
+    # ... and the symmetric case: taking a line back out of the same statement.
+    edit(root, spread.replace("        cap\n", ""))
+    code, err = check(root)
+    assert code == behaviour_drift.DRIFT, (
+        err
+    )  # `cap` is gone: the expression really changed
+
+
+def test_a_line_that_really_joins_a_multiline_statement_still_blocks(
+    tmp_path: Path,
+) -> None:
+    """The widening compares the statement against its own former self - it does not stop seeing a
+    change made INSIDE one."""
+    root = repo(tmp_path)
+    spread = GUARD.replace(
+        "    rem = cap - open_orders\n",
+        "    rem = (\n        cap\n        - open_orders\n    )\n",
+    )
+    edit(root, spread)
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "spread")
+
+    edit(
+        root,
+        spread.replace(
+            "        - open_orders\n", "        - open_orders\n        + 1\n"
+        ),
+    )
+
+    code, err = check(root)
+
+    assert code == behaviour_drift.DRIFT, err
+    assert "+op:Add" in err and "+literal:int:1" in err
+
+
 def test_a_new_file_cites_once_in_its_header(tmp_path: Path) -> None:
     root = repo(tmp_path)
     edit(
@@ -599,6 +700,42 @@ def test_diff_scoped_ci_form_binds_when_every_touched_phase_is_under_the_contrac
     assert proc.returncode == behaviour_drift.DRIFT, proc.stderr
 
 
+def test_the_full_audit_checks_the_phases_that_declared_the_contract(
+    tmp_path: Path,
+) -> None:
+    """`--all` is the remedy this tool prescribes when the scope is unknowable, and the mixed-scope
+    bail used to make it check nothing in any repository holding one greenfield phase - which is
+    every real feature. It audits what declared the contract and names what it skipped."""
+    root = repo(tmp_path)
+    other = root / "docs" / "features" / "demo" / "phases" / "2-new" / "specs" / "2.1-a"
+    other.mkdir(parents=True)
+    (other / "spec.md").write_text(
+        "---\nfeature: demo\nphase: 2-new\nspec: 2.1-a\nwork_kind: greenfield\n---\n\n"
+        "## Requirements\n- R2.1.1 - `binding: none` - ...\n",
+        encoding="utf-8",
+    )
+    edit(root, GUARD.replace("cap - open_orders", "cap + open_orders"))
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "behaviour_drift.py"),
+            "check",
+            "--all",
+            "--root",
+            str(root),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+
+    assert proc.returncode == behaviour_drift.DRIFT, proc.stderr
+    assert "+op:Add" in proc.stderr
+    assert "SKIPS 2-new" in proc.stderr, "it says per phase what it did not audit"
+
+
 def test_a_phase_the_change_does_not_touch_is_not_in_scope(tmp_path: Path) -> None:
     root = repo(tmp_path)
     edit(root, GUARD.replace("cap - open_orders", "cap + open_orders"))
@@ -716,6 +853,50 @@ def test_docstrings_bare_strings_ellipses_and_annotations_are_not_atoms() -> Non
     assert found == ["literal:int:3"]
 
 
+def test_suspension_is_an_edge_a_generator_turned_eager_cannot_hide_behind() -> None:
+    """A generator rewritten as an eager function returns a different thing to every caller, and
+    both sides used to reduce to exactly `['flow:loop']` - a behaviour change with no atom delta,
+    which is how a drift guard reports clean while missing something real (issue #97)."""
+    lazy = keys("def f(xs):\n    for x in xs:\n        yield x\n")
+    eager = keys(
+        "def f(xs):\n    out = []\n    for x in xs:\n        out.append(x)\n    return out\n"
+    )
+
+    assert "flow:yield" in lazy
+    assert lazy != eager
+
+
+def test_an_await_dropped_in_a_package_split_is_an_edge() -> None:
+    """`return await c.fetch()` becoming `return c.fetch()` returns a coroutine nobody runs."""
+    awaited = keys("async def f(c):\n    return await c.fetch()\n")
+    dropped = keys("async def f(c):\n    return c.fetch()\n")
+
+    assert "flow:await" in awaited
+    assert "flow:await" not in dropped
+
+
+def test_async_def_is_its_own_edge() -> None:
+    assert keys("async def f():\n    pass\n") == ["flow:async-def"]
+    assert keys("def f():\n    pass\n") == []
+    assert "flow:yield-from" in keys("def f(xs):\n    yield from xs\n")
+
+
+def test_a_generator_quietly_made_eager_blocks_the_phase(tmp_path: Path) -> None:
+    root = repo(
+        tmp_path,
+        "def stream(rows):\n    for row in rows:\n        yield row\n",
+    )
+    edit(
+        root,
+        "def stream(rows):\n    out = []\n    for row in rows:\n        out.append(row)\n    return out\n",
+    )
+
+    code, err = check(root)
+
+    assert code == behaviour_drift.DRIFT, err
+    assert "-flow:yield" in err
+
+
 def test_a_custom_exception_is_not_named_but_a_builtin_is() -> None:
     found = keys(
         "try:\n    pass\nexcept OrderError:\n    pass\nexcept (ValueError, KeyError):\n    pass\nexcept:\n    pass\n"
@@ -743,26 +924,156 @@ def test_an_else_edge_is_cited_on_the_else_line() -> None:
 def test_citations_are_read_from_comments_only_and_the_header_is_before_the_first_statement() -> (
     None
 ):
-    by_line, header = behaviour_atoms.citations(
+    by_line, header, marks = behaviour_atoms.citations(
         '"""doc"""\n# behaviour: R1.1.1, R1.1.2\nimport os\nx = "behaviour: R9.9.9"  # behavior: R2.2.2\n'
     )
     assert header == ["R1.1.1", "R1.1.2"]
     assert by_line == {2: ["R1.1.1", "R1.1.2"], 4: ["R2.2.2"]}
+    # The column is what tells a citation on its OWN line from one trailing a statement, which is
+    # what decides whether it may speak for a removal beside it.
+    assert marks == {2: 0, 4: 25}
 
 
-# --- wiring -----------------------------------------------------------------------------------------
+# --- it is enforced, not asked for --------------------------------------------------------------
+#
+# The whole issue is instruction-versus-mechanism, so a grep for the script's name in a hook proves
+# nothing: the string could sit in a comment or an unreachable branch. These drive the real hook,
+# at both triggers, in the shape a phase actually reaches it.
+
+HOOK = ROOT / "scripts" / "hook_verifier.sh"
+
+HOOK_SPEC = """---
+feature: demo
+phase: 1-core
+spec: 1.1-a
+work_kind: refactor
+spec_gate: approved
+review_status: approved
+status: {status}
+---
+
+## Requirements
+- R1.1.1 - `binding: integration` - the capacity guard
+
+## Acceptance criteria
+- R1.1.1 - passes when: ...; fails when: ...
+"""
+
+HOOK_MAPPING = """| requirement | test | level |
+|---|---|---|
+| R1.1.1 | test_capacity | integration |
+"""
 
 
-def test_the_spec_done_and_handover_triggers_run_it() -> None:
-    text = (ROOT / "scripts" / "hook_verifier.sh").read_text(encoding="utf-8")
-    assert text.count("behaviour_drift.py") >= 2
-    assert "verifier:behaviour-drift" in text
+def hook_project(tmp_path: Path) -> tuple[Path, Path]:
+    """A phase under the contract, committed clean, then given an UNCITED `-` -> `+` flip.
 
-
-def test_ci_sweeps_it_too() -> None:
-    assert "behaviour_drift.py" in (ROOT / "scripts" / "gate_ci.sh").read_text(
-        encoding="utf-8"
+    Committed first without the `done` stamp, so the stamp is the transition the hook binds on.
+    """
+    root = tmp_path / "proj"
+    spec_dir = root / "docs/features/demo/phases/1-core/specs/1.1-a"
+    spec_dir.mkdir(parents=True)
+    (root / "app").mkdir()
+    (root / "app" / "guard.py").write_text(GUARD, encoding="utf-8")
+    (spec_dir / "spec.md").write_text(HOOK_SPEC.format(status="in-progress"))
+    (spec_dir / "test-mapping.md").write_text(HOOK_MAPPING)
+    tests = root / "tests" / "demo" / "1-core"
+    tests.mkdir(parents=True)
+    (tests / "test_capacity.py").write_text("def test_capacity():\n    assert True\n")
+    git(root, "init", "-q")
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "t")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "before the stamp")
+    (root / "app" / "guard.py").write_text(
+        GUARD.replace("cap - open_orders", "cap + open_orders"), encoding="utf-8"
     )
+    return root, spec_dir
+
+
+def run_hook(root: Path, written: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps({"tool_input": {"file_path": str(written)}}),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+        env={
+            "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin",
+            "HOME": str(root.parent),
+            "CLAUDE_PROJECT_DIR": str(root),
+            "AVENGER_METRICS_OFF": "1",
+        },
+    )
+
+
+def test_the_spec_done_trigger_blocks_an_uncited_change(tmp_path: Path) -> None:
+    """A green suite and a recorded mapping are no longer enough for a no-change phase."""
+    root, spec_dir = hook_project(tmp_path)
+    (spec_dir / "spec.md").write_text(HOOK_SPEC.format(status="done"))
+
+    result = run_hook(root, spec_dir / "spec.md")
+
+    assert result.returncode == 2
+    assert "behaviour preserved" in result.stderr
+    assert "+op:Add" in result.stderr and "-op:Sub" in result.stderr
+
+
+def test_the_handover_trigger_blocks_the_same_change(tmp_path: Path) -> None:
+    """A spec-done check the phase drove around must not be the last word."""
+    root, spec_dir = hook_project(tmp_path)
+    handover = spec_dir.parent.parent / "handover.md"
+    handover.write_text("# Handover\n")
+
+    result = run_hook(root, handover)
+
+    assert result.returncode == 2
+    assert "behaviour preserved" in result.stderr
+    assert "+op:Add" in result.stderr
+
+
+def test_the_hook_lets_the_same_phase_through_once_the_change_is_cited(
+    tmp_path: Path,
+) -> None:
+    root, spec_dir = hook_project(tmp_path)
+    (root / "app" / "guard.py").write_text(
+        GUARD.replace("cap - open_orders", "cap + open_orders  # behaviour: R1.1.1"),
+        encoding="utf-8",
+    )
+    (spec_dir / "spec.md").write_text(HOOK_SPEC.format(status="done"))
+
+    result = run_hook(root, spec_dir / "spec.md")
+
+    assert "behaviour preserved" not in result.stderr, result.stderr
+    assert "clean" in result.stderr
+
+
+def test_a_landed_change_is_judged_against_its_merge_base(tmp_path: Path) -> None:
+    """The shape CI runs: nothing uncommitted, so the comparison is against the branch's base."""
+    root, spec_dir = hook_project(tmp_path)
+    (spec_dir.parent.parent / "handover.md").write_text("card\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "the flip")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "behaviour_drift.py"),
+            "check",
+            "--root",
+            str(root),
+            "--base",
+            "HEAD~1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+
+    assert proc.returncode == behaviour_drift.DRIFT, proc.stderr
+    assert "+op:Add" in proc.stderr
 
 
 def test_the_exception_ledger_template_carries_the_reader() -> None:

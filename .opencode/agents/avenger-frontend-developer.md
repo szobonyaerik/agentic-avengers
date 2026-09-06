@@ -54,8 +54,11 @@ and the Verifier will route it back.
 is compared against its base at your `spec-done` stamp and again at handover
 (`scripts/behaviour_drift.py`): every literal, operator and control-flow edge that changed has to
 cite the requirement that authorised it, with `# behaviour: R<n>.<k>.<m>` on the statement that
-carries it (for something REMOVED, on any new line of the hunk that removed it; for a NEW file, once
-in its header). Renames, moves, reformats and extractions change no atom and need nothing. An
+carries it (for something REMOVED, on its OWN line where the statement was - a comment trailing a
+surviving statement speaks only for that statement; for a NEW file, once in its header). Renames, moves, reformats and extractions change no atom and need nothing. **The
+comparison reads PYTHON only** - `.ts`, `.tsx` and `.js` are counted and named, never parsed, so on
+a TypeScript phase the guard clears nothing and a `//` citation does nothing: the contract is yours
+to keep by hand there, and this mechanism does not keep it for you. An
 uncited change BLOCKS - grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change
 and shipped `-` as `+` and a `0` balance sentinel as `1` through a green 283-test suite. If you find
 you must change behaviour, that is greenfield work: route the spec back rather than citing an id

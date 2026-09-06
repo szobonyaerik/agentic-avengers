@@ -803,8 +803,9 @@ literals, arithmetic/comparison/boolean/unary operators, membership and identity
 edges (`if`, `else`, loops, `try`/`except:<builtin>`/`finally`, early returns, `raise`, `assert`,
 `with`, `match`, comprehension filters) - is reduced by `scripts/behaviour_atoms.py` to **atoms with
 no identifier in them**, so a rename can never change one. Every changed atom cites what authorised
-it - `# behaviour: R<n>.<k>.<m>` on the statement or compound-statement HEADER; for a REMOVAL, on any
-new line of the hunk that removed it; for a NEW file, once in its header - and the id must be one a
+it - `# behaviour: R<n>.<k>.<m>` on the statement or compound-statement HEADER; for a REMOVAL, on its
+OWN line where the statement was, since a citation trailing a surviving statement speaks only for
+that statement and used to clear every deletion beside it; for a NEW file, once in its header - and the id must be one a
 spec in the phase declares (`requirement_cap.declared_ids`), so a citation of an id nobody declared
 authorises nothing and says so. The other route is the disclosed-exception ledger (`--rule
 behaviour-change`), subject one atom key (`+op:Add`, `-literal:int:0`) or the phase. **An uncited

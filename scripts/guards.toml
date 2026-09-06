@@ -455,6 +455,22 @@ replace = """
             return
         self._add(f"literal:{type(node.value).__name__}:{node.value!r}", node)"""
 
+[[guard]]
+id = "behaviour-drift.removal-citation-scope"
+implements = "scripts/behaviour_drift.py"
+defect = "A citation cleared EVERY removed atom in its definition, so a comment written for a rewritten line - `rem = cap - a  # behaviour: R1.1.1 rename only` - silently authorised the deletion of the if/raise guard beside it: issue #107's own shape, produced by the guard built for it."
+tests = ["tests/test_behaviour_drift.py"]
+[[guard.mutation]]
+file = "scripts/behaviour_drift.py"
+find = """
+        if not code:
+            whole.extend(ids)
+            continue"""
+replace = """
+        whole.extend(ids)
+        if not code:
+            continue"""
+
 # --- the Verifier's bookkeeping ------------------------------------------------------------------------------------
 
 [[guard]]

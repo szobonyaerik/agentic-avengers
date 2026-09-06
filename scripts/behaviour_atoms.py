@@ -17,7 +17,12 @@ A short key with NO IDENTIFIER in it, so that a rename can never change one:
   * `flow:<edge>`            - `if`, `ifexp`, `else`, `loop`, `try`, `except:<builtin|custom|bare>`,
                                `finally`, `early-return`, `raise:<builtin|custom|re-raise>`,
                                `break`, `continue`, `assert`, `with`, `comp-if`, `match`, `case`,
-                               `case-guard`
+                               `case-guard`, `yield`, `yield-from`, `await`, `async-def`
+
+Suspension is an edge like any other: a generator turned into an eager function that builds a list
+returns a different thing to every caller, and an `await` dropped during a package split turns a
+result into a coroutine nobody runs. Both are squarely what a migration does, and both used to
+reduce to the same atoms as the code they replaced.
 
 A TAIL return - the last statement of a function body - is deliberately not an atom: extracting a
 helper adds one, and extraction is what a refactor is allowed to do. An early return is a control
@@ -271,6 +276,8 @@ class _Walker(ast.NodeVisitor):
         self._stmt(node, header=True)
 
     def _function(self, node: ast.stmt) -> None:
+        if isinstance(node, ast.AsyncFunctionDef):
+            self._edge("flow:async-def", node, self._header(node))
         self._tails.append(node.body[-1] if node.body else None)
         self._ranges.append(self._header(node))
         try:
@@ -320,6 +327,18 @@ class _Walker(ast.NodeVisitor):
     def visit_Assert(self, node: ast.Assert) -> None:
         self._simple_edge("flow:assert", node)
 
+    def visit_Yield(self, node: ast.Yield) -> None:
+        self._add("flow:yield", node)
+        self.generic_visit(node)
+
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
+        self._add("flow:yield-from", node)
+        self.generic_visit(node)
+
+    def visit_Await(self, node: ast.Await) -> None:
+        self._add("flow:await", node)
+        self.generic_visit(node)
+
     def visit_comprehension(self, node: ast.comprehension) -> None:
         for test in node.ifs:
             self._add("flow:comp-if", test)
@@ -337,18 +356,23 @@ def atoms(source: str, label: str = "<source>") -> list[Atom]:
     return walker.atoms
 
 
-def citations(source: str) -> tuple[dict[int, list[str]], list[str]]:
-    """(citations by line, header citations) - ids named in `# behaviour:` COMMENTS only.
+def citations(source: str) -> tuple[dict[int, list[str]], list[str], dict[int, int]]:
+    """(citations by line, header citations, the column each citing comment starts at).
 
-    The header is every citing comment before the first statement that is not a docstring; a NEW
-    file cites there once for everything it adds. Read from the token stream, so a `behaviour:`
-    inside a string literal cites nothing.
+    Ids are named in `# behaviour:` COMMENTS only. The header is every citing comment before the
+    first statement that is not a docstring; a NEW file cites there once for everything it adds.
+    Read from the token stream, so a `behaviour:` inside a string literal cites nothing.
+
+    The column is what lets the decision layer tell a citation written on its OWN line - the way a
+    person records "this guard is gone on purpose" - from one trailing a statement, which speaks
+    for that statement and not for whatever was deleted beside it.
     """
     by_line: dict[int, list[str]] = {}
+    marks: dict[int, int] = {}
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
     except (tokenize.TokenError, SyntaxError):
-        return {}, []
+        return {}, [], {}
     for token in tokens:
         if token.type != tokenize.COMMENT:
             continue
@@ -357,6 +381,7 @@ def citations(source: str) -> tuple[dict[int, list[str]], list[str]]:
             by_line.setdefault(token.start[0], []).extend(
                 REQUIREMENT_ID.findall(found.group(1))
             )
+            marks.setdefault(token.start[0], token.start[1])
     first: int | None = None
     try:
         for stmt in ast.parse(source).body:
@@ -372,7 +397,7 @@ def citations(source: str) -> tuple[dict[int, list[str]], list[str]]:
         if first is None or line < first
         for rid in ids
     ]
-    return by_line, header
+    return by_line, header, marks
 
 
 def owners(source: str, label: str = "<source>") -> dict[int, str]:
