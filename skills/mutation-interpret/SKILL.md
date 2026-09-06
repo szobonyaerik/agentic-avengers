@@ -55,12 +55,19 @@ mid-mutant runs no `finally`, and one measured phase committed four such mutants
 (issue #95). Both readers now bracket every `exec` with `scripts/mutation_exec_guard.py`: a snapshot
 of the files the session can write before, an explicit restore-and-compare after — on the kill path
 too — and a **tree that differed fails the hook under every policy**. `advisory` governs how much
-authority the *score* has; a corrupted tree is not a score. When the hook reports
-`TREE INTEGRITY FAILED`, every in-scope file has been put back from the pre-exec snapshot and
-**nothing from that run is a verdict** — re-run it. The hook also refuses to start `exec` when the
+authority the *score* has; a corrupted tree is not a score. **Nothing from such a run is a verdict**
+— re-run it. Read the next line before you re-run, because only one of three says the tree is clean:
+`TREE INTEGRITY FAILED` followed by *every in-scope file has been put back* is the restored case;
+`NOT RESTORED` names files the restore could not write back; and `TREE INTEGRITY UNKNOWN` means the
+restore itself did not complete (a signal, a crash), so **what is on disk was never established**.
+The last two both tell you to inspect the working tree by hand before committing anything, and
+neither claims a restoration. The hook also refuses to start `exec` when the
 baseline's wall clock times the pending mutants would not fit `MUTATION_HOOK_BUDGET_S` (default: the
 hook's `hooks.json` timeout); that refusal is recorded as `did-not-run`, and the remedy is a faster
-test command, a narrower scope, or raising the budget and the hook timeout together.
+test command, a narrower scope, or raising the budget and the hook timeout together. A
+`MUTATION_HOOK_BUDGET_S` that is not a positive integer number of seconds is a **configuration
+error**: the hook stops naming the value and records `did-not-run`, rather than dying in bash
+arithmetic before the gate and its tree guard ever run.
 
 ## Surviving mutants
 Each survivor is a behavior no test catches. For each:

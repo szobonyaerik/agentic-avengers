@@ -558,7 +558,11 @@ mutation_nothing_in_scope() {
 # `record_fail`, never `mutation_fail`, because a corrupted tree is not a weak test signal.
 # $1 = scoped config · $2 = session · $3 = snapshot dir. Streams into $TMP like its neighbours.
 # Returns 0 exec finished and the tree is intact · 1 exec errored, tree intact · 3 the tree DIFFERED
-# (and was put back) · 4 no snapshot could be taken, so exec was never started.
+# and every in-scope file was put back · 5 the tree DIFFERED and was NOT fully put back, or the
+# restore did not complete at all, so the checkout is not clean · 4 no snapshot could be taken, so
+# exec was never started. 3 and 5 are distinct because only one of them may claim the tree is clean:
+# `restore` returns 2 whenever a copy back raises or the content still differs after it, and any
+# other non-zero code is a restore that did not finish.
 mutation_exec_guarded() {
   if ! python3 "$SCRIPT_DIR/mutation_exec_guard.py" snapshot --root "$ROOT" --session "$2" "$3" >>"$TMP" 2>&1; then
     return 4
@@ -568,7 +572,19 @@ mutation_exec_guarded() {
   python3 "$SCRIPT_DIR/mutation_exec_guard.py" restore --root "$ROOT" "$3" >"$3.restore" 2>&1
   local tc=$?
   cat "$3.restore" >>"$TMP"
-  if [ "$tc" -ne 0 ]; then cat "$3.restore" >&2; return 3; fi
+  if [ "$tc" -eq 1 ]; then
+    cat "$3.restore" >&2
+    echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2
+    echo "    in-scope file was put back from the pre-exec snapshot. Never advisory (issue #95)." >&2
+    return 3
+  fi
+  if [ "$tc" -ne 0 ]; then
+    cat "$3.restore" >&2
+    echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed and the" >&2
+    echo "    restore did NOT put everything back (exit $tc). This checkout is NOT clean: inspect it by" >&2
+    echo "    hand before trusting anything built from it. Never advisory (issue #95)." >&2
+    return 5
+  fi
   [ "$ec" -eq 0 ] || return 1
   return 0
 }
@@ -630,9 +646,7 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
       fi
       if [ "$mfc" -ne 0 ]; then
         :
-      elif [ "$mex" -eq 3 ]; then
-        echo "  ✗ mutation: TREE INTEGRITY FAILED — cosmic-ray exec left the working tree changed; every" >&2
-        echo "    in-scope file was put back from the pre-exec snapshot. Never advisory (issue #95)." >&2
+      elif [ "$mex" -eq 3 ] || [ "$mex" -eq 5 ]; then
         record_fail "mutation:tree-corrupted"
       elif [ "$mex" -eq 4 ]; then
         echo "  ✗ the in-scope files could not be snapshotted, so exec could not be guarded (fail closed):" >&2; tail -5 "$TMP" >&2

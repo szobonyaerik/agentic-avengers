@@ -8,6 +8,7 @@ against a `cosmic-ray` stub, the same seam `tests/test_gate_ci_mutation_base.py`
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -121,6 +122,43 @@ def test_an_errored_exec_over_an_intact_tree_is_1(repo, tmp_path):
     proc = _run(repo, "exit 7", tmp_path)
 
     assert "RC:1" in proc.stdout, proc.stderr
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root writes through a read-only file, so the copy back cannot fail",
+)
+def test_a_restore_that_cannot_put_the_file_back_is_5_and_never_claims_the_checkout_is_clean(
+    repo, tmp_path
+):
+    """Exit 1 and exit 2 out of `restore` do not mean the same thing, and CI must not conflate them.
+
+    `restore` returns 2 whenever the copy back raises - a read-only in-scope file, a restrictive
+    checkout mode - or the content still differs after it. Collapsed into the same code as "the tree
+    differed and every file is back", CI printed the clean-checkout claim over a checkout that still
+    held the mutant.
+    """
+    root, session, target = repo
+    mutant = "def a():\n    return 2\n"
+
+    try:
+        proc = _run(
+            repo,
+            f"printf 'def a():\\n    return 2\\n' > '{target}'; chmod 0444 '{target}'; exit 0",
+            tmp_path,
+        )
+    finally:
+        target.chmod(0o644)
+
+    assert "RC:5" in proc.stdout, proc.stderr
+    assert mutant == target.read_text(encoding="utf-8"), (
+        "the fixture must leave the mutant on disk; that is the state being reported on"
+    )
+    assert "NOT RESTORED" in proc.stderr
+    assert "NOT clean" in proc.stderr
+    assert "was put back from the pre-exec snapshot" not in proc.stderr, (
+        "the headline must not claim a restoration that did not happen"
+    )
 
 
 def test_a_tree_that_cannot_be_snapshotted_never_starts_exec(repo, tmp_path):

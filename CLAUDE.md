@@ -950,7 +950,17 @@ snapshot, never `git checkout`, because the pipeline verifies UNCOMMITTED work a
 state the implementer left. And where the kill can be **predicted**, exec is not started: the
 baseline's measured wall clock times the pending mutants, against what `MUTATION_HOOK_BUDGET_S`
 (default: the hook's own `hooks.json` timeout) has left, refuses up front and records `did-not-run` -
-a lower bound, said so, which is why the restore on the kill path stays. `MUTATION_POLICY=off` still
+a lower bound, said so, which is why the restore on the kill path stays. **That budget is validated
+where it is resolved**: unvalidated it reached bash arithmetic, where a non-numeric value left the
+remaining seconds unset and `set -u` exited 1 before the budget check, the snapshot and exec - the
+whole gate and its tree guard skipped, no record written, and 1 is not the blocking code either, so
+`enforce` did not stop. It is a configuration error, stopped and named exactly as an unrecognised
+`MUTATION_POLICY` is, and asked AFTER the policy so `off` still runs no mutation tool anywhere.
+**And only ONE restore outcome may claim the tree is clean**: exit 1 is *differed and every file put
+back*, exit 2 is *at least one was NOT*, and any other code is a restore that did not complete - a
+signal, a crash - which is why `main` has an exception boundary rather than letting a traceback exit
+1 and be read as the restored case. Both callers keep the three apart and the last two say to inspect
+the tree by hand. `MUTATION_POLICY=off` still
 exits before any cosmic-ray call. **What it cannot do is stated**: nothing runs when the hook ITSELF is
 SIGKILLed, and a test command that rewrites source under `module-path` reads as corruption.
 

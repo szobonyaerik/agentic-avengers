@@ -83,6 +83,23 @@ record_unavailable() {
   python3 "$SD/pipeline_metrics.py" mutation-unavailable "$FILE" "$1" >/dev/null 2>&1 || true
 }
 
+# The budget is validated the moment it can be, and never reaches bash arithmetic unvalidated: a
+# non-numeric value makes `$(( ))` fail, leaves REMAINING_S unset, and the next expansion under
+# `set -u` exits 1 - the whole gate and its tree guard skipped, no record written, and exit 1 is not
+# the blocking code either, so `enforce` does not stop. A configuration error stops, named, exactly
+# as an unrecognised MUTATION_POLICY does. It is asked AFTER the policy case so `off` still runs no
+# mutation tool anywhere. Leading zeros are normalised out: `$((0600))` is octal.
+budget_config_error() {
+  echo "mutation: MUTATION_HOOK_BUDGET_S='$MUTATION_HOOK_BUDGET_S' is not a positive integer number of seconds (fail closed)" >&2
+  record_unavailable "MUTATION_HOOK_BUDGET_S='$MUTATION_HOOK_BUDGET_S' is not a positive integer number of seconds - the gate did not run"
+  exit 2
+}
+case "$MUTATION_HOOK_BUDGET_S" in
+  ''|*[!0-9]*) budget_config_error ;;
+  *) [ "$((10#$MUTATION_HOOK_BUDGET_S))" -gt 0 ] || budget_config_error ;;
+esac
+MUTATION_HOOK_BUDGET_S=$((10#$MUTATION_HOOK_BUDGET_S))
+
 CFG="$CLAUDE_PROJECT_DIR/cosmic-ray.toml"
 if [ ! -f "$CFG" ]; then
   record_unavailable "cosmic-ray.toml missing at repo root"
@@ -121,9 +138,13 @@ bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 # live, and cleared BEFORE the restore runs so a second signal arriving mid-restore cannot start a
 # second one. The restore runs in the FOREGROUND on purpose: bash defers a trap until the running
 # command returns, so a kill during it completes the restore first. A tree that differed is recorded
-# in TREE_CORRUPTED and every exit path asks it before asking the policy.
+# in TREE_CORRUPTED and every exit path asks it before asking the policy. Only rc 1 means the tree
+# differed AND every file is back; rc 2 means at least one is NOT, and any other non-zero rc - a
+# restore killed by a signal, a crash - means the restore did not complete and the tree state is
+# UNKNOWN. The last two never claim the tree was put back.
 SNAP=""
 TREE_CORRUPTED=0
+TREE_NOTE="the working tree was altered by cosmic-ray exec; this run's result is void"
 restore_tree() {
   [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0
   local snap="$SNAP"; SNAP=""
@@ -131,12 +152,25 @@ restore_tree() {
   local rc=$?
   if [ "$rc" -eq 0 ]; then return 0; fi
   TREE_CORRUPTED=1
-  { echo "mutation: TREE INTEGRITY FAILED — cosmic-ray exec left the working tree different from the state it found it in."
+  if [ "$rc" -eq 1 ]; then
+    TREE_NOTE="the working tree was altered by cosmic-ray exec and restored from the pre-exec snapshot; this run's result is void"
+  elif [ "$rc" -eq 2 ]; then
+    TREE_NOTE="the working tree was altered by cosmic-ray exec and NOT every file could be put back; this run's result is void and the tree needs inspecting by hand"
+  else
+    TREE_NOTE="the tree check after cosmic-ray exec did not complete (exit $rc), so whether a mutant is still applied is UNKNOWN; this run's result is void"
+  fi
+  { if [ "$rc" -eq 1 ] || [ "$rc" -eq 2 ]; then
+      echo "mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree different from the state it found it in."
+    else
+      echo "mutation: TREE INTEGRITY UNKNOWN - the restore did not complete (exit $rc), so what cosmic-ray exec left behind could not be established."
+    fi
     cat "$WORK/restore.txt"
-    if [ "$rc" -eq 2 ]; then
+    if [ "$rc" -eq 1 ]; then
+      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict."
+    elif [ "$rc" -eq 2 ]; then
       echo "mutation: and NOT every file could be put back. Inspect the working tree by hand before committing anything."
     else
-      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict."
+      echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
     fi
   } >&2
 }
@@ -145,7 +179,7 @@ restore_tree() {
 # this. GATE_BYPASS is honoured through the same audited path as every other blocking check, and the
 # restore has already run by the time it is asked.
 fail_tree() {
-  record_unavailable "the working tree was altered by cosmic-ray exec and restored from the pre-exec snapshot; this run's result is void"
+  record_unavailable "$TREE_NOTE"
   echo "mutation: a corrupted tree is never advisory - failing the hook (MUTATION_POLICY=$MUTATION_POLICY)." >&2
   [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit "mutation:tree-corrupted"
   cleanup; trap - EXIT

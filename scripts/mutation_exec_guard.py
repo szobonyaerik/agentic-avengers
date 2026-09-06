@@ -51,7 +51,9 @@ Usage:
 Exit codes:
     0  snapshot written / tree intact / exec fits the budget
     1  restore: the tree DIFFERED and was put back / budget: exec would not fit
-    2  error - could not read the session, a file, or could not restore. Fail closed.
+    2  error - could not read the session, a file, could not restore, or an unexpected failure.
+       Fail closed. Nothing escapes as a traceback: 1 is the code the caller reads as "the tree
+       differed AND every file is back", and a crash is not that claim.
 """
 
 from __future__ import annotations
@@ -303,5 +305,14 @@ def main(argv: list[str] | None = None) -> int:
     return budget(args.session, args.baseline_s, args.budget_s)
 
 
+def main_guarded(argv: list[str] | None = None) -> int:
+    """`main` with nothing escaping as a traceback: an unexpected failure is ERROR, never DIFFERED."""
+    try:
+        return main(argv)
+    except Exception as exc:  # noqa: BLE001 - any crash is an unknown tree, and that is fail-closed
+        print(f"{TAG} unexpected failure: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ERROR
+
+
 if __name__ == "__main__":
-    raise SystemExit(guard_scope.run(__file__, main))
+    raise SystemExit(guard_scope.run(__file__, main_guarded))

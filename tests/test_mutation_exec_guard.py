@@ -10,6 +10,7 @@ left. The snapshot is the restore source on purpose - the pipeline verifies UNCO
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -243,3 +244,34 @@ class TestCli:
         assert "SCOPE OF A CLEAN RESULT" in intact.stderr, (
             "a clean result states its scope on stderr (issue #97)"
         )
+
+    def test_an_unexpected_failure_is_an_error_never_a_completed_restore(
+        self, repo, tmp_path
+    ):
+        """Exit 1 is the caller's evidence that the tree differed AND every file is back.
+
+        A crash used to exit 1 too - `main` had no boundary and a traceback leaves that code - so the
+        hook printed the successful-restoration line over a restore that never ran to the end. A
+        manifest the reader cannot make sense of is the cheapest way to reach that path.
+        """
+        root, session, tracked, untracked = repo
+        snap = tmp_path / "snap"
+        script = ROOT / "scripts" / "mutation_exec_guard.py"
+        (snap / "files").mkdir(parents=True)
+        (snap / "manifest.json").write_text(
+            json.dumps({"root": str(root), "files": [{"path": str(tracked)}]}),
+            encoding="utf-8",
+        )
+
+        crashed = subprocess.run(
+            [sys.executable, str(script), "restore", "--root", str(root), str(snap)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert crashed.returncode == guard.ERROR, (
+            "a crash is not the code that means the tree was put back"
+        )
+        assert "unexpected failure" in crashed.stderr
+        assert "Traceback" not in crashed.stderr

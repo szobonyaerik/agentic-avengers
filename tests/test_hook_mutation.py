@@ -13,6 +13,7 @@ here is that the absence is now written where a later reader looks.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -44,7 +45,7 @@ def project(tmp_path: Path):
 
 
 def run_hook(
-    project, policy: str = "advisory", path_prefix: str = ""
+    project, policy: str = "advisory", path_prefix: str = "", **extra_env: str
 ) -> subprocess.CompletedProcess:
     root, phase, store, writer, tmp = project
     payload = json.dumps({"tool_input": {"file_path": str(phase / "handover.md")}})
@@ -64,6 +65,7 @@ def run_hook(
             "AVENGER_METRICS_LOG": str(tmp / "diagnostics.log"),
             "DOUBLE_LOG": str(tmp / "calls.log"),
             "DOUBLE_STORE": str(store),
+            **extra_env,
         },
     )
 
@@ -333,10 +335,16 @@ def test_a_hook_killed_mid_exec_leaves_the_tree_exactly_as_it_found_it(live_proj
     assert "NOT a gate verdict" in err
 
 
-def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(project):
-    """The comparison is not only for the kill path. An exec that returns 0 and leaves a file changed
-    is the same corruption, and `advisory` says nothing about it: the policy selects how much
-    authority the SCORE has. The file is put back, the hook fails, and the run's result is void.
+LEAVES_THE_MUTANT = "printf 'def a():\\n    return 2\\n' > '{target}'; exit 0"
+LEAVES_THE_MUTANT_UNWRITABLE = (
+    "printf 'def a():\\n    return 2\\n' > '{target}'; chmod 0444 '{target}'; exit 0"
+)
+
+
+def corrupting_project(project, exec_body: str):
+    """A real repo whose `cosmic-ray exec` stub leaves its mutant applied and still reports success.
+
+    Returns the in-scope file, the bytes it held before exec, and the PATH prefix carrying the stub.
     """
     root, phase, store, writer, tmp = project
     (root / "pkg").mkdir(parents=True, exist_ok=True)
@@ -357,7 +365,7 @@ def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(pr
     target.write_text(original, encoding="utf-8")  # untracked: every line in scope
 
     binaries = tmp / "bin"
-    binaries.mkdir()
+    binaries.mkdir(exist_ok=True)
     maker = binaries / "make_session.py"
     maker.write_text(
         "import sys\n"
@@ -374,23 +382,121 @@ def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(pr
         "#!/usr/bin/env bash\n"
         'case "$1" in\n'
         f'  init) exec "{sys.executable}" "{maker}" "$3" ;;\n'
-        # exec "reverts" nothing: the mutant stays, and the command still reports success.
-        f"  exec) printf 'def a():\\n    return 2\\n' > '{target}'; exit 0 ;;\n"
+        f"  exec) {exec_body.format(target=target)} ;;\n"
         "  *) exit 0 ;;\n"
         "esac\n",
         encoding="utf-8",
     )
     stub.chmod(0o755)
+    return target, original, f"{binaries}:"
 
-    result = run_hook(project, policy="advisory", path_prefix=f"{binaries}:")
+
+def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(project):
+    """The comparison is not only for the kill path. An exec that returns 0 and leaves a file changed
+    is the same corruption, and `advisory` says nothing about it: the policy selects how much
+    authority the SCORE has. The file is put back, the hook fails, and the run's result is void.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT)
+
+    result = run_hook(project, policy="advisory", path_prefix=prefix)
 
     assert target.read_text(encoding="utf-8") == original, "the file is put back"
     assert result.returncode == 2, "a corrupted tree is never advisory"
     assert "TREE INTEGRITY FAILED" in result.stderr
     assert "RESTORED" in result.stderr
+    assert "every in-scope file has been put back" in result.stderr
     (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
     assert row["failure_cause"] == "did-not-run"
     assert "altered by cosmic-ray exec" in row["note"]
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root writes through a read-only file, so the copy back cannot fail",
+)
+def test_a_restore_that_could_not_put_everything_back_never_says_it_did(project):
+    """Only exit 1 out of `restore` means "the tree differed and every file is back".
+
+    Exit 2 means at least one file could NOT be put back - a read-only in-scope file, a copy that
+    still differs afterwards - and the operator has to be told to look at the tree. Reported as the
+    successful restoration it is not, a mutant stays on disk under a line saying it does not.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT_UNWRITABLE)
+
+    try:
+        result = run_hook(project, policy="advisory", path_prefix=prefix)
+    finally:
+        target.chmod(0o644)
+
+    assert target.read_text(encoding="utf-8") != original, (
+        "the fixture must leave the mutant on disk; that is the state being reported on"
+    )
+    assert result.returncode == 2, "a corrupted tree is never advisory"
+    assert "NOT RESTORED" in result.stderr
+    assert "Inspect the working tree by hand" in result.stderr
+    assert "every in-scope file has been put back" not in result.stderr, (
+        "nothing may claim a restoration that did not happen"
+    )
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run"
+    assert "NOT every file could be put back" in row["note"]
+
+
+# --- a budget the hook cannot compute with is a configuration error, not a skipped gate -----------
+
+
+def test_a_budget_that_is_not_a_positive_integer_stops_the_hook_and_is_recorded(
+    scoped_project,
+):
+    """Unvalidated, MUTATION_HOOK_BUDGET_S went straight into bash arithmetic: a non-numeric value
+    left REMAINING_S unset and `set -u` exited 1 before the budget check, the snapshot and exec - the
+    whole gate and its tree guard skipped, nothing recorded, and exit 1 is not the blocking code, so
+    `enforce` did not stop either. A configuration error stops, named, and leaves its record.
+    """
+    proj, prefix = scoped_project
+    root, phase, store, writer, tmp = proj
+    calls = tmp / "cr-calls.log"
+    stub = tmp / "bin" / "cosmic-ray"
+    stub.write_text(
+        f'#!/usr/bin/env bash\necho "$1" >> "{calls}"\nexit 0\n', encoding="utf-8"
+    )
+    stub.chmod(0o755)
+
+    result = run_hook(proj, path_prefix=prefix, MUTATION_HOOK_BUDGET_S="soon")
+
+    assert result.returncode == 2, "a configuration error stops under every policy"
+    assert "MUTATION_HOOK_BUDGET_S='soon'" in result.stderr, "the stop names the value"
+    assert "positive integer number of seconds" in result.stderr, (
+        "the stop names the shape it accepts"
+    )
+    assert not calls.exists(), "no cosmic-ray call before the configuration is usable"
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run"
+    assert "soon" in row["note"]
+
+
+def test_policy_off_outranks_a_budget_nobody_can_parse(scoped_project):
+    """`off` runs no mutation tool anywhere, so it is asked before the budget is: an operator who
+    switched the gate off must not be stopped by the configuration of the gate that is not running.
+    """
+    proj, prefix = scoped_project
+    root, phase, store, writer, tmp = proj
+    calls = tmp / "cr-calls.log"
+    stub = tmp / "bin" / "cosmic-ray"
+    stub.write_text(
+        f'#!/usr/bin/env bash\necho "$1" >> "{calls}"\nexit 0\n', encoding="utf-8"
+    )
+    stub.chmod(0o755)
+
+    result = run_hook(
+        proj, policy="off", path_prefix=prefix, MUTATION_HOOK_BUDGET_S="soon"
+    )
+
+    assert result.returncode == 0
+    assert not calls.exists()
+    assert recorded(store) == []
 
 
 def test_an_exec_that_cannot_finish_inside_the_budget_is_refused_up_front(live_project):

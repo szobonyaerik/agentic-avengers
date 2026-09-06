@@ -151,6 +151,64 @@ restore_tree() {
   return 0"""
 
 [[guard]]
+id = "mutation-gate.budget-validated"
+implements = "scripts/hook_mutation.sh"
+defect = "MUTATION_HOOK_BUDGET_S arrived from the environment unvalidated and went straight into bash arithmetic. A non-numeric value left REMAINING_S unset, and the next expansion under `set -u` exited 1 before the budget check, the snapshot and exec - the whole gate and its tree guard skipped with no record written, and exit 1 is not the blocking code, so `enforce` did not stop either."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+case "$MUTATION_HOOK_BUDGET_S" in
+  ''|*[!0-9]*) budget_config_error ;;"""
+replace = """
+case "$MUTATION_HOOK_BUDGET_S" in
+  a-value-no-operator-writes) budget_config_error ;;"""
+
+[[guard]]
+id = "mutation-gate.restore-claim"
+implements = "scripts/hook_mutation.sh"
+defect = "The hook read every non-2 exit from `restore` as `the tree differed and every file is back`, so a restore killed by a signal or crashing on a traceback - which exits 1, the code that means restored - told the operator the working tree was clean while a mutant was still applied in it."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+    if [ "$rc" -eq 1 ]; then
+      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict.""""
+replace = """
+    if true; then
+      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict.""""
+
+[[guard]]
+id = "mutation-gate.ci-restore-claim"
+implements = "scripts/gate_ci.sh"
+defect = "CI collapsed `restore` exit 1 and exit 2 into one code and printed `every in-scope file was put back from the pre-exec snapshot` for both, so a checkout whose read-only in-scope file could not be written back was reported as cleaned."
+tests = ["tests/test_gate_ci_mutation_tree.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+  if [ "$tc" -eq 1 ]; then
+    cat "$3.restore" >&2"""
+replace = """
+  if [ "$tc" -ne 0 ]; then
+    cat "$3.restore" >&2"""
+
+[[guard]]
+id = "mutation-gate.restore-crash"
+implements = "scripts/mutation_exec_guard.py"
+defect = "`main` had no exception boundary, so an uncaught exception exited 1 - the same code that tells the caller the tree differed and every file was put back. A restore that crashed part-way was read as one that completed, and the hook printed the successful-restoration line over a tree that still held the mutant."
+tests = ["tests/test_mutation_exec_guard.py"]
+[[guard.mutation]]
+file = "scripts/mutation_exec_guard.py"
+find = """
+    try:
+        return main(argv)
+    except Exception as exc:  # noqa: BLE001 - any crash is an unknown tree, and that is fail-closed
+        print(f"{TAG} unexpected failure: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ERROR"""
+replace = """
+    return main(argv)"""
+
+[[guard]]
 id = "mutation-gate.tree-compare"
 implements = "scripts/mutation_exec_guard.py"
 defect = "A restore that puts the files back but reports the tree intact lets the hook read a corrupted run as a clean one: the mutant is gone from disk, and the verdict computed over a run that left it there stands. A tree that had to be restored is a tree that differed, and the caller must hear it."
