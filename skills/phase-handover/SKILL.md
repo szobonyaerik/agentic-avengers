@@ -179,7 +179,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 | id | kind | one-line title | where the detail lives |
 |---|---|---|---|
 | OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
-| FWD-<n> | forward-claim | <what a later phase must handle> | this card |
+| FWD-<n> | forward-claim | <what a later phase must handle> | this card; measured_over: <set> if the claim quantifies universally |
 
 ### Next phase
 <next-phase-slug> — needs from this phase: <the one or two things it depends on>.
@@ -223,6 +223,17 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
   prediction was in. Put an issue reference on the row - `#<number>` or an issue URL - and the phase
   closes; `python3 scripts/carried_items.py filed <phase-dir>` is what checks it. It is a presence
   check: nothing judges whether the claim was worth carrying.
+
+- **A forward claim that quantifies universally carries the set it was measured over, in the
+  row.** "Every limb the model calls support is now on its bearing surface" was written on one
+  measured card four lines below the FWD row that contradicted it, false on the measurements, and
+  caught only because its author was under a standing instruction to say what was measured and over
+  what set - evidence the instruction helps and is not enforcement (issue #117, folded into #96).
+  So a `forward-claim` row whose text says *all*, *every*, *nothing*, *never*, *always*, *only*,
+  *identical*, *unchanged* (the closed set in `scripts/measurement_claims.py`) carries
+  `measured_over: <the clips, files, ids or cases actually checked>` in any of its cells, or is
+  narrowed to what was measured; `carried_items.py declared` refuses the card otherwise. The next
+  phase's spec writer and the Verifier then hold the claim's quantifier against that set.
 
 An id belongs to the card that declared it, so `OBS-1` here and `OBS-1` on the next phase's card are
 different items; the ids you already use keep working. Never write a prediction into the summary, a

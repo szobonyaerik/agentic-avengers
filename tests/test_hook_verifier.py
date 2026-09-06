@@ -118,7 +118,13 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
                 {
                     "attempt": number,
                     "verdict": result,
-                    "findings": [{"id": f"a{number}-{i}"} for i in range(findings)],
+                    "findings": [
+                        {
+                            "id": f"a{number}-{i}",
+                            "method": "drove the seam and compared outcomes",
+                        }
+                        for i in range(findings)
+                    ],
                 }
             )
         )
@@ -126,7 +132,17 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     verdict = {
         "attempt": number,
         "verdict": result,
-        "findings": [{"id": f"f{i}", "status": "open"} for i in range(findings)],
+        "findings": [
+            {
+                "id": f"f{i}",
+                "status": "open",
+                # Issue #96: a finding names its method. These fixtures pin the attempt cap, so the
+                # field is here only to get past `verifier_precheck`; `tests/test_verifier_precheck.py`
+                # owns the rule itself.
+                "method": "drove the seam and compared outcomes",
+            }
+            for i in range(findings)
+        ],
         "routed": [{"to": "implementer", "reason": "code issue", "finding_id": "f0"}],
     }
     if result == "pass":
@@ -223,7 +239,9 @@ def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(
             {
                 "attempt": "N/A",
                 "verdict": "fail",
-                "findings": [{"id": "f0", "status": "open"}],
+                "findings": [
+                    {"id": "f0", "status": "open", "method": "drove the seam"}
+                ],
                 "routed": [
                     {"to": "implementer", "reason": "code issue", "finding_id": "f0"}
                 ],

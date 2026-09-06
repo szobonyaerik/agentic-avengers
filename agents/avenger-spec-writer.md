@@ -94,10 +94,25 @@ it carries. These replace per-requirement tests; do not also ask for one test pe
 
 ## Acceptance criteria
 For each `integration` requirement and each journey: the observable pass condition AND at least one
-failure/edge condition. State them in terms of what a caller of the seam observes.
+failure/edge condition. State them in terms of what a caller of the seam observes, and **name what
+the test DRIVES** in a `drives:` field - the seam, command or planted input it pushes through.
+"Sweep both adapters for this class" is satisfied by reading, and reading is indistinguishable from
+driving until someone runs the code; `drives: every public method of both adapters, with a
+collaborator that raises` is not. `scripts/hook_spec_gate.sh` refuses a criterion with no `drives:`
+before any paid call (issue #96). A criterion nothing can drive - a visual, an external system - says
+so: `drives: undriven (<why>)`; the field's presence is what is checked here, and what an `undriven`
+declaration must carry is issue #116's decision.
 `binding: none` requirements get no acceptance criteria — there is nothing to run.
-- R<n>.<k>.2 — passes when: …; fails when: …
-- J1 — passes when: …; fails when: …
+- R<n>.<k>.2 — passes when: …; fails when: … — drives: <seam | command | planted input>
+- J1 — passes when: …; fails when: … — drives: <the user-facing entry point, end to end>
+
+**A universal claim about existing code carries its evidence.** "The method only calls X, Y and
+float()", "this never raises", "mypy rejects this signature" are measurement results, not
+specification. Put the measurement beside the claim - the command you ran and what it printed, the
+callers you enumerated and how (`grep -rn`, a call graph), the checker's own message - or do not
+write the universal. The gate blocks an unevidenced one as `unevidenced-universal`: one such claim
+passed every review and narrowed a handler that then let a live exception escape. A requirement
+stating what the NEW code must do is not a universal claim and needs no evidence.
 
 ## Interfaces / contracts
 Inputs, outputs, signatures, schemas, and error modes this spec exposes or consumes.

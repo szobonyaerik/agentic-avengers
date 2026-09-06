@@ -338,15 +338,21 @@ Three consequences worth stating outright:
   3. **Decide** (`scripts/spec_gate_triage.py`) — turns classifications into the verdict,
      deterministically. **No model decides whether a spec is blocked.**
 
-  **The blocking set is CLOSED, and it is exactly five things:** a **missing requirement**, an
-  internal **contradiction**, an **untestable criterion**, an **unhandled critical edge case**, and
-  a **false acknowledgement**.
+  **The blocking set is CLOSED, and it is exactly six things:** a **missing requirement**, an
+  internal **contradiction**, an **untestable criterion**, an **unhandled critical edge case**, a
+  **false acknowledgement**, and an **unevidenced universal**.
   Everything else is a **note**; **notes never block** and land in the spec's known-open list
   (`spec-notes.md`, read once by the implementer). The closed set is what stops the filter drifting
   back into the ratchet it replaces, and it is closed *mechanically*: a category the table does not
   know is a **hard failure naming what was invented**, never a judgement call — guessing "blocking"
-  reinstates the ratchet and guessing "note" silently deletes a finding. Adding a sixth category is a
-  deliberate edit to `spec_gate_triage.BLOCKING`, reviewed as such.
+  reinstates the ratchet and guessing "note" silently deletes a finding. Adding a category is a
+  deliberate edit to `spec_gate_triage.BLOCKING`, reviewed as such; the fifth and the sixth were
+  each added by exactly that route.
+
+  **The line the gate prints to a rejected writer is RENDERED from that table, never restated.** It
+  named four categories for as long as the fifth and sixth existed, so a rejected spec was told a rule
+  the gate does not apply — a document asserting behaviour nothing enforces, inside the gate that
+  enforces it, which is §12's own class.
 
   **`false-acknowledgement` — a reply must not assert a change that was not made.** It is the fifth,
   added by exactly that route. Three write paths in one measured phase answered a **suppressed**
@@ -711,7 +717,7 @@ stops being the only thing that can express "this phase moved".
 ```bash
 # prose belongs in a file the command reads — the reason is author-written prose
 python3 scripts/amendments.py open <phase-dir> --requirements R8.2.30,R8.2.31 \
-  --reason-file <file> [--security]
+  --reason-file <file> [--security] [--measured-over <set>]   # the set is ids/paths: not prose
 python3 scripts/amendments.py scope <phase-dir>   # the ids owed re-verification, and only those
 python3 scripts/amendments.py close <phase-dir> A1 --evidence <path>
 ```
@@ -746,6 +752,16 @@ while an earlier phase's verdict stands is ordinary work. `docs/` and the featur
 records an amendment — the remedy it prescribes — and it fails open on anything git cannot answer.
 **Never rewrite `verdict.json` to clear it**: that restates a verification nobody performed, which
 is the one remedy two separate phase workers correctly refused.
+
+**A reason that quantifies universally carries the set it was measured over** (issue #117, folded
+into #96). Three consecutive amendments in one phase asserted a scope wider than their author had
+measured - "nothing in the catalogue can turn waypoints red" (six of ten captures do), "every other
+clip's report bit-for-bit identical" (false of three) - each caught by a verifier, none by the
+author, each costing a further round to correct a document. `amendments.py open` refuses a reason
+using a universal from the closed set in `scripts/measurement_claims.py` unless `--measured-over`
+names the set, recorded on the amendment as the field `measured_over`, never folded into the prose.
+The Verifier then holds the claim's quantifier against that set when it re-verifies
+(`skills/verifier-triage`). Full statement under *A claim carries its measurement* below.
 
 ## Carried items - a handover's forward-looking claims are discharged, not merely written
 
@@ -821,6 +837,70 @@ that *enforces* it, and a discharge names the artifact that answers it - and tha
 **resolved, not merely written**: a requirement id no spec or test-mapping row states, or a path
 that is not a file, is refused when the discharge is written and re-resolved on every later check,
 so deleting the test that pinned a carried claim turns the claim red again.
+
+## A claim carries its measurement - a check states its method (issue #96)
+
+Every stage in one measured feature made the same mistake in a different costume: **a partial
+measurement written up as a complete result.** A sweep done by READING two adapters reported
+complete and missed two instances, one able to leave a live position with no stop order. A probe
+set what a collaborator *returns* and never what it *raises*, and a fix round scoped from it closed
+half the defect. An approved spec justified narrowing a handler with "the method only calls X, Y and
+float()" - false, and passed the gate, both reviews and the grill. A differential test across both
+adapters was trusted past what it can detect, and a round declined a live violation because "both
+sides fail identically, so it is not a divergence". A grep count stood in for reading; four named
+files stood in for the five the work touched; one break stood in for a class. Folded in from #117:
+three consecutive amendment records and one contract card claimed a scope wider than their author
+had measured. **Five of seven were caught by a human reading artifacts against source, one by a
+gate, none by a test.** Every one produced work that looked finished.
+
+**The rule: a stage that reports a check complete states the method by which it checked; an
+acceptance criterion names what was driven; a scope claim carries the set it was measured over as a
+FIELD, not prose.** "Sweep both connectors for this class" is satisfied by reading, because reading
+is cheaper and its output is indistinguishable from the real thing until someone runs the code.
+"Drive every method on both axes and compare outcomes" cannot be satisfied by reading.
+
+`scripts/measurement_claims.py` is the one owner, asked at the point of decision on each surface:
+
+- **An acceptance criterion carries `drives:`** - the seam, command or planted input its test pushes
+  through. `hook_spec_gate.sh` refuses a criterion without it **before any paid call**, while the
+  writer still owns the criterion. Presence is checked, never content: `drives: undriven (<why>)`
+  passes, because whether a criterion may be undriven and what that declaration must carry is
+  **issue #116's decision, deliberately left open here** rather than decided by refusal. A spec the
+  gate already approved, or an implementer has taken up, is counted and named (§ applicability).
+- **A verifier finding carries `method`** - how the defect was established and how its fix is
+  confirmed: what was driven, over which axes. `verifier_precheck.py` refuses a finding without it,
+  held whole at handover and for a verdict the diff writes; counted for a verdict it did not, under
+  `--all` too (`carried_items`' precedent: a document class every consumer repo already has). Added
+  at the schema (`skills/verifier-triage`), the third extension since it froze.
+- **A universal claim carries `measured_over`.** The vocabulary is a CLOSED set
+  (`measurement_claims.UNIVERSALS`: all, every, everything, nothing, none, no other, never, always,
+  only, entire, identical, unchanged, byte-for-byte, bit-for-bit, subsumed), pinned by test, matched
+  outside inline code: `amendments.py open` refuses a reason using one without `--measured-over`,
+  and records the set as a field; `carried_items.py declared` refuses a `forward-claim` row using one
+  without `measured_over:` in the row. Own card and new records only - a prior card's universal is
+  owed an answer, never refused where nobody can rewrite it. What is NOT decided mechanically is
+  whether the quantifier fits the set: that comparison needs the set's members and the world, and it
+  is the Verifier's (`skills/verifier-triage` § *Method, not recollection*).
+- **The spec gate blocks an `unevidenced-universal`** - a universal claim about how EXISTING code
+  behaves, used to justify a requirement or criterion, with no evidence beside it naming how it was
+  established and over what set. The sixth entry in `spec_gate_triage.BLOCKING`, added by the
+  deliberate route; the gate is asked about the evidence, never the truth, since nobody can tell the
+  truth from the spec. A requirement stating what NEW code must do is a specification, not a
+  measurement, and is never this category.
+- **A parity or differential test says in its runtime output that a shared defect is outside what
+  it can see** (`skills/tdd` § migration step 6): failure message and docstring name the limit, the
+  mapping row carries `blind_to: shared defect`, and every requirement it carries also has a test
+  driving one side against the spec. Where THIS repository owns a differential check -
+  `stage_effort.py` (documents against definitions), `doc_read_path.py --contract` (table against
+  sources), `guard_scope.py allowlists` (counts against a base), `plugin_release.py check` (a release
+  against the source it came from) - the limit is declared in
+  `scripts/guard_scope.toml` and emitted on the clean result, which is the runtime output a later
+  stage reads (§ *A guard says what a clean result does NOT establish*).
+
+**Three instances are instruction only, said rather than implied:** a grep count standing in for
+reading, an enumerated list mistaken for a complete one, and a single-sample proof of a negative.
+Nothing mechanical can tell a count from a reading or four files from five; `skills/verifier-triage`
+and `skills/tdd` carry the rule, and that is the whole of its enforcement.
 
 ## Skills are delivered, not requested — and the load is observed
 

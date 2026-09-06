@@ -849,3 +849,71 @@ def test_declining_needs_no_artifact(tmp_path: Path) -> None:
     nxt = phase(root, "9-b", "none")
     carried_items.discharge(nxt, "FWD-1", "declined", reason="phases 10-12; re-carried")
     assert carried_items.stale_discharges(nxt) == []
+
+
+# --- a forward claim that quantifies universally carries the set it was measured over (#117) -----
+# The phase-3 card of one measured feature told phase 4 that "every limb the model calls support is
+# now on its bearing surface" - contradicting its own FWD-4 four lines above, and false on the
+# measurements. Caught by the author, under a standing instruction, before commit: evidence the
+# instruction helps and is not enforcement. The set rides in the row as a field.
+
+HEADER = "| id | kind | one-line title | where the detail lives |\n|---|---|---|---|\n"
+UNIVERSAL_ROW = (
+    HEADER
+    + "| FWD-1 | forward-claim | every limb the model calls support is on its bearing surface | {where} |"
+)
+
+
+def test_a_forward_claim_quantifying_universally_without_its_set_does_not_close(
+    tmp_path: Path, capsys
+) -> None:
+    directory = phase(
+        feature(tmp_path), "3-real-frames", UNIVERSAL_ROW.format(where="this card")
+    )
+    problems = carried_items.phase_problems(directory)
+    assert any("FWD-1" in p and "measured_over" in p for p in problems), problems
+    assert run("declared", str(directory)) == 1
+    assert "FWD-1" in capsys.readouterr().err
+
+
+def test_a_forward_claim_carrying_its_measured_set_closes(tmp_path: Path) -> None:
+    directory = phase(
+        feature(tmp_path),
+        "3-real-frames",
+        UNIVERSAL_ROW.format(
+            where="measured_over: the ten committed captures, notes/parity.md"
+        ),
+    )
+    assert carried_items.phase_problems(directory) == []
+    assert run("declared", str(directory)) == 0
+
+
+def test_a_forward_claim_with_no_universal_owes_no_set(tmp_path: Path) -> None:
+    directory = phase(
+        feature(tmp_path),
+        "3-real-frames",
+        HEADER
+        + "| FWD-1 | forward-claim | `loop_span` finds the period on 3 of 7 cyclic clips | this card |",
+    )
+    assert carried_items.phase_problems(directory) == []
+
+
+def test_an_open_finding_row_is_not_held_to_the_set(tmp_path: Path) -> None:
+    """The rule is about forward CLAIMS. An open finding carried at the attempt cap names a verdict
+    entry, which carries its own method; its title is a pointer, not a claim about the world."""
+    directory = phase(
+        feature(tmp_path),
+        "3-real-frames",
+        HEADER
+        + "| OBS-1 | open-finding | all three adapters leak the token | verdict.json#findings[0] |",
+    )
+    assert carried_items.phase_problems(directory) == []
+
+
+def test_the_prior_cards_universal_claims_are_owed_not_refused(tmp_path: Path) -> None:
+    """A pre-rule card is the PRIOR phase's; refusing it there would wedge the next phase on a
+    document it cannot rewrite. Its rows are owed an answer exactly as before."""
+    root = feature(tmp_path)
+    phase(root, "3-real-frames", UNIVERSAL_ROW.format(where="this card"))
+    four = phase(root, "4-support", "| none |")
+    assert [item.id for item in carried_items.owed(four)] == ["FWD-1"]

@@ -10,7 +10,12 @@
     "head of the hash chain over verification-evidence.json's recorded runs; the gates refuse a pass",
     "whose chain does not match the transcript on disk. `run` no longer carries a family comparison:",
     "the cross-family reading pass it described is gone, and a field asserting an independence",
-    "nothing performs reads as coverage that is not there."
+    "nothing performs reads as coverage that is not there.",
+    "",
+    "`method` on every finding is the third extension, at the schema (issue #96): how the finding was",
+    "established and how its fix is confirmed - what was DRIVEN, over which axes. A sweep done by",
+    "reading reported complete and missed two instances; a probe that drove one axis of two scoped a",
+    "fix round that closed half a defect. scripts/verifier_precheck.py refuses a finding without it."
   ],
   "feature": "<feature>",
   "phase": "<n>-<slug>",
@@ -52,6 +57,7 @@
       "target": "<repo-relative test/file/requirement>",
       "severity": "blocker",
       "instruction": "<concrete fix directions for the routed agent>",
+      "method": "<how this was established and how its fix is confirmed: what was DRIVEN, over which axes - never 'read'>",
       "route_to": "avenger-backend-architect",
       "status": "open",
       "break_glass": false,

@@ -52,7 +52,9 @@ sys.path.insert(0, str(HERE))
 # The authorities. Imported, never copied: `BLOCKING` is the table the verdict is derived from and
 # `cap()` is the number counted before any model runs. A literal restatement of either here is the
 # second copy this module exists to avoid.
+import guard_scope  # noqa: E402
 from md_section import slice_section  # noqa: E402
+from measurement_claims import DRIVES  # noqa: E402
 from requirement_cap import cap  # noqa: E402
 from spec_gate_triage import BLOCKING, NOTE  # noqa: E402
 
@@ -162,8 +164,9 @@ def render(root: Path | None = None) -> str:
         "",
         "Nothing below is a second statement of the rules. Every line is rendered from the gate's "
         "own sources - `scripts/spec_gate_triage.py` (the table the verdict is derived from), "
-        "`scripts/requirement_cap.py` (the count), and the two prompts the gate's models are given. "
-        "If it changes there, it changes here.",
+        "`scripts/requirement_cap.py` (the count), `scripts/measurement_claims.py` (the criterion "
+        "field), and the two prompts the gate's models are given. If it changes there, it changes "
+        "here.",
         "",
         "## Size is settled mechanically, before any model sees your spec",
         "",
@@ -175,6 +178,16 @@ def render(root: Path | None = None) -> str:
         "none will ask you to expand a section.** So never answer anything with more prose. A spec "
         "that grows to satisfy a gate is the failure this design removed: one measured spec went "
         "25k -> 51k characters across four rejected rounds.",
+        "",
+        "## Every acceptance criterion names what it DRIVES, also before any model sees it",
+        "",
+        f"Each item under `## Acceptance criteria` carries a **`{DRIVES}:`** field - the seam, "
+        "command or planted input its test pushes through - checked by "
+        "`scripts/measurement_claims.py` before any paid call. 'Sweep both adapters for this class' "
+        "is satisfied by READING, and reading is indistinguishable from driving until someone runs "
+        "the code; an implementer swept that way, reported complete, and missed two instances. "
+        f"Presence is all that is checked: `{DRIVES}: undriven (<why>)` passes where nothing can "
+        "be driven.",
         "",
         "## Exactly these things BLOCK. The set is closed.",
         "",
@@ -215,4 +228,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

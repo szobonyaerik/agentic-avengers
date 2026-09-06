@@ -71,6 +71,11 @@ def project(tmp_path):
     # made the resolver die at import, which reached the server as a feature with no `stage` at all.
     # The walk is TRANSITIVE: a sibling that grows a sibling of its own is the same failure one hop
     # out, and it arrives here looking identical — a feature with no `stage`, not an import error.
+    # It reads BOTH import forms. Matching only `import x` under-read `from x import y`, which is
+    # how `measurement_claims` (issue #96) reached the resolver unvendored: a walk that calls itself
+    # derived while its extraction layer sees one of two spellings is the shape of that issue, here.
+    # `from pathlib import Path` matches too and costs nothing — the `is_file()` test below keeps
+    # anything that is not a sibling script out.
     pending, copied = ["pipeline_state"], set()
     while pending:
         module = pending.pop()
@@ -81,7 +86,9 @@ def project(tmp_path):
             continue
         copied.add(module)
         shutil.copy(sibling, root / "scripts" / sibling.name)
-        pending.extend(re.findall(r"^import ([a-z_]+)", sibling.read_text(), re.M))
+        pending.extend(
+            re.findall(r"^(?:import|from) ([a-z_]+)", sibling.read_text(), re.M)
+        )
     (root / ".agent-activity.jsonl").write_text(
         json.dumps(
             {

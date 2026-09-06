@@ -68,11 +68,16 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
      it lives in carried.json beside verdict.json (`scripts/carried_items.py list <phase-dir>`).
      ON THE LAST CARD (frontmatter `next:` is `e2e` or `ship`) no phase follows to answer these, so
      every `forward-claim` row must name an ISSUE instead - `#<number>` or an issue URL, anywhere in
-     the row. A presence check and nothing more; this phase does not close without it. -->
+     the row. A presence check and nothing more; this phase does not close without it.
+     A forward-claim row that quantifies universally (all / every / nothing / never / always / only /
+     identical / unchanged - the closed set in scripts/measurement_claims.py) carries the set it was
+     measured over IN THE ROW as `measured_over: <clips, files, ids or cases actually checked>`, or
+     is narrowed to what was measured. "Every limb ... is now on its bearing surface" was written
+     four lines below the row that contradicted it (issue #117). carried_items.py refuses it. -->
 | id | kind | one-line title | where the detail lives |
 |----|------|----------------|------------------------|
 | OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
-| FWD-<n> | forward-claim | <what a later phase must handle, and from which phase it bites> | this card |
+| FWD-<n> | forward-claim | <what a later phase must handle, and from which phase it bites> | this card; measured_over: <set> when the claim quantifies universally |
 
 ## Next phase
 > <next-phase-slug> — needs from this phase: <the one or two things it depends on>.

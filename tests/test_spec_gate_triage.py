@@ -45,12 +45,12 @@ def cls(**kinds: str) -> list[dict]:
     return [{"id": i, "category": c, "why": "because"} for i, c in kinds.items()]
 
 
-# ── the set is closed, and it is exactly five things ─────────────────────────
+# ── the set is closed, and it is exactly six things ──────────────────────────
 
 
-def test_exactly_five_things_block() -> None:
-    """A sixth category is a deliberate change to the table, reviewed as such — never something a
-    rubric edit or a well-argued observation can do at run time.
+def test_exactly_six_things_block() -> None:
+    """A further category is a deliberate change to the table, reviewed as such — never something
+    a rubric edit or a well-argued observation can do at run time.
 
     `false-acknowledgement` is the fifth, added deliberately here (retro: a reply may assert a
     change that was not made). Three write paths in one measured phase answered a SUPPRESSED write
@@ -58,15 +58,42 @@ def test_exactly_five_things_block() -> None:
     separately and the rule was never stated, so the class had nowhere to be caught: the same phase
     at process level had one poisoned credential row abort an entire poll cycle forever while the
     loop stayed alive announcing nothing - a system reporting healthy while doing none of its work.
-    Per-path repairs are what has already been done twice; the rule is what was missing."""
+    Per-path repairs are what has already been done twice; the rule is what was missing.
+
+    `unevidenced-universal` is the sixth (issue #96: a partial measurement written up as a complete
+    result). An approved spec justified narrowing an exception handler with "the method only calls
+    X, Y and float()" - it did not, the claim passed this gate, both human reviews and the grill,
+    and produced a live regression. The category is about the EVIDENCE beside the claim, never its
+    truth, which nobody can tell from the spec."""
     assert set(BLOCKING) == {
         "missing-requirement",
         "contradiction",
         "untestable-criterion",
         "unhandled-critical-edge-case",
         "false-acknowledgement",
+        "unevidenced-universal",
     }
     assert CATEGORIES == (*BLOCKING, NOTE)
+
+
+def test_a_universal_about_existing_code_with_no_evidence_blocks() -> None:
+    """The check that can fail for issue #96's spec instance. The verdict is still derived
+    deterministically - no model decides - and this is the category that makes the class reachable
+    at the one stage that reads the spec before it is built on."""
+    decision = decide(obs("o1"), cls(o1="unevidenced-universal"))
+    assert decision.approved is False
+    assert decision.blocking[0]["category"] == "unevidenced-universal"
+
+
+def test_the_prompts_hold_the_universal_to_its_evidence_not_its_truth() -> None:
+    """A gate asked "is this claim true" cannot answer from the spec and would guess; one asked
+    "does evidence sit beside it" can. Both prompts say which question is being asked."""
+    triage = " ".join(TRIAGE_PROMPT.read_text(encoding="utf-8").lower().split())
+    observe = " ".join(OBSERVE_PROMPT.read_text(encoding="utf-8").lower().split())
+    assert "unevidenced-universal" in triage
+    assert "not the truth of the claim" in triage
+    assert "only calls x, y and float()" in observe
+    assert "do not judge whether the claim is true" in observe
 
 
 def test_a_success_reply_on_a_suppressed_write_blocks() -> None:
@@ -87,6 +114,7 @@ def test_the_writer_is_primed_with_the_new_category_from_the_one_source() -> Non
     import spec_rubric
 
     assert "false-acknowledgement" in spec_rubric.blocking_block()
+    assert "unevidenced-universal" in spec_rubric.blocking_block()
 
 
 def test_the_prompt_and_the_table_name_the_same_categories() -> None:

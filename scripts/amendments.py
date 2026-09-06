@@ -19,13 +19,28 @@ Two rules make it safe, and both are enforced here rather than asked for:
   immediately**. A phase-8 credential leak must not sit in a batch waiting for the phase to close,
   and the cost argument that justifies batching does not apply to a secret already in a log.
 
+**A reason's scope claim carries the set it was measured over** (issue #117, folded into #96). Three
+consecutive amendments in one measured phase asserted a scope wider than the author had measured -
+"nothing in the catalogue can turn waypoints red" (six of ten captures do), "every other clip's report
+bit-for-bit identical" (false of three) - each caught by a verifier and none by the author, each costing
+a further round to correct a *document*. The author's own diagnosis: the conclusion is written at
+document scope and the sentence outlives the measurement. So a reason that quantifies universally
+(`measurement_claims.UNIVERSALS`, a closed set) is refused at write time unless `--measured-over`
+names the set - files, ids, clips, cases - it was actually checked over, and that set is recorded on
+the amendment as the field `measured_over`, never folded into the prose. The Verifier then tests the
+claim over exactly that set (`skills/verifier-triage`); what it does not do is decide here whether
+the quantifier fits the set, which needs the set's members and the world.
+
 `amendments.json` lives beside `verdict.json` in the phase directory. It is the amendment's own
 artifact; `verdict.json` carries only the **ids** of the amendments folded into it, so the frozen
 verdict schema gains one short array rather than a nested record.
 
 Usage:
     amendments.py open <phase-dir> --requirements R8.2.30,R8.2.31 --reason-file <f> [--security]
-                                          record an amendment; prints its id
+                                   [--measured-over <set>]
+                                          record an amendment; prints its id. A reason that
+                                          quantifies universally ("nothing in", "every other",
+                                          "all") is refused without the set it was measured over
     amendments.py close <phase-dir> <A-id> --evidence <path>
                                           mark it re-verified, with the evidence that did it
     amendments.py pending <phase-dir>     list amendments not yet re-verified (exit 1 if any)
@@ -49,6 +64,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import guard_scope  # noqa: E402
+from measurement_claims import MEASURED_OVER, claim_problem  # noqa: E402
 
 OK = 0
 OWED = 1
@@ -115,9 +131,18 @@ def _now() -> str:
 
 
 def open_amendment(
-    phase_dir: Path, requirements: list[str], reason: str, security: bool = False
+    phase_dir: Path,
+    requirements: list[str],
+    reason: str,
+    security: bool = False,
+    measured_over: list[str] | None = None,
 ) -> dict:
-    """Record a post-verification change against the requirement ids it touches."""
+    """Record a post-verification change against the requirement ids it touches.
+
+    `measured_over` is the set a universal claim in `reason` was checked over. It is required exactly
+    when the reason quantifies universally, and recorded as its own field either way (`None` when the
+    reason makes no such claim) so a later reader never has to infer the scope from prose.
+    """
     ids = [r.strip() for r in requirements if r.strip()]
     if not ids:
         raise AmendmentError(
@@ -131,6 +156,10 @@ def open_amendment(
         )
     if not reason.strip():
         raise AmendmentError("an amendment must say why it was made")
+    measured = [m.strip() for m in (measured_over or []) if m and m.strip()] or None
+    problem = claim_problem(reason, measured)
+    if problem is not None:
+        raise AmendmentError(f"{problem} (`--measured-over <set>`)")
 
     ledger = load(phase_dir)
     record = {
@@ -138,6 +167,7 @@ def open_amendment(
         "requirements": ids,
         "security": bool(security),
         "reason": reason.strip(),
+        MEASURED_OVER: measured,
         "status": PENDING,
         "opened_at": _now(),
         "verified_at": None,
@@ -236,6 +266,13 @@ def main(argv: list[str] | None = None) -> int:
         "hook matches its deny regex against the whole command string.",
     )
     p_open.add_argument("--security", action="store_true")
+    p_open.add_argument(
+        "--measured-over",
+        default="",
+        help="comma-separated: the set a universal claim in the reason was checked over (files, "
+        "ids, clips, cases). Required exactly when the reason quantifies universally; recorded on "
+        "the amendment as `measured_over`, a field the Verifier tests the claim against.",
+    )
 
     p_close = sub.add_parser("close")
     p_close.add_argument("phase_dir", type=Path)
@@ -264,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.requirements.split(","),
                 reason,
                 security=args.security,
+                measured_over=args.measured_over.split(","),
             )
             print(record["id"])
             if record["security"]:

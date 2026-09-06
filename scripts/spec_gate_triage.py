@@ -29,11 +29,13 @@ category, not as a quietly stricter gate.
 
 ## The closed set
 
-Exactly four things block. Everything else is a note, and **notes never block** - they land in the
+Exactly six things block. Everything else is a note, and **notes never block** - they land in the
 spec's known-open list (`spec-notes.md`) where the implementer reads them once.
 
-Adding a fifth category is a deliberate change to this table, reviewed as such. It is not something a
-rubric edit or a well-argued observation can do at run time.
+Adding a category is a deliberate change to this table, reviewed as such. It is not something a
+rubric edit or a well-argued observation can do at run time. The fifth (`false-acknowledgement`) and
+the sixth (`unevidenced-universal`) were each added by exactly that route, and each carries the
+measured instance that earned it.
 
 Usage:
     spec_gate_triage.py categories                       print the closed set (one per line)
@@ -73,7 +75,7 @@ APPROVED = 0
 BLOCKED = 1
 ERROR = 2
 
-#: The closed blocking set. Five entries, each one a defect that makes a spec unbuildable as written.
+#: The closed blocking set. Six entries, each one a defect that makes a spec unbuildable as written.
 #: The wording is the contract the triage prompt restates; `tests/test_spec_gate_triage.py` asserts
 #: the prompt and this table name the same categories, so the two cannot drift apart silently.
 BLOCKING: dict[str, str] = {
@@ -105,9 +107,24 @@ BLOCKING: dict[str, str] = {
         "failed is still answered with success - or a process that keeps reporting healthy while "
         "doing none of its work. The caller is told a change was made that was not"
     ),
+    # The sixth, added deliberately (issue #96: a partial measurement written up as a complete
+    # result). An approved spec justified narrowing an exception handler with "the method only calls
+    # X, Y and float()". It did not. The claim passed this gate, both human reviews and the grill,
+    # and produced a live regression; a second spec claimed mypy rejects a signature change it
+    # accepts, so the stated proof was vacuous. A universal claim about how existing code BEHAVES is
+    # a measurement result, and one that names no measurement was made by reading - which is
+    # indistinguishable from driving until someone runs the code. It belongs here and not in a lint
+    # because the words are ordinary ("only", "always", "never") and what makes them a finding is
+    # the absence of evidence beside them, which only a reader of the whole spec can see.
+    "unevidenced-universal": (
+        "a universal claim about runtime behaviour of existing code - 'only calls X', 'never "
+        "raises', 'mypy rejects this', 'all callers pass Y' - used to justify a requirement or "
+        "criterion, with no evidence beside it naming how the claim was established and over what "
+        "set (the command run, the callers enumerated, the checker's actual output)"
+    ),
 }
 
-#: Everything the triage pass sees that is not one of the four above. A note is recorded, read once
+#: Everything the triage pass sees that is not one of the six above. A note is recorded, read once
 #: by the implementer, and blocks nothing. This is the whole counterweight to the ratchet: an
 #: observation no longer has to be either "blocking" or "unsaid".
 NOTE = "note"

@@ -550,6 +550,36 @@ silence reads as "no limits".
 into the output a later stage reads. And treat **allowlist growth as a signal** - a guard quietened
 with nine new entries has been weakened, not maintained.
 
+## A claim carries its measurement (issue #96)
+
+Every stage in one measured feature made the same mistake in a different costume: **a partial
+measurement written up as a complete result.** A sweep done by READING two adapters reported complete
+and missed two instances; a probe set what a collaborator *returns* and never what it *raises*, and a
+fix round scoped from it closed half the defect; an approved spec justified narrowing a handler with
+"only calls X, Y and float()" - false, and past the gate, both reviews and the grill. Folded in from
+#117: three consecutive amendments and one contract card claimed a scope wider than their author had
+measured. Five of seven were caught by a human reading artifacts against source, one by a gate, none
+by a test.
+
+**A check states its method, a criterion names what it drives, and a scope claim carries the set it
+was measured over as a FIELD.** `scripts/measurement_claims.py` owns the rule and it is asked at the
+point of decision, never at the close:
+
+- `scripts/hook_spec_gate.sh` refuses an acceptance criterion with no **`drives:`** before any paid
+  call. Presence only - `drives: undriven (<why>)` passes, and what that declaration must carry is
+  issue #116's, deliberately left open.
+- `scripts/verifier_precheck.py` refuses a verdict finding with no **`method`** - what was driven,
+  over which axes.
+- `scripts/amendments.py open` and `scripts/carried_items.py` refuse a universal claim - a closed,
+  pinned vocabulary, matched outside inline code - with no **`measured_over`** set.
+- The spec gate blocks an **`unevidenced-universal`**, the sixth entry in the closed blocking set. It
+  asks about the evidence beside the claim, never about the claim's truth.
+
+Parity and differential tests state their blind spot in **runtime output** (`skills/tdd`); this
+repo's own two-sided checks declare it in `scripts/guard_scope.toml`. Three instances are
+**instruction only** and say so: a grep count substituted for reading, an enumerated list taken as
+complete, and a single-sample proof of a negative.
+
 ## Environment
 | var | default | effect |
 |---|---|---|
