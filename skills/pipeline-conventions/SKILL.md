@@ -811,7 +811,11 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
   fails the handover on it. Between the deferring phase and the owner, each phase answers the row
   with `recarry` - the record copied byte-for-byte, the *Done when* gate asked again against that
   phase, the discharge recorded as `declined` with the structural reason; declining it by hand is
-  refused. The owner answers it like any row. Deferrals are counted in the phase record as a
+  refused. That re-ask refuses only a **BLOCKS** - the finding became this phase's to fix on the way
+  through - and never an UNDECIDABLE: re-carrying decides nothing, and an intermediate phase whose
+  own *Done when* is prose only has no other route to answer an inherited row, which would make the
+  rule a wedge rather than a gate (§3a). A fresh `defer` still needs a decidable *Done when*. The
+  owner answers it like any row. Deferrals are counted in the phase record as a
   `gate_calls[]` row (`pipeline_metrics.record_deferrals`, on `record_plugin_version`'s precedent),
   so a phase that defers everything is as visible as one that fixes everything. **What it must never
   be**: a way to weaken a check, delete a test or move a threshold - phase 3's A3 caught a clip

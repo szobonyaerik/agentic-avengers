@@ -141,6 +141,19 @@ def test_a_header_with_no_rows_is_an_empty_table_not_a_missing_one() -> None:
     assert done_when.conditions("prose only") is None
 
 
+def test_a_second_table_under_the_same_phase_contributes_no_conditions() -> None:
+    """The table ends where it ends. Running to the end of the phase section made every row of a
+    later table - a spec list, a risk table - a phantom condition no requirement carries, so a plan
+    that declared its conditions correctly still read as undecidable."""
+    section = (
+        "- **Done when**: it holds.\n\n"
+        "  | done-when | outcome |\n  |---|---|\n  | DW-1 | it holds |\n\n"
+        "- **Specs**:\n\n"
+        "  | spec | title |\n  |---|---|\n  | 3.1 | smoothing |\n  | 3.2 | span |\n"
+    )
+    assert [c.id for c in done_when.conditions(section)] == ["DW-1"]
+
+
 # --- the tags on requirement lines ---------------------------------------------------------------
 
 
@@ -152,6 +165,38 @@ def test_tags_are_read_off_the_declaration_line_in_both_spellings() -> None:
     )
     tagged = done_when.tagged_requirements(text)
     assert tagged == {"R3.2.4": {"DW-2"}, "R3.2.5": {"DW-1", "DW-3"}}
+
+
+def test_a_tag_stops_at_the_prose_that_follows_it_on_a_plain_dash_line() -> None:
+    """This project writes prose with plain dashes, so the tag cannot end at a dash.
+
+    A capture class that swallowed spaces and hyphens read the rest of the line as condition ids;
+    those name nothing the plan declares, so `decide` returned UNDECIDABLE and the whole phase lost
+    deferral - silently, because the tag itself was read correctly.
+    """
+    text = (
+        "- R3.3.3 - `binding: e2e` - done_when: DW-1 - one-way reps play once, forward\n"
+        "- R3.3.4 - `binding: e2e` - done_when: DW-2, DW-3 - the cyclic cut, from a real frame\n"
+    )
+    assert done_when.tagged_requirements(text) == {
+        "R3.3.3": {"DW-1"},
+        "R3.3.4": {"DW-2", "DW-3"},
+    }
+
+
+def test_a_plain_dash_spec_still_decides_rather_than_going_undecidable(
+    tmp_path: Path,
+) -> None:
+    root = feature(tmp_path)
+    spec(
+        phase(root),
+        "3.2-span",
+        "- R3.2.4 - `binding: integration` - done_when: DW-2 - the cyclic (start, lag) pair\n"
+        "- R3.2.5 - `binding: e2e` - done_when: DW-1 - the one-way span is the largest real run\n"
+        "- R3.2.9 - `binding: e2e` - the classification margin is persisted\n",
+    )
+    assert done_when.decide(phase(root), ["R3.2.4"]).code == done_when.BLOCKS
+    assert done_when.decide(phase(root), ["R3.2.9"]).code == done_when.CLEAR
 
 
 def test_a_heading_style_declaration_carries_its_tag_in_the_block_below() -> None:

@@ -743,6 +743,61 @@ find = '''
 replace = '''
     if False:'''
 
+[[guard]]
+id = "carried-items.recarry-is-not-wedged-by-an-undecidable-done-when"
+implements = "scripts/carried_items.py"
+defect = "Re-carrying decides nothing - the record crosses byte-for-byte, still owed to the same later phase - so an undecidable Done when must not refuse it. Refused, an intermediate phase whose own Done when is prose only could not answer the inherited row at all: declining it is refused for an item a later phase owns, built/tested need a fix that does not exist, and the close had only GATE_BYPASS left. A rule whose remedy is unavailable is a wedge rather than a gate."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    _refuse_if_blocks(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")'''
+replace = '''
+    _decide_or_refuse(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")'''
+
+[[guard]]
+id = "carried-items.unreadable-verdict-does-not-abort-the-sweep"
+implements = "scripts/carried_items.py"
+defect = "`check` sweeps every phase in one pass. A verdict it cannot parse in ONE phase - an untouched one, outside the diff - propagated out of the sweep, so nothing was reported about any other phase, including the phases with real owed items."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    try:
+        out.extend(f"{phase_dir}: {line}" for line in deferral_problems(phase_dir))
+    except CarriedError as exc:
+        out.append(f"{phase_dir}: {exc}")'''
+replace = '''
+    out.extend(f"{phase_dir}: {line}" for line in deferral_problems(phase_dir))'''
+
+[[guard]]
+id = "done-when.tag-stops-at-the-prose-after-it"
+implements = "scripts/done_when.py"
+defect = "A `done_when:` capture that swallowed spaces and hyphens read the rest of a plain-dash declaration line as condition ids. Those name nothing the plan declares, so every such phase went UNDECIDABLE and lost deferral silently - and a tail that happened to mention another condition id read as carrying it, clearing a finding that should have been undecidable."
+tests = ["tests/test_done_when.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+    r"done[_-]when:[ \t`]*([A-Za-z0-9._-]+(?:[ \t]*,[ \t]*[A-Za-z0-9._-]+)*)",'''
+replace = '''
+    r"done[_-]when:[ \t`]*([A-Za-z0-9._\-, \t]+)",'''
+
+[[guard]]
+id = "done-when.table-ends-where-the-table-ends"
+implements = "scripts/done_when.py"
+defect = "The condition scan ran to the end of the phase section, so every row of any LATER table under the same heading - a spec list, a risk table - became a phantom condition no requirement carries, and a plan that declared its conditions correctly still read as undecidable."
+tests = ["tests/test_done_when.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+        if not cells:
+            if seen_header:
+                break
+            continue'''
+replace = '''
+        if not cells:
+            continue'''
+
 # --- the override log --------------------------------------------------------------------------------------------------------
 
 [[guard]]

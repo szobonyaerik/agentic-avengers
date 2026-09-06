@@ -233,7 +233,11 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
   `python3 scripts/carried_items.py recarry <phase-dir> <id>` - the record is copied byte-for-byte,
   the *Done when* gate is asked again against THAT phase, and the discharge is recorded as
   `declined` with the structural reason; declining it by hand is refused, because dropping a real
-  finding on the way to its owner is what this exists to make impossible. Fixing it early
+  finding on the way to its owner is what this exists to make impossible. Re-carrying is refused
+  only when the finding **blocks** that phase's *Done when* - it became yours to fix on the way
+  through. An **undecidable** *Done when* does not refuse it: re-carrying decides nothing, and a
+  phase whose own *Done when* is prose only would otherwise have no way to answer an inherited row
+  at all. It says so on stderr and carries the row on. Fixing it early
   (`--as built|tested`) is always allowed.
 
 - **On the LAST card there is no next phase, so a forward claim - or a deferred finding - must name

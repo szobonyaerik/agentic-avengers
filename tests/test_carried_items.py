@@ -444,6 +444,23 @@ def test_check_reports_the_unparseable_prior_card_and_keeps_scanning_other_phase
     assert any("9-b" in p and "Silence is not none" in p for p in problems)
 
 
+def test_check_reports_an_unreadable_verdict_and_keeps_scanning_other_phases(
+    tmp_path: Path,
+) -> None:
+    """A verdict is read for the deferral stamps it carries, and one that cannot be parsed is that
+    phase's own problem line - never the end of the sweep. Raising through `check` reported nothing
+    about any other phase, including the phases with real owed items, and did it over a phase the
+    diff never touched."""
+    root = feature(tmp_path)
+    eight = phase(root, "8-a", TABLE)
+    (eight / "verdict.json").write_text("{not json", encoding="utf-8")
+    phase(root, "9-b", "none")
+
+    problems = carried_items.check(tmp_path, enforce_all=True)
+    assert any("8-a" in p and "cannot read" in p for p in problems)
+    assert any("9-b" in p and "FWD-1" in p and "no answer here" in p for p in problems)
+
+
 def test_an_unparseable_prior_card_names_what_it_is_not_a_broken_table(
     tmp_path: Path,
 ) -> None:
@@ -1280,14 +1297,31 @@ def test_recarry_re_asks_the_done_when_gate_against_this_phase(tmp_path: Path) -
         carried_items.recarry(nine, "F9")
 
 
-def test_recarry_is_refused_where_the_done_when_cannot_be_read(tmp_path: Path) -> None:
+@pytest.mark.parametrize("slug", ["9-writer", "10-reader"])
+def test_recarry_carries_on_where_this_phases_done_when_cannot_be_read(
+    tmp_path: Path, slug: str, capsys
+) -> None:
+    """An undecidable *Done when* refuses a fresh deferral; it must not refuse a re-carry.
+
+    Re-carrying decides nothing - the record crosses byte-for-byte, still owed to the same later
+    phase - so refusing it wedged an intermediate phase that did nothing wrong: `discharge --as
+    declined` is refused for an item a later phase owns, `built`/`tested` need a fix that does not
+    exist, and the close then had only `GATE_BYPASS` left. Both undecidable shapes are here - phase
+    9 declares a condition no spec carries, phase 10's *Done when* is prose only - and each closes.
+    """
     root = deferring_eight(tmp_path)
     plan(root)
-    ten_like_nine = phase(
-        root, "9-writer", "none"
-    )  # phase 9 has a table but no spec carries DW-1
-    with pytest.raises(carried_items.CarriedError, match="NO requirement"):
-        carried_items.recarry(ten_like_nine, "FWD-1")
+    intermediate = phase(root, slug, "none")
+    carried = carried_items.recarry(intermediate, "FWD-1")
+    source = carried_items.deferrals(root / "8-poller")[0]
+    assert carried["measurement"] == source["measurement"]
+    assert carried["owner"] == "12-staging" and carried["origin"] == "8-poller"
+    assert "not read" in capsys.readouterr().err
+    (intermediate / "handover.md").write_text(
+        CARD.format(phase=slug, items=DEFERRED_ROW), encoding="utf-8"
+    )
+    assert carried_items.phase_problems(intermediate) == []
+    assert run("due", str(intermediate)) == 0
 
 
 def test_the_owner_answers_it_like_any_row_and_cannot_recarry(tmp_path: Path) -> None:

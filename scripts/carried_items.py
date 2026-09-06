@@ -764,6 +764,33 @@ def _decide_or_refuse(
     return decision
 
 
+def _refuse_if_blocks(phase_dir: Path, spec_ids: list[str], what: str) -> None:
+    """Re-carrying refuses a finding that BLOCKS this phase - and only that.
+
+    A fresh `defer` needs a DECIDABLE *Done when*, because there this phase is deciding that a
+    finding may leave it, and an unreadable *Done when* cannot say what a finding would block
+    (`_decide_or_refuse`). Re-carrying decides nothing of the sort: the record is copied
+    byte-for-byte and stays owed to the same later phase, so the question is only whether it became
+    THIS phase's to fix on the way through.
+
+    Refusing on UNDECIDABLE too would wedge an intermediate phase that did nothing wrong. A phase
+    whose own *Done when* is prose only inherits the row, cannot answer it with `discharge --as
+    declined` (that is refused for an item a later phase owns), cannot answer it with
+    `built`/`tested` without inventing a fix - and `due` then blocks its close with only
+    `GATE_BYPASS` left. A rule whose remedy is unavailable is a wedge rather than a gate (§3a), and
+    a phase written before the table existed closes the way it always did.
+    """
+    decision = done_when.decide(Path(phase_dir), spec_ids)
+    if decision.code == done_when.BLOCKS:
+        raise DeferralRefused(f"{what} cannot be re-carried: {decision.reason}")
+    if decision.code != done_when.CLEAR:
+        print(
+            f"[carried_items] {what} is re-carried unchanged, and this phase's own *Done when* was "
+            f"not read: {decision.reason}",
+            file=sys.stderr,
+        )
+
+
 def _emit_deferrals(phase_dir: Path) -> None:
     """Measurement, never a gate: the phase record counts deferrals (§6d), and a write that fails
     is swallowed by the sink and never fails the deferral it measures."""
@@ -852,8 +879,9 @@ def recarry(phase_dir: Path, item_id: str) -> dict:
 
     The record is copied from the declaring phase's ledger with its measurement unchanged, the *Done
     when* gate is asked again against THIS phase (a finding that blocks this phase's Done when is
-    this phase's to fix, however it arrived), and the discharge is recorded as `declined` with the
-    structural reason. The row on this phase's own card is still owed, and `declared` checks it.
+    this phase's to fix, however it arrived - and only that is refused here, see
+    `_refuse_if_blocks`), and the discharge is recorded as `declined` with the structural reason.
+    The row on this phase's own card is still owed, and `declared` checks it.
     """
     available = {item.id: item for item in owed(phase_dir)}
     item = available.get(item_id)
@@ -887,7 +915,7 @@ def recarry(phase_dir: Path, item_id: str) -> dict:
     ledger = load(phase_dir)
     if any(d.get("id") == item_id for d in ledger["deferrals"]):
         raise CarriedError(f"{item_id} is already carried in {path_for(phase_dir)}")
-    _decide_or_refuse(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")
+    _refuse_if_blocks(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")
     carried = dict(source)
     carried["recarried_by"] = Path(phase_dir).name
     carried["recarried_at"] = _now()
@@ -1119,7 +1147,15 @@ def phase_problems(phase_dir: Path) -> list[str]:
     # CarriedError reach `main()` as the loud, undecidable failure.
     settled = answered(phase_dir)
     out.extend(f"{phase_dir}: {line}" for line in stale_discharges(phase_dir))
-    out.extend(f"{phase_dir}: {line}" for line in deferral_problems(phase_dir))
+    # Same rule, same reason: an unreadable verdict is this phase's own problem line, not the end of
+    # the sweep. `deferral_problems` reads every verdict record in the phase and refuses one it
+    # cannot parse - loudly and undecidably where it runs standalone (`declared`, `deferred`, one
+    # phase at a time), but here one untouched phase's corrupt verdict would abort `check` before it
+    # reported anything about any other phase, including the phases with real owed items.
+    try:
+        out.extend(f"{phase_dir}: {line}" for line in deferral_problems(phase_dir))
+    except CarriedError as exc:
+        out.append(f"{phase_dir}: {exc}")
     try:
         carried = owed(phase_dir)
     except CarriedError as exc:

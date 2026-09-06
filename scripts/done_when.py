@@ -120,7 +120,18 @@ CONDITION_ID = re.compile(r"\A[A-Za-z][A-Za-z0-9._-]*\Z")
 #: The `done_when:` tag on a requirement's declaration line (or, for a heading-style declaration, in
 #: the block below it - the same layout rule `requirement_cap.declared_bindings` follows for
 #: `binding:`). Both spellings are accepted because both are how people write it.
-DONE_WHEN_TAG = re.compile(r"done[_-]when:[ \t`]*([A-Za-z0-9._\-, \t]+)", re.IGNORECASE)
+#:
+#: The capture is a COMMA-separated id list and stops at the first thing that is not one, because a
+#: declaration line continues into prose and this project writes that prose with plain dashes: a
+#: class that swallowed spaces and hyphens read `done_when: DW-1 - one-way reps play once` as seven
+#: condition ids, five of which name nothing the plan declares, so the whole phase went UNDECIDABLE
+#: and could never defer. `done_when: DW-1, DW-3` is the documented shape (docs/templates/
+#: spec.template.md) and the only one a tag may take; a space-separated list is indistinguishable
+#: from the prose that follows it.
+DONE_WHEN_TAG = re.compile(
+    r"done[_-]when:[ \t`]*([A-Za-z0-9._-]+(?:[ \t]*,[ \t]*[A-Za-z0-9._-]+)*)",
+    re.IGNORECASE,
+)
 
 #: The phase directory name's number: `3-real-frames` -> 3.
 PHASE_NUMBER = re.compile(r"^(\d+)-")
@@ -178,12 +189,20 @@ def conditions(section: str) -> list[Condition] | None:
     None and [] are different answers: no table is the prose-only state (undecidable), while a table
     with a header and no rows says the phase declared it has no structured conditions - which is
     equally undecidable for a deferral, and `decide` says so, but the two read differently.
+
+    The scan ends at the first line that is not a table row after the header, because a markdown
+    table ends there. Running to the end of the phase section instead made every row of any LATER
+    table under the same heading - a spec list, a risk table - a phantom condition that no
+    requirement carries, so the phase read as undecidable over a plan that declared its conditions
+    correctly.
     """
     out: list[Condition] = []
     seen_header = False
     for line in section.splitlines():
         cells = _cells(line)
         if not cells:
+            if seen_header:
+                break
             continue
         head = cells[0].strip("*`_ \t").lower()
         if head == TABLE_HEADER:

@@ -811,7 +811,11 @@ believed on sight**: `verdict_findings.open_findings` resolves it only for an id
 ledger and verdict, and `hook_verifier.sh` fails the handover on it. `bypassed` stays false - a
 deferral is not a waiver. Between the deferring phase and the owner, each phase answers the row with
 `recarry`: the record copied byte-for-byte, the *Done when* gate asked again against that phase, the
-discharge recorded as `declined` with the structural reason; declining it by hand is refused. The
+discharge recorded as `declined` with the structural reason; declining it by hand is refused. That
+re-ask refuses only a **BLOCKS** - the finding became this phase's to fix on the way through - and
+never an UNDECIDABLE, because re-carrying decides nothing and an intermediate phase whose own *Done
+when* is prose only has no other route to answer an inherited row (§3a: a rule whose remedy is
+unavailable is a wedge). A fresh `defer` still needs a decidable *Done when*. The
 owner answers it like any row, and on the last card it must name an issue like a forward claim.
 Deferrals are counted in the phase record as a `gate_calls[]` row (`record_deferrals`, on
 `record_plugin_version`'s precedent, since firstmate's schema is closed), so a phase that defers
