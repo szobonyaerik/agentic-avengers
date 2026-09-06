@@ -791,8 +791,14 @@ Phases are built in dependency/risk order, one at a time, fully through build-an
 Gates run on a fresh **cross-family** model (family ≠ author) and **fail closed** — a gate that can't
 reach a verdict (missing key, provider down, non-JSON, same-family) stops, **and it names which**:
 every stop carries a `cause=` from `scripts/gate_errors.py` and reproduces the provider's own words
-verbatim. A **local** state lock is not a provider failure at all and
-is named as one: concurrent gate calls through opencode contend on a SQLite lock on the operator's
+verbatim. **An empty reply is not a timeout either** (issue #98): `opencode run` on an exhausted free tier
+exits 0, prints its banner and returns no content, and a leftover worker holds the pipe, so the gate
+waited out its whole budget and reported `cause=timeout`, whose remedy - a larger budget - cannot
+work; two full budgets were spent before probing both gate models by hand told a slow model from an
+empty tier. `cause=provider-empty-response` names it, decided from the direct child's own exit (a
+process still running at the budget reports the kill signal, never 0) and from the stream carrying
+no text event; a call still running when its budget elapses stays `timeout`. A **local** state lock
+is not a provider failure at all and is named as one: concurrent gate calls through opencode contend on a SQLite lock on the operator's
 own disk, and three parallel calls returned ZERO verdicts in 900s where the same three serially
 returned all three in 68s. It presented as `timeout` — the shape that most invites the wrong
 diagnosis — and it WAS diagnosed wrongly both times it appeared: once as a provider-wide outage (on
@@ -1005,12 +1011,22 @@ shared database produced foreign-key violations plus a spurious lint failure, wi
 one apart as the only tell. Which stages are bound is **one pattern in one place**
 (`IMPLEMENTER_AGENTS`), asked of the spawning stage and of every live entry by the same module, so
 the hook carries no copy of it; the Verifier, the Breaker and the bug-hunter run beside an
-implementer by design and are never bound. A crashed agent leaving a start with no stop ages out
-after `IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock forever, and everything
-that is not a verdict — no `jq`, no `python3`, an unreadable payload, no activity log, an unusable
-pattern — lets the spawn through **and says so**. `GATE_BYPASS` proceeds, audited;
-`IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry it: its adapter hooks
-`tool.execute.after`, which is after the fact.
+implementer by design and are never bound. **A start with no stop is checked against two OBSERVED
+endings before any ceiling is consulted** (issue #98): a stage killed through the `TaskStop` tool
+fires no `SubagentStop`, so a killed implementer held its lock for the full four hours - measured at
+1410 activity rows, 33 starts, 1334 stops, exactly one unmatched. `hook_activity.sh` now records the
+harness's own `PostToolUse` for `TaskStop`, **only when the tool's response says the stop
+succeeded** (the attempt is not the outcome), and every start row carries `harness_pid`, the
+`claude` process the subagent ran inside, which `proc_group.process_exists` asks the kernel about. A
+row written before pids were recorded is unobservable on that axis and is judged by the ceiling
+alone, as before. What remains for `IMPLEMENTER_MAX_AGE_S` (default 4 hours) is an agent that died
+inside a live harness with no `TaskStop` - a crash - and that still ages out rather than holding the
+lock forever. Everything that is not a verdict — no `jq`, no `python3`, an unreadable payload, no
+activity log, an unusable pattern — lets the spawn through **and says so**. The refusal names the
+**scoped** override, `GATE_BYPASS_GATES="implementer-lock" GATE_BYPASS="<reason>"`, because bare
+`GATE_BYPASS` waives every gate the run reaches and the message used to send operators there for one
+dead lock; either proceeds, audited. `IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry
+it: its adapter hooks `tool.execute.after`, which is after the fact.
 
 **No model runs in these hooks** except the spec gate: the
 Verifier is an *agent* that runs in chat and commits `verdict.json`, and the hook only checks that
@@ -1106,7 +1122,15 @@ another, because that stem is what a stage matches on. The Verifier's own `verif
 behind `|| true`, but its stderr is no longer discarded: the highest-volume attribution path must not
 drop every defect and look like a run that found none. An unwritable record makes firstmate's CLI
 *block* rather than fail, so one timeout abandons the writer for that process: fail-open has to hold
-in wall clock, not just exit codes.
+in wall clock, not just exit codes. **And a write the SEAL refuses is queued, never destroyed**
+(issue #98): a closed record refuses, exit 3, any write that would move a measurement, and this side
+used to answer with a log line and nothing else - five spec-gate rounds are permanently missing from
+one ledger. `metrics_sink.py` now appends the exact refused argv to `.avenger-metrics-spool.jsonl`
+(gitignored, one command per line) and replays it before the next write to that phase and on
+`pipeline_metrics.py spool --drain`, so a phase reopened with `set <phase> --reopen closed:=null`
+receives everything the seal turned away, in order. The sink still returns `False` for the refused
+write - it did not land - and only the seal is queued, since any other refusal fails identically on
+replay. The moment `closed` is stamped is a separate question (#120) and is not moved here.
 
 **A spec round has ONE definition, and it is recorded at the GATE.** It used to be measured at the
 writer — `hook_spec_gate.sh` counted the body the moment it got past the cache check, **before either
@@ -1367,9 +1391,17 @@ old behaviour:
 statement per guard - `proves`, and `limits`, what a clean result does not establish - and
 `scripts/guard_scope.py` emits it. Every declared guard with runtime output calls
 `guard_scope.run(__file__, main)` at its entry point, or `guard_scope.py emit <name>` on its clean
-branch, **except where a declared, single-guard exception says why it cannot** - today exactly one,
+branch, **except where a declared, single-guard exception says why it cannot** - today exactly three:
 `hook_autoapprove.sh`, whose clean result is a per-tool-call ALLOW emitted thousands of times in one
-run, so it rides the DENY reason instead. An exception is never silent: `guard_proof.py scope` names
+run, so it rides the DENY reason instead; `hook_activity.sh`, whose clean result is one appended
+row per subagent event and which prints nothing by contract, since a `SubagentStart` hook's output
+reaches the agent being spawned - the one thing it decides is read by `implementer_liveness.py`,
+whose statement names it; and `pipeline_metrics.py`, whose clean result is a fail-open measurement
+write made from hooks that discard stderr, and one of whose clean results is contractually SILENT -
+`AVENGER_METRICS_OFF=1` records none deliberately and silently (§6d) - so a statement on the clean
+branch would break a documented contract rather than inform anybody; its one refusal, a spec round
+for a gate that reached no verdict, carries its own reason where somebody is being told a verdict.
+An exception is never silent: `guard_proof.py scope` names
 it and its reason beside its own clean line, so "N guards declare and emit" can never be read as
 "every guard emits". **Whether a guard emits is decided by PARSING, not by matching text** - a real
 `ast` call to `run`/`clean` for Python (following an aliased import), the invocation shape on

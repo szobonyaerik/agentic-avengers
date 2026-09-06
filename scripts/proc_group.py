@@ -133,6 +133,25 @@ class _KillGroupOnSignal:
                 pass
 
 
+def process_exists(pid: int) -> bool:
+    """Whether the kernel still knows `pid`. Asked of the kernel, never inferred from a log.
+
+    `os.kill(pid, 0)` delivers nothing and answers only "is there such a process": a
+    `ProcessLookupError` is a definite no, and a `PermissionError` is a definite yes (a process
+    exists that this user may not signal). Used by `implementer_liveness.py` to tell an implementer
+    whose harness is gone from one whose stop event was simply never recorded (issue #98).
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def run_bounded(cmd: list[str], timeout: float, cwd: str | None = None) -> ChildResult:
     """Run `cmd` in its own process group and return its result, or a killed-group timeout.
 
@@ -160,7 +179,9 @@ def run_bounded(cmd: list[str], timeout: float, cwd: str | None = None) -> Child
     try:
         pgid = os.getpgid(proc.pid)
     except (ProcessLookupError, OSError):
-        pgid = proc.pid  # start_new_session made the child its own leader, so this is the group
+        pgid = (
+            proc.pid
+        )  # start_new_session made the child its own leader, so this is the group
     with _KillGroupOnSignal(pgid, proc):
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
@@ -168,7 +189,9 @@ def run_bounded(cmd: list[str], timeout: float, cwd: str | None = None) -> Child
             _kill_group(pgid, proc)
             stdout, stderr = _drain(proc)
             return ChildResult(
-                returncode=proc.returncode if proc.returncode is not None else -signal.SIGKILL,
+                returncode=proc.returncode
+                if proc.returncode is not None
+                else -signal.SIGKILL,
                 stdout=stdout or "",
                 stderr=stderr or "",
                 elapsed=time.monotonic() - start,

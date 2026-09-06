@@ -6,6 +6,13 @@ out-of-credit reply, and an unreachable provider all surfaced as one `[gate_runn
 and exit 2. The 402 was found only by probing the provider by hand, and a day was spent reading
 infrastructure failures as model failures.
 
+A fourth hid inside `timeout` (issue #98): `opencode run` on an exhausted free tier exits 0, prints
+its banner and returns no content, and a leftover worker holds the stdout pipe - so the gate waited
+out its whole budget and reported `cause=timeout`, whose obvious remedy, raising the budget, cannot
+work. It cost two full budgets before probing both gate models by hand told "this model is slow"
+from "this tier is empty". `provider-empty-response` names that: the CLI RETURNED, and returned
+nothing. `timeout` is kept for what it says - a call still running when its budget elapsed.
+
 Every failure now carries a `cause` from CAUSES and prints the provider's own words VERBATIM. The
 verbatim part is load-bearing: the classifier below is a heuristic over vendor error strings and
 will not recognise every one of them: `provider-error` is the honest answer when it cannot tell, and
@@ -22,7 +29,8 @@ CAUSES = {
     "cross-family": "the gate model shares the author's vendor family — no independence",
     "unknown-vendor": "the gate model's vendor is unknown, so family cannot be established",
     "runner-untrusted": "the gate runner did not identify itself as the shipped runner",
-    "timeout": "the provider call exceeded its budget and was killed",
+    "timeout": "the provider call exceeded its budget and was killed while still running - a slow provider; a larger GATE_CALL_TIMEOUT is the remedy",
+    "provider-empty-response": "the provider CLI returned successfully with NO reply content - an exhausted tier, or a model that answered nothing; the call did not run out of time, so raising the budget cannot help",
     "provider-not-found": "the provider CLI is not on PATH",
     "provider-unreachable": "the provider could not be reached (network, DNS, outage)",
     "provider-payment-required": "the provider refused for billing reasons (402, credit, quota)",
@@ -39,7 +47,15 @@ CAUSES = {
 #: id, a latency, an exit code — and since payment is classified first, an unrelated provider error
 #: sent the operator to their billing page. The real 402 arrives by status code on the HTTPError
 #: path (gate_runner.call_openrouter), so these forms only have to serve provider CLI text.
-_STATUS_PREFIXES = ("http ", "http/1.1 ", "http/2 ", "status ", "status code ", "code ", "error ")
+_STATUS_PREFIXES = (
+    "http ",
+    "http/1.1 ",
+    "http/2 ",
+    "status ",
+    "status code ",
+    "code ",
+    "error ",
+)
 
 
 def _status_markers(*codes: int) -> tuple[str, ...]:
@@ -129,7 +145,9 @@ class GateError(RuntimeError):
         ]
         if self.provider_output.strip():
             lines.append("  --- provider output (verbatim) ---")
-            lines.extend(f"  {line}" for line in self.provider_output.rstrip().splitlines())
+            lines.extend(
+                f"  {line}" for line in self.provider_output.rstrip().splitlines()
+            )
             lines.append("  --- end provider output ---")
         return "\n".join(lines)
 

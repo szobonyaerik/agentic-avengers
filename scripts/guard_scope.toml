@@ -182,17 +182,19 @@ limits = [
 ]
 
 [guard."implementer_liveness.py"]
-proves = "that no second implementer was spawned into a working copy already holding a live one, read from the stage's own SubagentStop."
+proves = "that no second implementer was spawned into a working copy already holding a live one - a start with no SubagentStop, no harness-reported TaskStop, and a harness process the kernel still knows."
 limits = [
   "anything that is not a verdict - no jq, no python3, an unreadable payload or no activity log lets the spawn through and says so",
   "a stage started any way other than the spawn tool this hook sees",
   "what a live implementer is DOING: only that it started and has not stopped",
+  "an agent that died inside a harness still alive without a TaskStop - a crash, an interrupt - which only the age ceiling bounds",
+  "a start row written before harness pids were recorded, which the process check cannot see and judges by the ceiling alone",
 ]
 
 # --- the gates' own machinery -----------------------------------------------------------------------
 
 [guard."gate_runner.py"]
-proves = "that the verdict came from a resolvable model of a declared family over a named transport, inside its budget, with the call and any failure cause recorded."
+proves = "that the verdict came from a resolvable model of a declared family over a named transport, inside its budget, with the call and any failure cause recorded - an empty reply named as empty, a call still running at the budget named as a timeout."
 limits = [
   "that the verdict is CORRECT - this is transport and attribution, never review",
   "cross-family independence when a same-family waiver is in force: that is an audited override, not a gate that passed",
@@ -312,6 +314,7 @@ limits = [
   "that the mutation gate MEASURED anything: with no comparison base resolvable it reports `did-not-run` and is counted rather than blocking, even under enforce, because no remedy exists there (CLAUDE.md 3a)",
   "anything a model judges - no model runs here by design; the spec gate and the Verifier are in chat",
   "that the suite is adequate: a green suite proves the tests pass, never that any of them would notice the defect its guard exists for",
+  "that the announced interpreter is the project's intended one: the suite runs under the same python3 as every other check here, and that path is printed, not checked against a declaration",
 ]
 
 [guard."hook_mutation.sh"]
@@ -322,11 +325,28 @@ limits = [
   "anything about tests written to pass rather than to discriminate, for which there is no dedicated reader",
 ]
 
+[guard."pipeline_metrics.py"]
+proves = "that each fact it recorded was emitted by the stage that observed it, at the moment it observed it - a spec round only for a gate that reached a verdict, a phase close only once everything under the phase directory is committed."
+limits = [
+  "that anything was recorded AT ALL: every write but `defect` is fail-open by design (CLAUDE.md 6d), so a phase whose writer refused every entry looks exactly like one with nothing to report - `emission_gate.py` is the check for that, never a clean run of this",
+  "that a recorded number is RIGHT: it stores what a stage reports, and a stage that observed the wrong thing records the wrong thing",
+  "anything about a fact no stage emits: firstmate's schema is closed, so a measurement with no writer is simply absent rather than reported missing",
+]
+
+[guard."hook_activity.sh"]
+proves = "that a TaskStop row in .agent-activity.jsonl records a stop the harness itself reported as successful, never a TaskStop that was merely attempted."
+limits = [
+  "a stop performed any way the harness reports through no tool response - a crash, an interrupt, a session that died",
+  "the harness pid a start row carries: recorded from this hook's own ancestry and checked by implementer_liveness.py, never verified here",
+  "anything on a recorded row, which is this hook's clean result and deliberately carries no statement: it prints nothing by contract (a declared exception in `guard_proof.EMISSION_EXCEPTIONS`)",
+]
+
 [guard."hook_implementer_lock.sh"]
 proves = "that no second implementer was spawned into a working copy already holding a live one."
 limits = [
   "anything that is not a verdict - an unreadable payload, a missing interpreter or an unusable pattern lets the spawn through and says so",
   "a crashed agent past its age-out, whose lock is deliberately released rather than held forever",
+  "a lock cleared under GATE_BYPASS_GATES=implementer-lock, which is an audited override and not a check that passed",
 ]
 
 [guard."hook_plugin_release.sh"]

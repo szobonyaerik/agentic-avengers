@@ -109,6 +109,31 @@ def test_an_unknown_vendor_stops_the_gate_with_its_own_cause():
 
 def test_an_explicitly_declared_family_is_honoured_and_still_compared():
     """The escape hatch is deliberate and still subject to the cross-family rule."""
-    assert assert_cross_family("brandnewthing-v1", "anthropic", "brandnew") == "brandnew"
+    assert (
+        assert_cross_family("brandnewthing-v1", "anthropic", "brandnew") == "brandnew"
+    )
     with pytest.raises(GateError, match="cross-family violation"):
         assert_cross_family("brandnewthing-v1", "anthropic", "anthropic")
+
+
+# --- the free cross-family tier is a real second family (issue #98) --------------------------------
+
+
+@pytest.mark.parametrize(
+    "model, family",
+    [("opencode/hy3-free", "tencent"), ("opencode/mimo-v2.5-free", "xiaomi")],
+)
+def test_the_free_opencode_tier_resolves_to_its_vendor_not_to_the_router(model, family):
+    """Both config templates steered at paid routers only, so an exhausted paid balance read as
+    "no second family reachable" and nearly bought a same-family waiver. These two ids carried 83
+    recorded gate calls each in one measured feature; they are cross-family against Anthropic."""
+    assert model_family(model) == family
+    assert_cross_family(model, "anthropic")  # does not raise
+
+
+def test_the_free_tier_is_named_where_the_gate_model_is_configured():
+    """The template is the config surface an operator reads when the paid router is exhausted."""
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "docs" / "templates" / "env.example").read_text(encoding="utf-8")
+    assert "opencode/hy3-free" in template
+    assert "opencode/mimo-v2.5-free" in template
