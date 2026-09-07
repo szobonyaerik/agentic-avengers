@@ -529,6 +529,31 @@ Three consequences worth stating outright:
   With the cross-family reading pass removed it is now the pipeline's **only** systematic signal
   about non-discriminating tests — still advisory, still not a wall, and named as partial cover
   rather than a replacement (see *The Verifier* below).
+  - **exec may not leave the tree changed, and that is never advisory** (issue #95). `cosmic-ray
+    exec` mutates source in place and reverts in a `finally`; the hook's kill path SIGTERMs then
+    SIGKILLs the process group and neither runs a `finally`, so a mutant stayed on disk and was
+    committed as authored code - four times in one phase, three under `verdict: pass`, in live
+    trading code. `scripts/mutation_exec_guard.py` brackets every `exec` in `hook_mutation.sh` and
+    `gate_ci.sh`: a snapshot of every file the session can write, an explicit restore-and-compare
+    after - on the kill path too - and a tree that differed fails the hook whatever the policy, since
+    the policy governs the SCORE's authority and nothing else. The restore source is the snapshot,
+    never `git checkout`: the pipeline verifies uncommitted work. Where the kill can be predicted
+    (baseline wall clock x pending mutants against `MUTATION_HOOK_BUDGET_S`, default the hook's
+    `hooks.json` timeout) exec is refused up front and recorded `did-not-run`. `off` still exits
+    before any cosmic-ray call. What it cannot do is said: nothing runs when the hook itself is
+    SIGKILLed, and a test command that rewrites source under `module-path` reads as corruption.
+  - **`GATE_BYPASS` cannot waive a tree nothing established as clean.** This is the one exception to
+    the break-glass being able to waive every gate a run reaches, and it lives here because the
+    reason is the tree guard's own three outcomes. Only `restored` - the tree differed and every
+    in-scope file was put back from the pre-exec snapshot - stays waivable, and stays audited
+    exactly as before: the mutant is provably gone, so what is left is a void verdict, which is what
+    an override consents to. The other two are refused with the blocking exit and no log line, on
+    the same precedent as a gate outside `GATE_BYPASS_GATES`: `NOT every file could be put back`
+    leaves a mutant provably on disk, and `TREE INTEGRITY UNKNOWN` - a restore that did not
+    complete, a snapshot with no manifest, or a cosmic-ray process group that had not stopped when
+    the tree was checked - establishes nothing either way. Neither is a weak gate signal an operator
+    may accept; it is source nobody authored, so there is nothing to consent to. Both callers behave
+    identically, `hook_mutation.sh` per run and `gate_ci.sh` at its end-of-run override.
 - **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
   spec in the phase **resolves to** `criticality: critical`). Not optional in practice: it was owed on
   every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that
