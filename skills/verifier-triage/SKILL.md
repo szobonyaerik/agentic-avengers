@@ -307,7 +307,11 @@ findings is a clean pass with named debts, not a bypass.
 
 **A stamp with nothing behind it is an OPEN finding.** `verdict_findings.open_findings` resolves
 `deferred` only for an id `carried.json` records, `scripts/carried_items.py deferred <phase-dir>` names
-every stamp nothing backs, and `hook_verifier.sh` fails the handover on it. A defect that was never a
+every stamp nothing backs, and `hook_verifier.sh` fails the handover on it. It reads the whole
+attempt history - a passing verdict carries no findings, so the attempt that raised one is usually
+already archived - but judges each finding by the **last** record that states anything about it, so
+stamping `deferred` on attempt 1 and then FIXING the finding on attempt 2 closes cleanly; an
+archived stamp nothing ever answered is still named. A defect that was never a
 verdict finding (one found by watching a render) is deferred the same way without `--finding`; it
 then has a row and a record and no stamp to resolve.
 

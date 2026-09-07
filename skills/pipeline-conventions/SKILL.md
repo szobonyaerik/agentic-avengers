@@ -809,12 +809,15 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
   resolves it only for an id the ledger records, `carried_items.py deferred` names every stamp
   nothing backs and every disagreement between card, ledger and verdict, and `hook_verifier.sh`
   fails the handover on it. Between the deferring phase and the owner, each phase answers the row
-  with `recarry` - the record copied byte-for-byte, the *Done when* gate asked again against that
-  phase, the discharge recorded as `declined` with the structural reason; declining it by hand is
-  refused. That re-ask refuses only a **BLOCKS** - the finding became this phase's to fix on the way
-  through - and never an UNDECIDABLE: re-carrying decides nothing, and an intermediate phase whose
-  own *Done when* is prose only has no other route to answer an inherited row, which would make the
-  rule a wedge rather than a gate (§3a). A fresh `defer` still needs a decidable *Done when*. The
+  with `recarry`, **unconditionally** - the record copied byte-for-byte, the discharge recorded as
+  `declined` with the structural reason; declining it by hand is refused. The *Done when* gate is
+  **not** asked again there: it matches a finding's requirement ids against the conditions THIS
+  phase's specs tag, and a deferral carries the ids of the phase that raised it, so from an
+  intermediate phase it could only ever answer CLEAR - a gate that cannot refuse establishes
+  nothing (§11) - and refusing on an undecidable *Done when* wedged a phase that did nothing wrong
+  (§3a). It binds where its ids are the phase's own: at `defer` time, in the phase raising the
+  finding, where a fresh deferral still needs a decidable *Done when* and a BLOCKS is still
+  refused. The
   owner answers it like any row. Deferrals are counted in the phase record as a
   `gate_calls[]` row (`pipeline_metrics.record_deferrals`, on `record_plugin_version`'s precedent),
   so a phase that defers everything is as visible as one that fixes everything. **What it must never

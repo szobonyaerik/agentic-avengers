@@ -230,14 +230,15 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
   `| done-when |` table and the specs' `done_when:` tags) and refuses an owner that is not a later
   planned phase; the row is written as the command prints it. Row and record are checked against
   each other at close. The next phase answers such a row owned by a phase further out with
-  `python3 scripts/carried_items.py recarry <phase-dir> <id>` - the record is copied byte-for-byte,
-  the *Done when* gate is asked again against THAT phase, and the discharge is recorded as
-  `declined` with the structural reason; declining it by hand is refused, because dropping a real
-  finding on the way to its owner is what this exists to make impossible. Re-carrying is refused
-  only when the finding **blocks** that phase's *Done when* - it became yours to fix on the way
-  through. An **undecidable** *Done when* does not refuse it: re-carrying decides nothing, and a
-  phase whose own *Done when* is prose only would otherwise have no way to answer an inherited row
-  at all. It says so on stderr and carries the row on. Fixing it early
+  `python3 scripts/carried_items.py recarry <phase-dir> <id>` - the record is copied byte-for-byte
+  and the discharge is recorded as `declined` with the structural reason; declining it by hand is
+  refused, because dropping a real finding on the way to its owner is what this exists to make
+  impossible. **Re-carrying is unconditional**: the *Done when* gate is not asked again against
+  your phase. It matches a finding's requirement ids against the conditions your own specs tag, and
+  an inherited deferral carries the ids of the phase that raised it, so it could only ever answer
+  CLEAR here - and refusing on an undecidable *Done when* left a phase whose own *Done when* is
+  prose only with no way to answer an inherited row at all. The gate binds where its ids belong: at
+  `defer` time, in the phase raising the finding. Fixing it early
   (`--as built|tested`) is always allowed.
 
 - **On the LAST card there is no next phase, so a forward claim - or a deferred finding - must name

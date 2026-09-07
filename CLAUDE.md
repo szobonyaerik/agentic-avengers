@@ -808,14 +808,24 @@ not a later planned phase, and a record with no measurement; there is no command
 The Verifier stamps the finding `status: deferred` with `deferred_to`, and **the stamp is not
 believed on sight**: `verdict_findings.open_findings` resolves it only for an id the ledger records,
 `carried_items.py deferred` names every stamp nothing backs and every disagreement between card,
-ledger and verdict, and `hook_verifier.sh` fails the handover on it. `bypassed` stays false - a
+ledger and verdict, and `hook_verifier.sh` fails the handover on it. It reads the whole attempt
+history, because a passing verdict carries no findings and the attempt that raised one is usually
+archived - but it judges each finding by the **last** record that states anything about it,
+`verifier_attempts._check`'s own rule: a stamp on a superseded attempt whose finding was then fixed
+prescribed a remedy that no longer exists (`defer` refuses a finding carrying a *Done when*
+condition, and an archived attempt is not edited), so it wedged a phase with nothing open. `bypassed` stays false - a
 deferral is not a waiver. Between the deferring phase and the owner, each phase answers the row with
-`recarry`: the record copied byte-for-byte, the *Done when* gate asked again against that phase, the
-discharge recorded as `declined` with the structural reason; declining it by hand is refused. That
-re-ask refuses only a **BLOCKS** - the finding became this phase's to fix on the way through - and
-never an UNDECIDABLE, because re-carrying decides nothing and an intermediate phase whose own *Done
-when* is prose only has no other route to answer an inherited row (§3a: a rule whose remedy is
-unavailable is a wedge). A fresh `defer` still needs a decidable *Done when*. The
+`recarry`, and **re-carrying is unconditional**: the record copied byte-for-byte, the discharge
+recorded as `declined` with the structural reason; declining it by hand is refused. The *Done when*
+gate is **not** asked again there. It binds where its ids are the phase's own, which is the
+DEFERRING phase at `defer` time: `done_when.decide` matches the finding's requirement ids against
+the conditions THIS phase's specs tag, and a deferral carries the ids of the phase that raised it
+(`R<origin>.<k>.<m>`, §2), so from an intermediate phase the intersection is empty and BLOCKS was
+unreachable - a gate that can only answer one way reports a clean result stronger than anything it
+established (§11), and it is removed rather than left as a sentence nothing enforces. It also
+wedged an intermediate phase whose own *Done when* is prose only, which has no other route to
+answer an inherited row (§3a). A fresh `defer` still needs a decidable *Done when* and still
+refuses a finding that BLOCKS. The
 owner answers it like any row, and on the last card it must name an issue like a forward claim.
 Deferrals are counted in the phase record as a `gate_calls[]` row (`record_deferrals`, on
 `record_plugin_version`'s precedent, since firstmate's schema is closed), so a phase that defers

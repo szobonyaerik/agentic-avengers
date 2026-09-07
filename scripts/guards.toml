@@ -744,16 +744,33 @@ replace = '''
     if False:'''
 
 [[guard]]
-id = "carried-items.recarry-is-not-wedged-by-an-undecidable-done-when"
+id = "carried-items.recarry-is-unconditional"
 implements = "scripts/carried_items.py"
-defect = "Re-carrying decides nothing - the record crosses byte-for-byte, still owed to the same later phase - so an undecidable Done when must not refuse it. Refused, an intermediate phase whose own Done when is prose only could not answer the inherited row at all: declining it is refused for an item a later phase owns, built/tested need a fix that does not exist, and the close had only GATE_BYPASS left. A rule whose remedy is unavailable is a wedge rather than a gate."
+defect = "Re-carrying gated on the Done when. It decides nothing - the record crosses byte-for-byte, still owed to the same later phase - and the gate cannot even be asked here: a deferral's requirement ids belong to the phase that raised it, while the gate matches them against the conditions THIS phase's specs tag, so BLOCKS was unreachable and a clean result established nothing. Gated, an intermediate phase whose own Done when is prose only could not answer the inherited row at all: declining it is refused for an item a later phase owns, built/tested need a fix that does not exist, and the close had only GATE_BYPASS left."
 tests = ["tests/test_carried_items.py"]
 [[guard.mutation]]
 file = "scripts/carried_items.py"
 find = '''
-    _refuse_if_blocks(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")'''
+    carried = dict(source)
+    carried["recarried_by"] = Path(phase_dir).name'''
 replace = '''
-    _decide_or_refuse(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")'''
+    _decide_or_refuse(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")
+    carried = dict(source)
+    carried["recarried_by"] = Path(phase_dir).name'''
+
+[[guard]]
+id = "carried-items.a-superseded-deferred-stamp-does-not-outlive-the-finding"
+implements = "scripts/carried_items.py"
+defect = "A `status: deferred` stamp on an ARCHIVED attempt was held against the phase forever, even after a later attempt fixed the finding. The remedy the message prescribes does not exist there - `defer` refuses a finding whose requirement carries a Done when condition, and an archived attempt is not edited - so a phase with nothing open could close only under GATE_BYPASS. Each finding is judged by the LAST record that states anything about it, the rule verifier_attempts._check already follows."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+            if identifier in resolved:
+                continue'''
+replace = '''
+            if False:
+                continue'''
 
 [[guard]]
 id = "carried-items.unreadable-verdict-does-not-abort-the-sweep"

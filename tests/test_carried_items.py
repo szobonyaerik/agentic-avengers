@@ -1163,6 +1163,106 @@ def test_a_deferred_stamp_nothing_backs_is_named(tmp_path: Path) -> None:
     assert run("deferred", str(eight)) == 1
 
 
+def test_a_deferred_stamp_on_a_superseded_attempt_that_was_then_fixed_closes(
+    tmp_path: Path,
+) -> None:
+    """Attempt 1 stamps `deferred` before any ledger record - the order the skill warns about - the
+    handover is refused, the Verifier FIXES the finding instead, and attempt 2 passes.
+
+    The archived stamp survives that (an archived attempt is not edited), and held against the
+    phase forever it prescribed a remedy that does not exist: `defer` refuses a finding whose
+    requirement carries a *Done when* condition, which is often exactly why it was fixed. Each
+    finding is judged by the last record that states anything about it.
+    """
+    root = feature(tmp_path)
+    eight = bound_phase(root, items="none")
+    (eight / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [{"id": "f1", "spec_id": "R8.1.1", "status": "deferred"}],
+            }
+        )
+    )
+    assert run("deferred", str(eight)) == 1
+
+    (eight / "verdict-attempt-1.json").write_text((eight / "verdict.json").read_text())
+    (eight / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 2,
+                "findings": [{"id": "f1", "spec_id": "R8.1.1", "status": "fixed"}],
+            }
+        )
+    )
+    assert carried_items.deferral_problems(eight) == []
+    assert run("deferred", str(eight)) == 0
+    assert carried_items.phase_problems(eight) == []
+
+
+def test_a_deferred_stamp_no_later_attempt_answers_is_still_named(
+    tmp_path: Path,
+) -> None:
+    """History is still read for a stamp that was never rowed: an attempt-1 deferral nothing backs,
+    and a later attempt that says nothing about it, is the state this check exists for."""
+    root = feature(tmp_path)
+    eight = bound_phase(root, items="none")
+    (eight / "verdict-attempt-1.json").write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [{"id": "f1", "spec_id": "R8.1.2", "status": "deferred"}],
+            }
+        )
+    )
+    (eight / "verdict.json").write_text(
+        json.dumps({"verdict": "pass", "attempt": 2, "findings": []})
+    )
+    problems = carried_items.deferral_problems(eight)
+    assert len(problems) == 1 and "f1" in problems[0]
+    assert run("deferred", str(eight)) == 1
+
+
+def test_a_backed_deferral_on_a_later_attempt_answers_the_earlier_stamp(
+    tmp_path: Path,
+) -> None:
+    """The ledger record written after attempt 1 resolves the stamp on both records, so the phase
+    reports the deferral once - through the row-and-record checks - and not twice."""
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW)
+    (eight / "verdict-attempt-1.json").write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [{"id": "f1", "spec_id": "R8.1.2", "status": "deferred"}],
+            }
+        )
+    )
+    (eight / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 2,
+                "findings": [
+                    {
+                        "id": "f1",
+                        "spec_id": "R8.1.2",
+                        "status": "deferred",
+                        "deferred_to": "12-staging",
+                    }
+                ],
+            }
+        )
+    )
+    carried_items.defer(eight, "FWD-1", "12-staging", RECORD, finding="f1")
+    assert carried_items.deferral_problems(eight) == []
+    assert run("deferred", str(eight)) == 0
+
+
 def test_a_stamp_that_disagrees_with_the_ledger_about_the_owner_is_named(
     tmp_path: Path,
 ) -> None:
@@ -1287,19 +1387,51 @@ def test_recarry_still_owes_the_row_on_this_phases_own_card(tmp_path: Path) -> N
     assert carried_items.phase_problems(nine) == []
 
 
-def test_recarry_re_asks_the_done_when_gate_against_this_phase(tmp_path: Path) -> None:
-    """A finding clear of phase 8's Done when may still be phase 9's to fix."""
+def test_recarry_is_unconditional_even_where_the_gate_would_have_blocked(
+    tmp_path: Path,
+) -> None:
+    """The *Done when* gate is not asked again at a re-carry, and this is the case that used to be
+    the only way to make it answer BLOCKS.
+
+    It only ever answered on ids belonging to another phase: `done_when.decide` matches a finding's
+    requirement ids against the conditions THIS phase's specs tag, and a deferral carries the ids of
+    the phase that raised it, so the intersection is empty for every real deferral. Constructing a
+    refusal took a cross-phase id (`R9.1.1` deferred out of phase 8) that the pipeline's own id
+    scheme cannot produce. That same shape now carries on, with the measurement unchanged.
+    """
     root = feature(tmp_path)
     eight = bound_phase(root, items=DEFERRED_ROW.replace("FWD-1", "F9"))
     carried_items.defer(eight, "F9", "12-staging", RECORD, spec_ids=["R9.1.1"])
     nine = bound_phase(root, "9-writer")
+    assert (
+        carried_items.done_when.decide(nine, ["R9.1.1"]).code
+        == carried_items.done_when.BLOCKS
+    )
+    carried = carried_items.recarry(nine, "F9")
+    assert carried["measurement"] == carried_items.deferrals(eight)[0]["measurement"]
+    assert carried["owner"] == "12-staging"
+    (nine / "handover.md").write_text(
+        CARD.format(phase="9-writer", items=DEFERRED_ROW.replace("FWD-1", "F9")),
+        encoding="utf-8",
+    )
+    assert carried_items.phase_problems(nine) == []
+    assert run("due", str(nine)) == 0
+
+
+def test_a_fresh_defer_still_refuses_a_finding_that_blocks_this_phase(
+    tmp_path: Path,
+) -> None:
+    """Dropping the re-ask does not touch the deferral decision path, which is where the gate's ids
+    ARE the phase's own: phase 3's A3 stays refused."""
+    root = feature(tmp_path)
+    eight = bound_phase(root, items=DEFERRED_ROW)
     with pytest.raises(carried_items.DeferralRefused, match="DW-1"):
-        carried_items.recarry(nine, "F9")
+        carried_items.defer(eight, "FWD-1", "12-staging", RECORD, spec_ids=["R8.1.1"])
 
 
 @pytest.mark.parametrize("slug", ["9-writer", "10-reader"])
 def test_recarry_carries_on_where_this_phases_done_when_cannot_be_read(
-    tmp_path: Path, slug: str, capsys
+    tmp_path: Path, slug: str
 ) -> None:
     """An undecidable *Done when* refuses a fresh deferral; it must not refuse a re-carry.
 
@@ -1316,7 +1448,6 @@ def test_recarry_carries_on_where_this_phases_done_when_cannot_be_read(
     source = carried_items.deferrals(root / "8-poller")[0]
     assert carried["measurement"] == source["measurement"]
     assert carried["owner"] == "12-staging" and carried["origin"] == "8-poller"
-    assert "not read" in capsys.readouterr().err
     (intermediate / "handover.md").write_text(
         CARD.format(phase=slug, items=DEFERRED_ROW), encoding="utf-8"
     )

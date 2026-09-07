@@ -64,9 +64,11 @@ forward-looking claims alongside open findings, and makes it binding**:
    all, and says so. The Verifier stamps such a finding `status: deferred`, and
    `verdict_findings.open_findings` resolves that stamp ONLY when a record here backs it - a stamp
    with nothing behind it is open. Between the deferring phase and the owner, every phase answers
-   the row by `recarry`: the record is copied with its measurement byte-for-byte, the *Done when*
-   gate is asked again against THAT phase, and the discharge is recorded as `declined` with the
-   structural reason. The owner answers it like any other row. Nothing here may weaken a check,
+   the row by `recarry`, **unconditionally**: the record is copied with its measurement
+   byte-for-byte and the discharge is recorded as `declined` with the structural reason. The *Done
+   when* gate is NOT asked again there - its ids are the deferring phase's own, so it can only ever
+   answer one way from an intermediate phase, and a gate that cannot refuse establishes nothing
+   (§11). The owner answers it like any other row. Nothing here may weaken a check,
    delete a test or move a threshold: the deferral carries the number forward unchanged, and
    there is no command that edits one.
 
@@ -108,8 +110,9 @@ Usage:
                                             2 when that cannot be decided (prose-only Done when).
     carried_items.py recarry <phase-dir> <item-id>
                                             answer a deferred-finding row owned by a LATER phase:
-                                            copy its record unchanged, re-ask the Done when gate
-                                            against this phase, record the discharge as declined
+                                            copy its record unchanged and record the discharge as
+                                            declined. Unconditional - the Done when gate binds at
+                                            `defer`, where the ids are the phase's own.
     carried_items.py deferred <phase-dir>   exit 1 when a `status: deferred` verdict finding has no
                                             deferral behind it, or the card and the ledger disagree
                                             about what is deferred
@@ -121,6 +124,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -136,6 +140,7 @@ import done_when  # noqa: E402
 from doc_read_path import changed_paths  # noqa: E402
 from md_section import slice_section  # noqa: E402
 from spec_gate_context import layout, prior_phase  # noqa: E402
+from verdict_findings import open_findings  # noqa: E402
 
 OK = 0
 OWED = 1
@@ -764,33 +769,6 @@ def _decide_or_refuse(
     return decision
 
 
-def _refuse_if_blocks(phase_dir: Path, spec_ids: list[str], what: str) -> None:
-    """Re-carrying refuses a finding that BLOCKS this phase - and only that.
-
-    A fresh `defer` needs a DECIDABLE *Done when*, because there this phase is deciding that a
-    finding may leave it, and an unreadable *Done when* cannot say what a finding would block
-    (`_decide_or_refuse`). Re-carrying decides nothing of the sort: the record is copied
-    byte-for-byte and stays owed to the same later phase, so the question is only whether it became
-    THIS phase's to fix on the way through.
-
-    Refusing on UNDECIDABLE too would wedge an intermediate phase that did nothing wrong. A phase
-    whose own *Done when* is prose only inherits the row, cannot answer it with `discharge --as
-    declined` (that is refused for an item a later phase owns), cannot answer it with
-    `built`/`tested` without inventing a fix - and `due` then blocks its close with only
-    `GATE_BYPASS` left. A rule whose remedy is unavailable is a wedge rather than a gate (§3a), and
-    a phase written before the table existed closes the way it always did.
-    """
-    decision = done_when.decide(Path(phase_dir), spec_ids)
-    if decision.code == done_when.BLOCKS:
-        raise DeferralRefused(f"{what} cannot be re-carried: {decision.reason}")
-    if decision.code != done_when.CLEAR:
-        print(
-            f"[carried_items] {what} is re-carried unchanged, and this phase's own *Done when* was "
-            f"not read: {decision.reason}",
-            file=sys.stderr,
-        )
-
-
 def _emit_deferrals(phase_dir: Path) -> None:
     """Measurement, never a gate: the phase record counts deferrals (§6d), and a write that fails
     is swallowed by the sink and never fails the deferral it measures."""
@@ -877,11 +855,19 @@ def defer(
 def recarry(phase_dir: Path, item_id: str) -> dict:
     """Answer a deferred-finding row owned by a LATER phase: carry it on, byte-for-byte.
 
-    The record is copied from the declaring phase's ledger with its measurement unchanged, the *Done
-    when* gate is asked again against THIS phase (a finding that blocks this phase's Done when is
-    this phase's to fix, however it arrived - and only that is refused here, see
-    `_refuse_if_blocks`), and the discharge is recorded as `declined` with the structural reason.
-    The row on this phase's own card is still owed, and `declared` checks it.
+    **Re-carrying is UNCONDITIONAL**, and that is a decision rather than an omission. It used to
+    re-ask the *Done when* gate against THIS phase, on the reading that a finding could become this
+    phase's to fix on the way through. That question is unaskable here: `done_when.decide` matches
+    the finding's requirement ids against the conditions THIS phase's specs tag, and the ids on a
+    deferral belong to the phase that raised it (`R<origin>.<k>.<m>`, §2), so the intersection is
+    empty for every real deferral and BLOCKS was unreachable. A gate that can only answer one way
+    reports a clean result stronger than anything it established (§11), so it is gone rather than
+    left standing as a sentence nothing enforces.
+
+    The *Done when* gate still binds where its ids are the phase's own: at `defer` time, in the
+    phase that raises the finding. Here the record is copied with its measurement unchanged, stays
+    owed to the same later phase, and the discharge is recorded as `declined` with the structural
+    reason. The row on this phase's own card is still owed, and `declared` checks it.
     """
     available = {item.id: item for item in owed(phase_dir)}
     item = available.get(item_id)
@@ -915,7 +901,6 @@ def recarry(phase_dir: Path, item_id: str) -> dict:
     ledger = load(phase_dir)
     if any(d.get("id") == item_id for d in ledger["deferrals"]):
         raise CarriedError(f"{item_id} is already carried in {path_for(phase_dir)}")
-    _refuse_if_blocks(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")
     carried = dict(source)
     carried["recarried_by"] = Path(phase_dir).name
     carried["recarried_at"] = _now()
@@ -937,6 +922,33 @@ def recarry(phase_dir: Path, item_id: str) -> dict:
     return carried
 
 
+def _resolved_later(
+    history: list[tuple[Path, list[dict]]], backed: Collection[str]
+) -> list[set[str]]:
+    """For each verdict record, the finding ids some LATER record resolves.
+
+    A superseded attempt's stamp must not outlive the finding. `verdict_records` reads the whole
+    history because a passing verdict carries no findings and the attempt that raised one is often
+    already archived - but what a phase still OWES is decided by the latest statement about each
+    finding, the rule `verifier_attempts._check` already follows by judging only the latest attempt.
+    Resolution is `verdict_findings.open_findings`, the one owner of "still open", so `fixed`, a
+    break-glass waiver and a backed deferral all count and an unbacked `deferred` stamp does not -
+    the latest record is never skipped, so a stamp nothing ever backed is still named.
+    """
+    later: set[str] = set()
+    out: list[set[str]] = []
+    for _path, findings in reversed(history):
+        out.append(set(later))
+        later |= {
+            identifier
+            for finding in findings
+            if (identifier := str(finding.get("id") or ""))
+            and not open_findings([finding], backed)
+        }
+    out.reverse()
+    return out
+
+
 def deferral_problems(phase_dir: Path) -> list[str]:
     """Where the card, the ledger and the verdict disagree about what this phase deferred.
 
@@ -946,6 +958,13 @@ def deferral_problems(phase_dir: Path) -> list[str]:
     is open, and `open_findings` already reads it so - this names WHICH); and a verdict finding's
     `deferred_to`, when it says one, agrees with the record's owner. A phase with no card yet is
     checked on the ledger and the verdict alone.
+
+    The verdict half reads the whole attempt history but judges each finding by the LAST record
+    that states anything about it (`_resolved_later`): an archived attempt that stamped a finding
+    `deferred` before the ledger was written, and then FIXED it in the next attempt, is answered -
+    holding the archived stamp against the phase forever prescribed a remedy that no longer exists,
+    since `defer` refuses a finding whose requirement carries a *Done when* condition and an
+    archived attempt is not edited.
     """
     from verifier_attempts import (
         verdict_records,
@@ -968,19 +987,33 @@ def deferral_problems(phase_dir: Path) -> list[str]:
                 f"{FILENAME} - no owner, no measurement. Record it with `defer`, or change its kind."
             )
     backed = {str(d.get("finding")): d for d in records.values() if d.get("finding")}
+    history: list[tuple[Path, list[dict]]] = []
     for path in verdict_records(Path(phase_dir)):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise CarriedError(f"cannot read {path}: {exc}") from exc
-        for finding in (
-            payload.get("findings") if isinstance(payload, dict) else None
-        ) or []:
-            if not isinstance(finding, dict):
-                continue
+        history.append(
+            (
+                path,
+                [
+                    finding
+                    for finding in (
+                        payload.get("findings") if isinstance(payload, dict) else None
+                    )
+                    or []
+                    if isinstance(finding, dict)
+                ],
+            )
+        )
+    superseded = _resolved_later(history, set(backed))
+    for (path, findings), resolved in zip(history, superseded):
+        for finding in findings:
             if str(finding.get("status") or "").lower() != "deferred":
                 continue
             identifier = str(finding.get("id") or "")
+            if identifier in resolved:
+                continue
             record = backed.get(identifier)
             if record is None:
                 out.append(

@@ -197,8 +197,9 @@ command reads, never inline (`pipeline-conventions` § *Gates*).
 this phase owns it (`list` prints the owner), answer it like any row - a requirement in your spec is
 the usual answer. If a phase further out owns it, it is not declined: run
 `python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" recarry <phase-dir> <id>`, which copies
-the record with its measurement unchanged, re-asks this phase's *Done when* gate, records the
-discharge, and prints the row for this phase's own card.
+the record with its measurement unchanged, records the discharge, and prints the row for this
+phase's own card. It is unconditional - the *Done when* gate binds at `defer` time, in the phase
+that raised the finding, where the requirement ids are that phase's own.
 
 Discharging as `built` means a requirement in one of your specs states the behaviour - with its own
 id and its own `binding:`, like any other. It does not mean a sentence in Scope mentioning it.
