@@ -338,7 +338,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    blocks) · `enforce` (fails closed). An extra signal, and the pipeline's **only** systematic
    signal about non-discriminating tests now that the cross-family reading pass is gone — still
    advisory, still not a wall, and named as partial cover rather than a replacement. When off, no
-   mutation tool runs anywhere.
+   mutation tool runs anywhere. **The policy governs the SCORE only.** `cosmic-ray exec` mutates
+   source in place, so every exec is bracketed by `scripts/mutation_exec_guard.py` - a snapshot
+   before, an explicit restore-and-compare after and on the kill path - and a tree that differed
+   fails the run under every policy, because a mutant left on disk is authored code nobody
+   authored. Its three outcomes and what `GATE_BYPASS` may waive are in
+   `skills/pipeline-conventions`; how to read them is in `skills/mutation-interpret`.
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
    and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
    learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
@@ -553,7 +558,7 @@ with nine new entries has been weakened, not maintained.
 ## Environment
 | var | default | effect |
 |---|---|---|
-| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip) |
+| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip). It governs the **score** only: a tree `cosmic-ray exec` left changed fails the run under every policy |
 | `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
 | `GATE_TRIAGE_MODEL` | `GATE_MODEL` | the spec gate's cheaper triage pass; must not be the author's family. Unset, it now defaults to `GATE_MODEL` — the model the operator already configured and proved reachable — never to a hardcoded model on its own provider (issue #48) |
 | `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
