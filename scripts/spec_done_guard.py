@@ -96,6 +96,29 @@ generics are ordinary in a consumer repo. A real requirement id cannot contain t
 template is still rejected verbatim. The direction that matters most here is the FALSE POSITIVE: a
 misread row reverts a correctly-stamped spec, which is worse than the gap this check closes.
 
+## The stamp names the bytes it certified (issue #97, folded #121)
+
+Reverting a premature stamp closes the moment it is WRITTEN. It says nothing about the moment after:
+the hook passes, the stamp stands, and the implementer keeps editing `test-mapping.md` and the tests
+- which is the state issue #68 measured, one check later. A `done` that is checked once and then
+believed for the rest of the phase is a promise read as a completion, the exact shape #121 names.
+
+So the stamp is BOUND to the bytes the hook checked. On the `spec-done` trigger, after the mapping
+is recorded and the suite is green, `bind` writes `done_digest:` into the spec's frontmatter - a
+hash over the spec's own `test-mapping.md` and its own test directory
+(`tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`). `bound` recomputes it. A `done` whose digest no
+longer matches is a `done` written over different work: `verifier_precheck.py` reports it at
+handover, and the remedy is to stamp `done` again through a tool write, which re-runs this hook over
+the bytes that are actually there and re-binds. Nothing rewrites the stamp for this - the revert
+acts only on the two evidences it is scoped to, and this is a third.
+
+**What it binds is stated, not implied.** With no per-spec test directory the digest covers the
+mapping alone, and `bind` says so on stderr: a stamp that names the mapping and not the tests is a
+narrower claim, never a wider one. A spec that carries no `done_digest` at all was stamped before
+this rule, or through Bash (issue #102, the door this hook never sees) - it is COUNTED and NAMED by
+the precheck, never held, on the applicability boundary (§3a). The frontmatter key is outside the
+body the spec gate hashes, so binding a stamp never re-gates a spec.
+
 ## Exit 1 means the answer, never a crash
 
 `NOT_DONE` and `OUT_OF_SCOPE` are both exit 1, wired to two different branches of
@@ -117,10 +140,19 @@ Usage:
     spec_done_guard.py revert <spec.md>             flip status: done -> status: in-progress;
                                                      exit 0 whether or not a change was needed,
                                                      2 if the file cannot be read/written
+    spec_done_guard.py bind <spec.md>               write done_digest: over the spec's mapping and
+                                                     its own tests as they are now; exit 0, 2 on a
+                                                     spec that is not `done` or cannot be written
+    spec_done_guard.py bound <spec.md>              exit 0 = the recorded digest matches the bytes
+                                                     here now; 1 = it does not (the work moved on
+                                                     after `done`); 3 = no digest recorded (a stamp
+                                                     from before this rule, counted not held); 2 =
+                                                     error
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import sys
@@ -152,8 +184,17 @@ IN_PROGRESS = "in-progress"
 
 CHECK = "spec-done"
 
+#: The frontmatter key that names the bytes a `done` stamp certified. Written by `bind` from the
+#: hook, read by `bound` and by `verifier_precheck.py`. Outside the body, so the spec gate's hash
+#: never moves when a stamp is bound.
+DONE_DIGEST_FIELD = "done_digest"
+#: `bound`'s third answer: no digest was ever recorded. Its own exit code because "the stamp names
+#: other bytes" and "the stamp names nothing" have different remedies and different boundaries.
+UNBOUND = 3
+
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 STATUS_LINE = re.compile(rf"^{STATUS_FIELD}:.*$", re.MULTILINE)
+DONE_DIGEST_LINE = re.compile(rf"^{DONE_DIGEST_FIELD}:[ \t]*(\S*)[ \t]*$", re.MULTILINE)
 
 #: A markdown table's separator row and nothing else: pipes, colons, whitespace, and at least one
 #: dash. Detecting it by "the line contains `---`" dropped any real data row whose own text happens
@@ -342,6 +383,157 @@ def revert(spec_path: Path) -> bool:
     return True
 
 
+def _spec_test_dir(spec_path: Path) -> Path | None:
+    """`tests/<feature>/<n>-<slug>/<n>.<k>-<subslug>/`, or the older `tests/<n>-<slug>/<n>.<k>-…`.
+
+    The spec's OWN tests and never the phase's: another spec's implementer adding a case in the same
+    phase is not this spec's work moving on. None when neither exists, and the caller says what that
+    narrows the claim to.
+    """
+    spec = Path(spec_path).resolve()
+    parents = spec.parents
+    # parents: [0] <spec dir>, [1] specs, [2] <phase>, [3] phases, [4] <feature>, [5] features,
+    # [6] docs, [7] the repository root.
+    if len(parents) < 8 or parents[1].name != "specs" or parents[3].name != "phases":
+        return None
+    root, feature, phase, name = (
+        parents[7],
+        parents[4].name,
+        parents[2].name,
+        parents[0].name,
+    )
+    for candidate in (
+        root / "tests" / feature / phase / name,
+        root / "tests" / phase / name,
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def done_subject_digest(spec_path: Path) -> tuple[str, bool]:
+    """(hash over the bytes a `done` stamp certifies, whether a test directory was part of it).
+
+    The spec's own `test-mapping.md` and every file under its own test directory, each labelled
+    relative to what it belongs to - never an absolute path, so the digest does not move with the
+    checkout. A mapping or test file that cannot be read contributes an explicit marker rather than
+    being skipped: the stamp must move when its subject becomes unreadable.
+    """
+    spec = Path(spec_path).resolve()
+    entries: list[tuple[str, bytes]] = []
+
+    def add(label: str, path: Path) -> None:
+        try:
+            entries.append((label, path.read_bytes()))
+        except OSError:
+            entries.append((label, b"<unreadable>"))
+
+    mapping = spec.parent / "test-mapping.md"
+    if mapping.is_file():
+        add("mapping:test-mapping.md", mapping)
+    else:
+        entries.append(("mapping:test-mapping.md", b"<absent>"))
+    tests = _spec_test_dir(spec)
+    if tests is not None:
+        for path in sorted(p for p in tests.rglob("*") if p.is_file()):
+            if "__pycache__" in path.parts:
+                continue
+            add("test:" + path.relative_to(tests).as_posix(), path)
+    digest = hashlib.sha256()
+    for label, payload in sorted(entries):
+        digest.update(label.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(payload).hexdigest().encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest(), tests is not None
+
+
+def recorded_done_digest(text: str) -> str | None:
+    """The digest a `done` stamp was bound to, or None when the stamp names no bytes at all."""
+    match = FRONTMATTER.match(text)
+    if not match:
+        return None
+    found = DONE_DIGEST_LINE.search(match.group(1))
+    return (found.group(1) or None) if found else None
+
+
+def bind(spec_path: Path) -> tuple[str, bool]:
+    """Write `done_digest:` over the bytes here now. Returns (digest, tests were included).
+
+    Raises ValueError when the spec is not `status: done` - a stamp that is not there cannot be
+    bound - or has no frontmatter to hold the key.
+    """
+    text = spec_path.read_text(encoding="utf-8")
+    match = FRONTMATTER.match(text)
+    if not match:
+        raise ValueError("no YAML frontmatter")
+    if spec_gate_state.frontmatter(text).get(STATUS_FIELD) != DONE:
+        raise ValueError(f"status is not `{DONE}`, so there is no stamp to bind")
+    digest, with_tests = done_subject_digest(spec_path)
+    block = match.group(1)
+    line = f"{DONE_DIGEST_FIELD}: {digest}"
+    block = (
+        DONE_DIGEST_LINE.sub(line, block)
+        if DONE_DIGEST_LINE.search(block)
+        else f"{block}\n{line}"
+    )
+    spec_path.write_text(f"---\n{block}\n---" + text[match.end() :], encoding="utf-8")
+    return digest, with_tests
+
+
+def bound(spec_path: Path) -> bool | None:
+    """Whether the `done` stamp still names the bytes that are here. None = no digest recorded."""
+    recorded = recorded_done_digest(spec_path.read_text(encoding="utf-8"))
+    if recorded is None:
+        return None
+    current, _with_tests = done_subject_digest(spec_path)
+    return recorded == current
+
+
+def _bind_cli(path: Path) -> int:
+    try:
+        digest, with_tests = bind(path)
+    except (OSError, ValueError) as exc:
+        print(
+            f"[{CHECK}] cannot bind the `done` stamp on {path}: {exc}", file=sys.stderr
+        )
+        return ERROR
+    covered = (
+        "its test-mapping.md and its own test directory"
+        if with_tests
+        else "its test-mapping.md ONLY - no per-spec test directory exists, so the stamp says "
+        "nothing about tests"
+    )
+    print(
+        f"[{CHECK}] bound `status: {DONE}` on {path} to {covered} ({DONE_DIGEST_FIELD}: "
+        f"{digest[:12]}…). An edit to either after this reads as work that moved on after `done`.",
+        file=sys.stderr,
+    )
+    return OK
+
+
+def _bound_cli(path: Path) -> int:
+    state = bound(path)
+    if state is None:
+        applicability.report_unenforced(
+            CHECK,
+            1,
+            f"{path} carries no `{DONE_DIGEST_FIELD}` - stamped before this rule, or through a "
+            f"write no hook sees - so what its `done` certifies is UNKNOWABLE and it is counted, "
+            f"never held.",
+        )
+        return UNBOUND
+    if state:
+        return OK
+    print(
+        f"[{CHECK}] {path}: `status: {DONE}` was bound to different bytes than are here now - its "
+        f"test-mapping.md or its own tests changed AFTER it declared done. Stamp `done` again "
+        f"through a tool write so the hook re-checks and re-binds it.",
+        file=sys.stderr,
+    )
+    return NOT_DONE
+
+
 def _stamp_is_new_cli(path: Path) -> int:
     verdict = stamp_is_new(path)
     if verdict is True:
@@ -423,13 +615,22 @@ def main(argv: list[str] | None = None) -> int:
 
 def _dispatch(argv: list[str] | None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) == 2 and args[0] in ("stamp-is-new", "mapping-complete"):
+    if len(args) == 2 and args[0] in (
+        "stamp-is-new",
+        "mapping-complete",
+        "bind",
+        "bound",
+    ):
         path = Path(args[1])
         if not path.is_file():
             print(f"[spec_done_guard] no such spec: {path}", file=sys.stderr)
             return ERROR
         if args[0] == "stamp-is-new":
             return _stamp_is_new_cli(path)
+        if args[0] == "bind":
+            return _bind_cli(path)
+        if args[0] == "bound":
+            return _bound_cli(path)
         return _mapping_complete_cli(path)
     if len(args) == 2 and args[0] == "revert":
         path = Path(args[1])

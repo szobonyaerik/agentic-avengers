@@ -556,3 +556,148 @@ def test_cli_revert_reports_error_on_unwritable_target(tmp_path: Path) -> None:
 def test_cli_with_no_recognised_command_prints_usage_and_errors() -> None:
     assert main([]) == ERROR
     assert main(["bogus"]) == ERROR
+
+
+# ── the stamp names the bytes it certified (issue #97, folded #121) ──────────
+#
+# Reverting closes the moment `done` is WRITTEN; nothing closed the moment after, when the
+# implementer kept editing the mapping and the tests behind a stamp the checks had already passed.
+# `bind` writes a digest over the spec's own mapping and its own test directory; `bound` recomputes it.
+
+
+def layout(root: Path, *, tests: bool = True) -> Path:
+    """A spec in the canonical layout, with (by default) its own test directory."""
+    spec_dir = (
+        root / "docs" / "features" / "demo" / "phases" / "1-core" / "specs" / "1.1-a"
+    )
+    spec_dir.mkdir(parents=True)
+    spec = spec_dir / "spec.md"
+    write_spec(spec)
+    (spec_dir / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+        "| R1.1.1 | test_it | integration | ... |\n"
+    )
+    if tests:
+        own = root / "tests" / "demo" / "1-core" / "1.1-a"
+        own.mkdir(parents=True)
+        (own / "test_a.py").write_text("def test_it():\n    assert True\n")
+    return spec
+
+
+def test_bind_writes_a_digest_and_bound_reads_it_back(tmp_path: Path) -> None:
+    spec = layout(tmp_path)
+    digest, with_tests = spec_done_guard.bind(spec)
+    assert with_tests is True
+    assert f"done_digest: {digest}" in spec.read_text()
+    assert spec_done_guard.bound(spec) is True
+
+
+def test_an_edit_to_the_mapping_after_done_unbinds_the_stamp(tmp_path: Path) -> None:
+    """RED before the fix: nothing tied `done` to the mapping it was checked against."""
+    spec = layout(tmp_path)
+    spec_done_guard.bind(spec)
+    mapping = spec.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text() + "| R1.1.2 | test_more | integration | added later |\n"
+    )
+    assert spec_done_guard.bound(spec) is False
+
+
+def test_an_edit_to_the_specs_own_tests_after_done_unbinds_the_stamp(
+    tmp_path: Path,
+) -> None:
+    spec = layout(tmp_path)
+    spec_done_guard.bind(spec)
+    (tmp_path / "tests" / "demo" / "1-core" / "1.1-a" / "test_b.py").write_text(
+        "def test_later():\n    assert True\n"
+    )
+    assert spec_done_guard.bound(spec) is False
+
+
+def test_another_specs_tests_in_the_same_phase_are_not_this_specs_work(
+    tmp_path: Path,
+) -> None:
+    """The stamp binds the spec's OWN tests: a sibling's implementer adding a case is not it moving on."""
+    spec = layout(tmp_path)
+    spec_done_guard.bind(spec)
+    sibling = tmp_path / "tests" / "demo" / "1-core" / "1.2-b"
+    sibling.mkdir(parents=True)
+    (sibling / "test_c.py").write_text("def test_other():\n    assert True\n")
+    assert spec_done_guard.bound(spec) is True
+
+
+def test_binding_again_replaces_the_digest_rather_than_adding_a_second_key(
+    tmp_path: Path,
+) -> None:
+    spec = layout(tmp_path)
+    spec_done_guard.bind(spec)
+    mapping = spec.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text() + "| R1.1.2 | test_more | integration | later |\n"
+    )
+    spec_done_guard.bind(spec)
+    assert spec.read_text().count("done_digest:") == 1
+    assert spec_done_guard.bound(spec) is True
+
+
+def test_binding_never_moves_the_body_the_spec_gate_hashes(tmp_path: Path) -> None:
+    import spec_gate_cache
+
+    spec = layout(tmp_path)
+    before = spec_gate_cache.body_hash(spec_gate_cache.split_spec(spec.read_text())[1])
+    spec_done_guard.bind(spec)
+    after = spec_gate_cache.body_hash(spec_gate_cache.split_spec(spec.read_text())[1])
+    assert before == after
+
+
+def test_with_no_own_test_directory_the_stamp_binds_the_mapping_only_and_says_so(
+    tmp_path: Path, capsys
+) -> None:
+    spec = layout(tmp_path, tests=False)
+    assert main(["bind", str(spec)]) == OK
+    assert "ONLY" in capsys.readouterr().err
+    assert spec_done_guard.bound(spec) is True
+
+
+def test_bind_refuses_a_spec_that_is_not_done(tmp_path: Path, capsys) -> None:
+    spec = layout(tmp_path)
+    write_spec(spec, status="in-progress")
+    assert main(["bind", str(spec)]) == ERROR
+    assert "done_digest" not in spec.read_text()
+
+
+def test_a_stamp_with_no_digest_is_unbound_and_counted_not_held(
+    tmp_path: Path, capsys
+) -> None:
+    """A `done` from before the rule, or written through Bash, names no bytes - unknowable, never held."""
+    spec = layout(tmp_path)
+    assert spec_done_guard.bound(spec) is None
+    assert main(["bound", str(spec)]) == spec_done_guard.UNBOUND
+    assert "UNKNOWABLE" in capsys.readouterr().err
+
+
+def test_cli_bound_exits_one_when_the_work_moved_on_and_names_the_remedy(
+    tmp_path: Path, capsys
+) -> None:
+    spec = layout(tmp_path)
+    spec_done_guard.bind(spec)
+    assert main(["bound", str(spec)]) == OK
+    mapping = spec.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text() + "| R1.1.2 | test_more | integration | later |\n"
+    )
+    assert main(["bound", str(spec)]) == NOT_DONE
+    assert "again" in capsys.readouterr().err
+
+
+def test_an_unreadable_test_file_moves_the_digest_rather_than_vanishing(
+    tmp_path: Path,
+) -> None:
+    spec = layout(tmp_path)
+    spec_done_guard.bind(spec)
+    target = tmp_path / "tests" / "demo" / "1-core" / "1.1-a" / "test_a.py"
+    target.chmod(0)
+    try:
+        assert spec_done_guard.bound(spec) is False
+    finally:
+        target.chmod(0o644)

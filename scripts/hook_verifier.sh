@@ -193,6 +193,26 @@ if [ "$STAMP_BINDS" = "1" ]; then
   fi
 fi
 
+# The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
+# untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
+# is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
+# script can do: coverage judged per `binding:`, and adversarial execution against secrets, resource
+# lifetimes and concurrency invariants.
+#
+# Asked BEFORE the suite on the handover (issue #97, folded #122): the suite is the one thing here
+# that costs wall clock - roughly a minute on a measured phase - and it was run before every check
+# whose answer could not depend on it. A bookkeeping finding is static and free; paying the suite to
+# learn a mapping row names no test is the shape "re-runs the full suite before doing anything a
+# re-run could inform" describes. Nothing here reads the suite's result, so nothing moves.
+if [ "$TRIGGER" = "handover" ]; then
+  PHASE_DIR="$(dirname "$FILE")"
+  if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
+    fail "verifier:precheck" \
+      "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
+      "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
+  fi
+fi
+
 # Through `suite_outcome.py run`, never bare `pytest`: a suite that HANGS used to wedge this hook
 # until the harness killed it, and a suite that died before printing anything came back with an exit
 # code and no result to read. `suite_outcome` bounds the run in its own process group and answers
@@ -246,6 +266,25 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
        "$STAMP_NOTE" \
        "$(printf '%s\n' "$OUT" | tail -20)"
+fi
+
+# The stamp NAMES THE BYTES it certified (issue #97, folded #121). Everything above closes the
+# moment `done` is written; nothing closed the moment after, when the implementer kept editing the
+# mapping and the tests behind a stamp the checks had already passed. `bind` writes `done_digest:`
+# over the spec's own test-mapping.md and its own test directory as they are RIGHT NOW - a later
+# edit to either makes the stamp read as work that moved on after `done`, which
+# `verifier_precheck.py` reports at handover with the remedy (stamp done again, through a tool
+# write, so this hook re-checks and re-binds). Only a NEW stamp is bound: one already `done` at HEAD
+# has shipped and is never rewritten. Binding failing is an ERROR named as such, never a silent
+# `done` that binds nothing - that would be the unbound state this exists to remove, with a hook
+# that looked like it had bound it.
+if [ "$STAMP_BINDS" = "1" ]; then
+  if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then
+    fail "verifier:spec-done-unbound" \
+      "verifier ($TRIGGER): the 'status: done' stamp passed its checks but could NOT be bound to" \
+      "the bytes it certifies (cause above). An unbound stamp is a promise, not a completion, so" \
+      "this fails closed. The stamp is left exactly as written; fix what it named and stamp again."
+  fi
 fi
 
 # Fixture realism, mechanically (issue #33). One measured phase shipped a credential refusal that
@@ -311,17 +350,6 @@ fi
 [ "$TRIGGER" = "handover" ] || exit 0
 
 PHASE_DIR="$(dirname "$FILE")"
-
-# The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
-# untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
-# is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
-# script can do: coverage judged per `binding:`, and adversarial execution against secrets, resource
-# lifetimes and concurrency invariants.
-if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
-  fail "verifier:precheck" \
-    "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
-    "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
-fi
 
 # Required skills a stage was owed and was never observed loading. A pointer is the cheap half of
 # delivery — it saves injecting a large skill body on every spawn — and this audit is the other half:
@@ -448,6 +476,28 @@ case "$V" in
         "verifier: whether this phase's verification actually ran could not be DECIDED (cause" \
         "above) — this is not missing evidence, and recording a run will not repair it. A check" \
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
+    fi
+    # A verdict is bound to a HEAD (issue #97, folded #122). The evidence above proves the runs
+    # happened and were about these specs and tests; it says nothing about the COMMIT the tree
+    # stood on, and a fix round that commits while a verification is open moves HEAD past every
+    # recorded run with the verdict still reading `pass`. `verdict_currency.py` anchors an
+    # uncommitted verdict on the newest head its evidence recorded and asks git what landed after
+    # it; the remedy is an amendment naming the ids the change touched, never a rewritten verdict.
+    # Fails OPEN where git cannot answer, and says so - the same boundary every check here uses.
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it.
+    python3 "$SD/verdict_currency.py" check "$(dirname "$(dirname "$PHASE_DIR")")"; cur_rc=$?
+    if [ "$cur_rc" -eq 1 ]; then
+      fail "verifier:verdict-stale" \
+        "verifier: the tree moved past the head this phase was verified at, and no amendment" \
+        "records it (named above). The verdict describes a tree that no longer exists, so it is" \
+        "STALE, not passing. Open an amendment naming the requirement ids the change touched and" \
+        "re-verify only those - do NOT rewrite verdict.json."
+    elif [ "$cur_rc" -ne 0 ]; then
+      fail "verifier:verdict-currency-undecidable" \
+        "verifier: whether this phase's verdict still describes the tree could not be DECIDED" \
+        "(cause above) - this is not a stale verdict, and an amendment will not repair it. Fix" \
+        "what it named."
     fi
     # A phase that RESOLVES TO criticality: critical routes the Breaker (commands/avenger-run.md §4;
     # scripts/criticality.py resolves an absent, blank, unrecognised or unreadable field to critical,

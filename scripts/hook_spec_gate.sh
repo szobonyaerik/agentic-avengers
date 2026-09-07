@@ -153,9 +153,15 @@ fi
 
 # Diff-scoped re-gate: only for a spec that was approved AND has reached the implementer. A spec
 # still in draft has no settled text to protect, so it is always gated whole.
+#
+# `stale` is the status an approved spec READS AS the moment its body moves on from the bytes the
+# gate approved (spec_gate_state.status_of, issue #97) - which on a spec write is exactly the state
+# that owes a diff-scoped re-gate. Reading `approved` alone here would gate the whole spec again
+# and hand the reviewer text it had already passed, the sampling defect the kept body exists to stop.
+GATE_STATUS="$(python3 "$SD/spec_gate_state.py" status "$FILE" 2>/dev/null)"
 TARGET="$FILE"
 BUNDLE=""
-if [ "$(python3 "$SD/spec_gate_state.py" status "$FILE" 2>/dev/null)" = "approved" ] &&
+if { [ "$GATE_STATUS" = "approved" ] || [ "$GATE_STATUS" = "stale" ]; } &&
    grep -qE '^status:[[:space:]]*(done|in-progress)[[:space:]]*$' "$FILE" 2>/dev/null &&
    PREV=$(python3 "$SD/spec_gate_cache.py" previous "$FILE" gate 2>/dev/null); then
   BUNDLE="$(mktemp "${TMPDIR:-/tmp}/spec-gate-bundle.XXXXXX")"

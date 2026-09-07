@@ -29,9 +29,21 @@ Two path classes are excluded, each for a stated reason:
 * the feature's own `tests/e2e/<feature>/` — written once after the final phase is green, by design
   (CLAUDE.md §4b), and deliberately excluded from the phase verifier.
 
+**A verdict not yet committed anchors on the HEAD its evidence was recorded at** (issue #97, folded
+#122). The anchor above only exists once `verdict.json` has LANDED, so at phase close - the handover,
+where the verdict is on disk and not yet in any commit - this check used to answer "no committed
+verdict to anchor on" and step aside, which is the one moment the folded instance happened in: a fix
+round committed and moved the head while a verification was open, and only a human reading two
+heads side by side saw it. `verifier_evidence.py` now records `head` on every run, so an uncommitted
+verdict anchors on the newest recorded head of the phases carrying one, and `hook_verifier.sh` asks
+this at the handover. A committed verdict keeps the commit it landed in as its anchor, and
+deliberately not its evidence head: the phase's own commit lands AFTER its verification and carries
+the verified source, so reading it as post-verification would owe every phase an amendment for
+having been committed.
+
 **It fails OPEN on anything git cannot answer**, exactly as `applicability.changed_paths` does: no
-git, not a repository, no committed verdict to anchor on. An unknowable scope enforces nothing and
-says so on stderr rather than passing invisibly.
+git, not a repository, no verdict to anchor on - committed or recorded. An unknowable scope enforces
+nothing and says so on stderr rather than passing invisibly.
 
     verdict_currency.py check <feature-dir>     exit 0 current · 1 an amendment is owed · 2 usage
 """
@@ -45,6 +57,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import guard_scope  # noqa: E402
+import verifier_evidence  # noqa: E402 - the record that names which head a run stood on
 
 CURRENT = 0
 OWED = 1
@@ -83,7 +96,54 @@ def anchor(root: Path, feature_dir: Path) -> str | None:
     except ValueError:
         return None
     out = _git(root, "log", "-1", "--format=%H", "--", f"{rel}/phases/*/verdict.json")
-    return out.strip() or None if out is not None else None
+    committed = (out.strip() or None) if out is not None else None
+    if committed is not None:
+        return committed
+    return recorded_anchor(root, feature_dir)
+
+
+def recorded_anchor(root: Path, feature_dir: Path) -> str | None:
+    """The newest head recorded by the evidence of a phase whose verdict is on disk, or None.
+
+    Only phases that HAVE a `verdict.json` are read - a run recorded for a phase still being
+    verified anchors nothing, because there is no verdict yet for the tree to have moved past. A
+    record this cannot read is skipped and named: an unreadable transcript is `verifier_evidence
+    check`'s finding, not a reason for this check to invent an anchor or to crash.
+    """
+    best: tuple[int, str] | None = None
+    for verdict in sorted(Path(feature_dir).glob("phases/*/verdict.json")):
+        phase = verdict.parent
+        try:
+            head = verifier_evidence.latest_head(phase)
+        except verifier_evidence.EvidenceError as exc:
+            print(
+                f"{PREFIX} {phase.name}: its evidence record could not be read ({exc}) - no "
+                f"recorded head taken from it",
+                file=sys.stderr,
+            )
+            continue
+        if head is None:
+            continue
+        rank = _commit_time(root, head)
+        if rank is None:
+            print(
+                f"{PREFIX} {phase.name}: recorded head {head[:8]} is not a commit this repository "
+                f"knows - not used as an anchor",
+                file=sys.stderr,
+            )
+            continue
+        if best is None or rank > best[0]:
+            best = (rank, head)
+    return best[1] if best else None
+
+
+def _commit_time(root: Path, commit: str) -> int | None:
+    """When `commit` was made, for ranking recorded heads; None when git does not know it."""
+    out = _git(root, "log", "-1", "--format=%ct", commit, "--")
+    try:
+        return int(out.strip()) if out and out.strip() else None
+    except ValueError:
+        return None
 
 
 def _e2e_prefix(root: Path, feature: str) -> str:
@@ -133,8 +193,8 @@ def check(root: Path, feature_dir: Path) -> str | None:
     commit = anchor(root, feature_dir)
     if commit is None:
         print(
-            f"{PREFIX} {feature}: no committed verdict to anchor on (or git cannot say) — "
-            f"verdict currency NOT checked",
+            f"{PREFIX} {feature}: no committed verdict and no recorded head to anchor on (or git "
+            f"cannot say) — verdict currency NOT checked",
             file=sys.stderr,
         )
         return None

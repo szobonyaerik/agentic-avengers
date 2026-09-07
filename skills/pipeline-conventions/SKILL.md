@@ -170,9 +170,11 @@ enforces at the stamp itself, and the old sweep looked in the phase directory, w
 that file's home since specs became `<n>.<k>` directories.
 
 **It does NOT ask for `handover.md`, and that is a decision rather than an omission.**
-`hook_verifier.sh` owns that write and refuses it on a passing verdict PLUS six further checks -
-`verifier_precheck.py`, `required_skills.py audit`, `verifier_evidence.py check`,
-`breaker_gate.py due`, the carried-items gate and `emission_gate.py defects`. Any condition this
+`hook_verifier.sh` owns that write and refuses it on a passing verdict PLUS seven further checks -
+`verifier_precheck.py` (asked BEFORE the phase suite on the handover, since a bookkeeping finding
+is static and free and the suite is the one thing there that costs a minute), `required_skills.py
+audit`, `verifier_evidence.py check`, `verdict_currency.py check`, `breaker_gate.py due`, the
+carried-items gate and `emission_gate.py defects`. Any condition this
 sweep could ask is strictly WEAKER than that set, so a phase always exists where the Stop hook says
 "create handover.md before stopping" and the handover trigger then refuses to let anyone write it: a
 required skill with no observed load, a critical phase whose Breaker never ran, a verdict with no
@@ -445,7 +447,15 @@ Three consequences worth stating outright:
     stamp-freshness observations. Every one was mechanically decidable. `scripts/verifier_precheck.py`
     now decides them for no tokens: every requirement id appears in some `test-mapping.md` row for
     its phase (`binding: none` exempt by construction), the gate stamp is fresh for every spec, and
-    every spec still has its `## Acceptance criteria` heading. **A defect that recurred twice, six
+    every spec still has its `## Acceptance criteria` heading. **And the ROW is held to the test it
+    names** (issue #97, folded #122): a row is the claim that a named test proves a named
+    requirement, and confirming the id appeared somewhere and the test existed somewhere left that
+    claim unfalsifiable. `skills/tdd` already asks every test to list the ids it covers, so the
+    precheck pairs each row's ids with each row's tests and reads the test's own text - a test that
+    lists ids and NOT the row's is a finding; a test that lists none can corroborate nothing and is
+    counted and named, never held, since a corpus written before that instruction is exactly that
+    shape. It also holds every **bound `done` stamp** to the mapping and tests it was bound over (see
+    *The stamp names the bytes it certified*, below). **A defect that recurred twice, six
     attempts apart, in one phase, because nothing checked it continuously** — so it runs on **every
     commit**, and **diff-scoped**, the same "you are responsible for what you change" rule as the
     verifier evidence, the spec re-gate cache and the mutation gate: the phases the commit touches from
@@ -453,6 +463,16 @@ Three consequences worth stating outright:
     under `gate_ci.sh --full`. A full audit on every commit would hard-fail a consumer repo's CI over
     locked phases nobody touched; when git cannot say what changed, nothing is enforced and the check
     says so out loud rather than falling back to enforcing everything.
+  - **The stamp names the bytes it approved, and every reader sees it that way** (issue #97, folded
+    #121). `spec_gate: approved` and `gate_gated_hash` are written together over one body, and
+    `spec_gate_state.status_of` - the one reader - answers **`stale`** the moment the body no longer
+    hashes to what the gate recorded. `stale` is DERIVED, never written (`set` refuses it), so there
+    is no second freshness question for `gate_ci.sh`, `pipeline_state.py` or the hook to forget to
+    ask: a spec edited after its approval passed CI's stamp check on the value alone, and it cannot
+    now. A stamp with no recorded hash stays `approved` on the applicability boundary and the CLI
+    says so on stderr. A legitimately re-gated spec still gets a fresh stamp with nobody clearing
+    anything by hand - the re-gate hook treats `stale` exactly as it treated `approved`, a
+    diff-scoped re-gate against the kept body.
   - **A stale gate stamp has two remedies, and both of them clear the check.** Write the spec again
     to re-gate it, or record a disclosed `spec-gate` exception for that spec
     (`applicability.py record <phase-dir> --rule spec-gate --subject <n>.<k>-<subslug>
@@ -738,10 +758,20 @@ while it runs, so it changed verified production code and touched no phase artif
 `verdict.json` went on asserting a named source file was byte-identical, quoting a `git diff`, after
 the fix commit had changed it. `scripts/verdict_currency.py` is the trigger, run from
 `pipeline_state.py` before a feature may report `done` (the last point at which the remedy still
-exists — `done` is terminal) and from `gate_ci.sh --full`. It anchors on the **newest verdict in the
+exists — `done` is terminal), from `gate_ci.sh --full`, **and from `hook_verifier.sh` at the
+handover** (issue #97, folded #122). It anchors on the **newest verdict in the
 feature**: every commit after that is post-verification by construction, since a phase's own
 implementation commits always precede its own verdict, and before it an implementer changing source
-while an earlier phase's verdict stands is ordinary work. `docs/` and the feature's own
+while an earlier phase's verdict stands is ordinary work. **A verdict is bound to a HEAD**: every
+run `verifier_evidence.py record` makes carries the commit the working copy stood on (in the chain,
+where git could say), so a verdict not yet committed anchors on the newest head its evidence
+recorded - the one moment this check used to have no anchor at all, and the moment the folded
+instance happened in (faithful-rep phase 3: a fix round committed while a run was open, and only a
+human reading two heads side by side noticed). A committed verdict keeps the commit it landed in,
+deliberately not its evidence head, since the phase's own commit lands after its verification and
+carries the verified source. A verdict whose recorded head the branch has moved past is **stale, not
+passing**, and the close refuses to carry it; the remedy is the amendment. What it does not see is
+stated: an uncommitted edit at the same head, since it asks git what LANDED. `docs/` and the feature's own
 `tests/e2e/<feature>/` are excluded, each for a stated reason. The finding clears when a phase
 records an amendment — the remedy it prescribes — and it fails open on anything git cannot answer.
 **Never rewrite `verdict.json` to clear it**: that restates a verification nobody performed, which
@@ -1575,6 +1605,21 @@ after `IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock for
 that is not a verdict lets the spawn through and says so; `GATE_BYPASS` proceeds, audited, and
 `IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry it — its adapter hooks
 `tool.execute.after`, which is after the fact.
+
+**And once the stamp stands, it NAMES THE BYTES it certified** (issue #97, folded #121). The checks
+above close the moment `done` is written; nothing closed the moment after, when the implementer kept
+editing the mapping and the tests behind a stamp already passed - a promise read as a completion,
+one check later. So after the mapping is recorded and the suite is green, the hook runs
+`spec_done_guard.py bind`, which writes `done_digest:` into the spec's frontmatter - a hash over the
+spec's own `test-mapping.md` and its own test directory (`tests/<feature>/<n>-<slug>/<n>.<k>-…/`,
+never the phase's: a sibling's implementer adding a case is not this spec moving on). At handover
+`verifier_precheck.py` recomputes it, and a `done` bound to different bytes is a finding whose
+remedy is to stamp `done` again through a tool write, so the hook re-checks and re-binds over what is
+actually there. The key sits outside the body the spec gate hashes, so binding never re-gates. What
+it binds is stated: with no per-spec test directory the digest covers the mapping alone and `bind`
+says so; a `done` carrying no digest - stamped before the rule, or through Bash, the door #102 names -
+is counted and named, never held. A bind that fails is an ERROR that fails the hook, never a silent
+`done` that binds nothing.
 
 **And it binds only the TRANSITION into `done`** (the applicability boundary, §3a). The trigger
 fires on any write to a `spec.md` that merely *contains* `status: done`, so `spec_done_guard.py`
