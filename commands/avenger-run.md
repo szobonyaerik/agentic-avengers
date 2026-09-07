@@ -522,8 +522,9 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   ```
   Run directly by you as the orchestrating stage, the same way `defect` is (§6d). It is **belt and
   braces, not the only mechanism**: `scripts/hook_phase_close.sh` is a `PostToolUse` hook on `Bash`
-  that fires after the commit ran and stamps every phase that commit touched, so a run that forgets
-  this step still records the close. (This paragraph used to say no hook could see the commit land.
+  that fires after the commit ran and stamps every phase that commit touched **whose `handover.md`
+  that commit carries** - a spec, plan or amendment commit leaves the directory clean too and is
+  not the landing (issue #120) - so a run that forgets this step still records the close. (This paragraph used to say no hook could see the commit land.
   That was the defect — one can, and while it said otherwise nothing stamped the close at all for
   two measured phases running.) `record_phase_close` converges on a phase already closed, so running
   both costs nothing; opencode has no such hook and this command is its only emitter.

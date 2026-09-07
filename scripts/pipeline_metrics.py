@@ -47,8 +47,9 @@ record converges instead of double-counting a round.
 CLI, for the shell emission points (all fail open, all exit 0, except `defect` — see above):
     pipeline_metrics.py spec-round <spec.md> --verdict approved|blocked
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
-    pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
+    pipeline_metrics.py verifier-attempts <phase-dir>  (derived from verdict.json, not a counter)
     pipeline_metrics.py verifier-findings <phase-dir> <verdict.json>
+    pipeline_metrics.py breaker-findings <phase-dir> <breaker.json>
     pipeline_metrics.py mutation-survivors <phase-dir> <mutation-score.json>
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
     pipeline_metrics.py skill-required --stage <s>
@@ -56,15 +57,18 @@ CLI, for the shell emission points (all fail open, all exit 0, except `defect` �
         (exits 1 when the write failed or no writer is configured, 2 when --phase-ref names no phase)
     pipeline_metrics.py phase-open <phase-dir>
     pipeline_metrics.py phase-close <phase-dir>
+    pipeline_metrics.py provenance <phase-ref>   (report: what the pipeline stamped vs. hand-entered)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess  # noqa: S404 — `git ls-files`, fixed argv, to ask whether the closing document landed
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -489,7 +493,7 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
             bytes_by_round=rounds,
         ):
             return None
-        sink.set_fields(phase, spec_rounds=_spec_rounds(sink.show(phase)))
+        _stamp(phase, spec_rounds=_spec_rounds(sink.show(phase)))
         keep(path, "metrics", body)
         return len(rounds)
     except Exception as exc:  # noqa: BLE001
@@ -580,38 +584,41 @@ def record_plugin_version(phase: str) -> bool:
 # --- verification attempts, suite size, phase boundaries -----------------------------------------
 
 
-def open_verification_attempt(phase_dir: str) -> int | None:
-    """The verification ATTEMPT this run belongs to, derived from the verdict record on disk.
+def record_verification_attempts(phase_dir: str) -> int | None:
+    """Record how many verification ATTEMPTS this phase has run, from the verdict record on disk.
 
-    It used to increment on every invocation of the removed cross-family reading pass's script, which is
-    not the same thing and reads as if it were. One measured phase recorded **8** — three review calls
-    that timed out plus five diagnostic retries — while `verdict.json` correctly said `attempt: 1` and the
-    real three-attempt cap sat at 1 of 3, never fired. Read against a cap of 3, that number says the
-    cap failed and a declared hypothesis was disproved. Both would have been false, and the metric is
-    the only thing that said so.
+    `verification_attempts` is firstmate's "how many verification attempts ran, whatever their
+    verdict", and it is read against a cap of 3. It used to increment on every invocation of the
+    removed cross-family reading pass's script: one measured phase recorded **8** - three timed-out
+    review calls plus five diagnostic retries - while `verdict.json` correctly said `attempt: 1` and
+    the real cap sat at 1 of 3, never fired. Read against that cap, 8 says the cap failed and a
+    declared hypothesis was disproved; both would have been false. Then the script that counted was
+    deleted, and with it the only caller, so every record the pipeline wrote after that carried
+    **null** while the phases' own verdicts read `attempt: 4` (issue #120).
 
-    So the attempt comes from where the cap gets it: `verifier_attempts.current()`, over
-    `verdict.json` and the `verdict-attempt-<n>.json` archives the Verifier writes. This run is the
-    one after the last one on record, and **repeated invocations converge** on that same number
-    rather than accumulating — which is the producer contract firstmate's record requires, and
-    exactly what a retry must not disturb.
+    So the count comes from where the cap gets it: `verifier_attempts.current()`, the highest attempt
+    on record across `verdict.json` and the `verdict-attempt-<n>.json` archives the Verifier writes.
+    It is emitted where the fact is DECIDED - on every verdict write (`hook_verifier.sh`) - and again
+    at the handover, and **repeated invocations converge** on the same number rather than
+    accumulating, which is the producer contract firstmate's record requires and exactly what a
+    retry must not disturb. Retries and provider failures are not lost, they are attributed
+    correctly: `gate_calls[]` carries one entry per call with its `failure_cause`.
 
-    Retries and provider failures are not lost, they are attributed correctly: `gate_calls[]` already
-    carries one entry per call with its `failure_cause`, written by `gate_runner.py`. Only the
-    attribution was wrong. No field is added — firstmate owns that schema.
-
-    An unreadable verdict record leaves the derivation to the record already stored, which is a
-    measurement failing open exactly like every other one here.
+    A phase with no verdict on record has run no attempt, so nothing is written: `null` keeps
+    meaning "not measured" and 0 would claim a measurement nobody took. An unreadable verdict record
+    leaves the stored value alone, which is a measurement failing open like every other one here.
     """
     try:
         phase = resolve_phase(phase_dir)
         if phase is None:
             return None
-        attempt = verifier_attempts.current(Path(phase_dir)) + 1
-        sink.set_fields(phase, verification_attempts=attempt)
-        return attempt
+        count = verifier_attempts.current(Path(phase_dir))
+        if count == 0:
+            return 0
+        _stamp(phase, verification_attempts=count)
+        return count
     except Exception as exc:  # noqa: BLE001
-        sink.note(f"verification attempt not recorded: {type(exc).__name__}: {exc}")
+        sink.note(f"verification attempts not recorded: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -695,30 +702,98 @@ def record_phase_open(phase_dir: str) -> bool:
         counted = count_tests()
         if counted is not None:
             fields["tests_before"] = counted
-    return sink.set_fields(phase, **fields) if fields else True
+    return _stamp(phase, **fields) if fields else True
+
+
+#: The document whose committed presence is what LANDING means. `commands/avenger-run.md` §5 commits
+#: a phase "after each phase has a passing verdict.json AND its handover.md", and a phase closed at
+#: the attempt cap still writes the card (its remainder is carried there). So the card is the one
+#: artifact every closing phase commits and no earlier commit can - a spec commit, a plan commit, an
+#: amendment commit all leave the directory clean and none of them is the phase landing.
+CLOSING_DOCUMENT = "handover.md"
+
+
+def _committed(path: Path) -> bool | None:
+    """Whether `path` is tracked by git - in the index, which with a clean scope means in HEAD.
+
+    None when git cannot answer (no repository, no `git`, a hung `git`), never read as "committed".
+    """
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            [
+                "git",
+                "-C",
+                str(path.parent),
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                path.name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=sink.timeout(),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode == 0:
+        return True
+    # `--error-unmatch` exits 1 for a path git knows nothing about; anything else is git failing.
+    return False if proc.returncode == 1 else None
+
+
+def not_landed_reason(phase_dir: Path) -> str | None:
+    """Why `phase_dir` has not LANDED, or None once it has.
+
+    `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
+    implementation completion understates the phase by verification, route-backs and close - its
+    most expensive stages - and the too-early number is indistinguishable from a good one (issue
+    #46). Landing has TWO evidences here, and issue #120 is what the first alone measured:
+
+    * **The closing document is committed.** "Nothing under the directory is uncommitted" was the
+      whole test, and a spec commit satisfies it: phase 5 of one measured feature was stamped
+      `closed` at its SPEC commit, `elapsed_minutes: 10`, two hours and sixteen minutes before it
+      landed and before any verdict existed - and because a close SEALS the record, every defect
+      and gate call the phase produced after that was refused by the writer. `handover.md` being
+      *written* is still not landing (it is the Verifier's precondition); `handover.md` being
+      *committed* is what §5 says the landing commit contains.
+    * **Nothing under the directory is uncommitted** - `applicability.changed_paths`, reused rather
+      than re-derived so this agrees with every other "what did the diff touch" question in the
+      pipeline. An amendment can still reopen a phase after its card exists; while it does, the
+      directory is dirty and this refuses.
+
+    Returns None when git cannot answer at all, WRAPPED as a reason by the caller - a producer that
+    cannot observe landing must not claim it.
+    """
+    scope = applicability.changed_paths(phase_dir)
+    if scope is None:
+        return "git could not say whether it has landed"
+    if applicability.touched(phase_dir, scope):
+        return "still has uncommitted changes"
+    committed = _committed(Path(phase_dir) / CLOSING_DOCUMENT)
+    if committed is None:
+        return f"git could not say whether its {CLOSING_DOCUMENT} is committed"
+    if not committed:
+        return (
+            f"has no committed {CLOSING_DOCUMENT} - a commit that leaves the phase directory clean "
+            f"is not the phase landing until its contract card is in it (a spec or plan commit "
+            f"is not a close)"
+        )
+    return None
 
 
 def phase_landed(phase_dir: Path) -> bool | None:
-    """Whether `phase_dir` has LANDED — nothing under it left uncommitted.
+    """Whether `phase_dir` has LANDED: its closing document committed and nothing left uncommitted.
 
-    `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
-    implementation completion understates the phase by verification, route-backs and close — its
-    most expensive stages — and the too-early number is indistinguishable from a good one (issue
-    #46). `handover.md` being written is not landing: it is the Verifier's own precondition, checked
-    by `hook_verifier.sh` *after* this file exists, and a phase can still gain an open amendment, a
-    further Verifier finding, or a blocked handover before its commit happens.
-
-    Landing IS observable, though — `commands/avenger-run.md` §5 commits everything under the phase
-    directory the moment it actually lands — so this checks the one thing every caller can see
-    without being told who they are or when they think they are: `applicability.changed_paths`,
-    reused rather than re-derived so this agrees with every other "what did the diff touch" question
-    in the pipeline. True once nothing under `phase_dir` is modified, staged, or untracked. None when
-    git cannot answer (no repo, no `git` on PATH) — never read as "landed".
+    True once landed; False when git answered and it has not; None when git cannot answer - never
+    read as "landed". `not_landed_reason` carries the words.
     """
     scope = applicability.changed_paths(phase_dir)
     if scope is None:
         return None
-    return not applicability.touched(phase_dir, scope)
+    if applicability.touched(phase_dir, scope):
+        return False
+    return _committed(Path(phase_dir) / CLOSING_DOCUMENT)
 
 
 #: The mutation gate's stage name in `gate_calls[]`, and the cause a run that never happened carries.
@@ -768,27 +843,30 @@ def record_mutation_unavailable(phase_dir: str, reason: str) -> bool:
 def record_phase_close(phase_dir: str) -> bool:
     """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
 
-    Refuses the write while `phase_dir` is not yet landed (issue #46) — a producer that cannot
-    observe landing must not claim it, and this one now can. Called at the wrong moment, this is a
-    no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on why.
+    Refuses the write while `phase_dir` is not yet landed (issue #46, sharpened by issue #120: landed
+    means the contract card is COMMITTED, not merely that a commit left the directory clean) - a
+    producer that cannot observe landing must not claim it, and this one now can. Called at the
+    wrong moment, this is a no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on
+    why.
 
-    CONVERGES on a phase already closed, writing nothing at all. Two producers now stamp the close —
+    CONVERGES on a phase already closed, writing nothing at all. Two producers stamp the close -
     `hook_phase_close.sh` on every commit that touches the phase, and the orchestrator's own
-    `phase-close` — and a phase directory is routinely committed again after it closed. A closed
+    `phase-close` - and a phase directory is routinely committed again after it closed. A closed
     record SEALS its measurements, so a second stamp is not a repeat, it is drift: firstmate refuses
     it outright, and this would spend a refusal on every later commit to say what the record already
     says. Producing the same answer twice must cost nothing and change nothing.
+
+    `elapsed_minutes` is derived from `opened`, which only a spec WRITE through the Write/Edit hook
+    stamps (`hook_spec_gate.sh` -> `phase-open`). A phase whose specs were authored through a shell
+    heredoc has no `opened`, and its elapsed time is then genuinely unmeasured: it is left null and
+    SAID, never invented from a later moment, because a stamp is worth what its trigger point is
+    worth and "the first commit that touched the directory" is not dispatch.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
         return False
-    landed = phase_landed(Path(phase_dir))
-    if landed is not True:
-        why = (
-            "still has uncommitted changes"
-            if landed is False
-            else "git could not say whether it has landed"
-        )
+    why = not_landed_reason(Path(phase_dir))
+    if why is not None:
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
     record = sink.show(phase) or {}
@@ -802,7 +880,16 @@ def record_phase_close(phase_dir: str) -> bool:
     elapsed = _elapsed_minutes(record.get("opened"), closed)
     if elapsed is not None:
         fields["elapsed_minutes"] = elapsed
-    return sink.set_fields(phase, **fields)
+    else:
+        sink.note(
+            f"phase {phase}: elapsed_minutes NOT recorded - the record carries no `opened` "
+            f"({record.get('opened')!r}). Nothing stamped the phase open: `phase-open` fires from "
+            f"hook_spec_gate.sh on a spec written through the Write/Edit tool, and a spec authored "
+            f"through a shell heredoc or on a runtime without that hook fires nothing. The close is "
+            f"still stamped; the elapsed time is genuinely unmeasured and stays null rather than "
+            f"being invented from a later moment."
+        )
+    return _stamp(phase, **fields)
 
 
 def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
@@ -815,6 +902,132 @@ def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
     except ValueError:
         return None
     return max(0, int((end - start).total_seconds() // 60))
+
+
+# --- provenance: what the pipeline stamped itself ---------------------------------------------------
+
+#: The measurement scalars a close SEALS (`docs/pipeline-metrics.md`, "A closed record seals its
+#: measurements"). These are the fields a person can type in afterwards and the fields this pipeline
+#: stamps as the run happens, under one name, so the record alone cannot say which happened - which
+#: is how four of fourteen records in one home came to carry a null `elapsed_minutes` and eleven
+#: hand-entered close stamps without anything noticing (issue #120).
+MEASUREMENT_SCALARS = (
+    "opened",
+    "closed",
+    "elapsed_minutes",
+    "spec_rounds",
+    "verification_attempts",
+    "connection_drops",
+    "tests_before",
+    "tests_after",
+    "turns",
+    "output_tokens",
+    "cache_read_tokens",
+)
+
+#: The row that says which of those the PIPELINE wrote. Not a new top-level field: firstmate's schema
+#: is closed and its producer contract is "add no key" (§6d), so this follows the precedent
+#: `record_triage_decision`, `record_plugin_version` and `record_mutation_unavailable` set for a fact
+#: the schema has no field for - an ordinary `gate_calls` row on EXISTING keys, the fact in `note`,
+#: bounded free text the schema already has. `defects[]` already carries this per entry as
+#: `recorded_by` (firstmate PR 17); this is the same statement for the scalars, in the form the
+#: contract allows. The proper home is a per-scalar `recorded_by` in the schema, which is firstmate's
+#: decision and is said in the PR that shipped this rather than pre-empted here.
+#:
+#: It is written BEFORE `closed`, because `closed` seals every collection, `gate_calls` included: a
+#: row that arrives after the close is refused, and a refused provenance row is the one thing this
+#: row must never be. The reader (`provenance_report`) intersects the list with the scalars that
+#: actually hold a value, so a field this row names that a failed write left null is not counted as
+#: stamped - which is what makes writing the row a step early safe rather than an over-claim.
+PROVENANCE_STAGE = "metrics-provenance"
+PROVENANCE_MODEL = "none (scripts/pipeline_metrics.py)"
+PROVENANCE_PREFIX = "pipeline-stamped:"
+
+
+def _provenance_id(phase: str) -> str:
+    return f"p{phase}-{PROVENANCE_STAGE}"
+
+
+def stamped_fields(record: dict | None) -> set[str]:
+    """The measurement scalars the pipeline says it stamped, read back off the provenance row."""
+    for entry in (record or {}).get("gate_calls") or []:
+        if isinstance(entry, dict) and entry.get("stage") == PROVENANCE_STAGE:
+            note = str(entry.get("note") or "")
+            if note.startswith(PROVENANCE_PREFIX):
+                return {
+                    name.strip()
+                    for name in note[len(PROVENANCE_PREFIX) :].split(",")
+                    if name.strip()
+                }
+    return set()
+
+
+def _record_provenance(phase: str, names: set[str]) -> bool:
+    """Merge `names` into the phase's provenance row. Fail-open, converging by id."""
+    try:
+        known = stamped_fields(sink.show(phase)) | {
+            n for n in names if n in MEASUREMENT_SCALARS
+        }
+        if not known:
+            return True
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=_provenance_id(phase),
+            stage=PROVENANCE_STAGE,
+            spec=None,
+            attempt=1,
+            model=PROVENANCE_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=f"{PROVENANCE_PREFIX} {','.join(sorted(known))}",
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"provenance not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
+def _stamp(phase: str, **fields: object) -> bool:
+    """Set measurement scalars AND record that the pipeline set them.
+
+    Every scalar this module writes goes through here, so the provenance row cannot miss one by a
+    caller forgetting it. `closed` is written LAST and alone: it seals the collections, and the
+    provenance row has to be in `gate_calls` before that happens.
+    """
+    if not fields:
+        return True
+    ordinary = {k: v for k, v in fields.items() if k != "closed"}
+    if ordinary and not sink.set_fields(phase, **ordinary):
+        return False
+    _record_provenance(phase, set(fields))
+    if "closed" in fields:
+        return sink.set_fields(phase, closed=fields["closed"])
+    return True
+
+
+def provenance_report(record: dict) -> dict:
+    """What fraction of this record the pipeline wrote itself - the field that makes issue #120's
+    class self-detecting. A scalar with a value that the provenance row does not name was entered by
+    something other than this pipeline (a person, or a producer that predates the row)."""
+    stamped = stamped_fields(record)
+    held = [name for name in MEASUREMENT_SCALARS if record.get(name) is not None]
+    by_pipeline = [name for name in held if name in stamped]
+    by_hand = [name for name in held if name not in stamped]
+    defects: dict[str, int] = {}
+    for defect in record.get("defects") or []:
+        if isinstance(defect, dict):
+            key = defect.get("recorded_by") or "(absent)"
+            defects[key] = defects.get(key, 0) + 1
+    return {
+        "phase": record.get("phase"),
+        "scalars_held": len(held),
+        "scalars_by_pipeline": by_pipeline,
+        "scalars_not_by_pipeline": by_hand,
+        "fraction_by_pipeline": (len(by_pipeline) / len(held)) if held else None,
+        "defects_by_recorded_by": defects,
+    }
 
 
 # --- defects: which stage found each one ---------------------------------------------------------
@@ -981,6 +1194,97 @@ def record_mutation_survivors(phase_dir: str, score_path: str) -> bool:
     )
 
 
+#: `breaker.json`'s verdict that carries defects; `clean` names what was attacked and carries none.
+BREAKER_FOUND = "found"
+
+
+def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
+    """Turn every counterexample the Breaker LANDED into a defect attributed to it.
+
+    The Breaker is the stage that found phase 8's plaintext-credential leaks by constructing inputs,
+    and until this existed nothing recorded what it found: `skills/verifier-triage` asked the
+    Verifier to run `defect --found-by breaker` by hand, which is an instruction with no mechanism
+    (issue #120, "stages find defects they never emit"). `breaker.json` is the Breaker's own record
+    and `breaker_gate.py` already refuses a `found` verdict naming no counterexample, so the
+    counterexamples are the finding set, read where they are written - `hook_verifier.sh` on every
+    `breaker.json` write - and again at the handover. Idempotent by counterexample, so the two
+    converge on one entry each.
+
+    `breaker.json` carries no severity, so every entry is `correctness`; the Breaker attacks
+    security paths, and a reader who needs the split reads the counterexample test. Said here rather
+    than guessed at.
+    """
+    phase = resolve_phase(phase_dir)
+    if phase is None:
+        return 0
+    try:
+        payload = json.loads(Path(breaker_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        sink.note(f"breaker findings not recorded: {exc}")
+        return 0
+    if not isinstance(payload, dict) or payload.get("verdict") != BREAKER_FOUND:
+        return 0
+    written = 0
+    for counterexample in payload.get("counterexamples") or []:
+        text = str(counterexample or "").strip()
+        if not text:
+            continue
+        if record_defect(
+            phase,
+            identifier=f"breaker-{text[:200]}",
+            summary=f"Breaker counterexample: {text}",
+            found_by="breaker",
+            real=True,
+            stage_reached="implementation",
+            severity="correctness",
+        ):
+            written += 1
+    return written
+
+
+def record_spec_gate_findings(spec_path: str | None, blocking: list[dict]) -> int:
+    """Record each BLOCKING observation the spec gate derived as a defect the spec gate found.
+
+    `found_by: spec-gate` is in firstmate's vocabulary - "caught while judging the spec, before
+    implementation" - and nothing emitted it: `record_triage_decision` records the arithmetic (how
+    many observations, how many blocked) and the blockers themselves went to the spec writer and
+    nowhere else. Called from `spec_gate_triage.py` at the decide step, the one place the verdict is
+    derived, so it is reached on exactly the path the defect is found on.
+
+    `real` is False: a spec is an artifact, and the schema keeps artifact defects out of the
+    product-defect count. Idempotent by statement, so a body re-gated over the same blocker
+    converges on one entry.
+    """
+    if not spec_path or not blocking:
+        return 0
+    phase = resolve_phase(spec_path)
+    spec = resolve_spec(spec_path)
+    if phase is None or spec is None:
+        return 0
+    written = 0
+    for observation in blocking:
+        if not isinstance(observation, dict):
+            continue
+        statement = str(observation.get("statement") or "").strip()
+        if not statement:
+            continue
+        digest = hashlib.sha1(  # noqa: S324 — identity, not security
+            " ".join(statement.split()).encode("utf-8")
+        ).hexdigest()[:10]
+        category = str(observation.get("category") or "blocking")
+        if record_defect(
+            phase,
+            identifier=f"spec-gate-{spec}-{digest}",
+            summary=f"[{category}] {statement}",
+            found_by="spec-gate",
+            real=False,
+            stage_reached="spec",
+            severity="correctness",
+        ):
+            written += 1
+    return written
+
+
 # --- skill loads ----------------------------------------------------------------------------------
 
 
@@ -1117,17 +1421,23 @@ def _build_parser() -> argparse.ArgumentParser:
     killed.add_argument("--phase-dir")
     killed.add_argument("--model", default=os.environ.get("GATE_MODEL", "unknown"))
 
-    attempt = sub.add_parser(
-        "verifier-attempt",
-        help="print the verification ATTEMPT this run belongs to, derived from verdict.json",
+    attempts = sub.add_parser(
+        "verifier-attempts",
+        help="record how many verification attempts are on record, derived from verdict.json",
     )
-    attempt.add_argument("phase_dir")
+    attempts.add_argument("phase_dir")
 
     findings = sub.add_parser(
-        "verifier-findings", help="record the review's findings as defects"
+        "verifier-findings", help="record the Verifier's findings as defects"
     )
     findings.add_argument("phase_dir")
     findings.add_argument("verdict")
+
+    breaker = sub.add_parser(
+        "breaker-findings", help="record the Breaker's counterexamples as defects"
+    )
+    breaker.add_argument("phase_dir")
+    breaker.add_argument("breaker")
 
     survivors = sub.add_parser(
         "mutation-survivors", help="record surviving mutants as defects"
@@ -1182,6 +1492,12 @@ def _build_parser() -> argparse.ArgumentParser:
         boundary = sub.add_parser(name, help=f"stamp the phase {name.split('-')[1]}")
         boundary.add_argument("phase_dir")
 
+    provenance = sub.add_parser(
+        "provenance",
+        help="report what fraction of the record the pipeline wrote itself",
+    )
+    provenance.add_argument("phase_ref")
+
     return parser
 
 
@@ -1216,10 +1532,12 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
             cause=HOOK_KILLED,
             detail="the harness killed the hook while the gate was still running",
         )
-    elif args.command == "verifier-attempt":
-        print(open_verification_attempt(args.phase_dir) or 1)
+    elif args.command == "verifier-attempts":
+        record_verification_attempts(args.phase_dir)
     elif args.command == "verifier-findings":
         record_verifier_findings(args.phase_dir, args.verdict)
+    elif args.command == "breaker-findings":
+        record_breaker_findings(args.phase_dir, args.breaker)
     elif args.command == "mutation-survivors":
         record_mutation_survivors(args.phase_dir, args.score)
     elif args.command == "mutation-unavailable":
@@ -1259,6 +1577,13 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
         record_phase_close(args.phase_dir)
+    elif args.command == "provenance":
+        phase = _phase_of_ref(args.phase_ref)
+        record = sink.show(phase) if phase else None
+        if record is None:
+            sink.note(f"provenance: no record readable for {args.phase_ref!r}")
+        else:
+            print(json.dumps(provenance_report(record), indent=2, sort_keys=True))
     return None
 
 

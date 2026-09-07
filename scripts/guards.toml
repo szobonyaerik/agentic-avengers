@@ -93,6 +93,130 @@ find = '''
 replace = '''
         if False:'''
 
+[[guard]]
+id = "metrics-emission.landing-is-the-card"
+implements = "scripts/pipeline_metrics.py"
+defect = "The landing test was 'nothing under the phase directory is uncommitted', which a SPEC commit satisfies: phase 5 of one measured feature was stamped `closed` at its spec commit, `elapsed_minutes: 10`, two hours before it landed, and because a close SEALS the record every defect the phase then produced was refused by the writer (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    committed = _committed(Path(phase_dir) / CLOSING_DOCUMENT)
+    if committed is None:'''
+replace = '''
+    committed = True
+    if committed is None:'''
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    if applicability.touched(phase_dir, scope):
+        return False
+    return _committed(Path(phase_dir) / CLOSING_DOCUMENT)'''
+replace = '''
+    if applicability.touched(phase_dir, scope):
+        return False
+    return True'''
+
+[[guard]]
+id = "metrics-emission.attempts-on-record"
+implements = "scripts/pipeline_metrics.py"
+defect = "`verification_attempts` was counted per invocation of a review script (8 recorded against a real attempt of 1), then that script was deleted and nothing emitted the field at all: every pipeline-written record carried null while the phase's own verdict read `attempt: 4` (issue #120)."
+tests = ["tests/test_pipeline_metrics.py", "tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        count = verifier_attempts.current(Path(phase_dir))
+        if count == 0:
+            return 0'''
+replace = '''
+        count = verifier_attempts.current(Path(phase_dir)) + 1
+        if count == 0:
+            return 0'''
+
+[[guard]]
+id = "metrics-emission.attempts-emitted-on-verdict"
+implements = "scripts/hook_verifier.sh"
+defect = "The emitter existed and had no caller. A verdict write concluded an attempt and nothing stamped the count, so the field stayed null on every record the pipeline wrote (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$(dirname "$FILE")" >/dev/null || true
+    exit 0 ;;'''
+replace = '''
+    true
+    exit 0 ;;'''
+
+[[guard]]
+id = "metrics-emission.breaker-emitted-on-write"
+implements = "scripts/hook_verifier.sh"
+defect = "A `breaker.json` write reached no hook, so a Breaker counterexample - the stage that found phase 8's credential leaks - was recorded only if the Verifier remembered to run `defect` by hand, which is an instruction with no mechanism (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+    python3 "$SD/pipeline_metrics.py" breaker-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    exit 0 ;;'''
+replace = '''
+    true
+    exit 0 ;;'''
+
+[[guard]]
+id = "metrics-emission.breaker-floor"
+implements = "scripts/emission_gate.py"
+defect = "The defect floor read the Verifier's findings and nothing else, so a phase whose Breaker landed counterexamples nobody recorded closed clean (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/emission_gate.py"
+find = '''
+    if len(landed) < len(counterexamples):'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "metrics-emission.spec-gate-blockers"
+implements = "scripts/spec_gate_triage.py"
+defect = "The spec gate recorded how MANY observations it blocked on and never which: `found_by: spec-gate` is in firstmate's vocabulary and nothing emitted it (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/spec_gate_triage.py"
+find = '''
+    record_spec_gate_findings(
+        os.environ.get("AVENGER_METRICS_SPEC_PATH"), list(decision.blocking)
+    )'''
+replace = '''
+    pass'''
+
+[[guard]]
+id = "metrics-emission.provenance-before-seal"
+implements = "scripts/pipeline_metrics.py"
+defect = "`closed` seals every collection, `gate_calls` included; a provenance row written after it is refused, and a record whose provenance row was refused is the one record that cannot say what the pipeline wrote (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    _record_provenance(phase, set(fields))
+    if "closed" in fields:
+        return sink.set_fields(phase, closed=fields["closed"])
+    return True'''
+replace = '''
+    if "closed" in fields and not sink.set_fields(phase, closed=fields["closed"]):
+        return False
+    _record_provenance(phase, set(fields))
+    return True'''
+
+[[guard]]
+id = "metrics-emission.close-emitted-on-commit"
+implements = "scripts/hook_phase_close.sh"
+defect = "Issue #46 moved the close stamp to landing and nothing emitted it there: `commands/avenger-run.md` §5 asked the orchestrator to remember, and for two phases running it was not remembered, so every closing measurement was entered by hand hours later."
+tests = ["tests/test_hook_phase_close.py", "tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_phase_close.sh"
+find = '''
+      python3 "$SD/pipeline_metrics.py" phase-close "$dir" >/dev/null || true'''
+replace = '''
+      true'''
+
 # --- gate plausibility ----------------------------------------------------------------------------
 
 [[guard]]

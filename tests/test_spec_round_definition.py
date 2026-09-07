@@ -158,7 +158,11 @@ def test_a_gate_call_belongs_to_the_round_it_is_part_of(stub_sink) -> None:  # n
         del os.environ["AVENGER_METRICS_SPEC_PATH"]
 
     data = json.loads(sorted(store.glob("phase-*.json"))[0].read_text(encoding="utf-8"))
-    assert [call["attempt"] for call in data["gate_calls"]] == [2]
+    assert [
+        call["attempt"]
+        for call in data["gate_calls"]
+        if call["stage"] != metrics.PROVENANCE_STAGE
+    ] == [2]
 
 
 # --- and it binds through the real hook -----------------------------------------------------------

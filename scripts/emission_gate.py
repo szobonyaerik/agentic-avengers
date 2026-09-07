@@ -31,9 +31,13 @@ whether a phase is good — only whether the record says as much as the phase's 
 * **Only the Verifier's own `findings[]` count.** A defect described only in a PR body, a phase
   status log, a chat transcript or a commit message is invisible here, and phase 12's five included
   such cases. This check would have caught four of that phase's five, not all of them.
-* **No other stage is covered.** The implementer, the Breaker, the spec gate and mutation each
-  conclude defects, and nothing here compares their output to the record. The mutation gate has its
-  own emission (`record_mutation_survivors`); the others do not, and that gap is real.
+* **The Breaker is covered the same way**: a `found` verdict in `breaker.json` names its
+  counterexamples, and the record must carry at least that many defects `found_by: breaker`
+  (issue #120). A `clean` verdict, or no `breaker.json`, owes nothing here.
+* **No other stage is covered.** The implementer, the spec gate and mutation each conclude defects,
+  and nothing here compares their output to the record. Both have their own emission
+  (`record_spec_gate_findings`, `record_mutation_survivors`); the implementer has none, and that gap
+  is real.
 * **It counts entries, not defects.** One finding may describe two defects and the check still
   passes; it is a floor, never an equality.
 * **A phase with no metrics record is NOT CHECKED**, and says so on stderr. That is the standing
@@ -74,6 +78,8 @@ UNDECIDABLE = 2
 #: `record_verifier_findings` gives it. Read here rather than restated: a defect the Verifier
 #: emitted is the only thing this check counts, and a second copy of that rule is the one that drifts.
 VERIFIER = "verifier"
+#: The same pair for the Breaker (`record_breaker_findings`).
+BREAKER = "breaker"
 
 
 class Undecidable(Exception):
@@ -127,20 +133,55 @@ def described_findings(phase_dir: Path) -> set[str]:
 
 def recorded_verifier_defects(record: dict) -> set[str]:
     """The defects in the record that the Verifier is credited with."""
+    return recorded_defects_of(record, VERIFIER)
+
+
+def recorded_defects_of(record: dict, found_by: str) -> set[str]:
+    """The defects in the record credited to one `found_by`."""
     return {
         str(defect.get("id"))
         for defect in record.get("defects") or []
         if isinstance(defect, dict)
-        and defect.get("found_by") == VERIFIER
+        and defect.get("found_by") == found_by
         and defect.get("id")
     }
 
 
+def described_counterexamples(phase_dir: Path) -> set[str]:
+    """Every counterexample the Breaker LANDED in this phase, from its own record.
+
+    No `breaker.json`, or a `clean` verdict, describes nothing. An unparseable one is UNDECIDABLE
+    for the same reason an unparseable verdict archive is: read as empty it lowers the bar.
+    """
+    path = Path(phase_dir) / "breaker.json"
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Undecidable(f"{path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise Undecidable(f"{path}: the breaker record is not a JSON object")
+    if payload.get("verdict") != metrics.BREAKER_FOUND:
+        return set()
+    return {
+        str(item).strip()
+        for item in payload.get("counterexamples") or []
+        if str(item or "").strip()
+    }
+
+
 def check_defects(phase_dir: str) -> tuple[int, list[str]]:
-    """A phase must not close with fewer recorded defects than its own verdicts describe."""
+    """A phase must not close with fewer recorded defects than its own artifacts describe.
+
+    Two floors, one per stage that leaves a record of what it concluded: the Verifier's findings
+    across every verdict, and the Breaker's landed counterexamples. Each is a floor, never an
+    equality, and a defect another stage recorded does not pay for either.
+    """
     try:
         record = _record(phase_dir)
         described = described_findings(Path(phase_dir))
+        counterexamples = described_counterexamples(Path(phase_dir))
     except Undecidable as exc:
         return UNDECIDABLE, [str(exc)]
     if record is None:
@@ -148,21 +189,32 @@ def check_defects(phase_dir: str) -> tuple[int, list[str]]:
             f"NOT CHECKED: {phase_dir} has no metrics record of this project — nothing measured "
             f"this phase, so nothing here can say the measurement is missing."
         ]
+    lines: list[str] = []
     recorded = recorded_verifier_defects(record)
-    if len(recorded) >= len(described):
-        return CLEAN, []
-    missing = sorted(f"{VERIFIER}-{fid}" for fid in described)
-    return GAP, [
-        f"{phase_dir}: the Verifier concluded {len(described)} finding(s) across this phase's "
-        f"verdicts and the record carries {len(recorded)} defect(s) found_by={VERIFIER}.",
-        f"  concluded: {', '.join(sorted(described))}",
-        f"  recorded:  {', '.join(sorted(recorded)) or '(none)'}",
-        "  `found_by` is the one field that cannot be reconstructed after the run, so a phase that "
-        "closes here closes it forever.",
-        f"  Emit them: pipeline_metrics.py verifier-findings {phase_dir} "
-        f"{Path(phase_dir) / 'verdict.json'}",
-        f"  (expected ids: {', '.join(missing)})",
-    ]
+    if len(recorded) < len(described):
+        missing = sorted(f"{VERIFIER}-{fid}" for fid in described)
+        lines += [
+            f"{phase_dir}: the Verifier concluded {len(described)} finding(s) across this phase's "
+            f"verdicts and the record carries {len(recorded)} defect(s) found_by={VERIFIER}.",
+            f"  concluded: {', '.join(sorted(described))}",
+            f"  recorded:  {', '.join(sorted(recorded)) or '(none)'}",
+            "  `found_by` is the one field that cannot be reconstructed after the run, so a phase "
+            "that closes here closes it forever.",
+            f"  Emit them: pipeline_metrics.py verifier-findings {phase_dir} "
+            f"{Path(phase_dir) / 'verdict.json'}",
+            f"  (expected ids: {', '.join(missing)})",
+        ]
+    landed = recorded_defects_of(record, BREAKER)
+    if len(landed) < len(counterexamples):
+        lines += [
+            f"{phase_dir}: the Breaker landed {len(counterexamples)} counterexample(s) in "
+            f"breaker.json and the record carries {len(landed)} defect(s) found_by={BREAKER}.",
+            f"  landed:   {', '.join(sorted(counterexamples))}",
+            f"  recorded: {', '.join(sorted(landed)) or '(none)'}",
+            f"  Emit them: pipeline_metrics.py breaker-findings {phase_dir} "
+            f"{Path(phase_dir) / 'breaker.json'}",
+        ]
+    return (GAP, lines) if lines else (CLEAN, [])
 
 
 def sweep_defects(root: Path) -> tuple[int, list[str]]:

@@ -238,7 +238,9 @@ sc=$?
 # every stage's catches are in it. Fails open — this runs between the verdict and acting on it, and
 # cannot change either.
 python3 "$SD/mutation_score.py" --min-score "$MUTATION_MIN_SCORE" --json "$SESSION" >"$WORK/score.json" 2>/dev/null || true
-python3 "$SD/pipeline_metrics.py" mutation-survivors "$FILE" "$WORK/score.json" >/dev/null 2>&1 || true
+# stderr deliberately kept (issue #120): a refused write is the one diagnostic that tells a run that
+# dropped its survivors from a run that had none, and `2>/dev/null` here discarded exactly that.
+python3 "$SD/pipeline_metrics.py" mutation-survivors "$FILE" "$WORK/score.json" >/dev/null || true
 
 if [ "$sc" -eq 0 ]; then
   # A passing score is not a quality bar, and this says so beside the pass (issue #97).

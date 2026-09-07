@@ -61,7 +61,8 @@ noticed. Before you finish, write `breaker.json` next to `verdict.json`
 ```json
 {"verdict": "clean", "attacked": ["malformed payloads", "auth bypass", "replay"],
  "readers": ["breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
-             "pipeline_state.py @ per phase, resolving the next stage"]}
+             "pipeline_state.py @ per phase, resolving the next stage",
+             "pipeline_metrics.py @ each breaker.json write and phase close (hook_verifier.sh) - counterexample ids only"]}
 ```
 
 or, when you land a counterexample:
@@ -69,7 +70,8 @@ or, when you land a counterexample:
 ```json
 {"verdict": "found", "counterexamples": ["tests/<feature>/<n>-<slug>/test_breaker_replay.py::test_x"],
  "readers": ["breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
-             "pipeline_state.py @ per phase, resolving the next stage"]}
+             "pipeline_state.py @ per phase, resolving the next stage",
+             "pipeline_metrics.py @ each breaker.json write and phase close (hook_verifier.sh) - counterexample ids only"]}
 ```
 
 `attacked` (for `clean`) or `counterexamples` (for `found`) must be non-empty — the gate refuses a

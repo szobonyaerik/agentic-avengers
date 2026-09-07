@@ -62,6 +62,23 @@ case "$FILE" in
     # Emitted HERE rather than at a caller: a stage cannot forget an emission it does not make.
     # Idempotent by finding id, so this and the close-time emission converge on one entry.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    # The verification ATTEMPT count, from the same record (issue #120). It used to be counted per
+    # invocation of a review script that no longer exists, and when that script went the count went
+    # with it: every record the pipeline wrote after that carried null while the phase's own verdict
+    # read `attempt: 4`. The verdict write is the moment an attempt is concluded, so it is stamped
+    # here, derived from `verdict.json` and its archives - the number the 3-attempt cap reads.
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$(dirname "$FILE")" >/dev/null || true
+    exit 0 ;;
+  */breaker.json)
+    # MEASUREMENT ONLY — never a gate, always exits 0.
+    #
+    # A `found` verdict here is the Breaker CONCLUDING a defect - the stage that found phase 8's
+    # credential leaks by constructing inputs - and until this branch existed nothing recorded it:
+    # `skills/verifier-triage` asked the Verifier to run `defect --found-by breaker` by hand, which
+    # is an instruction with no mechanism, and one measured phase closed recording 1 defect against
+    # at least 5 it produced (issue #120). Idempotent by counterexample, converging with the
+    # close-time emission below.
+    python3 "$SD/pipeline_metrics.py" breaker-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
     exit 0 ;;
   */handover.md)
     TRIGGER="handover" ;;
@@ -492,6 +509,13 @@ case "$V" in
     # this is the pipeline's highest-volume defect-attribution path, and swallowing the diagnostic
     # would leave a run that dropped every verifier defect looking like one that found none.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$VERDICT" >/dev/null || true
+    # The Breaker's counterexamples and the attempt count, converging with their per-write emissions
+    # above: a breaker.json or verdict written outside a Write/Edit tool call reaches no per-write
+    # hook, and the handover is the one point every closing phase passes (issue #120).
+    if [ -f "$PHASE_DIR/breaker.json" ]; then
+      python3 "$SD/pipeline_metrics.py" breaker-findings "$PHASE_DIR" "$PHASE_DIR/breaker.json" >/dev/null || true
+    fi
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$PHASE_DIR" >/dev/null || true
     # ...and the check that makes its absence visible. The emission above is fail-open by design, so
     # on its own a producer that stopped producing is indistinguishable from a phase that found
     # nothing — which is exactly what two measured phases looked like while their Verifiers were

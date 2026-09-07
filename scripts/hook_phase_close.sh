@@ -26,9 +26,14 @@
 # runtime gap in this pipeline is.
 #
 # SCOPE. The phases the commit touched, read from the commit itself (`git show --name-only`), not
-# from a phase the caller names: the commit is the landing, so what it contains is what landed.
-# `record_phase_close` still refuses the write while anything under the phase directory is
-# uncommitted, so a `git commit` that left the phase dirty records nothing rather than a false close.
+# from a phase the caller names. WHICH of those commits is the landing is `record_phase_close`'s
+# decision, not this hook's: it refuses while anything under the phase directory is uncommitted AND
+# while the phase's contract card (`handover.md`) is not committed (issue #120). The second half is
+# what this hook used to get wrong by omission — "the directory is clean after the commit" is true of
+# a SPEC commit too, and phase 5 of one measured feature was stamped closed at its spec commit, two
+# hours before it landed; because a close SEALS the record, every defect the phase then produced was
+# refused by the writer. So a spec, plan or amendment commit records nothing here, and the commit
+# that carries the card is the one that stamps.
 #
 # BUDGET. `hooks.json` gives this 120s, which is `gate_timeouts.HOOK_HEADROOM_S` and is what one
 # `phase-close` can actually spend: `AVENGER_METRICS_TIMEOUT` (10s) for the writer plus

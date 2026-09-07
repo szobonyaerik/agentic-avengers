@@ -82,11 +82,12 @@ limits = [
 ]
 
 [guard."emission_gate.py"]
-proves = "that a closing phase records at least as many defects as its own verdicts describe, and that a landed phase carries a close stamp."
+proves = "that a closing phase records at least as many defects as its own verdicts and its Breaker record describe, and that a landed phase carries a close stamp."
 limits = [
-  "any defect described only in a PR body, a status log, a chat transcript or a commit message - it reads the Verifier's `findings[]` and nothing else",
-  "any other stage's conclusions, none of which are compared to the record",
+  "any defect described only in a PR body, a status log, a chat transcript or a commit message - it reads the Verifier's `findings[]` and the Breaker's `counterexamples[]` and nothing else",
+  "the spec gate's, mutation's and the implementer's conclusions, none of which are compared to the record here (the first two have their own emission, the implementer has none)",
   "equality: one finding may describe two defects and still pass. This is a floor",
+  "whether the close stamp was taken at the right moment - only that a landed phase carries one",
 ]
 
 # --- the spec wall ---------------------------------------------------------------------------------

@@ -144,9 +144,12 @@ the suite for them as a stage, and never record a review that did not happen.
 ## Record which stage found each defect
 
 `scripts/hook_verifier.sh` records every finding in your `verdict.json` as a defect attributed to
-`verifier` when the phase closes, and `hook_mutation.sh` records what mutation found. **What no
-script can see is the rest of what you catch** — a Breaker counterexample, a bug found by driving the real path
-by hand, one found by reading the code outside any gate. That attribution is the single most valuable
+`verifier` on every verdict write and again when the phase closes, records each counterexample in
+`breaker.json` as a defect attributed to `breaker` when the Breaker writes it, and stamps
+`verification_attempts` from the same verdict record; `hook_mutation.sh` records what mutation
+found and `spec_gate_triage.py` records each spec-gate blocker. **What no script can see is the
+rest of what you catch** — a bug found by driving the real path by hand, one found by reading the
+code outside any gate, a Breaker counterexample the Breaker never wrote to `breaker.json`. That attribution is the single most valuable
 number the pipeline produces about itself (one phase set showed the running suite catching 3 of 15
 genuine defects) and it is **unrecoverable once the run is over**, so record it while you have it:
 

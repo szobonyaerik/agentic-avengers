@@ -1201,10 +1201,24 @@ reader on the read path for this: **finding ids and kinds only, once per phase c
 `scripts/emission_gate.py defects` refuses a phase that closes carrying **fewer defects than its own
 verdicts describe**, from `hook_verifier.sh` at the handover and diff-scoped from `gate_ci.sh`.
 **What it does not cover is stated rather than implied**: the comparison reads the Verifier's own
-`findings[]` and nothing else, so a defect described only in a PR body, a status log or a commit
-message is invisible to it — it would have caught **four** of phase 12's five, not all — and no
-other stage's conclusions are compared to the record at all. It is a floor, never an equality: one
-finding may describe two defects and still pass.
+`findings[]` and the Breaker's `counterexamples[]` and nothing else, so a defect described only in
+a PR body, a status log or a commit message is invisible to it — it would have caught **four** of
+phase 12's five, not all — and no other stage's conclusions are compared to the record at all. It
+is a floor, never an equality: one finding may describe two defects and still pass.
+
+**Every stage that leaves a record of what it concluded now emits from that record** (issue #120).
+The Breaker's `breaker.json` reached no hook at all, so its counterexamples — the stage that found
+phase 8's credential leaks — were recorded only if the Verifier remembered to run `defect` by hand;
+`hook_verifier.sh` now has a `breaker.json` branch (`pipeline_metrics.py breaker-findings`, one
+defect per counterexample, `found_by: breaker`) and the handover re-emits it, and the floor above
+holds it. The spec gate recorded how MANY observations it blocked on and never which:
+`spec_gate_triage.py` now records each blocker at the decide step (`found_by: spec-gate`,
+`real: false`, since a spec is an artifact). `verification_attempts` was never emitted at all — the
+only caller went with the deleted review script, so every pipeline-written record carried null
+while the phase's own verdict read `attempt: 4`; `hook_verifier.sh` stamps it on every verdict
+write from `verifier_attempts.current()`, the number the cap reads. **Not covered, said rather than
+implied**: findings of the feature-close ship gate (`review-gate`) run in the daemon's own worktree
+where no hook of this pipeline fires, and the implementer's own catches have no record to read.
 
 **Something emits the close stamp at landing.** Issue #46 correctly moved `closed` from
 implementation-finish to landing; nothing emitted it *there*, so a premature stamp was replaced by
@@ -1216,7 +1230,21 @@ that *"no hook can see this commit land"*. One can: **`scripts/hook_phase_close.
 hook on `Bash`** that stamps every phase directory the commit it just ran actually touched.
 `record_phase_close` still refuses the write while anything under the phase is uncommitted, and now
 **converges** rather than re-stamping a phase already closed. `emission_gate.py close` fails a
-**landed phase carrying a null `closed`**. Note the trap it exists for: the hypothesis watching this
+**landed phase carrying a null `closed`**. **And landing is the committed contract card, not a clean
+directory** (issue #120): "nothing under the directory is uncommitted" is true of a SPEC commit too,
+and phase 5 of one measured feature was stamped `closed` at the exact second of its spec commit,
+`elapsed_minutes: 10`, two hours before it landed — and because a close SEALS the record, every
+defect and gate call the phase produced after that was refused by the writer, which is how "one
+phase recorded 1 of at least 5" happens with every emitter in place. `record_phase_close` now
+refuses until `handover.md` is committed (`CLOSING_DOCUMENT`), the one artifact §5 puts in the
+landing commit and no earlier commit can. A phase never opened (specs authored through a heredoc
+fire no `phase-open`) still closes, and its `elapsed_minutes` stays null and is SAID on stderr rather
+than invented from a later moment. **The record also says what the pipeline wrote itself**: every
+scalar this pipeline stamps goes through one `_stamp` and is named on a `gate_calls` row
+(`metrics-provenance`, the precedent `plugin-version` set for a fact firstmate's closed schema has
+no field for), written BEFORE `closed` seals the collections; `pipeline_metrics.py provenance
+<phase>` reports the fraction, intersecting the row with the scalars that actually hold a value.
+The proper home is a per-scalar `recorded_by` in firstmate's schema, which is their decision. Note the trap it exists for: the hypothesis watching this
 counted *overrides correcting a close stamp* and reported **zero**, which read as success and
 described a producer that had stopped — **a check that only looks for a wrong value can never see an
 absent one.**

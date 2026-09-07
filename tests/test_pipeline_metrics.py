@@ -319,7 +319,11 @@ def test_a_second_round_is_a_second_gate_call_not_an_overwrite(stub_sink):  # no
         verdict="GO",
     )
 
-    calls = stored(store, "08")["gate_calls"]
+    calls = [
+        c
+        for c in stored(store, "08")["gate_calls"]
+        if c["stage"] != metrics.PROVENANCE_STAGE
+    ]
     assert [c["id"] for c in calls] == [
         "8.1-a1-spec-gate-observe",
         "8.1-a2-spec-gate-observe",
@@ -472,27 +476,30 @@ def verdict_at(phase_dir: Path, attempt: int, name: str = "verdict.json") -> Non
     )
 
 
-def test_the_attempt_is_derived_from_the_verdict_record_not_counted_per_call(stub_sink):  # noqa: F811
+def test_the_attempt_count_is_derived_from_the_verdict_record_not_counted_per_call(
+    stub_sink,
+):  # noqa: F811
     """The measured defect: 8 recorded — three timed-out review calls plus five diagnostic
     retries — against a `verdict.json` correctly reading `attempt: 1` and a cap of 3 that had never
     fired. Read against that cap the number says the cap failed. Repeated calls must converge."""
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
-    phase_dir.mkdir(parents=True)
-
-    assert metrics.open_verification_attempt(str(phase_dir)) == 1
-    assert metrics.open_verification_attempt(str(phase_dir)) == 1
-    assert metrics.open_verification_attempt(str(phase_dir)) == 1
+    verdict_at(phase_dir, 1)
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
     assert stored(store, "08")["verification_attempts"] == 1
 
 
-def test_the_next_attempt_follows_the_verdict_on_record(stub_sink):  # noqa: F811
+def test_the_count_is_the_attempt_on_record_not_the_next_one(stub_sink):  # noqa: F811
+    """It used to record current+1 — "the attempt this run belongs to" — for a caller that ran
+    BEFORE the verdict. Emitted on the verdict write, that is one too many; the verdict on disk IS
+    the attempt just concluded (issue #120)."""
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
     verdict_at(phase_dir, 2)
-
-    assert metrics.open_verification_attempt(str(phase_dir)) == 3
-    assert stored(store, "08")["verification_attempts"] == 3
+    assert metrics.record_verification_attempts(str(phase_dir)) == 2
+    assert stored(store, "08")["verification_attempts"] == 2
 
 
 def test_archived_attempts_count_towards_it(stub_sink):  # noqa: F811
@@ -502,8 +509,7 @@ def test_archived_attempts_count_towards_it(stub_sink):  # noqa: F811
     verdict_at(phase_dir, 1, "verdict-attempt-1.json")
     verdict_at(phase_dir, 2, "verdict-attempt-2.json")
     verdict_at(phase_dir, 3)
-
-    assert metrics.open_verification_attempt(str(phase_dir)) == 4
+    assert metrics.record_verification_attempts(str(phase_dir)) == 3
 
 
 def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_sink):  # noqa: F811
@@ -512,8 +518,7 @@ def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
     (phase_dir / "verdict.json").write_text("{not json", encoding="utf-8")
-
-    assert metrics.open_verification_attempt(str(phase_dir)) is None
+    assert metrics.record_verification_attempts(str(phase_dir)) is None
     assert not (store / "phase-08.json").exists()
 
 
@@ -946,7 +951,7 @@ def test_the_cli_exits_zero_when_the_record_cannot_be_written(stub_sink, monkeyp
     for args in (
         ("spec-round", str(spec), "--verdict", "approved"),
         ("gate-killed", "--stage", "spec-gate-observe", "--spec-path", str(spec)),
-        ("verifier-attempt", str(spec.parents[2])),
+        ("verifier-attempts", str(spec.parents[2])),
         ("phase-open", str(spec)),
         ("phase-close", str(spec)),
     ):
@@ -1319,7 +1324,8 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
         detail="killed",
         provider="opencode",
     )
-    metrics.open_verification_attempt(phase_dir)
+    verdict_at(Path(phase_dir), 1)
+    metrics.record_verification_attempts(phase_dir)
     metrics.record_skill_load(
         "08",
         stage="avenger-verifier",
@@ -1338,6 +1344,9 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
         stage_reached="verification",
         severity="security",
     )
+    (Path(phase_dir) / metrics.CLOSING_DOCUMENT).write_text(
+        "# card\n", encoding="utf-8"
+    )
     git_land(project, "close")
     metrics.record_phase_close(phase_dir)
 
@@ -1354,7 +1363,9 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     assert record["spec_rounds"] == 1 and record["verification_attempts"] == 1
     assert record["tests_before"] == 1 and record["tests_after"] == 1
     gate_calls = [
-        c for c in record["gate_calls"] if c["stage"] != metrics.PLUGIN_VERSION_STAGE
+        c
+        for c in record["gate_calls"]
+        if c["stage"] not in (metrics.PLUGIN_VERSION_STAGE, metrics.PROVENANCE_STAGE)
     ]
     assert {c["verdict"] for c in gate_calls} == {"GO", "killed"}
     assert record["defects"][0]["found_by"] == "execution"
@@ -1502,7 +1513,8 @@ def test_no_defect_reaches_the_record_except_through_the_stamping_point():
     source = (
         Path(__file__).resolve().parents[1] / "scripts" / "pipeline_metrics.py"
     ).read_text(encoding="utf-8")
-    assert source.count('"defects"') == 1
+    writes = re.findall(r'sink\.add\([^)]*"defects"', source)
+    assert len(writes) == 1
     assert (
         'sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)'
         in source
