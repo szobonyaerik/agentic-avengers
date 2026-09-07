@@ -1181,7 +1181,9 @@ def test_a_defect_stays_silent_when_metrics_are_deliberately_off(
     assert metrics.DEFECT_WRITE_FAILED not in result.stderr
     assert metrics.DEFECT_NO_WRITER not in result.stderr
     assert [
-        line for line in result.stderr.splitlines() if guard_scope.SCOPE_MARKER not in line
+        line
+        for line in result.stderr.splitlines()
+        if guard_scope.SCOPE_MARKER not in line
     ] == []
 
 
@@ -1519,22 +1521,92 @@ def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(
     assert [d["recorded_by"] for d in defects] == ["stage"] * 3
 
 
-def test_no_defect_reaches_the_record_except_through_the_stamping_point():
-    """The guard against a FOURTH route: one `defects` write, so a new one cannot skip the stamp.
+def test_no_defect_reaches_the_record_except_through_the_stamping_point(
+    stub_sink,
+):  # noqa: F811
+    """The guard against a FOURTH route: EVERY route into `defects[]` carries the stamp.
 
-    Stamping every current route says nothing about the next one. `record_defect` is the single
-    write, and this is what keeps it single — a new emission point either goes through it and is
-    stamped, or turns this red.
+    Stamping the routes one at a time says nothing about the next one, so this drives all of them —
+    the four recorders and the `defect` CLI — and asserts the property on what LANDED, never on the
+    source text. `record_defect` is the single write that stamps; a route that reaches the record
+    any other way arrives here unstamped and turns this red.
     """
-    source = (
-        Path(__file__).resolve().parents[1] / "scripts" / "pipeline_metrics.py"
-    ).read_text(encoding="utf-8")
-    writes = re.findall(r'sink\.add\([^)]*"defects"', source)
-    assert len(writes) == 1
-    assert (
-        'sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)'
-        in source
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [
+                    {"id": "aaa", "kind": "code", "instruction": "off-by-one"}
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
+    (phase_dir / "breaker.json").write_text(
+        json.dumps(
+            {"verdict": "found", "counterexamples": ["tests/demo/t.py::test_replay"]}
+        ),
+        encoding="utf-8",
+    )
+    score = phase_dir / "score.json"
+    score.write_text(
+        json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8"
+    )
+    spec_path = phase_dir / "specs" / "8.1-a" / "spec.md"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("---\nfeature: demo\n---\n- R8.1.1 do\n", encoding="utf-8")
+
+    assert metrics.record_verifier_findings(str(phase_dir)) == 1
+    assert (
+        metrics.record_breaker_findings(str(phase_dir), str(phase_dir / "breaker.json"))
+        == 1
+    )
+    assert (
+        metrics.record_spec_gate_findings(
+            str(spec_path),
+            [
+                {
+                    "id": "o1",
+                    "category": "contradiction",
+                    "statement": "contradicts the overview",
+                }
+            ],
+        )
+        == 1
+    )
+    assert metrics.record_mutation_survivors(str(phase_dir), str(score)) is True
+    assert (
+        metrics.main(
+            [
+                "defect",
+                "--phase-ref",
+                str(phase_dir),
+                "--id",
+                "D1",
+                "--summary",
+                "caught by hand-run seam",
+                "--found-by",
+                "execution",
+                "--severity",
+                "security",
+            ]
+        )
+        == 0
+    )
+
+    defects = stored(store, "08")["defects"]
+    assert {d["found_by"] for d in defects} == {
+        "verifier",
+        "breaker",
+        "spec-gate",
+        "mutation",
+        "execution",
+    }
+    assert [d["recorded_by"] for d in defects] == ["stage"] * len(defects)
 
 
 def test_recorded_by_is_never_derived_from_what_caught_the_defect(stub_sink):  # noqa: F811

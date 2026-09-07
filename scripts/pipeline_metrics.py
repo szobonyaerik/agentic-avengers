@@ -268,7 +268,20 @@ def _spec_round(
 def _attempt(
     record: dict | None, stage: str, spec: str | None, spec_path: str | None = None
 ) -> int:
-    """The attempt a gate call belongs to: the spec's round, or the phase's verification attempt."""
+    """The attempt a gate call belongs to: the spec's round, or the phase's verification attempt.
+
+    `verification_attempts` counts the attempts already CONCLUDED - `verifier_attempts.current()`,
+    the highest attempt with a verdict on record (issue #120). It used to be written as
+    `current() + 1`, the attempt in flight, which this branch could read straight off. So the
+    conversion is now explicit here: a verifier gate call is made while an attempt is being decided,
+    before its verdict exists, which is `concluded + 1` - the same "closed, plus the one in flight"
+    shape `_spec_round` uses. Reading the field unconverted files every such call one attempt low.
+
+    Its limit, which `_spec_round` closes by comparing the body and this has no equivalent for: a
+    call made after the attempt's verdict landed is attributed to the next attempt. No gate runs in
+    the verification hooks today (§6a), so this branch is reached only through
+    `AVENGER_METRICS_STAGE=verifier`.
+    """
     declared = (os.environ.get("AVENGER_METRICS_ATTEMPT") or "").strip()
     if declared:
         try:
@@ -276,7 +289,11 @@ def _attempt(
         except ValueError:
             pass
     if stage == "verifier":
-        return max(1, int((record or {}).get("verification_attempts") or 1))
+        concluded = (record or {}).get("verification_attempts") or 0
+        try:
+            return max(1, int(concluded) + 1)
+        except (TypeError, ValueError):
+            return 1
     return _spec_round(record, spec, spec_path)
 
 
@@ -624,17 +641,22 @@ def record_verification_attempts(phase_dir: str) -> int | None:
         return None
 
 
-def test_root() -> Path:
-    """Where the project's tests live — the answer `subprocess_check.test_roots()` resolves.
+def test_roots() -> list[Path]:
+    """Where the project's tests live — EVERY root `subprocess_check.test_roots()` resolves.
 
     IMPORTED rather than restated. This used to re-read `$SUBPROC_CHECK_PATHS` here, which is the
     same declaration read in a second place, and the second copy is the one that drifts: the third
     reader, `hook_verifier.sh`, never read the declaration at all and ran a hardcoded
     `--ignore=tests/e2e` over no root, so on any project whose tests are not at `tests/` the suite
     this counted and the suite the gate ran were different populations (issue #120).
+
+    All of them, not the first. Collapsing a multi-root declaration to `test_roots()[0]` is the same
+    defect one notch narrower: `hook_verifier.sh` runs `--ignore=<root>/e2e <root>` for every
+    declared root, so counting only the first stamps `tests_before`/`tests_after` from a population
+    the gate never ran. Absolute, against the project root a caller already knows.
     """
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-    return root / subprocess_check.test_roots()[0]
+    return [root / declared for declared in subprocess_check.test_roots()]
 
 
 def pytest_argv() -> list[str]:
@@ -654,10 +676,15 @@ def count_tests() -> int | None:
     """Suite size: the number of items `pytest --collect-only` would run, minus e2e.
 
     The SAME population `hook_verifier.sh` reports when it runs the phase's suite (`pytest -q`,
-    `--ignore=<test root>/e2e` on the full-suite fallback) — collected test items, not `def test_`
-    lines (issue #46). Both the collected root and the ignored e2e directory come from
-    `test_root()`, so a project that points `SUBPROC_CHECK_PATHS` elsewhere excludes ITS e2e
-    directory rather than a `tests/e2e` that does not exist there.
+    `--ignore=<test root>/e2e <test root>` per declared root on the full-suite fallback) — collected
+    test items, not `def test_` lines (issue #46). Both the collected roots and the ignored e2e
+    directories come from `test_roots()`, so a project that points `SUBPROC_CHECK_PATHS` elsewhere
+    excludes ITS e2e directories rather than a `tests/e2e` that does not exist there, and a project
+    declaring several roots counts all of them.
+
+    A declared root that does not EXIST is skipped rather than handed to pytest, the same rule the
+    hook applies: pytest treats a missing path as a usage error, which would read as a red suite
+    where a project with no tests yet must simply collect nothing.
 
     Bounded through `proc_group.run_bounded`, never `subprocess.run(timeout=…)`: this runs inside
     `hook_spec_gate.sh`, and a raw timeout stops the process it started and nothing else — leaving
@@ -669,17 +696,13 @@ def count_tests() -> int | None:
     import error — the same "not counted" the prior static count used, so `record_phase_open`/
     `record_phase_close` still treat a None here as "skip the field", never a 0.
     """
-    root = test_root()
-    if not root.is_dir():
+    roots = [root for root in test_roots() if root.is_dir()]
+    if not roots:
         return None
     project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-    argv = [
-        *pytest_argv(),
-        "-q",
-        "--collect-only",
-        f"--ignore={root / 'e2e'}",
-        str(root),
-    ]
+    argv = [*pytest_argv(), "-q", "--collect-only"]
+    for root in roots:
+        argv += [f"--ignore={root / 'e2e'}", str(root)]
     try:
         result = proc_group.run_bounded(
             argv, gate_timeouts.collect_timeout(), cwd=str(project_root)
@@ -971,11 +994,31 @@ def stamped_fields(record: dict | None) -> set[str]:
 
 
 def _record_provenance(phase: str, names: set[str]) -> bool:
-    """Merge `names` into the phase's provenance row. Fail-open, converging by id."""
+    """Merge `names` into the phase's provenance row. Fail-open, converging by id.
+
+    The row only ever GROWS within a phase, so the merge needs the names already on it — and it is
+    written by upsert, which REPLACES the row it converges on. A read that could not answer is
+    therefore not the same as a row holding nothing: `sink.show` returns None for an unreadable
+    record as well as an absent one (a non-zero exit, output that is not JSON), and merging that
+    against an empty set would rewrite the row as the names of this stamp alone. Then
+    `provenance_report` reports every earlier pipeline-written scalar under
+    `scalars_not_by_pipeline` — the instrument built to tell a pipeline stamp from a hand-entered
+    one, mislabelling its own, with no error anywhere.
+
+    So an unreadable record writes NOTHING and says so. The row keeps what it had: incomplete for as
+    long as the read fails, never narrowed to a wrong set. A record that reads fine and holds no row
+    yet is the ordinary first stamp and is written as always.
+    """
     try:
-        known = stamped_fields(sink.show(phase)) | {
-            n for n in names if n in MEASUREMENT_SCALARS
-        }
+        record = sink.show(phase)
+        if record is None:
+            sink.note(
+                f"provenance not recorded for phase {phase}: the record could not be read, and the "
+                f"row is merged into what it already names — writing it now would narrow it to "
+                f"{','.join(sorted(n for n in names if n in MEASUREMENT_SCALARS))}"
+            )
+            return False
+        known = stamped_fields(record) | {n for n in names if n in MEASUREMENT_SCALARS}
         if not known:
             return True
         return sink.add(
@@ -1262,35 +1305,46 @@ def record_spec_gate_findings(spec_path: str | None, blocking: list[dict]) -> in
     `real` is False: a spec is an artifact, and the schema keeps artifact defects out of the
     product-defect count. Idempotent by statement, so a body re-gated over the same blocker
     converges on one entry.
+
+    **Fail-open at the definition, not at the call site**, like every other recorder here. Its one
+    caller is `spec_gate_triage.py`, whose exit code IS the gate's verdict and whose only escape
+    hatch is `guard_scope.run`, which re-raises anything that is not a `SystemExit`: an exception
+    from this emission would leave the process exiting 1, the code that script spells `BLOCKED`. A
+    measurement may not decide a verdict (§6d), and putting the guard here rather than around the
+    call is what stops the next caller reintroducing the hole by forgetting the wrapper.
     """
-    if not spec_path or not blocking:
+    try:
+        if not spec_path or not blocking:
+            return 0
+        phase = resolve_phase(spec_path)
+        spec = resolve_spec(spec_path)
+        if phase is None or spec is None:
+            return 0
+        written = 0
+        for observation in blocking:
+            if not isinstance(observation, dict):
+                continue
+            statement = str(observation.get("statement") or "").strip()
+            if not statement:
+                continue
+            digest = hashlib.sha1(  # noqa: S324 — identity, not security
+                " ".join(statement.split()).encode("utf-8")
+            ).hexdigest()[:10]
+            category = str(observation.get("category") or "blocking")
+            if record_defect(
+                phase,
+                identifier=f"spec-gate-{spec}-{digest}",
+                summary=f"[{category}] {statement}",
+                found_by="spec-gate",
+                real=False,
+                stage_reached="spec",
+                severity="correctness",
+            ):
+                written += 1
+        return written
+    except Exception as exc:  # noqa: BLE001 — measurement never decides a verdict
+        sink.note(f"spec gate findings not recorded: {type(exc).__name__}: {exc}")
         return 0
-    phase = resolve_phase(spec_path)
-    spec = resolve_spec(spec_path)
-    if phase is None or spec is None:
-        return 0
-    written = 0
-    for observation in blocking:
-        if not isinstance(observation, dict):
-            continue
-        statement = str(observation.get("statement") or "").strip()
-        if not statement:
-            continue
-        digest = hashlib.sha1(  # noqa: S324 — identity, not security
-            " ".join(statement.split()).encode("utf-8")
-        ).hexdigest()[:10]
-        category = str(observation.get("category") or "blocking")
-        if record_defect(
-            phase,
-            identifier=f"spec-gate-{spec}-{digest}",
-            summary=f"[{category}] {statement}",
-            found_by="spec-gate",
-            real=False,
-            stage_reached="spec",
-            severity="correctness",
-        ):
-            written += 1
-    return written
 
 
 # --- skill loads ----------------------------------------------------------------------------------

@@ -237,9 +237,51 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
-    return root / subprocess_check.test_roots()[0]'''
+    return [root / declared for declared in subprocess_check.test_roots()]'''
 replace = '''
-    return root / "tests"'''
+    return [root / "tests"]'''
+
+[[guard]]
+id = "suite-population.every-declared-root"
+implements = "scripts/pipeline_metrics.py"
+defect = "The counted population collapsed a multi-root declaration to its FIRST root while `hook_verifier.sh` runs `--ignore=<root>/e2e <root>` for every declared root, so `tests_before`/`tests_after` stamped a suite the gate never ran wherever a project declares more than one (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    roots = [root for root in test_roots() if root.is_dir()]'''
+replace = '''
+    roots = [root for root in test_roots() if root.is_dir()][:1]'''
+
+[[guard]]
+id = "metrics-emission.provenance-never-narrows"
+implements = "scripts/pipeline_metrics.py"
+defect = "The provenance row is merged from a read-back and written by upsert, and `sink.show` returns None for an UNREADABLE record as well as an absent one. Merging that against an empty set rewrote the row as the current stamp's names alone, so `provenance_report` reported every earlier pipeline-written scalar as hand-entered - the instrument built to tell the two apart mislabelling its own (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        record = sink.show(phase)
+        if record is None:'''
+replace = '''
+        record = sink.show(phase) or {}
+        if False:'''
+
+[[guard]]
+id = "metrics-emission.spec-gate-blockers-fail-open"
+implements = "scripts/pipeline_metrics.py"
+defect = "`record_spec_gate_findings` is called from `spec_gate_triage.py`, whose exit code IS the gate's verdict, and `guard_scope.run` re-raises anything that is not a SystemExit - so an emission failure left the process exiting 1, the code that script spells BLOCKED. A measurement may never decide a verdict (§6d)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    except Exception as exc:  # noqa: BLE001 — measurement never decides a verdict
+        sink.note(f"spec gate findings not recorded: {type(exc).__name__}: {exc}")
+        return 0'''
+replace = '''
+    except ValueError as exc:
+        sink.note(f"spec gate findings not recorded: {type(exc).__name__}: {exc}")
+        return 0'''
 
 # --- gate plausibility ----------------------------------------------------------------------------
 

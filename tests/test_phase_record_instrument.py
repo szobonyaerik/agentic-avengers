@@ -542,6 +542,51 @@ def test_a_field_the_row_names_but_a_failed_write_left_null_is_not_counted(stub_
     assert report["scalars_held"] == 1
 
 
+def test_an_unreadable_record_never_narrows_the_provenance_row(stub_sink):
+    """`sink.show` returns None for an UNREADABLE record as well as an absent one, and the row is
+    written by upsert. Merging a failed read against an empty set rewrote the row as this stamp's
+    names alone, so every earlier pipeline-written scalar then reported as hand-entered - the
+    instrument built to tell the two apart mislabelling its own, with no error anywhere.
+
+    Red when the defect returns: the row comes back naming `closed` and nothing else, and `opened`
+    and `tests_before` move to `scalars_not_by_pipeline`.
+    """
+    project, store, _ = stub_sink
+    import metrics_sink as sink
+
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    before = metrics.stamped_fields(stored(store, "05"))
+    assert "opened" in before
+
+    real_show = sink.show
+    calls: list[str] = []
+
+    def show_once_unreadable(phase: str):
+        """The reachable shape: the read that MERGES fails while the writer still works."""
+        calls.append(phase)
+        return None if len(calls) == 1 else real_show(phase)
+
+    try:
+        sink.show = show_once_unreadable
+        assert metrics._record_provenance("05", {"closed"}) is False
+    finally:
+        sink.show = real_show
+
+    record = stored(store, "05")
+    assert metrics.stamped_fields(record) == before
+    assert "opened" in metrics.provenance_report(record)["scalars_by_pipeline"]
+
+
+def test_a_readable_record_with_no_row_yet_is_the_ordinary_first_stamp(stub_sink):
+    """The other side of that distinction: a record that reads fine and simply holds no row is not
+    a failed read, and the first stamp still writes."""
+    project, store, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    assert "opened" in metrics.stamped_fields(stored(store, "05"))
+
+
 def test_the_provenance_cli_reports_the_fraction(stub_sink):
     project, _, _ = stub_sink
     phase_dir = phase(project)
@@ -618,18 +663,19 @@ def scratch_project(root: Path, *, e2e_fails: bool) -> Path:
 
 
 def test_the_declaration_has_one_reader(monkeypatch):
-    """`pipeline_metrics.test_root` reads `subprocess_check.test_roots()` rather than re-reading the
-    environment. Two copies of one declaration is what let the three readers disagree."""
+    """`pipeline_metrics.test_roots` reads `subprocess_check.test_roots()` rather than re-reading the
+    environment, and carries EVERY declared root. Two copies of one declaration is what let the three
+    readers disagree; keeping only the first is that disagreement one notch narrower."""
     import subprocess_check
 
     monkeypatch.setenv("SUBPROC_CHECK_PATHS", "suite" + os.pathsep + "extra")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/proj")
     assert subprocess_check.test_roots() == [Path("suite"), Path("extra")]
-    assert metrics.test_root() == Path("/proj/suite")
+    assert metrics.test_roots() == [Path("/proj/suite"), Path("/proj/extra")]
 
     monkeypatch.delenv("SUBPROC_CHECK_PATHS")
     assert subprocess_check.test_roots() == [Path("tests")]
-    assert metrics.test_root() == Path("/proj/tests")
+    assert metrics.test_roots() == [Path("/proj/tests")]
 
 
 def test_print_roots_reports_without_claiming_a_scan(tmp_path: Path):
@@ -693,6 +739,58 @@ def test_the_counted_suite_and_the_gates_suite_are_one_population(
     assert counted == gated, f"record counts {counted}, the gate runs {gated}"
 
 
+def test_every_declared_root_is_counted_not_only_the_first(tmp_path: Path, monkeypatch):
+    """The same property for a project that declares SEVERAL roots: the number stamped into
+    `tests_before` equals the number the verifier hook's own argv collects.
+
+    Red when the defect returns: counting `test_roots()[0]` alone stamps 3 while the gate runs 5.
+    """
+    scratch_project(tmp_path, e2e_fails=False)
+    (tmp_path / "extra" / "e2e").mkdir(parents=True)
+    for index in (1, 2):
+        (tmp_path / "extra" / f"test_x{index}.py").write_text(
+            f"def test_x{index}():\n    assert True\n", encoding="utf-8"
+        )
+    (tmp_path / "extra" / "e2e" / "test_journey.py").write_text(
+        "def test_journey():\n    assert True\n", encoding="utf-8"
+    )
+    declared = "suite" + os.pathsep + "extra"
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", declared)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    counted = metrics.count_tests()
+
+    roots = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/subprocess_check.py"), "--print-roots"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "SUBPROC_CHECK_PATHS": declared},
+    ).stdout.split()
+    argv: list[str] = []
+    for root in roots:
+        argv += [f"--ignore={root}/e2e", root]
+    gated = collected(argv, tmp_path)
+
+    assert counted == 5, counted
+    assert counted == gated, f"record counts {counted}, the gate runs {gated}"
+
+
+def test_a_declared_root_that_does_not_exist_is_skipped_not_handed_to_pytest(
+    tmp_path: Path, monkeypatch
+):
+    """The hook's own rule, at the counting end: pytest treats a missing path as a usage error, which
+    would read as no count at all where the existing roots still have a population to report."""
+    scratch_project(tmp_path, e2e_fails=False)
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "suite" + os.pathsep + "nowhere")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    assert metrics.count_tests() == 3
+
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "nowhere")
+    assert metrics.count_tests() is None
+
+
 def test_the_verifier_hooks_fallback_excludes_the_declared_roots_e2e(tmp_path: Path):
     """End to end through the real hook, on the trigger that runs the suite. A RED test in the
     declared root's own `e2e/` must not be run by the phase suite - §4b excludes feature e2e from
@@ -747,3 +845,108 @@ def test_the_verifier_hooks_fallback_excludes_the_declared_roots_e2e(tmp_path: P
     assert "declared test roots minus e2e" in combined or result.returncode == 0, (
         combined
     )
+
+
+# ── 7. a measurement never decides a verdict, and a reader states the field's meaning ───────────────
+
+
+def test_a_failing_spec_gate_emission_does_not_decide_the_gates_verdict(
+    stub_sink, monkeypatch
+):
+    """`spec_gate_triage.py`'s exit code IS the verdict, and `guard_scope.run` re-raises anything
+    that is not a SystemExit - so an exception escaping this emission left the process exiting 1,
+    the code that script spells BLOCKED. Measurement may never decide a verdict (§6d).
+
+    Red when the defect returns: `main` raises instead of returning the verdict it derived.
+    """
+    project, _, _ = stub_sink
+    import spec_gate_triage
+
+    path = spec(phase(project))
+    monkeypatch.setenv("AVENGER_METRICS_SPEC_PATH", str(path))
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("the writer died mid-entry")
+
+    monkeypatch.setattr(metrics, "record_defect", explode)
+
+    obs = project / "observations.json"
+    cls = project / "classifications.json"
+    obs.write_text(
+        json.dumps(
+            {
+                "observations": [
+                    {
+                        "id": "o1",
+                        "area": "requirements",
+                        "statement": "no replay criterion",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cls.write_text(
+        json.dumps(
+            {
+                "classifications": [
+                    {"id": "o1", "category": "missing-requirement", "why": "x"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        spec_gate_triage.main(["decide", str(obs), str(cls)])
+        == spec_gate_triage.BLOCKED
+    )
+
+
+def test_the_emission_fails_open_at_its_own_definition(stub_sink, monkeypatch):
+    """The guard is on the recorder, not around one call site, so the next caller cannot
+    reintroduce the hole by forgetting the wrapper."""
+    project, _, _ = stub_sink
+    path = spec(phase(project))
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("the writer died mid-entry")
+
+    monkeypatch.setattr(metrics, "record_defect", explode)
+    assert (
+        metrics.record_spec_gate_findings(
+            str(path),
+            [{"id": "o1", "category": "contradiction", "statement": "contradicts"}],
+        )
+        == 0
+    )
+
+
+def test_a_verifier_gate_call_is_filed_under_the_attempt_in_flight(
+    stub_sink, monkeypatch
+):
+    """`verification_attempts` counts attempts already CONCLUDED (it used to be written as the
+    attempt in flight), so the reader converts: a call made while an attempt is being decided
+    belongs to `concluded + 1`.
+
+    Red when the defect returns: with two attempts concluded the call is filed under 2 - one low,
+    and against a cap of 3 that is a number the record cannot be read against.
+    """
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    verdict(phase_dir, 1, name="verdict-attempt-1.json")
+    verdict(phase_dir, 2)
+    metrics.record_phase_open(str(phase_dir))
+    assert metrics.record_verification_attempts(str(phase_dir)) == 2
+
+    monkeypatch.setenv("AVENGER_METRICS_PHASE", "05")
+    monkeypatch.setenv("AVENGER_METRICS_STAGE", "verifier")
+    assert (
+        metrics.record_gate_call(model="probe", latency_ms=900, verdict="pass") is True
+    )
+
+    call = next(
+        c for c in stored(store, "05")["gate_calls"] if c.get("stage") == "verifier"
+    )
+    assert call["attempt"] == 3
