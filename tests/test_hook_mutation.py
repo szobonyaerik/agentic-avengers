@@ -596,6 +596,70 @@ def overrides_log(root: Path) -> str:
     return log.read_text(encoding="utf-8") if log.exists() else ""
 
 
+def slow_restore_python(binaries: Path, marker: Path) -> None:
+    """A `python3` on PATH that holds inside `mutation_exec_guard.py restore`, delegating the rest.
+
+    It announces that the restore has started and then sleeps, so a signal can be delivered while
+    that child is in the foreground. Everything else, the real restore included, runs on the real
+    interpreter, so the verdict under test is the real one.
+    """
+    shim = binaries / "python3"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys, time\n"
+        "argv = sys.argv[1:]\n"
+        "if len(argv) >= 2 and argv[0].endswith('mutation_exec_guard.py') "
+        "and argv[1] == 'restore':\n"
+        f"    open({str(marker)!r}, 'w').write('x')\n"
+        "    time.sleep(1.5)\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *argv])\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+
+
+def test_a_signal_during_the_restore_cannot_discard_its_verdict(project):
+    """The restore's verdict must survive the signal that arrives while it is being taken.
+
+    bash delivers a deferred TERM the instant the foreground restore child returns - one command
+    before its exit code is read. With the kill handler installed across that window it ran first,
+    re-entered `restore_tree`, found `SNAP` already cleared and returned 0, so `TREE_CORRUPTED` was
+    still 0: the hook printed `HOOK KILLED ... advisory never blocks` and exited 0 over a tree the
+    restore had just found altered. That is issue #95's silent clean pass, reached through the code
+    added to prevent it - so the property is that the recorded verdict is acted on, whatever the
+    signal's timing.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT)
+    import signal
+
+    started = tmp / "restore-started"
+    slow_restore_python(tmp / "bin", started)
+
+    proc = start_hook(project, path_prefix=prefix)
+    try:
+        assert wait_until(started.exists, timeout_s=120), (
+            "the restore never started; the fixture is not exercising this window"
+        )
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=120)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    assert target.read_text(encoding="utf-8") == original, "the file is put back"
+    assert "TREE INTEGRITY FAILED" in err, (
+        "the restore found the tree altered and said so; a signal may not delete that finding"
+    )
+    assert "every in-scope file has been put back" in err
+    assert proc.returncode == 2, (
+        "a corrupted tree is never advisory, and a signal does not make it advisory either"
+    )
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run"
+    assert "altered by cosmic-ray exec" in row["note"]
+
+
 def failing_restore_python(binaries: Path, code: int) -> None:
     """A `python3` on PATH whose `mutation_exec_guard.py restore` exits `code`, delegating the rest.
 

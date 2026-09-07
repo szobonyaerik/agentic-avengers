@@ -155,9 +155,37 @@ SNAP=""
 TREE_CORRUPTED=0
 TREE_STATE="unknown"
 REAP_INCOMPLETE=0
+RESTORE_DONE=0
+RESTORE_SIGNALLED=0
 TREE_NOTE="the working tree was altered by cosmic-ray exec; this run's result is void"
+
+# The restore is a CRITICAL SECTION, and this is the wrapper that makes it one.
+#
+# bash delivers a deferred trap the INSTANT the foreground child returns - measured, not assumed -
+# which is one command before the classification below reads its exit code. With `on_kill` installed
+# across that window the handler ran first, re-entered here, found `SNAP` already cleared and
+# returned 0, so `TREE_CORRUPTED` was still 0 and the hook exited 0 under advisory with no TREE
+# INTEGRITY line at all: the restore's verdict was computed and thrown away, over a tree that may
+# hold an applied mutant. So for the length of the restore the handler is replaced by one that only
+# RECORDS that a signal arrived; the verdict is taken, and only then is the signal acted on. bash
+# preserves `$?` across a trap handler, so the latch cannot swallow the restore's exit code either.
+#
+# `RESTORE_DONE` is what distinguishes "the restore already ran, here is its answer" from "there was
+# nothing to restore" - the conflation that lost the verdict. `SNAP` keeps its own meaning and is
+# still cleared before the child starts, so no second signal can start a second restore.
 restore_tree() {
+  [ "$RESTORE_DONE" -eq 0 ] || return 0
   [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0
+  RESTORE_DONE=1
+  local prior_term prior_int
+  prior_term=$(trap -p TERM); prior_int=$(trap -p INT)
+  trap 'RESTORE_SIGNALLED=1' TERM INT
+  classify_tree
+  if [ -n "$prior_term" ]; then eval "$prior_term"; else trap - TERM; fi
+  if [ -n "$prior_int" ]; then eval "$prior_int"; else trap - INT; fi
+}
+
+classify_tree() {
   local snap="$SNAP"; SNAP=""
   if [ ! -f "$snap/manifest.json" ]; then
     TREE_CORRUPTED=1
@@ -470,9 +498,15 @@ SNAP="$WORK/tree"
 
 run_child cosmic-ray exec "$SCOPED" "$SESSION"
 ec=$?
-# The tree is asked FIRST, on success and failure alike, and its answer outranks both.
+# The tree is asked FIRST, on success and failure alike, and its answer outranks both. A signal that
+# arrived while the restore held it is honoured here instead - after the verdict it would otherwise
+# have destroyed has been recorded and acted on, and never swallowed.
 restore_tree
 [ "$TREE_CORRUPTED" -eq 1 ] && fail_tree
+if [ "$RESTORE_SIGNALLED" -ne 0 ]; then
+  announce_kill
+  exit_killed
+fi
 if [ "$ec" -ne 0 ]; then
   echo "cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray exec errored"

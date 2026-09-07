@@ -145,10 +145,24 @@ tests = ["tests/test_hook_mutation.py"]
 file = "scripts/hook_mutation.sh"
 find = """
 restore_tree() {
+  [ "$RESTORE_DONE" -eq 0 ] || return 0
   [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0"""
 replace = """
 restore_tree() {
   return 0"""
+
+[[guard]]
+id = "mutation-gate.the-restore-verdict-outlives-its-signal"
+implements = "scripts/hook_mutation.sh"
+defect = "The kill handler stayed installed across the restore, and bash delivers a deferred trap the instant the foreground child returns - one command before its exit code is read. The handler ran first, re-entered `restore_tree`, found `SNAP` already cleared and returned 0, so `TREE_CORRUPTED` was still 0 and the hook exited 0 under advisory with no TREE INTEGRITY line, over a tree the restore had just found altered. The verdict was computed and thrown away: issue #95's own silent clean pass, reached through the code added to close it."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+  trap 'RESTORE_SIGNALLED=1' TERM INT
+  classify_tree"""
+replace = """
+  classify_tree"""
 
 [[guard]]
 id = "mutation-gate.reap-before-the-tree-is-judged"
