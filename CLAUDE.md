@@ -1154,7 +1154,9 @@ invisible in this repository and permanent in any project whose tests are not at
 at **3 against 4** on a scratch project with tests at `suite/`, which also means §4b's exclusion of
 feature e2e from the phase verifier hook only ever applied to the default layout.
 `subprocess_check.test_roots()` is the one reader now (the module that owns `SUBPROC_CHECK_PATHS`);
-`pipeline_metrics.test_root()` imports it and the hook asks for it with `--print-roots`, a query
+`pipeline_metrics.test_roots()` imports it and counts EVERY declared root, each minus its own
+`e2e/`, rather than the first - which is the same divergence one notch narrower - and the hook asks
+for it with `--print-roots`, a query
 routed deliberately AROUND `guard_scope.run` because it performs no scan and must not borrow a
 gate's clean-result line. A root the hook cannot resolve keeps the previous whole-tree scope and
 **says so** rather than silently switching population — counted the same way at both ends

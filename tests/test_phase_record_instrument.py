@@ -323,6 +323,10 @@ def test_a_found_breaker_verdict_records_one_defect_per_counterexample(stub_sink
     assert defects[0]["real"] is True
     assert defects[0]["recorded_by"] == "stage"
     assert defects[0]["id"].startswith("breaker-")
+    # The Breaker runs only after a passing verdict, so a counterexample it lands got past
+    # implementation AND verification - firstmate's "last stage the defect passed through
+    # undetected". Recording `implementation` credits the Verifier with a catch it never made.
+    assert defects[0]["stage_reached"] == "verification"
 
 
 def test_a_clean_breaker_verdict_records_no_defect(stub_sink):
@@ -542,14 +546,17 @@ def test_a_field_the_row_names_but_a_failed_write_left_null_is_not_counted(stub_
     assert report["scalars_held"] == 1
 
 
-def test_an_unreadable_record_never_narrows_the_provenance_row(stub_sink):
-    """`sink.show` returns None for an UNREADABLE record as well as an absent one, and the row is
-    written by upsert. Merging a failed read against an empty set rewrote the row as this stamp's
-    names alone, so every earlier pipeline-written scalar then reported as hand-entered - the
-    instrument built to tell the two apart mislabelling its own, with no error anywhere.
+def test_a_failed_read_never_narrows_the_provenance_row(stub_sink):
+    """The row is merged from a read-back and written by UPSERT, so a read that could not answer
+    must never be taken for a row holding nothing: merging it against an empty set rewrites the row
+    as this stamp's names alone, and every earlier pipeline-written scalar then reports as
+    hand-entered - the instrument built to tell the two apart mislabelling its own.
 
-    Red when the defect returns: the row comes back naming `closed` and nothing else, and `opened`
-    and `tests_before` move to `scalars_not_by_pipeline`.
+    The reachable shape is a read that fails while the writer still works - a timed-out `show`, one
+    reply that is not JSON - so this fails exactly the merge read and lets the rest through.
+
+    Red when the defect returns: the row comes back naming `closed` alone and `opened` moves to
+    `scalars_not_by_pipeline`.
     """
     project, store, _ = stub_sink
     import metrics_sink as sink
@@ -560,22 +567,36 @@ def test_an_unreadable_record_never_narrows_the_provenance_row(stub_sink):
     assert "opened" in before
 
     real_show = sink.show
-    calls: list[str] = []
+    seen: list[str] = []
 
-    def show_once_unreadable(phase: str):
-        """The reachable shape: the read that MERGES fails while the writer still works."""
-        calls.append(phase)
-        return None if len(calls) == 1 else real_show(phase)
+    def show_failing_once(phase: str):
+        seen.append(phase)
+        return None if len(seen) == 1 else real_show(phase)
 
     try:
-        sink.show = show_once_unreadable
-        assert metrics._record_provenance("05", {"closed"}) is False
+        sink.show = show_failing_once
+        metrics._record_provenance("05", {"closed"})
     finally:
         sink.show = real_show
 
     record = stored(store, "05")
-    assert metrics.stamped_fields(record) == before
+    assert before <= metrics.stamped_fields(record)
     assert "opened" in metrics.provenance_report(record)["scalars_by_pipeline"]
+
+
+def test_a_writer_that_cannot_answer_reads_at_all_writes_no_row(stub_sink, monkeypatch):
+    """The other end of the same rule: when nothing can say what the row already names, the row is
+    left exactly as it was - incomplete for as long as the read fails, never a wrong set."""
+    project, store, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    before = metrics.stamped_fields(stored(store, "05"))
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    assert metrics._record_provenance("05", {"closed"}) is False
+
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    assert metrics.stamped_fields(stored(store, "05")) == before
 
 
 def test_a_readable_record_with_no_row_yet_is_the_ordinary_first_stamp(stub_sink):
@@ -585,6 +606,34 @@ def test_a_readable_record_with_no_row_yet_is_the_ordinary_first_stamp(stub_sink
     phase_dir = phase(project)
     metrics.record_phase_open(str(phase_dir))
     assert "opened" in metrics.stamped_fields(stored(store, "05"))
+
+
+def test_a_close_that_is_the_records_first_write_still_names_itself(stub_sink):
+    """The third state `sink.show` answers None for: the record does not exist YET.
+
+    A phase never opened has no `opened` and so no `elapsed_minutes`, and a project whose suite
+    cannot be collected has no `tests_after` - which leaves `closed` as the only field of the first
+    stamp. `_stamp` opens the record through `set_fields`, and it has no ordinary field to set here,
+    so the record is still absent when the row is merged.
+
+    Red when the defect returns: the record lands with a pipeline-written `closed` and no provenance
+    row, and `provenance_report` calls the pipeline's own stamp hand-entered.
+    """
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    (phase_dir / metrics.CLOSING_DOCUMENT).write_text("# card\n", encoding="utf-8")
+    git_land(project, "land")
+
+    assert metrics.record_phase_close(str(phase_dir)) is True
+
+    record = stored(store, "05")
+    assert record["closed"] is not None
+    assert record["opened"] is None
+    assert "closed" in metrics.stamped_fields(record)
+    report = metrics.provenance_report(record)
+    assert report["scalars_not_by_pipeline"] == []
+    assert report["fraction_by_pipeline"] == 1.0
 
 
 def test_the_provenance_cli_reports_the_fraction(stub_sink):

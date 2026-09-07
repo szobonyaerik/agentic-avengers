@@ -261,11 +261,45 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
+    record = sink.show(phase)
+    if record is None and sink.ensure(phase):
         record = sink.show(phase)
-        if record is None:'''
+    return record'''
 replace = '''
-        record = sink.show(phase) or {}
-        if False:'''
+    return sink.show(phase) or {}'''
+
+[[guard]]
+id = "metrics-emission.provenance-first-stamp"
+implements = "scripts/pipeline_metrics.py"
+defect = "Refusing to write on a None from `sink.show` also refused the ABSENT record, and a close that stamps `closed` alone never reaches the `set_fields` that opens one - so a phase never opened (heredoc-authored specs, `count_tests` unable to answer) landed a pipeline-written `closed` with no provenance row at all, and `provenance_report` read its own stamp as hand-entered (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    record = sink.show(phase)
+    if record is None and sink.ensure(phase):
+        record = sink.show(phase)
+    return record'''
+replace = '''
+    return sink.show(phase)'''
+
+[[guard]]
+id = "metrics-emission.breaker-survived-verification"
+implements = "scripts/pipeline_metrics.py"
+defect = "A Breaker counterexample was recorded `stage_reached: implementation`, but the Breaker runs only after a passing verdict, so the defect got past verification too. The record then reads as one verification would have caught, crediting the Verifier in the column beside `found_by` that cannot be recovered after the run (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+            summary=f"Breaker counterexample: {text}",
+            found_by="breaker",
+            real=True,
+            stage_reached="verification",'''
+replace = '''
+            summary=f"Breaker counterexample: {text}",
+            found_by="breaker",
+            real=True,
+            stage_reached="implementation",'''
 
 [[guard]]
 id = "metrics-emission.spec-gate-blockers-fail-open"

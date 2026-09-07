@@ -993,24 +993,42 @@ def stamped_fields(record: dict | None) -> set[str]:
     return set()
 
 
+def _readable_record(phase: str) -> dict | None:
+    """The record the provenance row merges into, or None when the writer could not ANSWER.
+
+    `sink.show` returns None for three different states and only one of them is a failure: a record
+    that does not exist yet, one the writer refused to read, and one whose output was not JSON. The
+    merge has to tell them apart, because it writes by upsert: treating a failed read as "the row
+    holds nothing" rewrites the row as the current stamp's names alone, and treating an ABSENT
+    record as a failed read drops the row on the one write that would have created it.
+
+    So absence is resolved rather than guessed at: `sink.ensure` opens the record, which is exactly
+    what a first stamp of `closed` alone never reaches otherwise — `_stamp` runs `sink.set_fields`
+    only when it has an ordinary field to set, and `set_fields` is what normally opens the record.
+    A None still standing after that is the genuine failure.
+    """
+    record = sink.show(phase)
+    if record is None and sink.ensure(phase):
+        record = sink.show(phase)
+    return record
+
+
 def _record_provenance(phase: str, names: set[str]) -> bool:
     """Merge `names` into the phase's provenance row. Fail-open, converging by id.
 
     The row only ever GROWS within a phase, so the merge needs the names already on it — and it is
     written by upsert, which REPLACES the row it converges on. A read that could not answer is
-    therefore not the same as a row holding nothing: `sink.show` returns None for an unreadable
-    record as well as an absent one (a non-zero exit, output that is not JSON), and merging that
-    against an empty set would rewrite the row as the names of this stamp alone. Then
-    `provenance_report` reports every earlier pipeline-written scalar under
-    `scalars_not_by_pipeline` — the instrument built to tell a pipeline stamp from a hand-entered
-    one, mislabelling its own, with no error anywhere.
+    therefore not the same as a row holding nothing: merging a failed read against an empty set
+    would rewrite the row as the names of this stamp alone. Then `provenance_report` reports every
+    earlier pipeline-written scalar under `scalars_not_by_pipeline` — the instrument built to tell a
+    pipeline stamp from a hand-entered one, mislabelling its own, with no error anywhere.
 
     So an unreadable record writes NOTHING and says so. The row keeps what it had: incomplete for as
-    long as the read fails, never narrowed to a wrong set. A record that reads fine and holds no row
-    yet is the ordinary first stamp and is written as always.
+    long as the read fails, never narrowed to a wrong set. A record that simply does not exist yet
+    is the ordinary first stamp, is opened by `_readable_record`, and is written as always.
     """
     try:
-        record = sink.show(phase)
+        record = _readable_record(phase)
         if record is None:
             sink.note(
                 f"provenance not recorded for phase {phase}: the record could not be read, and the "
@@ -1264,6 +1282,14 @@ def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
     `breaker.json` carries no severity, so every entry is `correctness`; the Breaker attacks
     security paths, and a reader who needs the split reads the counterexample test. Said here rather
     than guessed at.
+
+    `stage_reached` is `verification`, firstmate's "the last stage the defect passed through
+    undetected". The Breaker runs only AFTER a passing verdict - `pipeline_state.py` reaches its
+    branch once the verdict passes and no amendment is owed - so a counterexample it lands got past
+    implementation AND verification, and recording `implementation` would read as a defect
+    verification would still have caught, crediting the Verifier in the one column beside `found_by`
+    that cannot be recovered after the run. `record_mutation_survivors`, the other post-verdict
+    recorder here, already says `verification`.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
@@ -1286,7 +1312,7 @@ def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
             summary=f"Breaker counterexample: {text}",
             found_by="breaker",
             real=True,
-            stage_reached="implementation",
+            stage_reached="verification",
             severity="correctness",
         ):
             written += 1
