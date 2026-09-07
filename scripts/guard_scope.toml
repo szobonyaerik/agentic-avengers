@@ -81,6 +81,15 @@ limits = [
   "anything about coverage or correctness, which it deliberately never judges",
 ]
 
+[guard."pipeline_metrics.py"]
+proves = "that a phase's measurements were offered to the record at the moment the stage concluded them, and that a close was refused until the phase actually landed - its contract card committed and nothing under it uncommitted."
+limits = [
+  "that anything was WRITTEN: every command here except `defect` is fail-open by design, so a clean exit means the emission was attempted, never that the record changed - `provenance <phase>` is what reads back what the pipeline actually stamped",
+  "that a fact no stage emits was measured at all - it records what it is handed, and the implementer's own catches reach it through no route",
+  "that a stamped number is RIGHT: it derives `verification_attempts` from the verdict record and the suite size from a collection, and a wrong artifact yields a wrong stamp",
+  "anything about a phase whose trigger never fired - a spec authored through a heredoc opens no phase, and its `elapsed_minutes` stays null and is said rather than invented",
+]
+
 [guard."emission_gate.py"]
 proves = "that a closing phase records at least as many defects as its own verdicts and its Breaker record describe, and that a landed phase carries a close stamp."
 limits = [
@@ -321,6 +330,15 @@ limits = [
   "that a passing score is a quality bar: advisory never blocks, and that is a decision rather than a defect",
   "that survivors above the threshold are harmless - each is still a behaviour no test catches",
   "anything about tests written to pass rather than to discriminate, for which there is no dedicated reader",
+]
+
+[guard."hook_phase_close.sh"]
+proves = "that every phase directory the commit just made touched was offered to `phase-close`, so the close stamp is taken at landing by something that executes rather than by an orchestrator remembering to."
+limits = [
+  "that any stamp was actually WRITTEN: `record_phase_close` decides landing and refuses a phase whose contract card is not committed, and the metrics writer is fail-open throughout - this hook offers the phase and never claims the record changed",
+  "a commit made outside a Bash tool call, which reaches no PostToolUse hook at all",
+  "anything when `jq`, the payload or the repository could not be read: each exits 0 having stamped nothing, and the close is then owed to the orchestrator's own `phase-close`",
+  "that the measurements the stamp carries are right - only when they were taken",
 ]
 
 [guard."hook_implementer_lock.sh"]

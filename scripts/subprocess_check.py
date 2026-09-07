@@ -337,7 +337,7 @@ def test_roots() -> list[Path]:
     had already diverged (issue #120): `pipeline_metrics.count_tests` collected the declared root and
     ignored ITS `e2e/`, while `hook_verifier.sh`'s full-suite fallback passed pytest no root at all
     and a hardcoded `--ignore=tests/e2e`. For a project whose tests are not at `tests/` those are
-    different populations - measured at 3 against 5 on a scratch project with tests at `suite/` -
+    different populations - measured at 3 against 4 on a scratch project with tests at `suite/` -
     so `tests_before`/`tests_after` counted one suite while the gate ran another, and
     `count_tests`'s own docstring claimed they were "the SAME population". A fact stated twice is
     the drift defect this repository refuses everywhere else.

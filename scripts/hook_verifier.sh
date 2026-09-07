@@ -223,7 +223,7 @@ fi
 # re-derived here. It used to pass pytest NO root and a hardcoded `--ignore=tests/e2e`, which is the
 # whole repository including the real e2e directory for any project whose tests are not at `tests/`
 # - so this gate ran one population while `pipeline_metrics.count_tests` stamped
-# `tests_before`/`tests_after` from another, measured at 5 against 3 on a scratch project with tests
+# `tests_before`/`tests_after` from another, measured at 4 against 3 on a scratch project with tests
 # at `suite/` (issue #120). Excluding each declared root's own `e2e/` is what §4b already says this
 # hook does; it simply did not do it anywhere but the default layout.
 #

@@ -80,6 +80,7 @@ import gate_timeouts  # noqa: E402
 import metrics_sink as sink  # noqa: E402
 import plugin_release  # noqa: E402
 import proc_group  # noqa: E402
+import guard_scope  # noqa: E402
 import skill_contract  # noqa: E402
 import subprocess_check  # noqa: E402
 import verifier_attempts  # noqa: E402
@@ -1701,4 +1702,6 @@ def _defect_failure_message(args: argparse.Namespace) -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # What a clean run does NOT establish (issue #97). Every command here but `defect` is
+    # fail-open, so exit 0 says the emission was attempted and never that the record changed.
+    raise SystemExit(guard_scope.run(__file__, main))

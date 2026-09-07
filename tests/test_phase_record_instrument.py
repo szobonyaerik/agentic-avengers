@@ -599,7 +599,7 @@ def test_the_real_writer_accepts_the_provenance_row_and_seals_after_it(real_sink
 # root's `e2e/`. `hook_verifier.sh`'s full-suite fallback ran a different command: no root at all and
 # a hardcoded `--ignore=tests/e2e`. On the default layout the two agree by coincidence (2013 == 2013
 # measured on this repository), so the divergence is invisible here and permanent anywhere else -
-# measured at 3 against 5 on a project with tests at `suite/`. The declaration now has ONE reader,
+# measured at 3 against 4 on a project with tests at `suite/`. The declaration now has ONE reader,
 # `subprocess_check.test_roots()`, and these prove both callers use it.
 
 
@@ -668,7 +668,7 @@ def test_the_counted_suite_and_the_gates_suite_are_one_population(
     """The property, not the tree shape: for a project whose tests are not at `tests/`, the number
     stamped into `tests_before` equals the number the verifier hook's fallback actually collects.
 
-    Before the fix these were 3 and 5 - the gate ran the whole tree, e2e included, while the record
+    Before the fix these were 3 and 4 - the gate ran the whole tree, e2e included, while the record
     claimed the declared root.
     """
     scratch_project(tmp_path, e2e_fails=False)

@@ -51,6 +51,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
 import gate_timeouts  # noqa: E402
+import guard_scope  # noqa: E402
+import metrics_sink as sink  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
 import plugin_release  # noqa: E402
 import proc_group  # noqa: E402
@@ -1158,7 +1160,16 @@ def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(
 def test_a_defect_stays_silent_when_metrics_are_deliberately_off(
     stub_sink, monkeypatch
 ):  # noqa: F811,E501
-    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
+    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud.
+
+    The METRICS layer is what must stay silent: not one `[metrics]` line, and nothing about a defect
+    that was not recorded. The only thing allowed on stderr is this module's own §97 scope statement,
+    which every declared guard emits on a clean result and which this clean result needs most of all
+    - a `defect` that exits 0 having deliberately recorded nothing is precisely the exit code a
+    reader would otherwise take for a write that happened. Asserting a bare empty stderr conflated
+    the two speakers; this asserts the property, and still goes red the moment the metrics layer
+    says anything at all.
+    """
     project, _, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
@@ -1166,7 +1177,12 @@ def test_a_defect_stays_silent_when_metrics_are_deliberately_off(
     result = run_cli(*DEFECT_ARGS)
 
     assert result.returncode == 0
-    assert result.stderr == ""
+    assert sink.PREFIX not in result.stderr
+    assert metrics.DEFECT_WRITE_FAILED not in result.stderr
+    assert metrics.DEFECT_NO_WRITER not in result.stderr
+    assert [
+        line for line in result.stderr.splitlines() if guard_scope.SCOPE_MARKER not in line
+    ] == []
 
 
 # --- driven through the real gate runner, which is where every gate call passes -------------------------

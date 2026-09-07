@@ -1151,7 +1151,7 @@ claimed. The test-root declaration had **three** readers each re-deriving it, an
 full-suite fallback passed pytest **no root at all** and a hardcoded `--ignore=tests/e2e`. On the
 default layout the two agree by coincidence (2013 == 2013 measured here), so the divergence is
 invisible in this repository and permanent in any project whose tests are not at `tests/` — measured
-at **3 against 5** on a scratch project with tests at `suite/`, which also means §4b's exclusion of
+at **3 against 4** on a scratch project with tests at `suite/`, which also means §4b's exclusion of
 feature e2e from the phase verifier hook only ever applied to the default layout.
 `subprocess_check.test_roots()` is the one reader now (the module that owns `SUBPROC_CHECK_PATHS`);
 `pipeline_metrics.test_root()` imports it and the hook asks for it with `--print-roots`, a query

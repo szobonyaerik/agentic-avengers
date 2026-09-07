@@ -70,4 +70,9 @@ git show --name-only --pretty=format: HEAD 2>/dev/null \
       python3 "$SD/pipeline_metrics.py" phase-close "$dir" >/dev/null || true
     done
 
+# What a clean run of this hook does NOT establish (issue #97). It offers each touched phase to
+# `phase-close`; whether a stamp was WRITTEN is `record_phase_close`'s decision and the metrics
+# writer is fail-open throughout, so silence here is not evidence that the record changed.
+python3 "$SD/guard_scope.py" emit hook_phase_close.sh >/dev/null || true
+
 exit 0

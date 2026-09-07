@@ -220,7 +220,7 @@ replace = '''
 [[guard]]
 id = "suite-population.declared-roots"
 implements = "scripts/hook_verifier.sh"
-defect = "`tests_before`/`tests_after` counted the project's DECLARED test root minus its own `e2e/`, while this hook's full-suite fallback passed pytest no root at all and a hardcoded `--ignore=tests/e2e`. For any project whose tests are not at `tests/` those are different populations - measured at 3 against 5 on a scratch project with tests at `suite/` - so the record's suite size and the suite the gate ran were never the same number, and §4b's exclusion of feature e2e from the phase verifier hook applied only to the default layout (issue #120)."
+defect = "`tests_before`/`tests_after` counted the project's DECLARED test root minus its own `e2e/`, while this hook's full-suite fallback passed pytest no root at all and a hardcoded `--ignore=tests/e2e`. For any project whose tests are not at `tests/` those are different populations - measured at 3 against 4 on a scratch project with tests at `suite/` - so the record's suite size and the suite the gate ran were never the same number, and §4b's exclusion of feature e2e from the phase verifier hook applied only to the default layout (issue #120)."
 tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/hook_verifier.sh"
