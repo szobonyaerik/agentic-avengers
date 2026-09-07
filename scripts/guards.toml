@@ -233,6 +233,22 @@ replace = """
   trap - TERM INT"""
 
 [[guard]]
+id = "mutation-gate.ci-restore-runs-under-its-traps"
+implements = "scripts/gate_ci.sh"
+defect = "The traps were cleared BEFORE the normal-path restore, so the one command answering the snapshot ran at the default signal disposition. A timed-out agent Bash call - the Verifier runs `gate_ci.sh --full` in the live working copy - killed the shell at 143 with the restore in flight: no classification, no `inspect it by hand`, and a mutant left on disk through the code added to remove it. bash delivers a trap the moment the foreground command returns, before the lines that classify it, which is why the handler reads whether the restore ever REPORTED rather than assuming it did."
+tests = ["tests/test_gate_ci_mutation_tree.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+  _mg_restore
+  local tc=$?
+  trap - TERM INT"""
+replace = """
+  trap - TERM INT
+  _mg_restore
+  local tc=$?"""
+
+[[guard]]
 id = "mutation-gate.snapshot-armed-late"
 implements = "scripts/hook_mutation.sh"
 defect = "`SNAP` was armed BEFORE the snapshot command ran, while `restore_tree` asked only that the directory existed. `snapshot()` mkdirs `<out>/files` as its first action, so the whole write was a window where SNAP named a manifest-less directory - and a signal arriving there restored against nothing, reported `NOT every file could be put back` and exited 2 under advisory, while exec had provably never started."

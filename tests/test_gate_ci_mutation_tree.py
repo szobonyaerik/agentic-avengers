@@ -216,6 +216,66 @@ def test_a_kill_mid_exec_puts_the_working_tree_back_before_exiting(repo, tmp_pat
     assert proc.returncode != 0, "an interrupted exec is not a passing gate"
 
 
+def test_a_signal_during_the_restore_does_not_kill_the_restore(repo, tmp_path):
+    """The restore is the one thing answering the snapshot, so it must not run unprotected.
+
+    A signal arriving mid-exec was already covered; this is the window after exec returns, where the
+    traps used to be cleared before the restore started. The Verifier runs `gate_ci.sh --full` in
+    the live working copy, so a timed-out agent Bash call lands here just as easily - and with the
+    default disposition bash died at 143 while the restore was in flight: no classification, no
+    `inspect it by hand`, and a mutant left on disk through the very code added to remove it. With
+    the traps installed bash defers the signal until the foreground restore returns, so the files go
+    back before anything exits.
+
+    bash delivers a deferred trap the moment that foreground command returns, ahead of the lines
+    that would classify its exit code - so the run reports that the restore's verdict was never
+    read, rather than claiming an outcome this shell did not observe.
+    """
+    root, session, target = repo
+    original = target.read_text(encoding="utf-8")
+    started = tmp_path / "restore-started"
+    slow = tmp_path / "bin"
+    slow.mkdir(parents=True, exist_ok=True)
+    (slow / "python3").write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys, time\n"
+        "argv = sys.argv[1:]\n"
+        "if len(argv) >= 2 and argv[0].endswith('mutation_exec_guard.py') "
+        "and argv[1] == 'restore':\n"
+        f"    open({str(started)!r}, 'w').write('x')\n"
+        "    time.sleep(1.5)\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *argv])\n",
+        encoding="utf-8",
+    )
+    (slow / "python3").chmod(0o755)
+
+    proc = _start(
+        repo, f"printf 'def a():\\n    return 2\\n' > '{target}'; exit 0", tmp_path
+    )
+    try:
+        assert _wait_until(started.exists, timeout_s=60), (
+            "the restore never started; the fixture is not exercising this window"
+        )
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    assert target.read_text(encoding="utf-8") == original, (
+        "the restore was cut short and left the mutant on disk:\n"
+        + target.read_text(encoding="utf-8")
+    )
+    assert "TREE INTEGRITY" in err, (
+        "a run interrupted during its restore must still say what it established - dying at the "
+        "default disposition reports nothing at all"
+    )
+    assert "inspect it by hand" in err
+    assert proc.returncode == 2, (
+        f"the gate's own exit code, not the shell's death by signal (got {proc.returncode})"
+    )
+
+
 def test_a_restore_that_did_not_complete_is_not_reported_as_a_changed_tree(
     repo, tmp_path
 ):

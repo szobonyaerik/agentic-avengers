@@ -578,12 +578,23 @@ mutation_nothing_in_scope() {
 # stays one sliceable unit; their closing braces are indented and never column 0.
 mutation_exec_guarded() {
   local scoped="$1" session="$2" snap="$3" child="" reap_incomplete=0
+  local restore_started=0 restore_done=0
   # Only rc 1 out of `restore` is "the tree differed and every in-scope file is back". rc 2 is "at
   # least one is NOT", and any other non-zero code is a restore that did not complete, where the
   # tree state is UNKNOWN - the operator action is the same, the claim is not.
+  #
+  # ONE restore, ever, and the TERM/INT traps stay installed across it. bash defers a trap until the
+  # running FOREGROUND command returns, which is why the restore runs in the foreground - but it
+  # delivers the trap BEFORE the classification below, so a handler must never assume this returned
+  # a verdict. `restore_started` without `restore_done` is exactly the UNKNOWN state and the two
+  # flags are what `_mg_on_signal` reads; the guard is what makes "no second restore" structural
+  # rather than a rule its callers have to remember.
   _mg_restore() {
+    [ "$restore_started" -eq 0 ] || return 5
+    restore_started=1
     python3 "$SCRIPT_DIR/mutation_exec_guard.py" restore --root "$ROOT" "$snap" >"$snap.restore" 2>&1
     local tc=$?
+    restore_done=1
     cat "$snap.restore" >>"$TMP"
     # A reap that could not confirm the group stopped outranks the comparison: the restore hashed
     # and copied while something in that group could still have been writing, so no outcome it
@@ -657,8 +668,22 @@ mutation_exec_guarded() {
     fi
     return 0
   }
+  # Three states, because a signal does not mean the same thing at every point of this function.
   _mg_on_signal() {
     trap - TERM INT
+    if [ "$restore_started" -ne 0 ] && [ "$restore_done" -eq 0 ]; then
+      echo "  ✗ mutation: INTERRUPTED during the restore (signal) - this is NOT a gate verdict." >&2
+      echo "  ✗ mutation: TREE INTEGRITY UNKNOWN - the signal arrived before the restore's verdict" >&2
+      echo "    could be read, so what cosmic-ray exec left on disk is not established here. This" >&2
+      echo "    checkout cannot be called clean: inspect it by hand before trusting anything built" >&2
+      echo "    from it (issue #95)." >&2
+      exit 2
+    fi
+    if [ "$restore_done" -ne 0 ]; then
+      echo "  ✗ mutation: INTERRUPTED after the restore (signal) - this is NOT a gate verdict. The" >&2
+      echo "    tree outcome is the one reported above." >&2
+      exit 2
+    fi
     echo "  ✗ mutation: INTERRUPTED mid-exec (signal) - this is NOT a gate verdict. Restoring the" >&2
     echo "    working tree from the pre-exec snapshot before exiting (issue #95)." >&2
     _mg_reap "$child"
@@ -678,9 +703,9 @@ mutation_exec_guarded() {
   trap _mg_on_signal TERM INT
   wait "$child"
   local ec=$?
-  trap - TERM INT
   _mg_restore
   local tc=$?
+  trap - TERM INT
   [ "$tc" -eq 0 ] || return "$tc"
   [ "$ec" -eq 0 ] || return 1
   return 0
