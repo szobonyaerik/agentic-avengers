@@ -1172,9 +1172,17 @@ load). `found_by` is the field the record exists for and the only one unrecovera
 defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
 inline prose. **`recorded_by` is a different question — WHO wrote the defect down, never derived from
 what caught it — and every route in `pipeline_metrics.py` answers `stage`**, because every one of them
-IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]`, held
-single by test so a fourth route cannot land unstamped, and nothing here can emit `operator` (a person
-transcribing afterwards is a different producer, using firstmate's own CLI). Its **third answer is
+IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]` - **true
+today and held by nothing**. `test_every_route_into_the_record_carries_the_recorder_stamp` drives
+every route that exists and asserts the stamp on the entries that LANDED, which is what the routes
+are worth; a route added later that calls `sink.add(phase, "defects", ...)` directly is driven by no
+test and turns nothing red. The two mechanisms that would catch it are refused rather than
+overlooked: a check over the record cannot tell an unstamped route from the version skew below, which
+drops `recorded_by` on purpose and would make the check fire on a lost measurement; and a
+`defects`-shaped rule inside `metrics_sink` would give the sink schema knowledge it deliberately has
+none of. So keeping the write single is a rule for whoever adds the next route, stated here because
+nothing will stop them. Nothing here can emit `operator` (a person transcribing afterwards is a
+different producer, using firstmate's own CLI). Its **third answer is
 absence**, meaning the record predates the field, which is why an unstamped emission would read as one
 of the two phases whose defects were entered by hand. Nothing back-fills. A firstmate too old to know
 the field refuses the whole entry over it — its key surface is closed — so the sink retries once

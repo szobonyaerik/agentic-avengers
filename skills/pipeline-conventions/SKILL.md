@@ -1278,7 +1278,13 @@ the field**, which a reader must not resolve to either. Two phases' defects were
 that fact survived only as prose; an unstamped emission from this pipeline would be indistinguishable
 from one of those. So `record_defect` stamps every defect it writes — the `defect` command, the
 verifier's findings and the mutation survivors alike — and **that is the single write to `defects[]`
-in the module**, held single by test, so a fourth route cannot land unstamped. Nothing here can emit
+in the module**, which is true today and **held by no check**. The test drives every route that
+exists and asserts the stamp on the entries that landed; a route added later writing to `defects[]`
+directly is driven by nothing and turns nothing red. Neither available mechanism is honest: a check
+over the record cannot tell an unstamped route from the version skew below, which drops
+`recorded_by` on purpose, and a `defects`-shaped rule in `metrics_sink` would give the sink schema
+knowledge it deliberately has none of. Keeping the write single is a rule for the next author, said
+here because nothing enforces it. Nothing here can emit
 `operator`: a person transcribing after the fact is a different producer and states it through
 firstmate's own CLI. **Nothing back-fills** — a record written before the field stays valid exactly
 as it is.

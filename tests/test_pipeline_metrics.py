@@ -1535,7 +1535,8 @@ def test_every_route_into_the_record_carries_the_recorder_stamp(
     here and cannot turn this red. Nothing executable sees a route nobody calls, and the alternative
     — counting write calls in the source — proves the shape of the file rather than the property, so
     the limit is stated instead. `record_defect` staying the single write is what makes the property
-    hold for a new route; that is a rule for its author, not a claim this test can make.
+    hold for a new route; that is a rule for its author, not a claim this test can make, and
+    `CLAUDE.md` §6d says so rather than claiming a check holds it.
     """
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
