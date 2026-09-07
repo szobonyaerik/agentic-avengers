@@ -152,11 +152,11 @@ implements = "scripts/hook_verifier.sh"
 defect = "The full-suite fallback built its pytest arguments as one STRING and relied on word-splitting, so a declared test root containing whitespace split into two nonexistent paths: pytest exited on a usage error and this hook read that as a RED suite, blocking the phase with a message about failing tests over a quoting fault."
 tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
-file = "scripts/hook_verifier.sh"
+file = "scripts/test_root_args.sh"
 find = '''
-    PYTEST_ARGS+=(--ignore="$r/e2e" "$r")'''
+    TEST_ROOT_ARGS+=(--ignore="$root/e2e" "$root")'''
 replace = '''
-    PYTEST_ARGS+=($(printf '%s' "--ignore=$r/e2e $r"))'''
+    TEST_ROOT_ARGS+=($(printf '%s' "--ignore=$root/e2e $root"))'''
 
 [[guard]]
 id = "metrics-emission.attempts-on-record"
@@ -264,11 +264,23 @@ implements = "scripts/hook_verifier.sh"
 defect = "`tests_before`/`tests_after` counted the project's DECLARED test root minus its own `e2e/`, while this hook's full-suite fallback passed pytest no root at all and a hardcoded `--ignore=tests/e2e`. For any project whose tests are not at `tests/` those are different populations - measured at 3 against 4 on a scratch project with tests at `suite/` - so the record's suite size and the suite the gate ran were never the same number, and §4b's exclusion of feature e2e from the phase verifier hook applied only to the default layout (issue #120)."
 tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
-file = "scripts/hook_verifier.sh"
+file = "scripts/test_root_args.sh"
 find = '''
-  ROOTS=$(python3 "$SD/subprocess_check.py" --print-roots 2>/dev/null)'''
+  roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>/dev/null)'''
 replace = '''
-  ROOTS=""'''
+  roots=""'''
+
+[[guard]]
+id = "suite-population.the-floor-asks-too"
+implements = "scripts/gate_ci.sh"
+defect = "The gate floor was a FOURTH reader of the test-root declaration and kept the hardcode the hook had just lost: `pytest -q --ignore=tests/e2e` with no root. On a project whose tests are not at `tests/` the ignore matched nothing on disk, so the pre-commit gate collected the feature-level e2e suite its own comment says it deliberately excludes - and the branch's `one reader` claim, written in three places, was false (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''
+  pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
+replace = '''
+  pytest -q --ignore=tests/e2e; pc=$?'''
 
 [[guard]]
 id = "suite-population.one-declaration"
@@ -1474,6 +1486,10 @@ replace = """
 [[exempt]]
 file = "scripts/load_env.sh"
 reason = "Sources the project .env into the calling shell and returns. It reaches no verdict, refuses nothing and has no exit path of its own - what it loads is judged by the gate that loaded it."
+
+[[exempt]]
+file = "scripts/test_root_args.sh"
+reason = "Sourced by the two gates that run the suite, it assembles the project's declared test roots into a pytest argument list and reports whether the declaration resolved. It reaches no verdict and has no exit path of its own - what a red suite MEANS is decided by the caller that ran it, and the rules it carries are proven through those callers' guards, which mutate this file."
 
 [[exempt]]
 file = "scripts/bypass_reason.sh"

@@ -17,6 +17,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/load_env.sh"   # pipeline config from the project .env (real env always wins)
 . "$SCRIPT_DIR/bypass_reason.sh"   # one owner of the break-glass reason's on-disk shape
+. "$SCRIPT_DIR/test_root_args.sh"  # one owner of "the declared test roots, as pytest arguments"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 cd "$ROOT"
@@ -485,8 +486,16 @@ if [ "$FULL" -eq 1 ]; then
   echo "• tests: pytest -q (incl. e2e)"
   pytest -q; pc=$?
 else
-  echo "• tests: pytest -q --ignore=tests/e2e"
-  pytest -q --ignore=tests/e2e; pc=$?
+  # The declared test roots, minus each root's own `e2e/`, from the one file that assembles them
+  # (`test_root_args.sh`, which `hook_verifier.sh` also sources). This branch used to hardcode
+  # `--ignore=tests/e2e` with no root: on a project whose tests are not at `tests/` the ignore
+  # matched nothing on disk and the pre-commit gate collected the feature-level e2e suite the
+  # comment above says it deliberately excludes.
+  if ! test_root_pytest_args "$SCRIPT_DIR"; then
+    echo "  no declared test root exists on disk — keeping the whole-tree scope" >&2
+  fi
+  echo "• tests: pytest -q ${TEST_ROOT_ARGS[*]} ($TEST_ROOT_SCOPE)"
+  pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?
 fi
 if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
 [ "$pc" -eq 5 ] && echo "  (no tests collected — skipping)"

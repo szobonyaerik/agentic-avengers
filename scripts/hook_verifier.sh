@@ -40,6 +40,7 @@
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (bypass_log)
+. "$SD/test_root_args.sh"   # one owner of "the declared test roots, as pytest arguments"
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
@@ -234,33 +235,12 @@ if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
   OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
-  ROOTS=$(python3 "$SD/subprocess_check.py" --print-roots 2>/dev/null)
-  # A real ARRAY, never a string that is word-split at the call: `SUBPROC_CHECK_PATHS` is
-  # operator-set and a root containing whitespace split into two nonexistent paths, so pytest exited
-  # on a usage error and the branch below read that as a RED suite - the hook blocking a phase over
-  # a quoting fault, with a message about failing tests. The `-d` check cannot help, because the
-  # split happened after it.
-  PYTEST_ARGS=()
-  while IFS= read -r r; do
-    # A declared root that does not EXIST is skipped, never handed to pytest: pytest treats a
-    # missing path as a usage error, which would read here as a RED suite, where a project with no
-    # tests yet must simply collect nothing. Same rule `subprocess_check.py` applies to an absent
-    # root - clean, but never silent.
-    [ -n "$r" ] && [ -d "$r" ] || continue
-    PYTEST_ARGS+=(--ignore="$r/e2e" "$r")
-  done <<INNER
-$ROOTS
-INNER
-  if [ ${#PYTEST_ARGS[@]} -gt 0 ]; then
-    SCOPE="declared test roots minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  else
-    # No declared root exists on disk (or none could be resolved). Keep the previous whole-tree
-    # form: in a project with no tests it collects nothing and exits 5, which the branch below
-    # treats as "not a failure" rather than as a red suite.
-    PYTEST_ARGS=(--ignore=tests/e2e)
-    SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir; no declared test root exists)"
-  fi
-  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "${PYTEST_ARGS[@]}" 2>&1); pc=$?
+  # `test_root_args.sh` owns the assembly, and `gate_ci.sh` asks the same question of the same file:
+  # two shell copies of one rule is the drift this whole change removes, and these two gates ran
+  # different populations while it had two.
+  test_root_pytest_args "$SD" || true
+  SCOPE="$TEST_ROOT_SCOPE ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
+  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "${TEST_ROOT_ARGS[@]}" 2>&1); pc=$?
 fi
 
 # 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.

@@ -1143,3 +1143,137 @@ def test_a_declared_root_containing_a_space_runs_rather_than_reading_red(
     # The root reached pytest whole - never as `my` and `suite` - and its own e2e stayed excluded.
     assert "file or directory not found" not in combined, combined
     assert "test_journey" not in combined, combined
+
+
+# ── 9. the declaration's readers, all of them ──────────────────────────────────────────────────────
+
+
+def scratch_gate_project(root: Path) -> None:
+    """A project whose tests are NOT at `tests/`, with a RED test in the declared root's own e2e."""
+    import shutil
+
+    shutil.copytree(ROOT / "scripts", root / "scripts")
+    (root / "suite" / "e2e").mkdir(parents=True)
+    (root / "suite" / "test_ok.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    (root / "suite" / "e2e" / "test_journey.py").write_text(
+        "def test_journey():\n    assert False\n", encoding="utf-8"
+    )
+
+
+def test_the_gate_floor_runs_the_declared_roots_and_excludes_their_e2e(tmp_path: Path):
+    """The gate floor is a reader of the declaration too, and it kept the hardcode the hook lost.
+
+    Driven through the real `gate_ci.sh` pre-commit branch on a project whose tests are at `suite/`:
+    the declared root runs and its OWN `e2e/` is excluded, which is what the branch's own comment
+    says it does.
+
+    Red when the defect returns: `--ignore=tests/e2e` matches nothing on disk, `suite/e2e` is
+    collected, its failing journey turns the gate red, and the floor fails a suite it is designed
+    never to run.
+    """
+    scratch_gate_project(tmp_path)
+    git_init(tmp_path)
+    git_land(tmp_path, "root")
+
+    result = subprocess.run(
+        ["bash", str(tmp_path / "scripts/gate_ci.sh")],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(tmp_path),
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(tmp_path),
+            "CLAUDE_PROJECT_DIR": str(tmp_path),
+            "SUBPROC_CHECK_PATHS": "suite",
+            "AVENGER_METRICS_OFF": "1",
+        },
+    )
+    combined = result.stdout + result.stderr
+    assert "test_journey" not in combined, combined
+    assert "1 passed" in combined, combined
+
+
+def test_both_gates_assemble_the_roots_through_one_file(tmp_path: Path):
+    """The property behind "one reader": the floor and the phase gate ask the same file, so they
+    cannot run different populations. Asserted by driving the shared assembly the way both do."""
+    (tmp_path / "suite" / "e2e").mkdir(parents=True)
+    (tmp_path / "extra").mkdir()
+    script = (
+        f'. "{ROOT}/scripts/test_root_args.sh"\n'
+        f'test_root_pytest_args "{ROOT}/scripts" || echo "FELL-BACK"\n'
+        'printf "%s\\n" "${TEST_ROOT_ARGS[@]}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(tmp_path),
+        env={**os.environ, "SUBPROC_CHECK_PATHS": "suite" + os.pathsep + "extra"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split("\n")[:4] == [
+        "--ignore=suite/e2e",
+        "suite",
+        "--ignore=extra/e2e",
+        "extra",
+    ], result.stdout
+    assert "FELL-BACK" not in result.stdout
+
+
+def test_the_assembly_says_so_when_no_declared_root_resolves(tmp_path: Path):
+    """A silent fallback to a different population is the defect being removed, so the fallback
+    reports itself and the caller prints it."""
+    script = (
+        f'. "{ROOT}/scripts/test_root_args.sh"\n'
+        f'test_root_pytest_args "{ROOT}/scripts" || echo "FELL-BACK: $TEST_ROOT_SCOPE"\n'
+        'printf "%s\\n" "${TEST_ROOT_ARGS[@]}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(tmp_path),
+        env={**os.environ, "SUBPROC_CHECK_PATHS": "nowhere"},
+    )
+    assert "FELL-BACK" in result.stdout, result.stdout
+    assert "--ignore=tests/e2e" in result.stdout
+
+
+def test_print_roots_answers_the_query_in_process_without_scanning(
+    tmp_path: Path, capsys
+):
+    """`--print-roots` was registered on the parser and read only by the `__main__` intercept, so an
+    in-process `main(["--print-roots"])` performed a full scan and returned a gate verdict - a
+    silently wrong answer rather than an error.
+
+    Red when the defect returns: the scan runs (its scope line reaches stderr) and the roots are
+    never printed.
+    """
+    import subprocess_check
+
+    (tmp_path / "suite").mkdir()
+    (tmp_path / "suite" / "test_spawn.py").write_text(
+        "import subprocess\n\n\ndef test_spawn():\n    subprocess.run(['true'])\n",
+        encoding="utf-8",
+    )
+    os.environ["SUBPROC_CHECK_PATHS"] = "suite"
+    cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        capsys.readouterr()
+        code = subprocess_check.main(["--print-roots"])
+        said = capsys.readouterr()
+    finally:
+        os.chdir(cwd)
+        del os.environ["SUBPROC_CHECK_PATHS"]
+
+    assert code == subprocess_check.CLEAN
+    assert said.out.split() == ["suite"]
+    # The undeclared spawner above would have been reported by a scan. Nothing scanned.
+    assert "subprocess check scope" not in said.err
+    assert "test_spawn" not in said.err

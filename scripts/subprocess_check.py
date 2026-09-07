@@ -421,6 +421,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Honoured BEFORE the scan, so an in-process `main(["--print-roots"])` answers the query it was
+    # asked. The flag was registered here and read only by the `__main__` intercept, so a caller
+    # inside the process got a full scan and a gate verdict instead - a silently wrong answer rather
+    # than an error. The intercept stays: it is what keeps this query out of `guard_scope.run`,
+    # whose clean line states the scope of a SCAN nobody performed here.
+    if args.print_roots:
+        return print_roots()
+
     found: list[Violation] = []
     errors: list[tuple[Path, str]] = []
     absent: list[Path] = []
