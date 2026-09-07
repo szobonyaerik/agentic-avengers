@@ -795,36 +795,47 @@ def not_landed_reason(phase_dir: Path) -> str | None:
 
     Returns None when git cannot answer at all, WRAPPED as a reason by the caller - a producer that
     cannot observe landing must not claim it.
+
+    The evidences are written ONCE, in `_landing`. This and `phase_landed` are projections of that
+    one answer, and their callers decide with different halves of it - `record_phase_close` with the
+    words, `emission_gate.landed_phases` with the verdict. Written twice, a third evidence added to
+    one leaves the gate calling a phase landed that the stamp refuses, and prescribing a
+    `phase-close` that by construction records nothing.
     """
-    scope = applicability.changed_paths(phase_dir)
-    if scope is None:
-        return "git could not say whether it has landed"
-    if applicability.touched(phase_dir, scope):
-        return "still has uncommitted changes"
-    committed = _committed(Path(phase_dir) / CLOSING_DOCUMENT)
-    if committed is None:
-        return f"git could not say whether its {CLOSING_DOCUMENT} is committed"
-    if not committed:
-        return (
-            f"has no committed {CLOSING_DOCUMENT} - a commit that leaves the phase directory clean "
-            f"is not the phase landing until its contract card is in it (a spec or plan commit "
-            f"is not a close)"
-        )
-    return None
+    return _landing(phase_dir)[1]
 
 
 def phase_landed(phase_dir: Path) -> bool | None:
     """Whether `phase_dir` has LANDED: its closing document committed and nothing left uncommitted.
 
     True once landed; False when git answered and it has not; None when git cannot answer - never
-    read as "landed". `not_landed_reason` carries the words.
+    read as "landed". `not_landed_reason` carries the words; `_landing` decides both.
+    """
+    return _landing(phase_dir)[0]
+
+
+def _landing(phase_dir: Path) -> tuple[bool | None, str | None]:
+    """The one landing decision: (has it landed, why not). The evidences are stated only here.
+
+    Three verdicts, and the third is not a lighter version of the second: True with no reason;
+    False with the reason; and None - git could not answer - which also carries a reason and must
+    never be read as landed. Callers take the half they need and cannot disagree about the rest.
     """
     scope = applicability.changed_paths(phase_dir)
     if scope is None:
-        return None
+        return None, "git could not say whether it has landed"
     if applicability.touched(phase_dir, scope):
-        return False
-    return _committed(Path(phase_dir) / CLOSING_DOCUMENT)
+        return False, "still has uncommitted changes"
+    committed = _committed(Path(phase_dir) / CLOSING_DOCUMENT)
+    if committed is None:
+        return None, f"git could not say whether its {CLOSING_DOCUMENT} is committed"
+    if not committed:
+        return False, (
+            f"has no committed {CLOSING_DOCUMENT} - a commit that leaves the phase directory clean "
+            f"is not the phase landing until its contract card is in it (a spec or plan commit "
+            f"is not a close)"
+        )
+    return True, None
 
 
 #: The mutation gate's stage name in `gate_calls[]`, and the cause a run that never happened carries.
@@ -1279,6 +1290,13 @@ def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
     `breaker.json` write - and again at the handover. Idempotent by counterexample, so the two
     converge on one entry each.
 
+    Identity is a digest of the WHOLE counterexample, the construction `record_spec_gate_findings`
+    already uses, with a readable prefix. A truncated id is not identity: `emission_gate` counts the
+    full strings, so two counterexamples sharing a long prefix upserted onto one entry while the
+    floor counted two - a permanent handover GAP whose own printed remedy, re-running this emitter,
+    could never raise the count. Bounded, and stable across repeated emission, so the per-write hook
+    and the close-time pass still converge on one entry each.
+
     `breaker.json` carries no severity, so every entry is `correctness`; the Breaker attacks
     security paths, and a reader who needs the split reads the counterexample test. Said here rather
     than guessed at.
@@ -1306,9 +1324,12 @@ def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
         text = str(counterexample or "").strip()
         if not text:
             continue
+        digest = hashlib.sha1(  # noqa: S324 — identity, not security
+            " ".join(text.split()).encode("utf-8")
+        ).hexdigest()[:10]
         if record_defect(
             phase,
-            identifier=f"breaker-{text[:200]}",
+            identifier=f"breaker-{text[:80]}-{digest}",
             summary=f"Breaker counterexample: {text}",
             found_by="breaker",
             real=True,

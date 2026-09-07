@@ -110,12 +110,53 @@ replace = '''
 file = "scripts/pipeline_metrics.py"
 find = '''
     if applicability.touched(phase_dir, scope):
-        return False
-    return _committed(Path(phase_dir) / CLOSING_DOCUMENT)'''
+        return False, "still has uncommitted changes"'''
 replace = '''
     if applicability.touched(phase_dir, scope):
-        return False
-    return True'''
+        return True, None'''
+
+[[guard]]
+id = "metrics-emission.landing-decided-once"
+implements = "scripts/pipeline_metrics.py"
+defect = "`phase_landed` and `not_landed_reason` were two independent implementations of one landing predicate with different callers - the close stamp reads the words, `emission_gate.landed_phases` reads the verdict. A third evidence added to one leaves the gate calling a phase LANDED that the stamp refuses, and prescribing a `phase-close` that by construction records nothing (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    read as "landed". `not_landed_reason` carries the words; `_landing` decides both.
+    """
+    return _landing(phase_dir)[0]'''
+replace = '''
+    read as "landed". `not_landed_reason` carries the words; `_landing` decides both.
+    """
+    scope = applicability.changed_paths(phase_dir)
+    if scope is None:
+        return None
+    return not applicability.touched(phase_dir, scope)'''
+
+[[guard]]
+id = "metrics-emission.breaker-identity-is-whole"
+implements = "scripts/pipeline_metrics.py"
+defect = "A breaker defect's id was a TRUNCATION of its counterexample while `emission_gate` counts the full strings, so two counterexamples sharing a long prefix upserted onto one entry while the floor counted two - a permanent handover GAP whose own printed remedy, re-running the emitter, could never raise the count (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+            identifier=f"breaker-{text[:80]}-{digest}",'''
+replace = '''
+            identifier=f"breaker-{text[:80]}",'''
+
+[[guard]]
+id = "suite-population.roots-are-one-argument-each"
+implements = "scripts/hook_verifier.sh"
+defect = "The full-suite fallback built its pytest arguments as one STRING and relied on word-splitting, so a declared test root containing whitespace split into two nonexistent paths: pytest exited on a usage error and this hook read that as a RED suite, blocking the phase with a message about failing tests over a quoting fault."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+    PYTEST_ARGS+=(--ignore="$r/e2e" "$r")'''
+replace = '''
+    PYTEST_ARGS+=($(printf '%s' "--ignore=$r/e2e $r"))'''
 
 [[guard]]
 id = "metrics-emission.attempts-on-record"

@@ -88,6 +88,7 @@ limits = [
   "that a fact no stage emits was measured at all - it records what it is handed, and the implementer's own catches reach it through no route",
   "that a stamped number is RIGHT: it derives `verification_attempts` from the verdict record and the suite size from a collection, and a wrong artifact yields a wrong stamp",
   "anything about a phase whose trigger never fired - a spec authored through a heredoc opens no phase, and its `elapsed_minutes` stays null and is said rather than invented",
+  "that a scalar `provenance` credits to the pipeline still HOLDS the value the pipeline stamped: the row records field NAMES only, so the pipeline stamps `tests_after=100` and names it, the close seals the record, an operator later corrects it to 128 through firstmate's own CLI, and `provenance_report` goes on counting it under `scalars_by_pipeline` at `fraction_by_pipeline: 1.0`. The row is names-only on purpose - values beside the record would be a second copy of a record firstmate owns, against its closed schema - so this is a declared limit, not a defect awaiting a fix",
 ]
 
 [guard."emission_gate.py"]

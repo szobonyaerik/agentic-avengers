@@ -1521,15 +1521,21 @@ def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(
     assert [d["recorded_by"] for d in defects] == ["stage"] * 3
 
 
-def test_no_defect_reaches_the_record_except_through_the_stamping_point(
+def test_every_route_into_the_record_carries_the_recorder_stamp(
     stub_sink,
 ):  # noqa: F811
-    """The guard against a FOURTH route: EVERY route into `defects[]` carries the stamp.
+    """Every route into `defects[]` that exists today stamps `recorded_by`, asserted on what LANDED.
 
-    Stamping the routes one at a time says nothing about the next one, so this drives all of them —
-    the four recorders and the `defect` CLI — and asserts the property on what LANDED, never on the
-    source text. `record_defect` is the single write that stamps; a route that reaches the record
-    any other way arrives here unstamped and turns this red.
+    It drives all five — the four recorders and the `defect` CLI — through the sink double and reads
+    the entries back, rather than reading the source for one write call. Stamping the routes one at
+    a time says nothing about the others; this says it about all of them at once.
+
+    **What it does not establish**, said rather than implied: the enumeration is this test's own, so
+    a SIXTH route added later that calls `sink.add(phase, "defects", …)` directly is never driven
+    here and cannot turn this red. Nothing executable sees a route nobody calls, and the alternative
+    — counting write calls in the source — proves the shape of the file rather than the property, so
+    the limit is stated instead. `record_defect` staying the single write is what makes the property
+    hold for a new route; that is a rule for its author, not a claim this test can make.
     """
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"

@@ -329,6 +329,42 @@ def test_a_found_breaker_verdict_records_one_defect_per_counterexample(stub_sink
     assert defects[0]["stage_reached"] == "verification"
 
 
+def test_two_counterexamples_sharing_a_long_prefix_are_two_defects(stub_sink):
+    """Identity is over the WHOLE counterexample, because the emission floor counts whole strings.
+
+    A truncated id upserted both onto one entry (`sink.add` converges by id) while
+    `emission_gate.check_defects` counted two, so the handover gate reported a GAP whose own printed
+    remedy - re-running this emitter - could never raise the count: a blocking check with no
+    available remedy.
+
+    Red when the defect returns: one defect is recorded against two counterexamples and the floor
+    reports GAP.
+    """
+    project, store, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    shared = "tests/demo/5-config/test_breaker.py::test_replay_" + "x" * 240
+    path = breaker_record(phase_dir, "found", [shared + "_one", shared + "_two"])
+
+    assert metrics.record_breaker_findings(str(phase_dir), str(path)) == 2
+    assert metrics.record_breaker_findings(str(phase_dir), str(path)) == 2  # converges
+
+    defects = stored(store, "05")["defects"]
+    assert len(defects) == 2
+    assert len({d["id"] for d in defects}) == 2
+    assert emission_gate.check_defects(str(phase_dir))[0] == emission_gate.CLEAN
+
+
+def test_a_breaker_defect_id_stays_bounded(stub_sink):
+    """Bounded as well as whole: dropping the truncation would let an arbitrarily long
+    counterexample become the record's identity field."""
+    project, store, _ = stub_sink
+    phase_dir = phase(project)
+    path = breaker_record(phase_dir, "found", ["y" * 5000])
+    assert metrics.record_breaker_findings(str(phase_dir), str(path)) == 1
+    assert len(stored(store, "05")["defects"][0]["id"]) < 200
+
+
 def test_a_clean_breaker_verdict_records_no_defect(stub_sink):
     project, store, _ = stub_sink
     phase_dir = phase(project)
@@ -999,3 +1035,111 @@ def test_a_verifier_gate_call_is_filed_under_the_attempt_in_flight(
         c for c in stored(store, "05")["gate_calls"] if c.get("stage") == "verifier"
     )
     assert call["attempt"] == 3
+
+
+# ── 8. one landing rule, and one argument per declared root ────────────────────────────────────────
+
+
+def test_both_landing_projections_answer_from_one_decision(stub_sink):
+    """`record_phase_close` decides with the reason and `emission_gate.landed_phases` with the
+    verdict, so the two must never be able to disagree: landed is exactly "no reason", and every
+    other verdict - including the one git could not answer - carries one.
+
+    Red when the defect returns: a second implementation of the predicate drifts from the first, and
+    the gate calls a phase LANDED that the close stamp refuses, prescribing a `phase-close` that by
+    construction records nothing.
+    """
+    project, _, _ = stub_sink
+    git_init(project)
+    (project / "README.md").write_text("demo\n", encoding="utf-8")
+    git_land(project, "root")  # git answers "what changed" only once HEAD exists
+    phase_dir = phase(project)
+
+    seen = set()
+
+    def agree(label: str) -> bool | None:
+        """Both projections, read at THIS moment - the state is what the working tree is now."""
+        verdict_ = metrics.phase_landed(phase_dir)
+        why = metrics.not_landed_reason(phase_dir)
+        assert (verdict_ is True) == (why is None), (
+            f"{label}: {verdict_!r} against {why!r}"
+        )
+        seen.add(verdict_)
+        return verdict_
+
+    spec(phase_dir)
+    assert agree("uncommitted") is False
+    git_land(project, "specs")
+    assert agree("clean, no committed card") is False
+    (phase_dir / metrics.CLOSING_DOCUMENT).write_text("# card\n", encoding="utf-8")
+    assert agree("card written, uncommitted") is False
+    git_land(project, "land")
+    assert agree("landed") is True
+
+    assert {True, False} <= seen
+
+
+def test_a_phase_git_cannot_answer_for_is_not_landed_and_says_why(stub_sink):
+    """The third verdict is not a lighter version of the second: unknown must never read as landed,
+    and it carries a reason like every refusal does."""
+    project, _, _ = stub_sink
+    phase_dir = phase(project)  # no repository at all
+    assert metrics.phase_landed(phase_dir) is None
+    assert metrics.not_landed_reason(phase_dir) is not None
+
+
+def test_a_declared_root_containing_a_space_runs_rather_than_reading_red(
+    tmp_path: Path,
+):
+    """The hook's own fallback, driven end to end. `SUBPROC_CHECK_PATHS` is operator-set, so a root
+    with whitespace is reachable; split at the call it became two nonexistent paths, pytest exited
+    on a usage error, and this hook read that as a RED suite - blocking the phase with a message
+    about failing tests over a quoting fault.
+
+    Red when the defect returns: the hook fails and names the split paths.
+    """
+    import shutil
+
+    shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
+    root = tmp_path / "my suite"
+    (root / "e2e").mkdir(parents=True)
+    (root / "test_ok.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    (root / "e2e" / "test_journey.py").write_text(
+        "def test_journey():\n    assert False\n", encoding="utf-8"
+    )
+    git_init(tmp_path)
+
+    spec_dir = tmp_path / "docs/features/demo/phases/1-demo/specs/1.1-a"
+    spec_dir.mkdir(parents=True)
+    header = "---\nfeature: demo\nphase: 1-demo\nstatus: %s\nspec_gate: approved\n"
+    body = "review_status: approved\n---\n\n## Acceptance criteria\n\n- R1.1.1 (binding: none) do\n"
+    (spec_dir / "spec.md").write_text(header % "in-progress" + body, encoding="utf-8")
+    (spec_dir / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+        "| R1.1.1 | my suite/test_ok.py::test_ok | integration | drives the seam |\n",
+        encoding="utf-8",
+    )
+    git_land(tmp_path, "specs")
+    (spec_dir / "spec.md").write_text(header % "done" + body, encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(tmp_path / "scripts/hook_verifier.sh")],
+        input=json.dumps({"tool_input": {"file_path": str(spec_dir / "spec.md")}}),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(tmp_path),
+            "CLAUDE_PROJECT_DIR": str(tmp_path),
+            "SUBPROC_CHECK_PATHS": "my suite",
+            "AVENGER_METRICS_OFF": "1",
+        },
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    # The root reached pytest whole - never as `my` and `suite` - and its own e2e stayed excluded.
+    assert "file or directory not found" not in combined, combined
+    assert "test_journey" not in combined, combined
