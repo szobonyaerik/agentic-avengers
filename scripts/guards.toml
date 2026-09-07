@@ -218,6 +218,32 @@ SNAP="$WORK/tree"
 if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then"""
 
 [[guard]]
+id = "mutation-gate.bypass-never-waives-a-dirty-tree"
+implements = "scripts/hook_mutation.sh"
+defect = "`fail_tree` honoured GATE_BYPASS for EVERY tree outcome. An unscoped break-glass (GATE_BYPASS_GATES is opt-in) over a restore that could not write back onto a read-only in-scope file, or a restore that never completed, exited 0 through the audited path with the cosmic-ray mutant still on disk - issue #95's damage model surviving the fix for it. A restore having RUN is not a restore having SUCCEEDED."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+    if [ "$TREE_STATE" = "restored" ]; then
+      bypass_and_exit "mutation:tree-corrupted"
+    fi"""
+replace = """
+    bypass_and_exit "mutation:tree-corrupted\""""
+
+[[guard]]
+id = "mutation-gate.ci-bypass-never-waives-a-dirty-tree"
+implements = "scripts/gate_ci.sh"
+defect = "CI's end-of-run break-glass waived `mutation:tree-corrupted` whatever the tree guard had established, so an override aimed at a flaky gate turned a checkout still holding a cosmic-ray mutant into a green run - in the live working copy the Verifier runs `gate_ci.sh --full` in."
+tests = ["tests/test_gate_ci_mutation_bypass.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ] && [ "$TREE_UNCLEAN" -ne 0 ]; then"""
+replace = """
+if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ] && false; then"""
+
+[[guard]]
 id = "mutation-gate.restore-crash"
 implements = "scripts/mutation_exec_guard.py"
 defect = "`main` had no exception boundary, so an uncaught exception exited 1 - the same code that tells the caller the tree differed and every file was put back. A restore that crashed part-way was read as one that completed, and the hook printed the successful-restoration line over a tree that still held the mutant."

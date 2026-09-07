@@ -32,6 +32,10 @@ while [ $# -gt 0 ]; do
 done
 fail=0
 failed_gates=""
+# Set when a gate leaves this checkout in a state nothing established as clean - today only the
+# mutation tree guard, whose own return code already tells the state apart. GATE_BYPASS may not
+# waive it (issue #95).
+TREE_UNCLEAN=0
 
 record_fail() { fail=1; failed_gates="${failed_gates} $1"; }
 
@@ -699,8 +703,11 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
       fi
       if [ "$mfc" -ne 0 ]; then
         :
-      elif [ "$mex" -eq 3 ] || [ "$mex" -eq 5 ]; then
+      elif [ "$mex" -eq 3 ]; then
         record_fail "mutation:tree-corrupted"
+      elif [ "$mex" -eq 5 ]; then
+        record_fail "mutation:tree-corrupted"
+        TREE_UNCLEAN=1
       elif [ "$mex" -eq 4 ]; then
         echo "  ✗ the in-scope files could not be snapshotted, so exec could not be guarded (fail closed):" >&2; tail -5 "$TMP" >&2
         mutation_fail "mutation:integrity-unavailable"
@@ -743,6 +750,23 @@ fi
 # **An override that could not be logged is not an override.** `bypass_log.sh` exits 2 when the
 # append does not land, and that failure is this script's failure: the gates stay failed and CI stays
 # red, rather than the bypass proceeding with no audit line behind it.
+#
+# One state is not a verdict anyone can waive, and it is refused BEFORE the log is written, on
+# `bypass_log.sh`'s own precedent that a refused override leaves no record: `mutation_exec_guarded`
+# returning 5 means the restore did not put every in-scope file back, or did not complete at all, so
+# a cosmic-ray mutant is either provably still applied or not established to be gone. Overriding
+# that converts issue #95's exact damage - source nobody authored, left in the checkout - into a
+# green run. Its sibling, exit 3, is a run whose result is void over a tree the restore put back;
+# that stays waivable, and this reads the guard's own return code rather than classifying again.
+if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ] && [ "$TREE_UNCLEAN" -ne 0 ]; then
+  echo "✗ NOT BYPASSED: GATE_BYPASS cannot waive a working tree that is not established clean." >&2
+  echo "  cosmic-ray exec left this checkout changed and the restore did not put everything back," >&2
+  echo "  or did not complete, so a mutant is still applied or nothing established that it is gone." >&2
+  echo "  Inspect the working tree by hand before trusting anything built from it. Nothing was" >&2
+  echo "  logged: an override records that a gate was waived, and there is no verdict here to waive." >&2
+  echo "✗ pipeline gates failed:${failed_gates}" >&2
+  exit 1
+fi
 if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ]; then
   if CLAUDE_PROJECT_DIR="$ROOT" bash "$SCRIPT_DIR/bypass_log.sh" --gates "${failed_gates# }"; then
     exit 0

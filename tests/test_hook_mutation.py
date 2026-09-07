@@ -447,6 +447,128 @@ def test_a_restore_that_could_not_put_everything_back_never_says_it_did(project)
     assert "NOT every file could be put back" in row["note"]
 
 
+# --- GATE_BYPASS waives a verdict, never a tree nobody established as clean (issue #95) -----------
+
+
+def overrides_log(root: Path) -> str:
+    log = root / "gate-overrides.log"
+    return log.read_text(encoding="utf-8") if log.exists() else ""
+
+
+def failing_restore_python(binaries: Path, code: int) -> None:
+    """A `python3` on PATH whose `mutation_exec_guard.py restore` exits `code`, delegating the rest.
+
+    The three tree states are the restore's own exit codes, and only rc 2 has a fixture that
+    produces it naturally (a read-only in-scope file). A restore killed by a signal or crashing
+    part-way is the third, and it has no natural fixture at all, so the code is delivered directly
+    while every other call runs on the real interpreter.
+    """
+    shim = binaries / "python3"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "argv = sys.argv[1:]\n"
+        "if len(argv) >= 2 and argv[0].endswith('mutation_exec_guard.py') "
+        "and argv[1] == 'restore':\n"
+        f"    sys.exit({code})\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *argv])\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+
+
+def test_a_bypass_still_waives_a_tree_that_was_put_back(project):
+    """The break-glass is not being removed, and this is the state it still covers.
+
+    After a restore that put every in-scope file back, the mutant is provably no longer on disk:
+    what is left is a run whose RESULT is void, and a void result is exactly what an audited
+    override exists to waive.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT)
+
+    result = run_hook(
+        project,
+        policy="advisory",
+        path_prefix=prefix,
+        GATE_BYPASS="mutation gate is flaky on this runner",
+    )
+
+    assert target.read_text(encoding="utf-8") == original, "the file was put back"
+    assert result.returncode == 0, (
+        "a restored tree leaves only a verdict, which is waivable"
+    )
+    assert "gate:mutation:tree-corrupted" in overrides_log(root), (
+        "an override that is honoured is an override that is logged"
+    )
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root writes through a read-only file, so the copy back cannot fail",
+)
+def test_a_bypass_cannot_waive_a_mutant_that_is_still_applied(project):
+    """`GATE_BYPASS` used to carry issue #95's damage model straight through the audited path.
+
+    An unscoped break-glass is documented and `GATE_BYPASS_GATES` is opt-in, so an operator waiving
+    a flaky mutation gate also waived the tree check underneath it: the restore could not write back
+    over a read-only in-scope file, the mutant stayed on disk, and the hook exited 0 with cosmic-ray
+    source in the working tree, ready to be committed as authored code.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT_UNWRITABLE)
+
+    try:
+        result = run_hook(
+            project,
+            policy="advisory",
+            path_prefix=prefix,
+            GATE_BYPASS="skipping flaky mutation gate",
+        )
+    finally:
+        target.chmod(0o644)
+
+    assert target.read_text(encoding="utf-8") != original, (
+        "the fixture must leave the mutant on disk; that is the state being reported on"
+    )
+    assert result.returncode == 2, (
+        "a tree holding a mutant is not a verdict an override converts"
+    )
+    assert "NOT BYPASSED" in result.stderr
+    assert "STILL APPLIED" in result.stderr
+    assert overrides_log(root) == "", (
+        "a refused override leaves no record: a line in that log asserts a gate WAS waived"
+    )
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run", (
+        "the phase record still says the gate reached no verdict"
+    )
+
+
+def test_a_bypass_cannot_waive_a_restore_that_did_not_complete(project):
+    """The third state: nothing established what exec left behind, so there is nothing to waive."""
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT)
+    failing_restore_python(tmp / "bin", 9)
+
+    result = run_hook(
+        project,
+        policy="advisory",
+        path_prefix=prefix,
+        GATE_BYPASS="skipping flaky mutation gate",
+    )
+
+    assert result.returncode == 2
+    assert "NOT BYPASSED" in result.stderr
+    assert "UNKNOWN" in result.stderr
+    assert "STILL APPLIED" not in result.stderr, (
+        "a restore that did not complete establishes neither direction"
+    )
+    assert overrides_log(root) == ""
+    (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
+    assert row["failure_cause"] == "did-not-run"
+
+
 def test_a_clean_restore_states_what_it_does_not_establish(project):
     """CLAUDE.md §11: a later stage reads OUTPUT, not source, and it is the CLEAN result that gets
     over-read. The restore's own scope statement was written to a file the hook cat'd only in the

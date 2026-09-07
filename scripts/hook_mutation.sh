@@ -146,14 +146,21 @@ bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 # means at least one is NOT, and any other non-zero rc - a restore killed by a signal, a crash -
 # means the restore did not complete and the tree state is UNKNOWN. The last two never claim the tree
 # was put back, and neither does a snapshot with no manifest to compare against.
+#
+# TREE_STATE is that three-way classification named, so every later reader asks restore_tree's own
+# answer instead of re-deriving one: `restored` is the only state in which the mutant is provably no
+# longer on disk, and it is the only one an override may waive. It defaults to the state that waives
+# nothing, so a path that reached a failure without classifying it fails closed.
 SNAP=""
 TREE_CORRUPTED=0
+TREE_STATE="unknown"
 TREE_NOTE="the working tree was altered by cosmic-ray exec; this run's result is void"
 restore_tree() {
   [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0
   local snap="$SNAP"; SNAP=""
   if [ ! -f "$snap/manifest.json" ]; then
     TREE_CORRUPTED=1
+    TREE_STATE="unknown"
     TREE_NOTE="the pre-exec snapshot carries no manifest, so what cosmic-ray exec left behind is UNKNOWN; this run's result is void"
     { echo "mutation: TREE INTEGRITY UNKNOWN - the snapshot at $snap holds no manifest, so there is nothing to compare the tree against."
       echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
@@ -168,10 +175,13 @@ restore_tree() {
   if [ "$rc" -eq 0 ]; then cat "$WORK/restore.txt" >&2; return 0; fi
   TREE_CORRUPTED=1
   if [ "$rc" -eq 1 ]; then
+    TREE_STATE="restored"
     TREE_NOTE="the working tree was altered by cosmic-ray exec and restored from the pre-exec snapshot; this run's result is void"
   elif [ "$rc" -eq 2 ]; then
+    TREE_STATE="unrestored"
     TREE_NOTE="the working tree was altered by cosmic-ray exec and NOT every file could be put back; this run's result is void and the tree needs inspecting by hand"
   else
+    TREE_STATE="unknown"
     TREE_NOTE="the tree check after cosmic-ray exec did not complete (exit $rc), so whether a mutant is still applied is UNKNOWN; this run's result is void"
   fi
   { if [ "$rc" -eq 1 ] || [ "$rc" -eq 2 ]; then
@@ -191,12 +201,36 @@ restore_tree() {
 }
 # Never advisory. A mutant left in the tree is not a weak test signal, it is authored code that
 # nobody authored; the policy switch selects how much authority the SCORE has and says nothing about
-# this. GATE_BYPASS is honoured through the same audited path as every other blocking check, and the
-# restore has already run by the time it is asked.
+# this.
+#
+# GATE_BYPASS waives exactly ONE of the three tree states, and which one is decided by asking
+# restore_tree's TREE_STATE rather than by classifying a second time here - a second, weaker copy of
+# a rule is the drift defect. `restored` is a run whose result is void over a tree the restore put
+# back: the mutant is provably gone, so an override there waives a verdict and nothing else, through
+# the same audited path as every other blocking check. `unrestored` and `unknown` are not verdicts an
+# override can convert: one has a cosmic-ray mutant provably still applied and the other establishes
+# nothing about what exec left behind, and issue #95's whole damage model is a mutant on disk under a
+# green result. A refused override follows GATE_BYPASS_GATES' precedent exactly - the blocking exit
+# and NO log line, since a line in gate-overrides.log asserts that a gate WAS overridden. The record
+# is still written in every case: the phase record must say the gate reached no verdict.
 fail_tree() {
   record_unavailable "$TREE_NOTE"
   echo "mutation: a corrupted tree is never advisory - failing the hook (MUTATION_POLICY=$MUTATION_POLICY)." >&2
-  [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit "mutation:tree-corrupted"
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    if [ "$TREE_STATE" = "restored" ]; then
+      bypass_and_exit "mutation:tree-corrupted"
+    fi
+    echo "✗ NOT BYPASSED: GATE_BYPASS cannot waive a working tree that is not established clean." >&2
+    if [ "$TREE_STATE" = "unrestored" ]; then
+      echo "  A cosmic-ray mutant is provably STILL APPLIED: the restore could not put every" >&2
+      echo "  in-scope file back, so this is source nobody authored, not a weak test signal." >&2
+    else
+      echo "  Whether a cosmic-ray mutant is still applied is UNKNOWN: the tree check did not" >&2
+      echo "  complete, so nothing established what exec left behind." >&2
+    fi
+    echo "  Inspect the working tree by hand before committing anything. Nothing was logged: an" >&2
+    echo "  override records that a gate was waived, and there is no verdict here to waive." >&2
+  fi
   cleanup; trap - EXIT
   exit 2
 }
