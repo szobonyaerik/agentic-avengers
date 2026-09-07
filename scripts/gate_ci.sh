@@ -618,26 +618,41 @@ mutation_exec_guarded() {
   }
   # The hook's primitive, applied here for the same reason: `cosmic-ray exec` spawns workers that run
   # the suite, so signalling the direct child alone leaves them running. Liveness is asked of the
-  # GROUP, never of the leader, which this shell reaps asynchronously while its workers keep going;
-  # the SIGKILL is followed by a real `wait` and a second bounded poll, and a group still alive after
-  # that is reported rather than assumed gone.
+  # GROUP, never of the leader, which this shell reaps asynchronously while its workers keep going -
+  # and of process STATE, never of a process-table entry, because a ZOMBIE answers `kill -0` and runs
+  # no code. `ps -eo pgid=,stat=` is what asks the same question on macOS and Linux: BSD's `-g`
+  # selects a process group, procps' `-g` selects a session. Exit 0 a member can still run, 1 none
+  # can, 2 nothing could be asked - and 2 is unknowable rather than live, said out loud.
+  _mg_live_member() {
+    local table
+    table=$(ps -eo pgid=,stat= 2>/dev/null) || return 2
+    [ -n "$table" ] || return 2
+    printf '%s\n' "$table" | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }'
+  }
   _mg_reap() {
     local pgid="$1" waited=0
     [ -n "$pgid" ] || return 0
     kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
-    while [ "$waited" -lt 50 ] && kill -0 "-$pgid" 2>/dev/null; do
+    while [ "$waited" -lt 50 ] && _mg_live_member "$pgid"; do
       sleep 0.1; waited=$((waited + 1))
     done
     kill -KILL "-$pgid" 2>/dev/null || true
     wait "$pgid" 2>/dev/null || true
     waited=0
-    while [ "$waited" -lt 50 ] && kill -0 "-$pgid" 2>/dev/null; do
+    while [ "$waited" -lt 50 ] && _mg_live_member "$pgid"; do
       sleep 0.1; waited=$((waited + 1))
     done
-    if kill -0 "-$pgid" 2>/dev/null; then
+    _mg_live_member "$pgid"; local live=$?
+    if [ "$live" -eq 0 ]; then
       reap_incomplete=1
       echo "  ✗ mutation: the cosmic-ray process group did not stop after SIGKILL - a worker may" >&2
       echo "    still be writing to this checkout." >&2
+      return 1
+    fi
+    if [ "$live" -ne 1 ]; then
+      reap_incomplete=1
+      echo "  ✗ mutation: could not ask whether the cosmic-ray process group had stopped (ps returned" >&2
+      echo "    nothing usable), so whether a worker is still writing is unknowable, not answered." >&2
       return 1
     fi
     return 0
@@ -691,6 +706,12 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
     echo "  (module-path '$MODPATH' not present — no code to mutate, skipping)"
   else
     WORK=$(mktemp -d); SESSION="$WORK/session.sqlite"; TMP="$WORK/report.txt"; SCOPED="$WORK/cosmic-ray.toml"
+    # The snapshot under $WORK/tree holds byte copies of every in-scope source file, and the signal
+    # path this script now has exits without reaching the `rm -rf` at the end of the block. An EXIT
+    # trap is what covers both, and it runs strictly AFTER the restore, because `_mg_on_signal`
+    # restores and only then exits: removing the snapshot mid-restore is the one way this could make
+    # issue #95 worse rather than better.
+    trap 'rm -rf "$WORK"' EXIT
     cp "$COSMIC_CFG" "$SCOPED"
     # Diff-scope over the WORKING TREE plus the branch, through scripts/mutation_scope.py. The
     # `cr-filter-git` this replaces scopes with `git diff --relative -U0 <branch> .`, which reports

@@ -14,6 +14,7 @@ here is that the absence is now written where a later reader looks.
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -421,6 +422,99 @@ def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(pr
     (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
     assert row["failure_cause"] == "did-not-run"
     assert "altered by cosmic-ray exec" in row["note"]
+
+
+def _live_member_source() -> str:
+    """Slice `group_has_live_member` out of the hook and run it, the same seam the gate_ci tests use.
+
+    The subject is one bash function over real OS state; it is executed, not read.
+    """
+    lines = HOOK.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.startswith("group_has_live_member() {")
+    )
+    close_at = next(i for i, ln in enumerate(lines[start:], start) if ln == "}")
+    return "\n".join(lines[start : close_at + 1])
+
+
+def _ask_live_member(pgid: int) -> int:
+    body = f'{_live_member_source()}\ngroup_has_live_member "{pgid}"\n'
+    return subprocess.run(
+        ["bash", "-c", body], capture_output=True, text=True
+    ).returncode
+
+
+# A: a new session and process group. It forks B; B forks C, which exits at once and becomes a
+# ZOMBIE whose parent B is alive. B then leaves the group for one of its own, and A exits - so the
+# group holds exactly one entry, a corpse, held there for as long as B lives. This is the shape the
+# hook's kill path really produces: `wait` collects the leader, and the test-command process it
+# spawned lingers unreaped wherever PID 1 does not reap.
+ZOMBIE_ONLY_GROUP = """
+import os, sys, time
+b = os.fork()
+if b == 0:
+    if os.fork() == 0:
+        os._exit(0)
+    time.sleep(0.2)
+    os.setpgid(0, 0)
+    open(sys.argv[1], "w").write(str(os.getpid()))
+    time.sleep(120)
+    os._exit(0)
+time.sleep(0.5)
+os._exit(0)
+"""
+
+
+def test_a_zombie_is_not_a_worker_that_could_still_be_writing(tmp_path):
+    """A corpse holds a process-table entry and runs no code, so it holds no working tree.
+
+    `kill -0` answers yes for a zombie, and after the SIGKILL the test-command process cosmic-ray
+    spawned is reparented to PID 1 - which clears at once under launchd or systemd and never clears
+    in a PID namespace whose PID 1 does not reap, which is what a plain `docker run` CI container
+    is. Counted as a live worker it produces the UNKNOWN tree state over a tree the restore proved
+    intact - and UNKNOWN is the state this pipeline defines as "inspect by hand" and refuses to let
+    GATE_BYPASS waive, so the wrong answer here costs an operator a hard block with no override.
+    """
+    marker = tmp_path / "b.pid"
+    proc = subprocess.Popen(
+        [sys.executable, "-c", ZOMBIE_ONLY_GROUP, str(marker)], start_new_session=True
+    )
+    try:
+        assert wait_until(marker.exists, timeout_s=30), (
+            "the fixture never built its group"
+        )
+        proc.wait(timeout=30)
+        table = subprocess.run(
+            ["ps", "-eo", "pgid=,stat="], capture_output=True, text=True, check=False
+        ).stdout
+        states = [
+            row.split()[1]
+            for row in table.splitlines()
+            if row.split()[:1] == [str(proc.pid)]
+        ]
+        assert states and all(s.startswith("Z") for s in states), (
+            f"the fixture must leave a zombie-only group; ps says {states}"
+        )
+
+        assert _ask_live_member(proc.pid) == 1, (
+            "a group holding nothing but a corpse has no member that could still write"
+        )
+    finally:
+        if marker.exists():
+            os.kill(int(marker.read_text()), signal.SIGKILL)
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_a_running_member_is_reported_as_one(tmp_path):
+    """The companion: the check must still see a member that really can write."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True
+    )
+    try:
+        assert _ask_live_member(proc.pid) == 0
+    finally:
+        proc.kill()
 
 
 def test_a_worker_that_outlives_the_leader_is_reaped_before_the_tree_is_judged(project):

@@ -300,19 +300,40 @@ signal_child_group() {
   kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
 }
 
-# The liveness question is asked of the GROUP, never of the leader: bash reaps the backgrounded
-# leader asynchronously, so `kill -0 <leader>` starts failing while the workers it spawned are still
-# running the test command - and one of them writing a mutant while the restore hashes and copies is
-# the state the restore exists to rule out. The SIGKILL is not treated as synchronous either: it is
-# followed by a real `wait` on the job this shell started, then by a second bounded poll of the
-# group. A group still alive after that is NOT reported as reaped - REAP_INCOMPLETE says so, and
-# restore_tree turns it into the UNKNOWN tree state, because a tree that may still be written to is
-# not one anything established as clean.
+# The one question the reap has to answer: can any member of the group still WRITE to the tree?
+#
+# It is asked of the GROUP, never of the leader, because this shell reaps the backgrounded leader
+# asynchronously and the workers it spawned keep running the test command afterwards - one of them
+# writing a mutant while the restore hashes and copies is the state the restore exists to rule out.
+# And it is asked of process STATE, never of the existence of a process-table entry: a ZOMBIE
+# answers `kill -0` and runs no code, so counting it reports a worker holding a tree that nothing is
+# holding. That is not a harmless conservative default - it produces the UNKNOWN state, which this
+# pipeline defines as "inspect the working tree by hand" and refuses to let GATE_BYPASS waive, over
+# a tree the restore proved intact. It is reachable: after the SIGKILL, `wait` collects the leader
+# this shell owns, and the test-command process it spawned is reparented to PID 1 - which clears in
+# milliseconds under launchd or systemd and NEVER clears in a PID namespace whose PID 1 is an
+# ordinary non-reaping process, which is what a plain `docker run` CI container is.
+#
+# `ps -eo pgid=,stat=` rather than `ps -g`: BSD's `-g` selects a process group and procps' `-g`
+# selects a session, so only the everything-plus-columns form asks the same question on macOS and
+# Linux. Exit 0 a member can still run, 1 none can, 2 nothing could be asked - and 2 is an unknowable
+# answer rather than a live worker, taken deliberately and said out loud by the caller.
+group_has_live_member() {
+  local pgid="$1" table
+  table=$(ps -eo pgid=,stat= 2>/dev/null) || return 2
+  [ -n "$table" ] || return 2
+  printf '%s\n' "$table" | awk -v g="$pgid" '$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }'
+}
+
+# Bounded poll, then SIGKILL, then a real `wait` for the job this shell started, then the same
+# bounded poll again. A group that still holds a live member after that is NOT reported as reaped:
+# REAP_INCOMPLETE says so and restore_tree turns it into the UNKNOWN tree state, because a tree
+# something may still be writing to is not one anything established as clean.
 reap_child_group() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
   local waited=0
-  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "-$pgid" 2>/dev/null; do
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && group_has_live_member "$pgid"; do
     sleep 0.1; waited=$((waited + 1))
   done
   # Unconditional, as in proc_group.py: a group whose leader exited still has members, so "the child
@@ -320,13 +341,20 @@ reap_child_group() {
   kill -KILL "-$pgid" 2>/dev/null || true
   wait "$pgid" 2>/dev/null || true
   waited=0
-  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "-$pgid" 2>/dev/null; do
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && group_has_live_member "$pgid"; do
     sleep 0.1; waited=$((waited + 1))
   done
-  if kill -0 "-$pgid" 2>/dev/null; then
+  group_has_live_member "$pgid"; local live=$?
+  if [ "$live" -eq 0 ]; then
     REAP_INCOMPLETE=1
     echo "mutation: the cosmic-ray process group did not stop after SIGKILL - a worker may still be" >&2
     echo "  writing to the working tree, so nothing below establishes what is on disk." >&2
+    return 1
+  fi
+  if [ "$live" -ne 1 ]; then
+    REAP_INCOMPLETE=1
+    echo "mutation: could not ask whether the cosmic-ray process group had stopped (ps returned" >&2
+    echo "  nothing usable), so whether a worker is still writing is unknowable, not answered." >&2
     return 1
   fi
   return 0

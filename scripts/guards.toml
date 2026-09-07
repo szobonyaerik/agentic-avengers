@@ -153,20 +153,30 @@ restore_tree() {
 [[guard]]
 id = "mutation-gate.reap-before-the-tree-is-judged"
 implements = "scripts/hook_mutation.sh"
-defect = "The reap asked `kill -0 <leader>` while its own comment said a group whose leader exited still has members, and this shell reaps the backgrounded leader asynchronously - so the poll reported the work stopped while a cosmic-ray worker was still running the test command, and the restore then hashed and copied a tree something else could still write to. The SIGKILL was treated as synchronous too, with no `wait` and no confirmation that the group was gone."
+defect = "The tree was judged while the cosmic-ray group could still write to it. The reap polled the LEADER, which this shell reaps asynchronously while the workers it spawned keep running the test command, so it reported the work stopped and the restore then hashed and copied a tree something else was still writing."
 tests = ["tests/test_hook_mutation.py"]
 [[guard.mutation]]
 file = "scripts/hook_mutation.sh"
 find = """
-  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "-$pgid" 2>/dev/null; do
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && group_has_live_member "$pgid"; do
     sleep 0.1; waited=$((waited + 1))
   done
   # Unconditional, as in proc_group.py"""
 replace = """
-  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
+  while false; do
     sleep 0.1; waited=$((waited + 1))
   done
   # Unconditional, as in proc_group.py"""
+
+[[guard]]
+id = "mutation-gate.a-corpse-is-not-a-live-worker"
+implements = "scripts/hook_mutation.sh"
+defect = "Liveness was decided by `kill -0`, which succeeds for a ZOMBIE: an entry in the process table that runs no code. After the SIGKILL, `wait` collects the leader this shell owns and the test-command process it spawned is reparented to PID 1 - cleared in milliseconds under launchd or systemd, NEVER cleared in a PID namespace whose PID 1 is an ordinary non-reaping process, which is what a plain `docker run` CI container is. The reap then reported a worker holding a tree nothing was holding, which produces the UNKNOWN state: the one this pipeline defines as `inspect the working tree by hand` and refuses to let GATE_BYPASS waive, over a tree the restore had proved intact."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """'$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }'"""
+replace = """'$1 == g { found = 1 } END { exit !found }'"""
 
 [[guard]]
 id = "mutation-gate.budget-validated"
