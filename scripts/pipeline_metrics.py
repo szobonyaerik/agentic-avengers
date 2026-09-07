@@ -81,6 +81,7 @@ import metrics_sink as sink  # noqa: E402
 import plugin_release  # noqa: E402
 import proc_group  # noqa: E402
 import skill_contract  # noqa: E402
+import subprocess_check  # noqa: E402
 import verifier_attempts  # noqa: E402
 from spec_gate_cache import keep, normalized, previous, split_spec  # noqa: E402
 
@@ -623,10 +624,16 @@ def record_verification_attempts(phase_dir: str) -> int | None:
 
 
 def test_root() -> Path:
-    """Where the project's tests live — the same answer `subprocess_check.py` resolves."""
-    declared = (os.environ.get("SUBPROC_CHECK_PATHS") or "").strip()
+    """Where the project's tests live — the answer `subprocess_check.test_roots()` resolves.
+
+    IMPORTED rather than restated. This used to re-read `$SUBPROC_CHECK_PATHS` here, which is the
+    same declaration read in a second place, and the second copy is the one that drifts: the third
+    reader, `hook_verifier.sh`, never read the declaration at all and ran a hardcoded
+    `--ignore=tests/e2e` over no root, so on any project whose tests are not at `tests/` the suite
+    this counted and the suite the gate ran were different populations (issue #120).
+    """
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-    return root / (declared.split(os.pathsep)[0] if declared else "tests")
+    return root / subprocess_check.test_roots()[0]
 
 
 def pytest_argv() -> list[str]:

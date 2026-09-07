@@ -77,9 +77,9 @@ tests = ["tests/test_emission_gate.py"]
 [[guard.mutation]]
 file = "scripts/emission_gate.py"
 find = '''
-    if len(recorded) >= len(described):'''
+    if len(recorded) < len(described):'''
 replace = '''
-    if True:'''
+    if False:'''
 
 [[guard]]
 id = "metrics-emission.close-stamp"
@@ -216,6 +216,30 @@ find = '''
       python3 "$SD/pipeline_metrics.py" phase-close "$dir" >/dev/null || true'''
 replace = '''
       true'''
+
+[[guard]]
+id = "suite-population.declared-roots"
+implements = "scripts/hook_verifier.sh"
+defect = "`tests_before`/`tests_after` counted the project's DECLARED test root minus its own `e2e/`, while this hook's full-suite fallback passed pytest no root at all and a hardcoded `--ignore=tests/e2e`. For any project whose tests are not at `tests/` those are different populations - measured at 3 against 5 on a scratch project with tests at `suite/` - so the record's suite size and the suite the gate ran were never the same number, and §4b's exclusion of feature e2e from the phase verifier hook applied only to the default layout (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+  ROOTS=$(python3 "$SD/subprocess_check.py" --print-roots 2>/dev/null)'''
+replace = '''
+  ROOTS=""'''
+
+[[guard]]
+id = "suite-population.one-declaration"
+implements = "scripts/pipeline_metrics.py"
+defect = "The test-root declaration had three readers and each re-derived it. A fact stated more than once drifts, and this one had: `pipeline_metrics.test_root` re-read $SUBPROC_CHECK_PATHS while `hook_verifier.sh` never read it at all (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    return root / subprocess_check.test_roots()[0]'''
+replace = '''
+    return root / "tests"'''
 
 # --- gate plausibility ----------------------------------------------------------------------------
 

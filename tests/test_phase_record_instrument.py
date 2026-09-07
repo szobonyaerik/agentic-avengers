@@ -591,3 +591,159 @@ def test_the_real_writer_accepts_the_provenance_row_and_seals_after_it(real_sink
     assert validate.returncode == 0, validate.stderr
     # Re-emission converges rather than being refused by the seal.
     assert metrics.record_phase_close(str(phase_dir)) is True
+
+
+# ── 6. tests_before/tests_after count the suite the gate actually runs ──────────────────────────────
+#
+# `count_tests` stamps `tests_before`/`tests_after` from the project's DECLARED test root minus that
+# root's `e2e/`. `hook_verifier.sh`'s full-suite fallback ran a different command: no root at all and
+# a hardcoded `--ignore=tests/e2e`. On the default layout the two agree by coincidence (2013 == 2013
+# measured on this repository), so the divergence is invisible here and permanent anywhere else -
+# measured at 3 against 5 on a project with tests at `suite/`. The declaration now has ONE reader,
+# `subprocess_check.test_roots()`, and these prove both callers use it.
+
+
+def scratch_project(root: Path, *, e2e_fails: bool) -> Path:
+    """A project whose tests are NOT at `tests/` - the layout the divergence needs."""
+    (root / "suite" / "e2e").mkdir(parents=True, exist_ok=True)
+    for index in (1, 2, 3):
+        (root / "suite" / f"test_u{index}.py").write_text(
+            f"def test_u{index}():\n    assert True\n", encoding="utf-8"
+        )
+    body = "assert False" if e2e_fails else "assert True"
+    (root / "suite" / "e2e" / "test_journey.py").write_text(
+        f"def test_journey():\n    {body}\n", encoding="utf-8"
+    )
+    return root
+
+
+def test_the_declaration_has_one_reader(monkeypatch):
+    """`pipeline_metrics.test_root` reads `subprocess_check.test_roots()` rather than re-reading the
+    environment. Two copies of one declaration is what let the three readers disagree."""
+    import subprocess_check
+
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "suite" + os.pathsep + "extra")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/proj")
+    assert subprocess_check.test_roots() == [Path("suite"), Path("extra")]
+    assert metrics.test_root() == Path("/proj/suite")
+
+    monkeypatch.delenv("SUBPROC_CHECK_PATHS")
+    assert subprocess_check.test_roots() == [Path("tests")]
+    assert metrics.test_root() == Path("/proj/tests")
+
+
+def test_print_roots_reports_without_claiming_a_scan(tmp_path: Path):
+    """The shell's way in to the same answer. It must NOT emit the guard's clean-scan statement:
+    a query borrowing a gate's clean line claims a result nobody obtained."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/subprocess_check.py"), "--print-roots"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(tmp_path),
+        env={**os.environ, "SUBPROC_CHECK_PATHS": "suite" + os.pathsep + "extra"},
+    )
+    assert result.returncode == 0
+    assert result.stdout.split() == ["suite", "extra"]
+    assert "SCOPE OF A CLEAN RESULT" not in result.stderr
+
+
+def collected(argv: list[str], cwd: Path) -> int:
+    """How many test items pytest would run for `argv`, from its own summary line."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", *argv],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(cwd),
+    )
+    match = metrics.TESTS_COLLECTED.search(result.stdout)
+    assert match, result.stdout + result.stderr
+    return int(match.group(1))
+
+
+def test_the_counted_suite_and_the_gates_suite_are_one_population(
+    tmp_path: Path, monkeypatch
+):
+    """The property, not the tree shape: for a project whose tests are not at `tests/`, the number
+    stamped into `tests_before` equals the number the verifier hook's fallback actually collects.
+
+    Before the fix these were 3 and 5 - the gate ran the whole tree, e2e included, while the record
+    claimed the declared root.
+    """
+    scratch_project(tmp_path, e2e_fails=False)
+    monkeypatch.setenv("SUBPROC_CHECK_PATHS", "suite")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    counted = metrics.count_tests()
+
+    roots = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/subprocess_check.py"), "--print-roots"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "SUBPROC_CHECK_PATHS": "suite"},
+    ).stdout.split()
+    argv: list[str] = []
+    for root in roots:
+        argv += [f"--ignore={root}/e2e", root]
+    gated = collected(argv, tmp_path)
+
+    assert counted == 3, counted
+    assert counted == gated, f"record counts {counted}, the gate runs {gated}"
+
+
+def test_the_verifier_hooks_fallback_excludes_the_declared_roots_e2e(tmp_path: Path):
+    """End to end through the real hook, on the trigger that runs the suite. A RED test in the
+    declared root's own `e2e/` must not be run by the phase suite - §4b excludes feature e2e from
+    the phase verifier hook, and before this the exclusion only ever applied to a literal
+    `tests/e2e`.
+
+    Red when the defect returns: a hardcoded `--ignore=tests/e2e` over no root collects
+    `suite/e2e/test_journey.py`, the suite goes red, and the hook stops on it.
+    """
+    import shutil
+
+    shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
+    scratch_project(tmp_path, e2e_fails=True)
+    git_init(tmp_path)
+
+    # A spec stamped `status: done`, with a real mapping row - the spec-done trigger, and the one
+    # branch that runs the phase suite. The phase has NO tests directory of its own, so `TESTPATH`
+    # does not resolve and the full-suite fallback is what runs: the path under test.
+    spec_dir = tmp_path / "docs/features/demo/phases/1-demo/specs/1.1-a"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    header = "---\nfeature: demo\nphase: 1-demo\nstatus: %s\nspec_gate: approved\n"
+    body = "review_status: approved\n---\n\n## Acceptance criteria\n\n- R1.1.1 (binding: none) do\n"
+    (spec_dir / "spec.md").write_text(header % "in-progress" + body, encoding="utf-8")
+    (spec_dir / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+        "| R1.1.1 | suite/test_u1.py::test_u1 | integration | drives the seam |\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "specs"], cwd=tmp_path, check=True, capture_output=True
+    )
+    (spec_dir / "spec.md").write_text(header % "done" + body, encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(tmp_path / "scripts/hook_verifier.sh")],
+        input=json.dumps({"tool_input": {"file_path": str(spec_dir / "spec.md")}}),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(tmp_path),
+            "CLAUDE_PROJECT_DIR": str(tmp_path),
+            "SUBPROC_CHECK_PATHS": "suite",
+            "AVENGER_METRICS_OFF": "1",
+        },
+    )
+    combined = result.stdout + result.stderr
+    # The failing e2e test must never have been collected by the phase suite.
+    assert "test_journey" not in combined, combined
+    assert "declared test roots minus e2e" in combined or result.returncode == 0, (
+        combined
+    )

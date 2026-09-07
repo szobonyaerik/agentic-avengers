@@ -329,14 +329,31 @@ def scan_path(root: Path) -> tuple[list[Violation], list[tuple[Path, str]], list
     return found, errors, []
 
 
-def requested_paths(argv_paths: list[Path]) -> list[Path]:
-    """The roots to scan: explicit arguments, else `$SUBPROC_CHECK_PATHS`, else `tests/`."""
-    if argv_paths:
-        return argv_paths
+def test_roots() -> list[Path]:
+    """The project's declared test roots: `$SUBPROC_CHECK_PATHS`, else `tests/`.
+
+    This module owns the declaration, so this is the ONE place it is read, and every other reader
+    asks here rather than restating the env lookup. Two of them had restated it and the two answers
+    had already diverged (issue #120): `pipeline_metrics.count_tests` collected the declared root and
+    ignored ITS `e2e/`, while `hook_verifier.sh`'s full-suite fallback passed pytest no root at all
+    and a hardcoded `--ignore=tests/e2e`. For a project whose tests are not at `tests/` those are
+    different populations - measured at 3 against 5 on a scratch project with tests at `suite/` -
+    so `tests_before`/`tests_after` counted one suite while the gate ran another, and
+    `count_tests`'s own docstring claimed they were "the SAME population". A fact stated twice is
+    the drift defect this repository refuses everywhere else.
+
+    Relative paths are returned as declared; a caller resolves them against the project root it
+    already knows, which is what lets a hook pass them to pytest unchanged.
+    """
     override = os.environ.get(PATHS_ENV, "").strip()
     if override:
         return [Path(p) for p in override.split(os.pathsep) if p.strip()]
     return [Path(p) for p in DEFAULT_PATHS]
+
+
+def requested_paths(argv_paths: list[Path]) -> list[Path]:
+    """The roots to scan: explicit arguments, else the project's declared test roots."""
+    return argv_paths if argv_paths else test_roots()
 
 
 @dataclass(frozen=True)
@@ -397,6 +414,11 @@ def main(argv: list[str] | None = None) -> int:
         dest="enforce_all",
         help="enforce every file scanned, not only the ones this change touches (full audit)",
     )
+    parser.add_argument(
+        "--print-roots",
+        action="store_true",
+        help="print the project's declared test roots, one per line, and exit (scans nothing)",
+    )
     args = parser.parse_args(argv)
 
     found: list[Violation] = []
@@ -453,5 +475,20 @@ def main(argv: list[str] | None = None) -> int:
     return CLEAN
 
 
+def print_roots() -> int:
+    """Print the declared test roots, one per line. Scans nothing, judges nothing.
+
+    Deliberately NOT routed through `guard_scope.run`: that emits the scope statement of a CLEAN
+    SCAN, and this call performs no scan at all. A report borrowing a gate's clean line would claim
+    a result nobody obtained, which is the class of defect this repository exists to remove - so the
+    query answers on stdout and stays out of the guard's verdict path entirely.
+    """
+    for root in test_roots():
+        print(root)
+    return CLEAN
+
+
 if __name__ == "__main__":
+    if "--print-roots" in sys.argv[1:]:
+        raise SystemExit(print_roots())
     raise SystemExit(guard_scope.run(__file__, main))

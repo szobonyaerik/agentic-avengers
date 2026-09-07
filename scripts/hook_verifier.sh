@@ -217,12 +217,46 @@ fi
 # lives there because the recorded transcript (`verifier_evidence.py`) asks it of the same suite,
 # and a rule written twice is a rule that drifts. `SUITE_BUDGET_S` is where a project puts the
 # watchdog inside this hook's own harness budget.
+#
+# THE FULL-SUITE FALLBACK RUNS THE PROJECT'S DECLARED TEST ROOTS, asked of the module that owns the
+# declaration (`subprocess_check.py --print-roots`, $SUBPROC_CHECK_PATHS else tests/) rather than
+# re-derived here. It used to pass pytest NO root and a hardcoded `--ignore=tests/e2e`, which is the
+# whole repository including the real e2e directory for any project whose tests are not at `tests/`
+# - so this gate ran one population while `pipeline_metrics.count_tests` stamped
+# `tests_before`/`tests_after` from another, measured at 5 against 3 on a scratch project with tests
+# at `suite/` (issue #120). Excluding each declared root's own `e2e/` is what §4b already says this
+# hook does; it simply did not do it anywhere but the default layout.
+#
+# Resolution failing is NOT a reason to widen back to the whole tree: with no roots readable the run
+# keeps its previous shape and says so, since a silent fallback to a different population is the
+# defect being removed.
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
   OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
-  SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+  ROOTS=$(python3 "$SD/subprocess_check.py" --print-roots 2>/dev/null)
+  PYTEST_ARGS=""
+  while IFS= read -r r; do
+    # A declared root that does not EXIST is skipped, never handed to pytest: pytest treats a
+    # missing path as a usage error, which would read here as a RED suite, where a project with no
+    # tests yet must simply collect nothing. Same rule `subprocess_check.py` applies to an absent
+    # root - clean, but never silent.
+    [ -n "$r" ] && [ -d "$r" ] || continue
+    PYTEST_ARGS="$PYTEST_ARGS --ignore=$r/e2e $r"
+  done <<INNER
+$ROOTS
+INNER
+  if [ -n "$PYTEST_ARGS" ]; then
+    SCOPE="declared test roots minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
+  else
+    # No declared root exists on disk (or none could be resolved). Keep the previous whole-tree
+    # form: in a project with no tests it collects nothing and exits 5, which the branch below
+    # treats as "not a failure" rather than as a red suite.
+    PYTEST_ARGS="--ignore=tests/e2e"
+    SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir; no declared test root exists)"
+  fi
+  # shellcheck disable=SC2086 — $PYTEST_ARGS is a built argument list, deliberately word-split.
+  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short $PYTEST_ARGS 2>&1); pc=$?
 fi
 
 # 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.

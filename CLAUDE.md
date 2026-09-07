@@ -1145,7 +1145,19 @@ phase recorded **8** against a real attempt of 1 and a cap of 3 that had never f
 the cap having failed; the retries stay visible in `gate_calls[]` with their `failure_cause`, and only
 the attribution was wrong) · tests before/after — **collected pytest test items**
 (`pytest --collect-only`, minus the test root's `e2e/`), the same population `hook_verifier.sh`'s own
-`pytest -q` reports, never `def test_` lines — counted the same way at both ends
+`pytest -q` reports, never `def test_` lines — and "the same population" is now TRUE rather than
+claimed. The test-root declaration had **three** readers each re-deriving it, and they disagreed:
+`count_tests` collected the declared root and ignored ITS `e2e/`, while the verifier hook's
+full-suite fallback passed pytest **no root at all** and a hardcoded `--ignore=tests/e2e`. On the
+default layout the two agree by coincidence (2013 == 2013 measured here), so the divergence is
+invisible in this repository and permanent in any project whose tests are not at `tests/` — measured
+at **3 against 5** on a scratch project with tests at `suite/`, which also means §4b's exclusion of
+feature e2e from the phase verifier hook only ever applied to the default layout.
+`subprocess_check.test_roots()` is the one reader now (the module that owns `SUBPROC_CHECK_PATHS`);
+`pipeline_metrics.test_root()` imports it and the hook asks for it with `--print-roots`, a query
+routed deliberately AROUND `guard_scope.run` because it performs no scan and must not borrow a
+gate's clean-result line. A root the hook cannot resolve keeps the previous whole-tree scope and
+**says so** rather than silently switching population — counted the same way at both ends
 (`hook_spec_gate.sh` on the first spec write, and the orchestrator's `phase-close` after the phase's
 commit) · the phase's **close** and `elapsed_minutes`, stamped by the orchestrator right after that
 commit and by no hook, because **close means landed, not implemented**: `handover.md` being written
