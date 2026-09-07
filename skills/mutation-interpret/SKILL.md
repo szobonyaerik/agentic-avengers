@@ -60,8 +60,12 @@ authority the *score* has; a corrupted tree is not a score. **Nothing from such 
 `TREE INTEGRITY FAILED` followed by *every in-scope file has been put back* is the restored case;
 `NOT RESTORED` names files the restore could not write back; and `TREE INTEGRITY UNKNOWN` means the
 restore itself did not complete (a signal, a crash), so **what is on disk was never established**.
-The last two both tell you to inspect the working tree by hand before committing anything, and
-neither claims a restoration. The hook also refuses to start `exec` when the
+`TREE INTEGRITY UNKNOWN` also covers a cosmic-ray process group that had not stopped when the tree
+was checked, since a tree something may still be writing to is established no better than one whose
+restore crashed. The last two both tell you to inspect the working tree by hand before committing
+anything, neither claims a restoration, and **`GATE_BYPASS` will not waive either of them** - only
+the restored case, the one where the mutant is provably gone (`skills/pipeline-conventions`, under
+the mutation gate, states that rule once). The hook also refuses to start `exec` when the
 baseline's wall clock times the pending mutants would not fit `MUTATION_HOOK_BUDGET_S` (default: the
 hook's `hooks.json` timeout); that refusal is recorded as `did-not-run`, and the remedy is a faster
 test command, a narrower scope, or raising the budget and the hook timeout together. A

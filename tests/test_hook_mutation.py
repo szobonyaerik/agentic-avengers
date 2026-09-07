@@ -342,6 +342,15 @@ LEAVES_THE_MUTANT = "printf 'def a():\\n    return 2\\n' > '{target}'; exit 0"
 LEAVES_THE_MUTANT_UNWRITABLE = (
     "printf 'def a():\\n    return 2\\n' > '{target}'; chmod 0444 '{target}'; exit 0"
 )
+# A worker that outlives the SIGTERM, writes a mutant, and only then exits - the shape
+# `cosmic-ray exec` really has, where the CLI leader dies at once and the test-command subprocess it
+# spawned is still running. The leader blocks so the hook has to be killed to get past it.
+WORKER_OUTLIVES_THE_LEADER = (
+    "( trap '' TERM; sleep 0.6; printf 'def a():\\n    return 2\\n' > '{target}' )"
+    " >/dev/null 2>&1 &\n"
+    "touch '{target}.exec-started'\n"
+    "sleep 120"
+)
 
 
 def corrupting_project(project, exec_body: str):
@@ -412,6 +421,44 @@ def test_a_tree_that_differs_after_a_clean_exit_fails_the_hook_under_advisory(pr
     (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
     assert row["failure_cause"] == "did-not-run"
     assert "altered by cosmic-ray exec" in row["note"]
+
+
+def test_a_worker_that_outlives_the_leader_is_reaped_before_the_tree_is_judged(project):
+    """The tree may only be judged once nothing in the group can still write to it.
+
+    `cosmic-ray exec` is a CLI leader plus the test-command subprocesses it spawns, and this shell
+    reaps the backgrounded leader asynchronously - so asking `kill -0 <leader>` reports the work
+    stopped while a worker is still running, and the restore then hashes and copies a tree something
+    else is writing to. Here the worker ignores the SIGTERM and applies its mutant 0.6s later: the
+    reap has to wait for the GROUP, or that write is never seen at all and the hook reports a tree
+    it never established, over a file cosmic-ray was still holding.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, WORKER_OUTLIVES_THE_LEADER)
+    import signal
+
+    started = target.with_suffix(".py.exec-started")
+    proc = start_hook(project, path_prefix=prefix, MUTATION_HOOK_BUDGET_S="600")
+    try:
+        assert wait_until(started.exists, timeout_s=120), (
+            "exec never started; the fixture is not exercising the kill path"
+        )
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=120)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    assert target.read_text(encoding="utf-8") == original, (
+        "the worker's mutant is still applied in the working tree after the kill:\n"
+        + target.read_text(encoding="utf-8")
+    )
+    assert "TREE INTEGRITY" in err, (
+        "the worker wrote before it exited, so the tree check must have seen that write - a clean "
+        "report here means the restore ran while the group was still alive"
+    )
+    assert "RESTORED" in err
+    assert proc.returncode == 2, "a corrupted tree is never advisory"
 
 
 @pytest.mark.skipif(

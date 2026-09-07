@@ -151,6 +151,24 @@ restore_tree() {
   return 0"""
 
 [[guard]]
+id = "mutation-gate.reap-before-the-tree-is-judged"
+implements = "scripts/hook_mutation.sh"
+defect = "The reap asked `kill -0 <leader>` while its own comment said a group whose leader exited still has members, and this shell reaps the backgrounded leader asynchronously - so the poll reported the work stopped while a cosmic-ray worker was still running the test command, and the restore then hashed and copied a tree something else could still write to. The SIGKILL was treated as synchronous too, with no `wait` and no confirmation that the group was gone."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "-$pgid" 2>/dev/null; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  # Unconditional, as in proc_group.py"""
+replace = """
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  # Unconditional, as in proc_group.py"""
+
+[[guard]]
 id = "mutation-gate.budget-validated"
 implements = "scripts/hook_mutation.sh"
 defect = "MUTATION_HOOK_BUDGET_S arrived from the environment unvalidated and went straight into bash arithmetic. A non-numeric value left REMAINING_S unset, and the next expansion under `set -u` exited 1 before the budget check, the snapshot and exec - the whole gate and its tree guard skipped with no record written, and exit 1 is not the blocking code, so `enforce` did not stop either."

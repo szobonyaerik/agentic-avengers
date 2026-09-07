@@ -858,7 +858,11 @@ in-process model, and says so on stderr every call rather than quietly doing not
 reaches, which is how a bypass aimed at the spec gate's subprocess check also waived a cross-family
 NO-GO in the same run; `GATE_BYPASS_GATES="<gate> <gate>"` limits it to exactly those, refuses
 anything else with the blocking exit and no log line, and matches names exactly, since a prefix would
-reinstate the leak one level down (issue #59).
+reinstate the leak one level down (issue #59). **One outcome is not waivable at all**: the mutation
+tree guard's two not-clean states - a mutant provably still on disk, and a tree nothing established
+either way - are refused in both callers, because that is authored code nobody authored rather than
+a weak gate signal an operator may accept. Only its `restored` outcome stays waivable and audited;
+`skills/pipeline-conventions` states the rule and its three outcomes once, under the mutation gate.
 
 **The feature-close ship gate (`no-mistakes`) is the one sanctioned same-family exception.** It runs
 once per feature — after the last phase is verified and the e2e suite is written — and covers what no

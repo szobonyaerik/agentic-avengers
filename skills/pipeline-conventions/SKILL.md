@@ -542,6 +542,18 @@ Three consequences worth stating outright:
     `hooks.json` timeout) exec is refused up front and recorded `did-not-run`. `off` still exits
     before any cosmic-ray call. What it cannot do is said: nothing runs when the hook itself is
     SIGKILLed, and a test command that rewrites source under `module-path` reads as corruption.
+  - **`GATE_BYPASS` cannot waive a tree nothing established as clean.** This is the one exception to
+    the break-glass being able to waive every gate a run reaches, and it lives here because the
+    reason is the tree guard's own three outcomes. Only `restored` - the tree differed and every
+    in-scope file was put back from the pre-exec snapshot - stays waivable, and stays audited
+    exactly as before: the mutant is provably gone, so what is left is a void verdict, which is what
+    an override consents to. The other two are refused with the blocking exit and no log line, on
+    the same precedent as a gate outside `GATE_BYPASS_GATES`: `NOT every file could be put back`
+    leaves a mutant provably on disk, and `TREE INTEGRITY UNKNOWN` - a restore that did not
+    complete, a snapshot with no manifest, or a cosmic-ray process group that had not stopped when
+    the tree was checked - establishes nothing either way. Neither is a weak gate signal an operator
+    may accept; it is source nobody authored, so there is nothing to consent to. Both callers behave
+    identically, `hook_mutation.sh` per run and `gate_ci.sh` at its end-of-run override.
 - **Breaker** — critical/security paths only, run when the resolver reports `stage: breaker` (any
   spec in the phase **resolves to** `criticality: critical`). Not optional in practice: it was owed on
   every phase-8 and phase-9 spec of one feature and ran on neither, with zero trace anywhere in that

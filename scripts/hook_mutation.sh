@@ -154,6 +154,7 @@ bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 SNAP=""
 TREE_CORRUPTED=0
 TREE_STATE="unknown"
+REAP_INCOMPLETE=0
 TREE_NOTE="the working tree was altered by cosmic-ray exec; this run's result is void"
 restore_tree() {
   [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0
@@ -169,6 +170,20 @@ restore_tree() {
   fi
   python3 "$SD/mutation_exec_guard.py" restore --root "$CLAUDE_PROJECT_DIR" "$snap" >"$WORK/restore.txt" 2>&1
   local rc=$?
+  # A reap that could not confirm the group stopped outranks whatever the comparison found: the
+  # restore hashed and copied while something in that group could still have been writing, so
+  # neither "intact" nor "put back" is a claim anything established. Same category, same remedy as
+  # a restore that did not complete.
+  if [ "$REAP_INCOMPLETE" -ne 0 ]; then
+    TREE_CORRUPTED=1
+    TREE_STATE="unknown"
+    TREE_NOTE="cosmic-ray workers were still alive when the tree was checked, so whether a mutant is still applied is UNKNOWN; this run's result is void"
+    { echo "mutation: TREE INTEGRITY UNKNOWN - the cosmic-ray process group had not stopped when the tree was checked, so what is on disk was never established."
+      cat "$WORK/restore.txt"
+      echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
+    } >&2
+    return 0
+  fi
   # A CLEAN restore says on stderr what a clean result does not establish (guard_scope, CLAUDE.md
   # §11). Held in a file and cat'd only in the failure branch, that statement reached the reader on
   # exactly the runs it exists for - the clean ones, which are the ones that get over-read.
@@ -285,16 +300,36 @@ signal_child_group() {
   kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
 }
 
+# The liveness question is asked of the GROUP, never of the leader: bash reaps the backgrounded
+# leader asynchronously, so `kill -0 <leader>` starts failing while the workers it spawned are still
+# running the test command - and one of them writing a mutant while the restore hashes and copies is
+# the state the restore exists to rule out. The SIGKILL is not treated as synchronous either: it is
+# followed by a real `wait` on the job this shell started, then by a second bounded poll of the
+# group. A group still alive after that is NOT reported as reaped - REAP_INCOMPLETE says so, and
+# restore_tree turns it into the UNKNOWN tree state, because a tree that may still be written to is
+# not one anything established as clean.
 reap_child_group() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
   local waited=0
-  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "-$pgid" 2>/dev/null; do
     sleep 0.1; waited=$((waited + 1))
   done
   # Unconditional, as in proc_group.py: a group whose leader exited still has members, so "the child
   # is gone" is never evidence that the work stopped.
   kill -KILL "-$pgid" 2>/dev/null || true
+  wait "$pgid" 2>/dev/null || true
+  waited=0
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "-$pgid" 2>/dev/null; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  if kill -0 "-$pgid" 2>/dev/null; then
+    REAP_INCOMPLETE=1
+    echo "mutation: the cosmic-ray process group did not stop after SIGKILL - a worker may still be" >&2
+    echo "  writing to the working tree, so nothing below establishes what is on disk." >&2
+    return 1
+  fi
+  return 0
 }
 
 run_child() {

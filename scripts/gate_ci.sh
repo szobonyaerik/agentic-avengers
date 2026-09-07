@@ -577,7 +577,7 @@ mutation_nothing_in_scope() {
 # an established claim that exec left the tree changed. Its helpers are nested so the whole guard
 # stays one sliceable unit; their closing braces are indented and never column 0.
 mutation_exec_guarded() {
-  local scoped="$1" session="$2" snap="$3" child=""
+  local scoped="$1" session="$2" snap="$3" child="" reap_incomplete=0
   # Only rc 1 out of `restore` is "the tree differed and every in-scope file is back". rc 2 is "at
   # least one is NOT", and any other non-zero code is a restore that did not complete, where the
   # tree state is UNKNOWN - the operator action is the same, the claim is not.
@@ -585,6 +585,16 @@ mutation_exec_guarded() {
     python3 "$SCRIPT_DIR/mutation_exec_guard.py" restore --root "$ROOT" "$snap" >"$snap.restore" 2>&1
     local tc=$?
     cat "$snap.restore" >>"$TMP"
+    # A reap that could not confirm the group stopped outranks the comparison: the restore hashed
+    # and copied while something in that group could still have been writing, so no outcome it
+    # reports is established. Same category and same remedy as a restore that did not complete.
+    if [ "$reap_incomplete" -ne 0 ]; then
+      cat "$snap.restore" >&2
+      echo "  ✗ mutation: TREE INTEGRITY UNKNOWN - the cosmic-ray process group had not stopped when" >&2
+      echo "    the tree was checked, so what is on disk was never established. This checkout cannot" >&2
+      echo "    be called clean: inspect it by hand before trusting anything built from it." >&2
+      return 5
+    fi
     # A CLEAN restore states what a clean result does not establish (guard_scope, CLAUDE.md §11).
     # Kept in the file and shown only in the failure branch, it never reached the reader on the runs
     # it is written for.
@@ -607,15 +617,30 @@ mutation_exec_guarded() {
     return 5
   }
   # The hook's primitive, applied here for the same reason: `cosmic-ray exec` spawns workers that run
-  # the suite, so signalling the direct child alone leaves them running.
+  # the suite, so signalling the direct child alone leaves them running. Liveness is asked of the
+  # GROUP, never of the leader, which this shell reaps asynchronously while its workers keep going;
+  # the SIGKILL is followed by a real `wait` and a second bounded poll, and a group still alive after
+  # that is reported rather than assumed gone.
   _mg_reap() {
     local pgid="$1" waited=0
     [ -n "$pgid" ] || return 0
     kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
-    while [ "$waited" -lt 50 ] && kill -0 "$pgid" 2>/dev/null; do
+    while [ "$waited" -lt 50 ] && kill -0 "-$pgid" 2>/dev/null; do
       sleep 0.1; waited=$((waited + 1))
     done
     kill -KILL "-$pgid" 2>/dev/null || true
+    wait "$pgid" 2>/dev/null || true
+    waited=0
+    while [ "$waited" -lt 50 ] && kill -0 "-$pgid" 2>/dev/null; do
+      sleep 0.1; waited=$((waited + 1))
+    done
+    if kill -0 "-$pgid" 2>/dev/null; then
+      reap_incomplete=1
+      echo "  ✗ mutation: the cosmic-ray process group did not stop after SIGKILL - a worker may" >&2
+      echo "    still be writing to this checkout." >&2
+      return 1
+    fi
+    return 0
   }
   _mg_on_signal() {
     trap - TERM INT
