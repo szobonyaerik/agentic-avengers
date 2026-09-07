@@ -186,11 +186,36 @@ tests = ["tests/test_gate_ci_mutation_tree.py"]
 [[guard.mutation]]
 file = "scripts/gate_ci.sh"
 find = """
-  if [ "$tc" -eq 1 ]; then
-    cat "$3.restore" >&2"""
+    if [ "$tc" -eq 1 ]; then
+      echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2"""
 replace = """
-  if [ "$tc" -ne 0 ]; then
-    cat "$3.restore" >&2"""
+    if [ "$tc" -ne 0 ]; then
+      echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2"""
+
+[[guard]]
+id = "mutation-gate.ci-kill-path-restore"
+implements = "scripts/gate_ci.sh"
+defect = "`gate_ci.sh` ran `cosmic-ray exec` in the foreground with no signal handling, so the restore happened only after a normal return. agents/avenger-verifier.md has the Verifier run `gate_ci.sh --full` in the LIVE working copy, so an interrupted or timed-out agent Bash call left the mutant applied in the implementer's uncommitted tree - issue #95's damage model in the one checkout nobody discards."
+tests = ["tests/test_gate_ci_mutation_tree.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+  trap _mg_on_signal TERM INT"""
+replace = """
+  trap - TERM INT"""
+
+[[guard]]
+id = "mutation-gate.snapshot-armed-late"
+implements = "scripts/hook_mutation.sh"
+defect = "`SNAP` was armed BEFORE the snapshot command ran, while `restore_tree` asked only that the directory existed. `snapshot()` mkdirs `<out>/files` as its first action, so the whole write was a window where SNAP named a manifest-less directory - and a signal arriving there restored against nothing, reported `NOT every file could be put back` and exited 2 under advisory, while exec had provably never started."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then"""
+replace = """
+SNAP="$WORK/tree"
+if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then"""
 
 [[guard]]
 id = "mutation-gate.restore-crash"

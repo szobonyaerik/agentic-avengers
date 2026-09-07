@@ -259,11 +259,13 @@ def live_project(project):
     return project, target
 
 
-def start_hook(project, **extra_env) -> subprocess.Popen:
+def start_hook(
+    project, path_prefix: str = "", new_session: bool = False, **extra_env
+) -> subprocess.Popen:
     root, phase, store, writer, tmp = project
     payload = json.dumps({"tool_input": {"file_path": str(phase / "handover.md")}})
     env = {
-        "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin",
+        "PATH": f"{path_prefix}{Path(sys.executable).parent}:/usr/bin:/bin:/usr/local/bin",
         "HOME": str(tmp),
         "CLAUDE_PROJECT_DIR": str(root),
         "MUTATION_POLICY": "advisory",
@@ -284,6 +286,7 @@ def start_hook(project, **extra_env) -> subprocess.Popen:
             stderr=subprocess.PIPE,
             text=True,
             env=env,
+            start_new_session=new_session,
         )
 
 
@@ -442,6 +445,96 @@ def test_a_restore_that_could_not_put_everything_back_never_says_it_did(project)
     (row,) = [c for c in recorded(store) if c["stage"] == "mutation"]
     assert row["failure_cause"] == "did-not-run"
     assert "NOT every file could be put back" in row["note"]
+
+
+def test_a_clean_restore_states_what_it_does_not_establish(project):
+    """CLAUDE.md §11: a later stage reads OUTPUT, not source, and it is the CLEAN result that gets
+    over-read. The restore's own scope statement was written to a file the hook cat'd only in the
+    failure branch, so the one run it is written for - the clean one - never showed it, and the
+    operator saw only `hook_mutation.sh`'s statement, which says nothing about tree integrity.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, "exit 0")
+
+    result = run_hook(project, policy="advisory", path_prefix=prefix)
+
+    assert target.read_text(encoding="utf-8") == original, (
+        "the fixture leaves the tree intact"
+    )
+    assert "tree intact" in result.stderr
+    assert "SCOPE OF A CLEAN RESULT" in result.stderr
+
+
+def snapshot_stalling_python(binaries: Path, marker: Path) -> None:
+    """A `python3` on PATH that stalls inside `mutation_exec_guard.py snapshot`, delegating the rest.
+
+    It reproduces the real command's first observable action - `snapshot()` mkdirs `<out>/files`
+    before it hashes or copies anything - and then holds there, which is the window the hook is
+    being asked about. Everything else runs on the real interpreter.
+    """
+    shim = binaries / "python3"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib, sys, time\n"
+        "argv = sys.argv[1:]\n"
+        "if len(argv) >= 2 and argv[0].endswith('mutation_exec_guard.py') "
+        "and argv[1] == 'snapshot':\n"
+        "    (pathlib.Path(argv[-1]) / 'files').mkdir(parents=True, exist_ok=True)\n"
+        f"    pathlib.Path({str(marker)!r}).write_text('x')\n"
+        "    time.sleep(120)\n"
+        "    sys.exit(0)\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *argv])\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+
+
+def test_a_kill_while_the_snapshot_is_being_written_never_claims_the_tree_was_altered(
+    project,
+):
+    """A snapshot that has not finished cannot answer anything, so nothing may be claimed from it.
+
+    `SNAP` used to be armed BEFORE the snapshot command ran, while `restore_tree` asked only that
+    the directory existed. `snapshot()` mkdirs `<out>/files` as its first action, so the whole write
+    was a window where `SNAP` named a manifest-less directory: a signal arriving there ran a restore
+    against nothing, which is ERROR, and the hook reported `NOT every file could be put back` and
+    exited 2 under advisory - while exec had provably never started and nothing had been altered.
+
+    The signal goes to the process GROUP, which is how the harness delivers it: the snapshot is a
+    foreground child, so bash defers its trap until that child returns, and the child returns
+    because the same signal reached it.
+    """
+    root, phase, store, writer, tmp = project
+    target, original, prefix = corrupting_project(project, LEAVES_THE_MUTANT)
+    import signal
+
+    marker = tmp / "snapshot-started"
+    snapshot_stalling_python(tmp / "bin", marker)
+
+    proc = start_hook(project, path_prefix=prefix, new_session=True)
+    try:
+        assert wait_until(marker.exists, timeout_s=120), (
+            "the snapshot was never reached; the fixture is not exercising the window"
+        )
+        os.killpg(proc.pid, signal.SIGTERM)
+        _, err = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+    assert target.read_text(encoding="utf-8") == original, (
+        "exec never ran, so nothing was altered"
+    )
+    assert "TREE INTEGRITY" not in err, (
+        "an unfinished snapshot establishes nothing about the tree, in either direction"
+    )
+    assert "NOT a gate verdict" in err, "a kill before exec is a kill, and says so"
+    assert proc.returncode == 0, (
+        "advisory does not block on a kill the gate never answered"
+    )
+    assert not [c for c in recorded(store) if c["stage"] == "mutation"], (
+        "nothing was measured and nothing was corrupted, so there is no mutation row to write"
+    )
 
 
 # --- a budget the hook cannot compute with is a configuration error, not a skipped gate -----------

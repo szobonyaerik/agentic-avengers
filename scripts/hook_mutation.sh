@@ -134,23 +134,38 @@ trap cleanup EXIT
 # first, or every bypassed run leaks its work dir.
 bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 
-# The pre-exec snapshot, and the one restore that answers it. SNAP is set only while a snapshot is
-# live, and cleared BEFORE the restore runs so a second signal arriving mid-restore cannot start a
-# second one. The restore runs in the FOREGROUND on purpose: bash defers a trap until the running
-# command returns, so a kill during it completes the restore first. A tree that differed is recorded
-# in TREE_CORRUPTED and every exit path asks it before asking the policy. Only rc 1 means the tree
-# differed AND every file is back; rc 2 means at least one is NOT, and any other non-zero rc - a
-# restore killed by a signal, a crash - means the restore did not complete and the tree state is
-# UNKNOWN. The last two never claim the tree was put back.
+# The pre-exec snapshot, and the one restore that answers it. SNAP is armed only once the snapshot
+# has COMPLETED - never before it, because `snapshot` mkdirs its files directory as its first action,
+# so an armed-early SNAP names a directory holding no manifest for the whole time it is being
+# written, and a signal arriving in that window ran a restore against nothing and reported a tree
+# that could not be put back while exec had provably never started. It is cleared BEFORE the restore
+# runs so a second signal arriving mid-restore cannot start a second one. The restore runs in the
+# FOREGROUND on purpose: bash defers a trap until the running command returns, so a kill during it
+# completes the restore first. A tree that differed is recorded in TREE_CORRUPTED and every exit path
+# asks it before asking the policy. Only rc 1 means the tree differed AND every file is back; rc 2
+# means at least one is NOT, and any other non-zero rc - a restore killed by a signal, a crash -
+# means the restore did not complete and the tree state is UNKNOWN. The last two never claim the tree
+# was put back, and neither does a snapshot with no manifest to compare against.
 SNAP=""
 TREE_CORRUPTED=0
 TREE_NOTE="the working tree was altered by cosmic-ray exec; this run's result is void"
 restore_tree() {
   [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0
   local snap="$SNAP"; SNAP=""
+  if [ ! -f "$snap/manifest.json" ]; then
+    TREE_CORRUPTED=1
+    TREE_NOTE="the pre-exec snapshot carries no manifest, so what cosmic-ray exec left behind is UNKNOWN; this run's result is void"
+    { echo "mutation: TREE INTEGRITY UNKNOWN - the snapshot at $snap holds no manifest, so there is nothing to compare the tree against."
+      echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
+    } >&2
+    return 0
+  fi
   python3 "$SD/mutation_exec_guard.py" restore --root "$CLAUDE_PROJECT_DIR" "$snap" >"$WORK/restore.txt" 2>&1
   local rc=$?
-  if [ "$rc" -eq 0 ]; then return 0; fi
+  # A CLEAN restore says on stderr what a clean result does not establish (guard_scope, CLAUDE.md
+  # §11). Held in a file and cat'd only in the failure branch, that statement reached the reader on
+  # exactly the runs it exists for - the clean ones, which are the ones that get over-read.
+  if [ "$rc" -eq 0 ]; then cat "$WORK/restore.txt" >&2; return 0; fi
   TREE_CORRUPTED=1
   if [ "$rc" -eq 1 ]; then
     TREE_NOTE="the working tree was altered by cosmic-ray exec and restored from the pre-exec snapshot; this run's result is void"
@@ -345,12 +360,16 @@ fi
 # Snapshot every file the session can write, from the session itself. No snapshot, no exec: a run
 # that cannot be checked afterwards is a run that can leave a mutant behind unnoticed, which is the
 # defect. Foreground, like the restore: short, and a kill during it completes it first.
-SNAP="$WORK/tree"
-if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$SNAP" >>"$TMP" 2>&1; then
-  SNAP=""
+#
+# SNAP is armed AFTER the command returns 0, and that ordering is the whole of it: while the snapshot
+# is being written its directory exists and holds no manifest, so a SNAP armed ahead of it points at
+# a snapshot that cannot answer anything. A kill in that window is a kill BEFORE exec - nothing was
+# altered, and the restore has nothing to say - which is what an unarmed SNAP reports.
+if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then
   echo "the in-scope files could not be snapshotted before exec (fail closed) - refusing to start it:" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:integrity-unavailable" "the in-scope files could not be snapshotted, so exec could not be guarded - refused to start"
 fi
+SNAP="$WORK/tree"
 
 run_child cosmic-ray exec "$SCOPED" "$SESSION"
 ec=$?

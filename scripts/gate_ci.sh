@@ -552,39 +552,92 @@ mutation_nothing_in_scope() {
 # Every `cosmic-ray exec` is bracketed by scripts/mutation_exec_guard.py (issue #95): a snapshot of
 # every file the session can write before, and an explicit restore-and-compare after. exec mutates
 # source IN PLACE and reverts in a `finally`, and the in-session hook's kill path left a mutant applied
-# on disk, where it was committed as authored code. CI has no kill path of its own to guard (a runner
-# that times out discards its checkout, so no budget refusal lives here), but the comparison after a
-# clean exit is the same question, and a tree that differed is a FAILED RUN whatever the policy -
-# `record_fail`, never `mutation_fail`, because a corrupted tree is not a weak test signal.
+# on disk, where it was committed as authored code. The restore runs on the KILL PATH here too, not
+# only after a clean exit: this script is not CI-only - agents/avenger-verifier.md has the Verifier
+# run `gate_ci.sh --full` in the LIVE working copy, and an agent Bash call that is interrupted or
+# times out mid-exec leaves the mutant in the implementer's UNCOMMITTED tree, which is issue #95's
+# damage model in the one checkout nobody throws away. So exec is launched into its own session, the
+# TERM/INT trap signals and REAPS its process group before restoring - a worker still alive would
+# re-apply the next mutant over a restore that ran ahead of it - and the restore source is the
+# pre-exec snapshot, never `git checkout`, because this pipeline verifies uncommitted work and HEAD
+# is not the state the implementer left. A tree that differed is a FAILED RUN whatever the policy -
+# `record_fail`, never `mutation_fail`, because a corrupted tree is not a weak test signal. What
+# still does not live here is the budget refusal: a CI runner that times out discards its checkout.
 # $1 = scoped config · $2 = session · $3 = snapshot dir. Streams into $TMP like its neighbours.
 # Returns 0 exec finished and the tree is intact · 1 exec errored, tree intact · 3 the tree DIFFERED
 # and every in-scope file was put back · 5 the tree DIFFERED and was NOT fully put back, or the
 # restore did not complete at all, so the checkout is not clean · 4 no snapshot could be taken, so
 # exec was never started. 3 and 5 are distinct because only one of them may claim the tree is clean:
 # `restore` returns 2 whenever a copy back raises or the content still differs after it, and any
-# other non-zero code is a restore that did not finish.
+# other non-zero code is a restore that did not finish - which is reported as UNKNOWN rather than as
+# an established claim that exec left the tree changed. Its helpers are nested so the whole guard
+# stays one sliceable unit; their closing braces are indented and never column 0.
 mutation_exec_guarded() {
-  if ! python3 "$SCRIPT_DIR/mutation_exec_guard.py" snapshot --root "$ROOT" --session "$2" "$3" >>"$TMP" 2>&1; then
+  local scoped="$1" session="$2" snap="$3" child=""
+  # Only rc 1 out of `restore` is "the tree differed and every in-scope file is back". rc 2 is "at
+  # least one is NOT", and any other non-zero code is a restore that did not complete, where the
+  # tree state is UNKNOWN - the operator action is the same, the claim is not.
+  _mg_restore() {
+    python3 "$SCRIPT_DIR/mutation_exec_guard.py" restore --root "$ROOT" "$snap" >"$snap.restore" 2>&1
+    local tc=$?
+    cat "$snap.restore" >>"$TMP"
+    # A CLEAN restore states what a clean result does not establish (guard_scope, CLAUDE.md §11).
+    # Kept in the file and shown only in the failure branch, it never reached the reader on the runs
+    # it is written for.
+    if [ "$tc" -eq 0 ]; then cat "$snap.restore" >&2; return 0; fi
+    cat "$snap.restore" >&2
+    if [ "$tc" -eq 1 ]; then
+      echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2
+      echo "    in-scope file was put back from the pre-exec snapshot. Never advisory (issue #95)." >&2
+      return 3
+    fi
+    if [ "$tc" -eq 2 ]; then
+      echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed and the" >&2
+      echo "    restore did NOT put everything back (exit $tc). This checkout is NOT clean: inspect it by" >&2
+      echo "    hand before trusting anything built from it. Never advisory (issue #95)." >&2
+      return 5
+    fi
+    echo "  ✗ mutation: TREE INTEGRITY UNKNOWN - the restore did not complete (exit $tc), so whether" >&2
+    echo "    cosmic-ray exec left a mutant applied could not be established. This checkout cannot be" >&2
+    echo "    called clean: inspect it by hand before trusting anything built from it (issue #95)." >&2
+    return 5
+  }
+  # The hook's primitive, applied here for the same reason: `cosmic-ray exec` spawns workers that run
+  # the suite, so signalling the direct child alone leaves them running.
+  _mg_reap() {
+    local pgid="$1" waited=0
+    [ -n "$pgid" ] || return 0
+    kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
+    while [ "$waited" -lt 50 ] && kill -0 "$pgid" 2>/dev/null; do
+      sleep 0.1; waited=$((waited + 1))
+    done
+    kill -KILL "-$pgid" 2>/dev/null || true
+  }
+  _mg_on_signal() {
+    trap - TERM INT
+    echo "  ✗ mutation: INTERRUPTED mid-exec (signal) - this is NOT a gate verdict. Restoring the" >&2
+    echo "    working tree from the pre-exec snapshot before exiting (issue #95)." >&2
+    _mg_reap "$child"
+    _mg_restore
+    exit 2
+  }
+  if ! python3 "$SCRIPT_DIR/mutation_exec_guard.py" snapshot --root "$ROOT" --session "$session" "$snap" >>"$TMP" 2>&1; then
     return 4
   fi
-  cosmic-ray exec "$1" "$2" >>"$TMP" 2>&1
+  # os.setsid() then exec: the backgrounded pid IS the session and group leader, so `kill -<pid>`
+  # reaches every worker. `setsid(1)` is not on macOS, which is why this is done in python. And bash
+  # defers a trap until the running FOREGROUND command returns, so exec must be waited on rather than
+  # run inline, or the restore would happen only after the call it was killed for had finished.
+  python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+    cosmic-ray exec "$scoped" "$session" >>"$TMP" 2>&1 &
+  child=$!
+  trap _mg_on_signal TERM INT
+  wait "$child"
   local ec=$?
-  python3 "$SCRIPT_DIR/mutation_exec_guard.py" restore --root "$ROOT" "$3" >"$3.restore" 2>&1
+  trap - TERM INT
+  _mg_restore
   local tc=$?
-  cat "$3.restore" >>"$TMP"
-  if [ "$tc" -eq 1 ]; then
-    cat "$3.restore" >&2
-    echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2
-    echo "    in-scope file was put back from the pre-exec snapshot. Never advisory (issue #95)." >&2
-    return 3
-  fi
-  if [ "$tc" -ne 0 ]; then
-    cat "$3.restore" >&2
-    echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed and the" >&2
-    echo "    restore did NOT put everything back (exit $tc). This checkout is NOT clean: inspect it by" >&2
-    echo "    hand before trusting anything built from it. Never advisory (issue #95)." >&2
-    return 5
-  fi
+  [ "$tc" -eq 0 ] || return "$tc"
   [ "$ec" -eq 0 ] || return 1
   return 0
 }
