@@ -1688,12 +1688,11 @@ def test_both_gates_assemble_the_roots_through_one_file(tmp_path: Path):
     assert "FELL-BACK" not in result.stdout
 
 
-def test_the_assembly_says_so_when_no_declared_root_resolves(tmp_path: Path):
-    """A silent fallback to a different population is the defect being removed, so the fallback
-    reports itself and the caller prints it."""
+def fall_back_scope(tmp_path: Path, scripts: str, **env: str) -> str:
+    """Drive the real assembly and return what it SAID about falling back."""
     script = (
         f'. "{ROOT}/scripts/test_root_args.sh"\n'
-        f'test_root_pytest_args "{ROOT}/scripts" || echo "FELL-BACK: $TEST_ROOT_SCOPE"\n'
+        f'test_root_pytest_args "{scripts}" || echo "FELL-BACK: $TEST_ROOT_SCOPE"\n'
         'printf "%s\\n" "${TEST_ROOT_ARGS[@]}"\n'
     )
     result = subprocess.run(
@@ -1702,10 +1701,50 @@ def test_the_assembly_says_so_when_no_declared_root_resolves(tmp_path: Path):
         text=True,
         check=False,
         cwd=str(tmp_path),
-        env={**os.environ, "SUBPROC_CHECK_PATHS": "nowhere"},
+        env={**os.environ, **env},
     )
     assert "FELL-BACK" in result.stdout, result.stdout
-    assert "--ignore=tests/e2e" in result.stdout
+    assert "--ignore=tests/e2e" in result.stdout, (
+        "the whole-tree fallback is the right scope for both causes and must not change"
+    )
+    return result.stdout
+
+
+def test_a_declaration_that_names_no_root_on_disk_says_that(tmp_path: Path):
+    """A silent fallback to a different population is the defect being removed, so the fallback
+    reports itself and the caller prints it.
+
+    This is the state the single old message described correctly: the query answered, and none of
+    the roots it named exists here.
+    """
+    said = fall_back_scope(tmp_path, f"{ROOT}/scripts", SUBPROC_CHECK_PATHS="nowhere")
+    assert "no root it names exists on disk" in said
+    assert "could not be READ" not in said
+
+
+def test_a_declaration_that_could_not_be_read_is_not_reported_as_absent(tmp_path: Path):
+    """The other state reaching the same fallback, which the one message asserted was the first.
+
+    No `python3`, an unreadable or crashing `subprocess_check.py` in a vendored install - the
+    declaration was never read, so naming a missing root states something nobody established and
+    sends the reader to inspect a project layout that may be perfectly fine.
+
+    Red when the two collapse back into one message: a query that never ran reports the filesystem
+    as the cause, and the real cause is discarded with the query's stderr.
+    """
+    broken = tmp_path / "scripts"
+    broken.mkdir()
+    (broken / "subprocess_check.py").write_text(
+        "raise SystemExit('the declaration reader is broken here')\n", encoding="utf-8"
+    )
+
+    said = fall_back_scope(tmp_path, str(broken))
+
+    assert "could not be READ" in said
+    assert "the declaration reader is broken here" in said, (
+        "the query's own cause is reported, not discarded"
+    )
+    assert "no root it names exists on disk" not in said
 
 
 def test_print_roots_answers_the_query_in_process_without_scanning(

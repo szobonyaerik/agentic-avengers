@@ -15,6 +15,9 @@
 #
 # It decides NOTHING. It assembles arguments and reports whether the declaration resolved; what a
 # red suite means is the caller's verdict, which is why this file carries no exit code of its own.
+# The fallback is one behaviour with two causes, and `TEST_ROOT_SCOPE` is the single place either is
+# worded: a caller says it out loud rather than writing its own sentence about a state it did not
+# observe.
 #
 # bash 3.2-compatible (macOS default), and safe under `set -u`: `TEST_ROOT_ARGS` is never left empty
 # at the point a caller expands it.
@@ -23,8 +26,21 @@
 # Returns 0 when at least one declared root resolved on disk, 1 when the run fell back to the
 # whole tree - which a caller SAYS out loud, because silently switching population is the defect.
 test_root_pytest_args() {
-  local sd="$1" root roots
-  roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>/dev/null)
+  local sd="$1" root roots status errfile why=""
+  # The query's stderr is KEPT, because two different states reach the fallback below and only one
+  # of them is "no root on disk": a query that never answered - no `python3`, an unreadable or
+  # crashing `subprocess_check.py` in a vendored install - never read the declaration at all, so
+  # reporting a missing root asserts something nobody established and sends the reader to inspect a
+  # project layout that may be perfectly fine. Captured to a file rather than merged into stdout:
+  # merged, a stray warning line on a SUCCESSFUL query would be read as a declared root.
+  errfile="$(mktemp "${TMPDIR:-/tmp}/test-root-query.XXXXXX" 2>/dev/null)" || errfile=""
+  if [ -n "$errfile" ]; then
+    roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>"$errfile"); status=$?
+    why=$(tail -n 1 "$errfile" 2>/dev/null | tr -d '\r')
+    rm -f "$errfile"
+  else
+    roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>/dev/null); status=$?
+  fi
 
   TEST_ROOT_ARGS=()
   while IFS= read -r root; do
@@ -48,10 +64,15 @@ INNER
     return 0
   fi
 
-  # No declared root exists on disk (or none could be resolved). Keep the previous whole-tree form:
-  # in a project with no tests it collects nothing and exits 5, which every caller treats as "not a
-  # failure" rather than as a red suite.
+  # Nothing to run the declared way. Keep the previous whole-tree form in BOTH states below: in a
+  # project with no tests it collects nothing and exits 5, which every caller treats as "not a
+  # failure" rather than as a red suite. Only the stated cause differs, and it is stated here once -
+  # every caller prints `TEST_ROOT_SCOPE` rather than authoring a second sentence of its own.
   TEST_ROOT_ARGS=(--ignore=tests/e2e)
-  TEST_ROOT_SCOPE="full suite minus e2e (no declared test root exists)"
+  if [ "$status" -ne 0 ]; then
+    TEST_ROOT_SCOPE="full suite minus e2e (the test-root declaration could not be READ: ${why:-the query exited $status and said nothing}) - which root a project declares is UNKNOWN here, not absent"
+  else
+    TEST_ROOT_SCOPE="full suite minus e2e (the declaration was read and no root it names exists on disk)"
+  fi
   return 1
 }

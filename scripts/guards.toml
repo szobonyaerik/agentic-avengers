@@ -351,9 +351,32 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/test_root_args.sh"
 find = '''
-  roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>/dev/null)'''
+  errfile="$(mktemp "${TMPDIR:-/tmp}/test-root-query.XXXXXX" 2>/dev/null)" || errfile=""
+  if [ -n "$errfile" ]; then
+    roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>"$errfile"); status=$?
+    why=$(tail -n 1 "$errfile" 2>/dev/null | tr -d '\r')
+    rm -f "$errfile"
+  else
+    roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>/dev/null); status=$?
+  fi'''
 replace = '''
-  roots=""'''
+  roots=""; status=0'''
+
+[[guard]]
+id = "suite-population.a-fallback-names-its-own-cause"
+implements = "scripts/test_root_args.sh"
+defect = "The query's stderr went to /dev/null and its exit status was dropped, so the two states that reach the whole-tree fallback shared one message: `no declared test root exists`. A query that never answered - no `python3`, an unreadable or crashing `subprocess_check.py` in a vendored install - never read the declaration at all, and was reported as a project whose declared root is missing from disk, sending the reader to inspect a layout that may be perfectly fine while the real cause was discarded (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/test_root_args.sh"
+find = '''
+  if [ "$status" -ne 0 ]; then
+    TEST_ROOT_SCOPE="full suite minus e2e (the test-root declaration could not be READ: ${why:-the query exited $status and said nothing}) - which root a project declares is UNKNOWN here, not absent"
+  else
+    TEST_ROOT_SCOPE="full suite minus e2e (the declaration was read and no root it names exists on disk)"
+  fi'''
+replace = '''
+  TEST_ROOT_SCOPE="full suite minus e2e (no declared test root exists)"'''
 
 [[guard]]
 id = "suite-population.the-floor-asks-too"

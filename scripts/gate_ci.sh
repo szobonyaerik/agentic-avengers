@@ -492,7 +492,7 @@ else
   # matched nothing on disk and the pre-commit gate collected the feature-level e2e suite the
   # comment above says it deliberately excludes.
   if ! test_root_pytest_args "$SCRIPT_DIR"; then
-    echo "  no declared test root exists on disk — keeping the whole-tree scope" >&2
+    echo "  $TEST_ROOT_SCOPE — keeping the whole-tree scope" >&2
   fi
   echo "• tests: pytest -q ${TEST_ROOT_ARGS[*]} ($TEST_ROOT_SCOPE)"
   pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?
