@@ -60,12 +60,9 @@ tests = ["tests/test_spec_done_guard.py"]
 [[guard.mutation]]
 file = "scripts/spec_done_guard.py"
 find = '''
-    text = spec_path.read_text(encoding="utf-8")
-    match = FRONTMATTER.match(text)'''
+    new_block = STATUS_LINE.sub(f"{STATUS_FIELD}: {IN_PROGRESS}", block)'''
 replace = '''
-    return False
-    text = spec_path.read_text(encoding="utf-8")
-    match = FRONTMATTER.match(text)'''
+    new_block = block'''
 
 # --- metrics emission -----------------------------------------------------------------------------
 
@@ -1288,9 +1285,11 @@ tests = ["tests/test_hook_verifier.py"]
 [[guard.mutation]]
 file = "scripts/hook_verifier.sh"
 find = '''
+if [ "$STAMP_BINDS" = "1" ]; then
   if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then'''
 replace = '''
-  if false; then'''
+if [ "$STAMP_BINDS" = "0" ]; then
+  if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then'''
 
 # --- a verdict is bound to a head (issue #97, folded #122) -------------------------------------------
 
@@ -1316,15 +1315,39 @@ tests = ["tests/test_verdict_currency.py", "tests/test_hook_verifier.py"]
 [[guard.mutation]]
 file = "scripts/verdict_currency.py"
 find = '''
-    return recorded_anchor(root, feature_dir)
-
-
-def recorded_anchor'''
+    if committed is None:
+        return recorded'''
 replace = '''
-    return None
+    if committed is None:
+        return None'''
 
+[[guard]]
+id = "verdict-currency.ranks-both-anchors"
+implements = "scripts/verdict_currency.py"
+defect = "The anchor short-circuited on ANY committed verdict, so the recorded head was reachable in phase 1 alone: from phase 2 onward a phase closing at its own handover anchored on its PREDECESSOR's verdict commit, and every one of its own implementation commits read as a post-verification change with an amendment owed by the wrong phase."
+tests = ["tests/test_verdict_currency.py"]
+[[guard.mutation]]
+file = "scripts/verdict_currency.py"
+find = '''
+    if _is_ancestor(root, committed, recorded):
+        return recorded'''
+replace = '''
+    if False:
+        return recorded'''
 
-def recorded_anchor'''
+[[guard]]
+id = "hook-verifier.re-binds-a-shipped-stamp"
+implements = "scripts/hook_verifier.sh"
+defect = "Binding rode `stamp_is_new`, false for every committed `done`, so the remedy both `verifier_precheck` and `spec_done_guard` prescribe for a stale digest - write the spec again - reached this hook, bound nothing, and left the finding standing on every later run: a documented remedy that silently no-ops."
+tests = ["tests/test_hook_verifier.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+    if [ "$bound_rc" -eq 1 ]; then
+      STAMP_REBINDS=1'''
+replace = '''
+    if [ "$bound_rc" -eq 1 ]; then
+      STAMP_REBINDS=0'''
 
 [[guard]]
 id = "hook-verifier.refuses-a-stale-verdict"

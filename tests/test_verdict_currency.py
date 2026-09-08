@@ -281,3 +281,33 @@ def test_a_run_with_no_verdict_yet_anchors_nothing(tmp_path: Path, capsys) -> No
     record_run(tmp_path, phase)
     assert verdict_currency.check(tmp_path, feature(tmp_path)) is None
     assert "NOT checked" in capsys.readouterr().err
+
+
+def test_phase_ns_own_work_is_not_held_by_phase_n_minus_1s_committed_verdict(
+    open_repo: Path,
+) -> None:
+    """The handover of any phase past the first (the finding this test was written for).
+
+    `anchor()` used to short-circuit on ANY committed verdict, so the recorded head was reachable in
+    phase 1 alone. From phase 2 onward the feature carries an earlier committed verdict, and the
+    handover of the open phase anchored on it: every implementation commit of the phase now closing
+    read as a post-verification change, and `hook_verifier.sh` refused the close with an amendment
+    scoped to the wrong phase. Nothing here was verified and then changed.
+    """
+    earlier = feature(open_repo) / "phases" / "2-earlier"
+    earlier.mkdir()
+    (earlier / "verdict.json").write_text(
+        json.dumps({"verdict": "pass", "findings": []})
+    )
+    commit_paths(
+        open_repo,
+        "phase 2 verdict",
+        "docs/features/demo/phases/2-earlier/verdict.json",
+    )
+    # Phase 3's own implementation lands after phase 2's verdict, and its verification is recorded
+    # at that head — the ordinary shape of every phase after the first.
+    (open_repo / "src" / "frames.py").write_text("def frames():\n    return 3\n")
+    commit_paths(open_repo, "phase 3 implementation", "src/frames.py")
+    record_run(open_repo, feature(open_repo) / "phases" / "3-frames")
+
+    assert verdict_currency.check(open_repo, feature(open_repo)) is None

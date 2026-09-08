@@ -476,8 +476,9 @@ def done_stamp_problem(spec: Path, body: str) -> str | None:
     return (
         f"{spec}: `status: done` was bound to different bytes than are here now - its "
         f"test-mapping.md or its own tests changed AFTER it declared done, so the stamp certifies "
-        f"work this spec no longer has. Stamp `done` again through a tool write; the hook re-checks "
-        f"the mapping and the suite over what is actually there and re-binds."
+        f"work this spec no longer has. Write the spec again through a tool write (it already says "
+        f"`status: done`); the hook re-checks the mapping and the suite over what is actually there "
+        f"and re-binds, whether or not the spec has shipped."
     )
 
 

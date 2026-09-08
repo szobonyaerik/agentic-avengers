@@ -134,7 +134,19 @@ fail() {   # $1 = bypass tag, rest = message
 # `applicability.spec_shipped` reads, which flips the requirement cap from counting a shipped spec
 # to blocking it with a split it cannot take. A spec already stamped `done` at committed HEAD is
 # CLOSED: counted and named on stderr, never reverted, never blocked here.
+#
+# BINDING is a SEPARATE question from reverting, with its own evidence (issue #97's own fix round).
+# `STAMP_BINDS` answers "may this hook rewrite the stamp", and gating the BIND on it made the
+# documented remedy for a stale digest silently no-op: once a bound `done` spec is committed, a
+# route-back that adds a test case (locked-after-verify allows exactly that) makes
+# `verifier_precheck.done_stamp_problem` fire, and its remedy - stamp `done` again through a tool
+# write - lands here as "already stamped done at HEAD", binds nothing, and the finding stands on
+# every later run. A check reporting success while doing nothing is the class this issue exists to
+# close. So `STAMP_REBINDS` carries the bind path's own evidence: a digest IS recorded and no longer
+# matches. Nothing is reverted on that path and nothing new is blocked on it - a shipped spec that
+# cannot be re-bound is left exactly where it already was, with the precheck still reporting it.
 STAMP_BINDS=0
+STAMP_REBINDS=0
 STAMP_NOTE=""
 
 revert_premature_stamp() {
@@ -162,6 +174,21 @@ if [ "$TRIGGER" = "spec-done" ]; then
       "verifier ($TRIGGER): whether this 'status: done' stamp is NEW could not be DECIDED (cause" \
       "above) — this is not a premature stamp, and finishing the mapping will not repair it. The" \
       "stamp is left exactly as written. Fix what it named."
+  else
+    # The stamp has SHIPPED, so nothing here may rewrite it. Its DIGEST is a different question, and
+    # a recorded digest that no longer matches is the bind path's own evidence: the write that
+    # brought us here IS the documented remedy, and it re-binds below once the mapping and the suite
+    # have passed over the bytes that are actually there. Exit 3 (no digest at all) stays counted
+    # and never held - re-binding it would invent a certification from a stamp nobody checked.
+    # `bound`'s stderr names the remedy for a reader who has to act; on the path that IS the remedy
+    # it would be noise, so it is held back and printed only when this hook is not about to act.
+    bound_err=$(python3 "$SD/spec_done_guard.py" bound "$FILE" 2>&1); bound_rc=$?
+    if [ "$bound_rc" -eq 1 ]; then
+      STAMP_REBINDS=1
+      printf '%s\n' "[spec-done] this spec has SHIPPED, so its stamp is never rewritten here — but its recorded done_digest no longer matches its test-mapping.md or its own tests. Re-checking both and re-binding, which is what the precheck's remedy prescribes." >&2
+    elif [ -n "$bound_err" ]; then
+      printf '%s\n' "$bound_err" >&2
+    fi
   fi
 fi
 
@@ -190,6 +217,18 @@ if [ "$STAMP_BINDS" = "1" ]; then
       "verifier ($TRIGGER): whether this spec's mapping is recorded could not be DECIDED (cause" \
       "above) — this is not an empty mapping, and recording one will not repair it. The stamp is" \
       "left exactly as written."
+  fi
+fi
+
+# The rebind path asks the same mapping question and answers it differently. A shipped spec whose
+# mapping does not hold (or cannot be decided) is left exactly where it already was: not reverted,
+# because its stamp has shipped, and not FAILED, because refusing a write that used to pass would be
+# a new block on closed work (§3a). Only the re-bind is withheld — the precheck goes on reporting the
+# stale digest, with the same remedy, which is the state this hook found rather than one it created.
+if [ "$STAMP_REBINDS" = "1" ]; then
+  if ! python3 "$SD/spec_done_guard.py" mapping-complete "$FILE" >/dev/null 2>&1; then
+    STAMP_REBINDS=0
+    printf '%s\n' "[spec-done] the re-bind is WITHHELD: this shipped spec's test-mapping.md does not hold (run 'spec_done_guard.py mapping-complete' on it for the cause). Its stamp is untouched and its recorded done_digest still does not match, so the precheck keeps reporting it." >&2
   fi
 fi
 
@@ -274,16 +313,25 @@ fi
 # over the spec's own test-mapping.md and its own test directory as they are RIGHT NOW - a later
 # edit to either makes the stamp read as work that moved on after `done`, which
 # `verifier_precheck.py` reports at handover with the remedy (stamp done again, through a tool
-# write, so this hook re-checks and re-binds). Only a NEW stamp is bound: one already `done` at HEAD
-# has shipped and is never rewritten. Binding failing is an ERROR named as such, never a silent
-# `done` that binds nothing - that would be the unbound state this exists to remove, with a hook
-# that looked like it had bound it.
+# write, so this hook re-checks and re-binds). A stamp already `done` at HEAD has SHIPPED and is
+# never rewritten - but its digest is re-taken when one is recorded and no longer matches, which is
+# what makes that remedy real rather than a no-op (see STAMP_REBINDS above). Binding failing on a
+# NEW stamp is an ERROR named as such, never a silent `done` that binds nothing - that would be the
+# unbound state this exists to remove, with a hook that looked like it had bound it.
 if [ "$STAMP_BINDS" = "1" ]; then
   if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then
     fail "verifier:spec-done-unbound" \
       "verifier ($TRIGGER): the 'status: done' stamp passed its checks but could NOT be bound to" \
       "the bytes it certifies (cause above). An unbound stamp is a promise, not a completion, so" \
       "this fails closed. The stamp is left exactly as written; fix what it named and stamp again."
+  fi
+elif [ "$STAMP_REBINDS" = "1" ]; then
+  # Same write, different applicability. A shipped stamp is never rewritten here, and its digest is
+  # re-taken over the mapping and the tests these checks just passed. A bind that fails is REPORTED
+  # and does not fail the hook: the spec returns to the state it arrived in, which the precheck
+  # already holds, and failing here would block a write that passed before this path existed.
+  if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then
+    printf '%s\n' "[spec-done] the re-bind FAILED (cause above). This shipped spec's stamp is untouched and its done_digest still does not match what is there now, so the precheck keeps reporting it — fix what the cause named and write the spec again." >&2
   fi
 fi
 

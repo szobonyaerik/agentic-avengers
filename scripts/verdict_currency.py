@@ -41,6 +41,13 @@ deliberately not its evidence head: the phase's own commit lands AFTER its verif
 the verified source, so reading it as post-verification would owe every phase an amendment for
 having been committed.
 
+The two are RANKED by commit time rather than tried in order. Preferring any committed verdict made
+the recorded head reachable in phase 1 alone - from phase 2 onward a feature always carries an
+earlier committed verdict, so a phase closing at its own handover anchored on its PREDECESSOR and
+every one of its own implementation commits read as post-verification change. Taking the later of
+the two leaves a closed phase anchored exactly where it was: a verdict's landing commit is always
+newer than the head its own evidence recorded.
+
 **It fails OPEN on anything git cannot answer**, exactly as `applicability.changed_paths` does: no
 git, not a repository, no verdict to anchor on - committed or recorded. An unknowable scope enforces
 nothing and says so on stderr rather than passing invisibly.
@@ -85,11 +92,28 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def anchor(root: Path, feature_dir: Path) -> str | None:
-    """The commit at which this feature's NEWEST `verdict.json` landed, or None when unknowable.
+    """The NEWEST moment this feature was verified at, or None when unknowable.
 
     `git log -1` over every phase's verdict at once: the newest of them is the moment after which a
     source change is post-verification. A feature with no committed verdict has nothing to be stale
     against, which is not a finding — it is a feature that has not been verified yet.
+
+    **The two anchors are RANKED, never ordered by which exists.** Reading the committed verdict
+    first and the recorded head only in its absence makes the recorded head reachable in phase 1
+    alone: from phase 2 onward the feature always carries an earlier committed verdict, so a phase
+    closing at its own handover anchored on its PREDECESSOR's verdict commit and `changed_since`
+    swept up every one of its own implementation commits. That is ordinary phase work — the state
+    `test_ordinary_phase_work_before_the_newest_verdict_is_not_held` pins for the committed case —
+    reported as a stale verdict, with a remedy (an amendment naming the ids the change touched)
+    scoped to the wrong phase. So the LATER of the two wins. The stated intent survives unchanged: a
+    committed verdict's own landing commit always comes after the head its evidence recorded, so a
+    closed phase still anchors on its verdict commit.
+
+    Later is asked as ANCESTRY (`git merge-base --is-ancestor`), not as commit time: both anchors
+    are commits on the history under HEAD, and a phase's commits routinely share a timestamp to the
+    second, where a `>` on `%ct` silently keeps the wrong one. Two commits on neither's ancestry
+    cannot be ranked at all — a recorded head from another branch — and that keeps the committed
+    verdict, the answer this check has always given, said out loud rather than resolved silently.
     """
     try:
         rel = feature_dir.resolve().relative_to(Path(root).resolve()).as_posix()
@@ -97,9 +121,32 @@ def anchor(root: Path, feature_dir: Path) -> str | None:
         return None
     out = _git(root, "log", "-1", "--format=%H", "--", f"{rel}/phases/*/verdict.json")
     committed = (out.strip() or None) if out is not None else None
-    if committed is not None:
+    recorded = recorded_anchor(root, feature_dir)
+    if committed is None:
+        return recorded
+    if recorded is None or recorded == committed:
         return committed
-    return recorded_anchor(root, feature_dir)
+    if _is_ancestor(root, committed, recorded):
+        return recorded
+    if not _is_ancestor(root, recorded, committed):
+        print(
+            f"{PREFIX} {Path(feature_dir).name}: the newest committed verdict ({committed[:8]}) "
+            f"and the newest recorded head ({recorded[:8]}) are on neither's ancestry, so which is "
+            f"LATER cannot be stated - anchoring on the committed verdict, which is what this "
+            f"check has always done",
+            file=sys.stderr,
+        )
+    return committed
+
+
+def _is_ancestor(root: Path, earlier: str, later: str) -> bool:
+    """Whether `earlier` is reachable from `later`. False for unrelated commits and for git failing.
+
+    `_git` returns None on a non-zero exit, which `--is-ancestor` also uses for its NO — so both
+    arrive here as False, and the caller treats "not an ancestor" and "git could not say" the same
+    way on purpose: it falls back to the committed verdict either way.
+    """
+    return _git(root, "merge-base", "--is-ancestor", earlier, later) is not None
 
 
 def recorded_anchor(root: Path, feature_dir: Path) -> str | None:

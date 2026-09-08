@@ -112,6 +112,19 @@ handover, and the remedy is to stamp `done` again through a tool write, which re
 the bytes that are actually there and re-binds. Nothing rewrites the stamp for this - the revert
 acts only on the two evidences it is scoped to, and this is a third.
 
+**That remedy works on a SHIPPED spec too, and the bind path carries its own evidence to make it
+so.** Binding used to ride `stamp_is_new`, which answers "may this hook rewrite the stamp" - false
+for every spec whose `done` is already committed. So a route-back that added a test case to a
+committed, bound spec (locked-after-verify allows exactly that) made the precheck fire with a remedy
+that landed in this hook as "already stamped done at HEAD", bound nothing, and left the finding
+standing on every later run: a documented remedy that silently no-ops, which is the class issue #97
+exists to close. `hook_verifier.sh` now asks a second question on the shipped branch - is a digest
+RECORDED and no longer matching - and re-binds on that evidence alone, after the same mapping and
+suite checks. Nothing is reverted there and nothing new is blocked: a shipped spec whose mapping
+does not hold, or whose bind fails, is left exactly where it arrived, with the precheck still
+reporting it. A spec carrying NO digest is untouched by that path too - re-binding it would invent
+a certification from a stamp no hook ever checked, and it stays counted, never held.
+
 **What it binds is stated, not implied.** With no per-spec test directory the digest covers the
 mapping alone, and `bind` says so on stderr: a stamp that names the mapping and not the tests is a
 narrower claim, never a wider one. A spec that carries no `done_digest` at all was stamped before
@@ -527,8 +540,9 @@ def _bound_cli(path: Path) -> int:
         return OK
     print(
         f"[{CHECK}] {path}: `status: {DONE}` was bound to different bytes than are here now - its "
-        f"test-mapping.md or its own tests changed AFTER it declared done. Stamp `done` again "
-        f"through a tool write so the hook re-checks and re-binds it.",
+        f"test-mapping.md or its own tests changed AFTER it declared done. Write the spec again "
+        f"through a tool write (it already says `status: {DONE}`): the hook re-checks the mapping "
+        f"and the suite over what is there now and re-binds, whether or not the spec has shipped.",
         file=sys.stderr,
     )
     return NOT_DONE
