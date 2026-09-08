@@ -51,6 +51,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import gate_errors  # noqa: E402
 import gate_timeouts  # noqa: E402
+import guard_scope  # noqa: E402
+import metrics_sink as sink  # noqa: E402
 import pipeline_metrics as metrics  # noqa: E402
 import plugin_release  # noqa: E402
 import proc_group  # noqa: E402
@@ -319,7 +321,11 @@ def test_a_second_round_is_a_second_gate_call_not_an_overwrite(stub_sink):  # no
         verdict="GO",
     )
 
-    calls = stored(store, "08")["gate_calls"]
+    calls = [
+        c
+        for c in stored(store, "08")["gate_calls"]
+        if c["stage"] != metrics.PROVENANCE_STAGE
+    ]
     assert [c["id"] for c in calls] == [
         "8.1-a1-spec-gate-observe",
         "8.1-a2-spec-gate-observe",
@@ -472,27 +478,30 @@ def verdict_at(phase_dir: Path, attempt: int, name: str = "verdict.json") -> Non
     )
 
 
-def test_the_attempt_is_derived_from_the_verdict_record_not_counted_per_call(stub_sink):  # noqa: F811
+def test_the_attempt_count_is_derived_from_the_verdict_record_not_counted_per_call(
+    stub_sink,
+):  # noqa: F811
     """The measured defect: 8 recorded — three timed-out review calls plus five diagnostic
     retries — against a `verdict.json` correctly reading `attempt: 1` and a cap of 3 that had never
     fired. Read against that cap the number says the cap failed. Repeated calls must converge."""
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
-    phase_dir.mkdir(parents=True)
-
-    assert metrics.open_verification_attempt(str(phase_dir)) == 1
-    assert metrics.open_verification_attempt(str(phase_dir)) == 1
-    assert metrics.open_verification_attempt(str(phase_dir)) == 1
+    verdict_at(phase_dir, 1)
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
     assert stored(store, "08")["verification_attempts"] == 1
 
 
-def test_the_next_attempt_follows_the_verdict_on_record(stub_sink):  # noqa: F811
+def test_the_count_is_the_attempt_on_record_not_the_next_one(stub_sink):  # noqa: F811
+    """It used to record current+1 — "the attempt this run belongs to" — for a caller that ran
+    BEFORE the verdict. Emitted on the verdict write, that is one too many; the verdict on disk IS
+    the attempt just concluded (issue #120)."""
     project, store, _ = stub_sink
     phase_dir = project / "docs/features/demo/phases/8-auth"
     verdict_at(phase_dir, 2)
-
-    assert metrics.open_verification_attempt(str(phase_dir)) == 3
-    assert stored(store, "08")["verification_attempts"] == 3
+    assert metrics.record_verification_attempts(str(phase_dir)) == 2
+    assert stored(store, "08")["verification_attempts"] == 2
 
 
 def test_archived_attempts_count_towards_it(stub_sink):  # noqa: F811
@@ -502,8 +511,7 @@ def test_archived_attempts_count_towards_it(stub_sink):  # noqa: F811
     verdict_at(phase_dir, 1, "verdict-attempt-1.json")
     verdict_at(phase_dir, 2, "verdict-attempt-2.json")
     verdict_at(phase_dir, 3)
-
-    assert metrics.open_verification_attempt(str(phase_dir)) == 4
+    assert metrics.record_verification_attempts(str(phase_dir)) == 3
 
 
 def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_sink):  # noqa: F811
@@ -512,8 +520,7 @@ def test_an_unreadable_verdict_record_records_nothing_rather_than_a_number(stub_
     phase_dir = project / "docs/features/demo/phases/8-auth"
     phase_dir.mkdir(parents=True)
     (phase_dir / "verdict.json").write_text("{not json", encoding="utf-8")
-
-    assert metrics.open_verification_attempt(str(phase_dir)) is None
+    assert metrics.record_verification_attempts(str(phase_dir)) is None
     assert not (store / "phase-08.json").exists()
 
 
@@ -946,7 +953,7 @@ def test_the_cli_exits_zero_when_the_record_cannot_be_written(stub_sink, monkeyp
     for args in (
         ("spec-round", str(spec), "--verdict", "approved"),
         ("gate-killed", "--stage", "spec-gate-observe", "--spec-path", str(spec)),
-        ("verifier-attempt", str(spec.parents[2])),
+        ("verifier-attempts", str(spec.parents[2])),
         ("phase-open", str(spec)),
         ("phase-close", str(spec)),
     ):
@@ -1153,7 +1160,16 @@ def test_a_named_but_unexecutable_writer_is_retryable_with_a_true_cause(
 def test_a_defect_stays_silent_when_metrics_are_deliberately_off(
     stub_sink, monkeypatch
 ):  # noqa: F811,E501
-    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud."""
+    """`AVENGER_METRICS_OFF=1` is a configured choice, not a failure — it must not turn loud.
+
+    The METRICS layer is what must stay silent: not one `[metrics]` line, and nothing about a defect
+    that was not recorded. The only thing allowed on stderr is this module's own §97 scope statement,
+    which every declared guard emits on a clean result and which this clean result needs most of all
+    - a `defect` that exits 0 having deliberately recorded nothing is precisely the exit code a
+    reader would otherwise take for a write that happened. Asserting a bare empty stderr conflated
+    the two speakers; this asserts the property, and still goes red the moment the metrics layer
+    says anything at all.
+    """
     project, _, _ = stub_sink
     write_spec(project, 8, "8.1", "- R8.1.1 one\n")
     monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
@@ -1161,7 +1177,14 @@ def test_a_defect_stays_silent_when_metrics_are_deliberately_off(
     result = run_cli(*DEFECT_ARGS)
 
     assert result.returncode == 0
-    assert result.stderr == ""
+    assert sink.PREFIX not in result.stderr
+    assert metrics.DEFECT_WRITE_FAILED not in result.stderr
+    assert metrics.DEFECT_NO_WRITER not in result.stderr
+    assert [
+        line
+        for line in result.stderr.splitlines()
+        if guard_scope.SCOPE_MARKER not in line
+    ] == []
 
 
 # --- driven through the real gate runner, which is where every gate call passes -------------------------
@@ -1319,7 +1342,8 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
         detail="killed",
         provider="opencode",
     )
-    metrics.open_verification_attempt(phase_dir)
+    verdict_at(Path(phase_dir), 1)
+    metrics.record_verification_attempts(phase_dir)
     metrics.record_skill_load(
         "08",
         stage="avenger-verifier",
@@ -1338,6 +1362,9 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
         stage_reached="verification",
         severity="security",
     )
+    (Path(phase_dir) / metrics.CLOSING_DOCUMENT).write_text(
+        "# card\n", encoding="utf-8"
+    )
     git_land(project, "close")
     metrics.record_phase_close(phase_dir)
 
@@ -1354,7 +1381,9 @@ def test_a_populated_record_validates(real_sink):  # noqa: F811
     assert record["spec_rounds"] == 1 and record["verification_attempts"] == 1
     assert record["tests_before"] == 1 and record["tests_after"] == 1
     gate_calls = [
-        c for c in record["gate_calls"] if c["stage"] != metrics.PLUGIN_VERSION_STAGE
+        c
+        for c in record["gate_calls"]
+        if c["stage"] not in (metrics.PLUGIN_VERSION_STAGE, metrics.PROVENANCE_STAGE)
     ]
     assert {c["verdict"] for c in gate_calls} == {"GO", "killed"}
     assert record["defects"][0]["found_by"] == "execution"
@@ -1492,21 +1521,99 @@ def test_every_route_that_records_a_defect_stamps_the_pipeline_as_the_recorder(
     assert [d["recorded_by"] for d in defects] == ["stage"] * 3
 
 
-def test_no_defect_reaches_the_record_except_through_the_stamping_point():
-    """The guard against a FOURTH route: one `defects` write, so a new one cannot skip the stamp.
+def test_every_route_into_the_record_carries_the_recorder_stamp(
+    stub_sink,
+):  # noqa: F811
+    """Every route into `defects[]` that exists today stamps `recorded_by`, asserted on what LANDED.
 
-    Stamping every current route says nothing about the next one. `record_defect` is the single
-    write, and this is what keeps it single — a new emission point either goes through it and is
-    stamped, or turns this red.
+    It drives all five — the four recorders and the `defect` CLI — through the sink double and reads
+    the entries back, rather than reading the source for one write call. Stamping the routes one at
+    a time says nothing about the others; this says it about all of them at once.
+
+    **What it does not establish**, said rather than implied: the enumeration is this test's own, so
+    a SIXTH route added later that calls `sink.add(phase, "defects", …)` directly is never driven
+    here and cannot turn this red. Nothing executable sees a route nobody calls, and the alternative
+    — counting write calls in the source — proves the shape of the file rather than the property, so
+    the limit is stated instead. `record_defect` staying the single write is what makes the property
+    hold for a new route; that is a rule for its author, not a claim this test can make, and
+    `CLAUDE.md` §6d says so rather than claiming a check holds it.
     """
-    source = (
-        Path(__file__).resolve().parents[1] / "scripts" / "pipeline_metrics.py"
-    ).read_text(encoding="utf-8")
-    assert source.count('"defects"') == 1
-    assert (
-        'sink.add(phase, "defects", _optional=DEFECT_OPTIONAL_FIELDS, **fields)'
-        in source
+    project, store, _ = stub_sink
+    phase_dir = project / "docs/features/demo/phases/8-auth"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "fail",
+                "attempt": 1,
+                "findings": [
+                    {"id": "aaa", "kind": "code", "instruction": "off-by-one"}
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
+    (phase_dir / "breaker.json").write_text(
+        json.dumps(
+            {"verdict": "found", "counterexamples": ["tests/demo/t.py::test_replay"]}
+        ),
+        encoding="utf-8",
+    )
+    score = phase_dir / "score.json"
+    score.write_text(
+        json.dumps({"survivors": 4, "tested": 40, "score": 0.9}), encoding="utf-8"
+    )
+    spec_path = phase_dir / "specs" / "8.1-a" / "spec.md"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("---\nfeature: demo\n---\n- R8.1.1 do\n", encoding="utf-8")
+
+    assert metrics.record_verifier_findings(str(phase_dir)) == 1
+    assert (
+        metrics.record_breaker_findings(str(phase_dir), str(phase_dir / "breaker.json"))
+        == 1
+    )
+    assert (
+        metrics.record_spec_gate_findings(
+            str(spec_path),
+            [
+                {
+                    "id": "o1",
+                    "category": "contradiction",
+                    "statement": "contradicts the overview",
+                }
+            ],
+        )
+        == 1
+    )
+    assert metrics.record_mutation_survivors(str(phase_dir), str(score)) is True
+    assert (
+        metrics.main(
+            [
+                "defect",
+                "--phase-ref",
+                str(phase_dir),
+                "--id",
+                "D1",
+                "--summary",
+                "caught by hand-run seam",
+                "--found-by",
+                "execution",
+                "--severity",
+                "security",
+            ]
+        )
+        == 0
+    )
+
+    defects = stored(store, "08")["defects"]
+    assert {d["found_by"] for d in defects} == {
+        "verifier",
+        "breaker",
+        "spec-gate",
+        "mutation",
+        "execution",
+    }
+    assert [d["recorded_by"] for d in defects] == ["stage"] * len(defects)
 
 
 def test_recorded_by_is_never_derived_from_what_caught_the_defect(stub_sink):  # noqa: F811

@@ -40,6 +40,7 @@
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (bypass_log)
+. "$SD/test_root_args.sh"   # one owner of "the declared test roots, as pytest arguments"
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
@@ -62,6 +63,23 @@ case "$FILE" in
     # Emitted HERE rather than at a caller: a stage cannot forget an emission it does not make.
     # Idempotent by finding id, so this and the close-time emission converge on one entry.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    # The verification ATTEMPT count, from the same record (issue #120). It used to be counted per
+    # invocation of a review script that no longer exists, and when that script went the count went
+    # with it: every record the pipeline wrote after that carried null while the phase's own verdict
+    # read `attempt: 4`. The verdict write is the moment an attempt is concluded, so it is stamped
+    # here, derived from `verdict.json` and its archives - the number the 3-attempt cap reads.
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$(dirname "$FILE")" >/dev/null || true
+    exit 0 ;;
+  */breaker.json)
+    # MEASUREMENT ONLY — never a gate, always exits 0.
+    #
+    # A `found` verdict here is the Breaker CONCLUDING a defect - the stage that found phase 8's
+    # credential leaks by constructing inputs - and until this branch existed nothing recorded it:
+    # `skills/verifier-triage` asked the Verifier to run `defect --found-by breaker` by hand, which
+    # is an instruction with no mechanism, and one measured phase closed recording 1 defect against
+    # at least 5 it produced (issue #120). Idempotent by counterexample, converging with the
+    # close-time emission below.
+    python3 "$SD/pipeline_metrics.py" breaker-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
     exit 0 ;;
   */handover.md)
     TRIGGER="handover" ;;
@@ -95,10 +113,12 @@ FEATURE="$(derive_feature "$FILE" || true)"
 # the phase landing — this hook still has to check the suite, the verdict, amendments and carried
 # items below, any of which can still route the phase back. Stamping here recorded `closed` and
 # `elapsed_minutes` for phases that were not, in fact, done: an open amendment, a further Verifier
-# finding, a blocked handover, nothing pushed. `commands/avenger-run.md` §5 stamps the close itself,
-# directly, right after the per-phase commit actually lands — the one moment this hook cannot see.
-# `record_phase_close` also refuses the write itself while the phase directory is still uncommitted,
-# so a caller that got the ordering wrong fails the write rather than recording a false close.
+# finding, a blocked handover, nothing pushed. `hook_phase_close.sh` stamps it instead, on the commit
+# that lands the phase - a `PostToolUse` hook on `Bash` runs after the commit, which is the moment
+# this hook cannot see - with `commands/avenger-run.md` §5 the other emitter and the only one on
+# opencode. `record_phase_close` also refuses the write itself until the contract card is COMMITTED
+# and nothing under the phase directory is uncommitted, so a caller that got the ordering wrong
+# fails the write rather than recording a false close.
 
 # Layout: tests/<feature>/<n>-<slug>/... ; fall back to tests/<slug> for repos on the older layout.
 TESTPATH=""
@@ -262,12 +282,29 @@ fi
 # interpreter runs the suite was load-bearing once (three tests failing under a bare `python3` and
 # passing under the venv, issue #98) and a PATH lookup pins nothing; the same `python3` that runs
 # every check in this hook runs the suite.
+#
+# THE FULL-SUITE FALLBACK RUNS THE PROJECT'S DECLARED TEST ROOTS, asked of the module that owns the
+# declaration (`subprocess_check.py --print-roots`, $SUBPROC_CHECK_PATHS else tests/) rather than
+# re-derived here. It used to pass pytest NO root and a hardcoded `--ignore=tests/e2e`, which is the
+# whole repository including the real e2e directory for any project whose tests are not at `tests/`
+# - so this gate ran one population while `pipeline_metrics.count_tests` stamped
+# `tests_before`/`tests_after` from another, measured at 4 against 3 on a scratch project with tests
+# at `suite/` (issue #120). Excluding each declared root's own `e2e/` is what §4b already says this
+# hook does; it simply did not do it anywhere but the default layout.
+#
+# Resolution failing is NOT a reason to widen back to the whole tree: with no roots readable the run
+# keeps its previous shape and says so, since a silent fallback to a different population is the
+# defect being removed.
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
   OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
-  SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+  # `test_root_args.sh` owns the assembly, and `gate_ci.sh` asks the same question of the same file:
+  # two shell copies of one rule is the drift this whole change removes, and these two gates ran
+  # different populations while it had two. `python3 -m pytest` for the reason above (issue #98).
+  test_root_pytest_args "$SD" || true
+  SCOPE="$TEST_ROOT_SCOPE ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
+  OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short "${TEST_ROOT_ARGS[@]}" 2>&1); pc=$?
 fi
 
 # 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.
@@ -287,9 +324,10 @@ fi
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
 #
 # The REVERT is spec-scoped, so the evidence it acts on must be scoped to the same thing. With no
-# phase test directory resolvable the run above is the whole repository minus e2e — the permanent
-# state of any project whose tests do not live under `tests/` (what SUBPROC_CHECK_PATHS exists for)
-# — and one unrelated red test there says nothing about whether THIS spec is done, while
+# phase test directory resolvable the run above is the project's DECLARED test roots, each minus its
+# own `e2e/` - `SUBPROC_CHECK_PATHS` is what STOPS that run being repository-wide - falling back to
+# the whole tree minus `tests/e2e` only when no declared root resolves on disk. Both are wider than
+# one spec, so one unrelated red test in either says nothing about whether THIS spec is done, while
 # `agents/avenger-backend-architect.md` tells the implementer outright that pre-existing failures
 # are expected and are to be surfaced rather than fixed. So an unscoped suite is UNDECIDABLE for the
 # revert: the hook still fails closed, and the stamp is left exactly as written. Same direction as
@@ -613,6 +651,13 @@ case "$V" in
     # this is the pipeline's highest-volume defect-attribution path, and swallowing the diagnostic
     # would leave a run that dropped every verifier defect looking like one that found none.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$VERDICT" >/dev/null || true
+    # The Breaker's counterexamples and the attempt count, converging with their per-write emissions
+    # above: a breaker.json or verdict written outside a Write/Edit tool call reaches no per-write
+    # hook, and the handover is the one point every closing phase passes (issue #120).
+    if [ -f "$PHASE_DIR/breaker.json" ]; then
+      python3 "$SD/pipeline_metrics.py" breaker-findings "$PHASE_DIR" "$PHASE_DIR/breaker.json" >/dev/null || true
+    fi
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$PHASE_DIR" >/dev/null || true
     # ...and how many of them this phase DEFERRED rather than fixed (issue #115), on the same terms:
     # measurement, `|| true`, converging on one row. `defer`/`recarry` emit it the moment the fact is
     # decided; this is the close-time convergence. A phase that defers everything is as visible in

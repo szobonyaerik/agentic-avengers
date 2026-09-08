@@ -64,11 +64,14 @@ import guard_scope  # noqa: E402
 # nothing below this line can change a verdict. Nothing is written to stdout either; the decision
 # JSON is the only thing on it.
 try:
-    from pipeline_metrics import record_triage_decision
+    from pipeline_metrics import record_spec_gate_findings, record_triage_decision
 except ImportError:  # pragma: no cover - vendored without the metrics modules
 
     def record_triage_decision(**_kwargs):
         return False
+
+    def record_spec_gate_findings(*_args, **_kwargs):
+        return 0
 
 
 APPROVED = 0
@@ -298,6 +301,12 @@ def main(argv: list[str] | None = None) -> int:
         blocking=len(decision.blocking),
         notes=len(decision.notes),
         approved=decision.approved,
+    )
+    # Each blocker is a defect the spec gate FOUND (`found_by: spec-gate` is in firstmate's own
+    # vocabulary), recorded here because this is the one place the blocking set is derived - the
+    # arithmetic above says how many, this says which (issue #120). Fail-open like the line above.
+    record_spec_gate_findings(
+        os.environ.get("AVENGER_METRICS_SPEC_PATH"), list(decision.blocking)
     )
     return APPROVED if decision.approved else BLOCKED
 
