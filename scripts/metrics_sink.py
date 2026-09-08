@@ -15,6 +15,19 @@ and reported to the caller as `False`. Nothing raises past `add`/`set_fields`/`e
 here ever calls `sys.exit`. A metrics bug that blocked delivery would be a self-inflicted outage in
 the thing meant to make delivery cheaper.
 
+**A refused write on a SEALED record is queued, never destroyed** (issue #98). firstmate seals a
+record's measurements once `closed` is set, and refuses - exit 3 - any write that would move one.
+That refusal is correct; what was wrong was this side's answer to it: the note went to the log and
+the entry went nowhere, so a phase closed too early lost five spec-gate rounds for good, and the
+ledger read as a phase with fewer rounds rather than as one missing writes. Now a write the writer
+refused *because the record is closed* is appended to `<project>/.avenger-metrics-spool.jsonl` - the
+exact argv, so nothing is re-derived - and replayed by `drain()` before the next write to that phase
+and by `pipeline_metrics.py spool --drain`, so a record reopened with `set <phase> --reopen
+closed:=null` receives everything the seal turned away, in order. The sink still returns `False` for
+the refused write: it did not land, and reporting the outcome is the whole of this issue. Only the
+seal is queued - a refusal for any other reason (a key the writer does not know, an invalid value)
+would fail identically on replay, and a queue that can never drain is the loss with extra steps.
+
 **Nothing is ever written to stdout.** Several callers are hooks whose stdout is a JSON protocol
 (`hook_ponytail.sh` returns `hookSpecificOutput` there). A stray diagnostic line on stdout would
 corrupt a hook's contract, so every message from this module goes to stderr and to the log file, and
@@ -67,6 +80,14 @@ except Exception:  # noqa: BLE001 — vendored without env_file.py, or an unread
 #: Written before every diagnostic so a reader can tell these lines from a gate's.
 PREFIX = "[metrics]"
 
+#: Where a write the seal turned away waits (one JSON object per line: phase, argv, when, why).
+#: Beside the diagnostics log, gitignored like it, and overridable for the same reason.
+SPOOL_NAME = ".avenger-metrics-spool.jsonl"
+SPOOL_ENV = "AVENGER_METRICS_SPOOL"
+
+#: firstmate's exit for "the tool declined, and the caller can act on that" - the seal is one of them.
+REFUSED = 3
+
 #: Whole seconds any single CLI call may take. A healthy call answers in tens of milliseconds, so
 #: this is two orders of magnitude of headroom and is only ever reached when something is wrong. A
 #: hung writer must not hold a hook open: the hook's budget is spent on the gate, and measurement
@@ -100,7 +121,9 @@ def note(message: str) -> None:
     except Exception:  # noqa: BLE001 — a closed stderr must not break the caller
         pass
     try:
-        path = os.environ.get("AVENGER_METRICS_LOG") or str(_project_dir() / ".avenger-metrics.log")
+        path = os.environ.get("AVENGER_METRICS_LOG") or str(
+            _project_dir() / ".avenger-metrics.log"
+        )
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except Exception:  # noqa: BLE001 — an unwritable log is not worth a second failure
@@ -159,7 +182,11 @@ def enabled() -> bool:
         return True
     # Not when the breaker tripped: it has already said why, and repeating "no writer is configured"
     # over a writer that IS configured and hung sends the reader to their PATH for a stuck lock.
-    if not _announced and not _writer_unusable and os.environ.get("AVENGER_METRICS_OFF") != "1":
+    if (
+        not _announced
+        and not _writer_unusable
+        and os.environ.get("AVENGER_METRICS_OFF") != "1"
+    ):
         _announced = True
         note(_unresolvable_reason())
     return False
@@ -224,7 +251,10 @@ def project() -> str | None:
     try:
         proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
             ["git", "-C", str(_project_dir()), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=timeout(), check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout(),
+            check=False,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             return Path(proc.stdout.strip()).name
@@ -286,7 +316,9 @@ def ensure(phase: str) -> bool:
     if show(phase) is not None:
         return True
     if result is not None:
-        note(f"phase {phase}: could not open a record (exit {result[0]}): {result[2].strip()}")
+        note(
+            f"phase {phase}: could not open a record (exit {result[0]}): {result[2].strip()}"
+        )
     return False
 
 
@@ -306,11 +338,18 @@ def _write(
 ) -> bool:
     if not ensure(phase):
         return False
+    if queued(phase):
+        # Earlier writes the seal turned away go first, so a reopened record receives them in the
+        # order they were made. A still-sealed record keeps them queued and this write joins them.
+        drain(phase)
     argv = [verb, phase, *head, *(assignment(k, v) for k, v in fields.items())]
     result = run(*argv)
     if result is None:
         return False
     if result[0] != 0:
+        if _sealed(phase, result):
+            _spool(phase, argv, result[2])
+            return False
         dropped = tuple(key for key in optional if key in fields)
         if dropped and _write_without(verb, phase, head, fields, dropped):
             note(
@@ -324,8 +363,150 @@ def _write(
     return True
 
 
+def spool_path() -> Path:
+    declared = (os.environ.get(SPOOL_ENV) or "").strip()
+    return Path(declared) if declared else _project_dir() / SPOOL_NAME
+
+
+def _sealed(phase: str, result: tuple[int, str, str]) -> bool:
+    """Whether a refusal is the SEAL: firstmate's refusal exit, on a record that is closed.
+
+    Decided from the record's own state rather than from the wording of the refusal, which is
+    firstmate's to change. A refusal on an open record is something replay cannot fix.
+    """
+    if result[0] != REFUSED:
+        return False
+    record = show(phase)
+    return bool(record) and record.get("closed") is not None
+
+
+def _spool(phase: str, argv: list[str], why: str) -> None:
+    """Append one refused write to the spool. Never raises; a spool that cannot be written is said."""
+    entry = {
+        "phase": phase,
+        "argv": list(argv),
+        "refused_at": _utcnow(),
+        "why": (why or "").strip().splitlines()[:2],
+    }
+    path = spool_path()
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        note(
+            f"phase {phase}: {argv[0]} refused by the seal AND could not be queued at {path} "
+            f"({exc}) — this write is LOST: {' '.join(argv)}"
+        )
+        return
+    note(
+        f"phase {phase}: {argv[0]} refused - the record is closed - so the write is QUEUED at "
+        f"{path} rather than dropped. Reopen the phase (`set {phase} --reopen closed:=null`) and it "
+        f"lands on the next write, or run `pipeline_metrics.py spool --drain`."
+    )
+
+
+def _utcnow() -> str:
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_spool() -> list[dict]:
+    path = spool_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            note(
+                f"spool {path}: an unreadable line was skipped, not dropped: {line[:120]}"
+            )
+            entries.append({"unreadable": line})
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def _write_spool(entries: list[dict]) -> None:
+    path = spool_path()
+    try:
+        if not entries:
+            if path.exists():
+                path.unlink()
+            return
+        lines = [
+            entry["unreadable"] if "unreadable" in entry else json.dumps(entry)
+            for entry in entries
+        ]
+        path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    except OSError as exc:
+        note(
+            f"spool {path}: could not be rewritten ({exc}); its entries stand as they were"
+        )
+
+
+def queued(phase: str | None = None) -> list[dict]:
+    """The writes still waiting, for one phase or for all of them."""
+    return [
+        entry
+        for entry in _read_spool()
+        if "unreadable" not in entry
+        and (phase is None or str(entry.get("phase")) == phase)
+    ]
+
+
+def drain(phase: str | None = None) -> tuple[int, int]:
+    """Replay every queued write (for `phase`, or all). Returns (landed, still queued).
+
+    A write that lands leaves the spool; one the writer refuses again stays, verbatim, for the next
+    attempt. Nothing here re-derives an argv - what was refused is exactly what is replayed.
+    """
+    if cli() is None:
+        return 0, len(queued(phase))
+    landed = 0
+    kept: list[dict] = []
+    for entry in _read_spool():
+        if "unreadable" in entry or (
+            phase is not None and str(entry.get("phase")) != phase
+        ):
+            kept.append(entry)
+            continue
+        argv = entry.get("argv")
+        if not isinstance(argv, list) or not argv:
+            kept.append(entry)
+            continue
+        result = run(*[str(a) for a in argv])
+        if result is not None and result[0] == 0:
+            landed += 1
+            continue
+        kept.append(entry)
+    _write_spool(kept)
+    remaining = len(
+        [
+            e
+            for e in kept
+            if "unreadable" not in e and (phase is None or str(e.get("phase")) == phase)
+        ]
+    )
+    if landed:
+        note(f"spool: {landed} queued write(s) landed; {remaining} still waiting")
+    return landed, remaining
+
+
 def _write_without(
-    verb: str, phase: str, head: list[str], fields: dict[str, object], dropped: tuple[str, ...]
+    verb: str,
+    phase: str,
+    head: list[str],
+    fields: dict[str, object],
+    dropped: tuple[str, ...],
 ) -> bool:
     """Retry the write with `dropped` removed. One retry, no recursion, no second `ensure`.
 
@@ -345,7 +526,9 @@ def set_fields(phase: str, **fields: object) -> bool:
     return _write("set", phase, [], fields)
 
 
-def add(phase: str, collection: str, _optional: tuple[str, ...] = (), **fields: object) -> bool:
+def add(
+    phase: str, collection: str, _optional: tuple[str, ...] = (), **fields: object
+) -> bool:
     """Upsert one entry into a collection, by its identity field.
 
     Re-emitting the same identity converges on one entry rather than appending a second, which is

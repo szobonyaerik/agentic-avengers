@@ -21,11 +21,27 @@ means the implementer FINISHED - `SubagentStop` - which `scripts/hook_activity.s
 **Nothing here can be moved by writing a document.** A start with no matching stop is an implementer
 still in the worktree, whatever any spec's frontmatter says.
 
-## What bounds it
+## What bounds it - the process, first
 
-A crashed subagent leaves a start with no stop, and reading that as live forever is a permanent
-wedge with no remedy - the shape §3a exists to refuse. `IMPLEMENTER_MAX_AGE_S` (default 4 hours)
-bounds it, and an aged-out start is named rather than silently dropped.
+`SubagentStop` is not the only way an implementer ends, and for a long time it was the only ending
+this read (issue #98). A stage killed through the `TaskStop` tool fires no `SubagentStop`, so its
+start stayed unmatched and its lock was held for the full four-hour ceiling: measured at 1410
+activity rows, 33 starts, 1334 stops, exactly one unmatched - the killed agent. Recovery cost half
+a working day for a routine correct action. So an open start is now checked against two OUTCOMES
+before the ceiling is even consulted:
+
+* **`TaskStop`** - `hook_activity.sh` records the harness's own `PostToolUse` for that tool, and
+  records it only when the tool's response says the stop succeeded. A start whose id was stopped
+  that way is not live.
+* **The harness process** - every start row carries `harness_pid`, the pid of the `claude` process
+  the subagent runs inside. `proc_group.process_exists` asks the kernel; a pid that is gone is an
+  implementer that cannot be running, whatever the log says. A row with no pid (written before
+  this rule) is not judged by it, so nothing recorded earlier changes meaning.
+
+A crashed subagent inside a harness that is still alive can still leave a start with no stop, and
+reading that as live forever is a permanent wedge with no remedy - the shape §3a exists to refuse.
+`IMPLEMENTER_MAX_AGE_S` (default 4 hours) still bounds that last case, and an aged-out start is
+named rather than silently dropped.
 
 **A missing log is not "nothing is running".** The activity hook may be off (`ACTIVITY_OFF=1`), or
 this may not be a pipeline run at all. That is `LivenessUnknown`, and the caller says so rather than
@@ -54,6 +70,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import guard_scope  # noqa: E402
+from proc_group import process_exists  # noqa: E402
 
 NONE_LIVE = 0
 LIVE = 1
@@ -81,6 +98,10 @@ DEFAULT_MAX_AGE_S = 4 * 60 * 60
 
 START = "SubagentStart"
 STOP = "SubagentStop"
+#: The harness reported that it stopped this agent (`hook_activity.sh` writes it from the TaskStop
+#: tool's own success response). Keyed by id alone: the tool names a task id, not an agent type.
+KILLED = "TaskStop"
+PID_KEY = "harness_pid"
 
 
 class LivenessUnknown(Exception):
@@ -182,8 +203,13 @@ def live(root: Path, *, now: datetime | None = None) -> list[dict]:
                 if same:
                     open_runs.pop(same[-1])
 
+    killed = _killed_ids(text)
     still: list[dict] = []
-    for entry in open_runs.values():
+    for (_, agent_id), entry in open_runs.items():
+        if agent_id and agent_id in killed:
+            continue  # the harness reported this stop itself; a TaskStop fires no SubagentStop
+        if not _harness_alive(entry):
+            continue  # the process the agent ran inside is gone, so the agent is too
         when = _when(entry)
         if when is None:
             continue  # an entry that cannot be placed in time cannot be shown to be current
@@ -191,6 +217,40 @@ def live(root: Path, *, now: datetime | None = None) -> list[dict]:
             continue
         still.append(entry)
     return still
+
+
+def _killed_ids(text: str) -> set[str]:
+    """Every agent id the harness reported as stopped through the TaskStop tool.
+
+    A `TaskStop` row carries no `agent_type` - the tool names a task id - so it is matched on id
+    across every open run rather than through the type-keyed loop above.
+    """
+    ids: set[str] = set()
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and str(entry.get("event") or "") == KILLED:
+            agent_id = str(entry.get("agent_id") or "").strip()
+            if agent_id:
+                ids.add(agent_id)
+    return ids
+
+
+def _harness_alive(entry: dict) -> bool:
+    """Whether the harness process a start row names still exists. Asked of the kernel.
+
+    A row with no usable pid is UNOBSERVABLE, and unobservable is read as alive: this check may
+    release a lock only on a fact it actually saw, and a row written before pids were recorded is
+    judged by the ceiling alone, exactly as it was before.
+    """
+    raw = entry.get(PID_KEY)
+    try:
+        pid = int(raw)
+    except (TypeError, ValueError):
+        return True
+    return process_exists(pid)
 
 
 def describe(entry: dict) -> str:

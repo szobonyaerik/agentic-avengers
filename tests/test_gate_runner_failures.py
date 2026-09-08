@@ -32,8 +32,16 @@ STUBS = {
     # A provider that cannot be reached at all.
     "unreachable": "#!/bin/sh\necho 'curl: (7) Failed to connect to openrouter.ai port 443: "
     "Connection refused' >&2\nexit 1\n",
-    # A provider that answers, but with nothing a verdict can be read out of.
-    "chatty": "#!/bin/sh\necho 'I had a think about it and it seems fine to me.'\n",
+    # A provider that answers - a real text event, the shape a reply has under `--format json` -
+    # but with nothing a verdict can be read out of.
+    "chatty": '#!/bin/sh\necho \'{"type":"text","part":{"id":"p1","text":"I had a think about it '
+    "and it seems fine to me.\"}}'\n",
+    # An exhausted tier (issue #98): the CLI prints its banner, exits 0 with NO reply content, and a
+    # leftover worker keeps the stdout pipe open, so the call outlives its budget with nothing in it.
+    "exhausted": '#!/bin/sh\necho "opencode v1.2.3 - free tier"\nsleep 120 &\n'
+    'echo "$!" > "$PIDFILE"\nexit 0\n',
+    # The same emptiness without the held pipe: exit 0, banner, nothing else, instantly.
+    "exhausted_fast": '#!/bin/sh\necho "opencode v1.2.3 - free tier"\nexit 0\n',
     # A provider that wedges, leaving a grandchild holding the pipe.
     "wedged": '#!/bin/sh\nsleep 120 &\necho "$!" > "$PIDFILE"\nsleep 120\n',
     # Local SQLite lock contention, in its fast shape: it fails in about 0.6s naming the lock.
@@ -169,6 +177,49 @@ def test_a_timeout_names_itself_reports_measured_time_and_leaves_nothing_running
         pytest.fail(
             f"grandchild {grandchild} outlived the timeout — still running, still spending"
         )
+
+
+# --- an empty reply is its own cause, never a timeout (issue #98) ---------------------------------
+
+
+def test_an_exhausted_tier_holding_the_pipe_is_named_as_empty_not_timeout(gate) -> None:
+    """THE measured case. `opencode run` on an empty free tier exits 0 with its banner and no
+    content, a worker holds the pipe, the budget elapses, and the gate reported `cause=timeout` -
+    whose remedy, raising the budget, cannot work. The direct child's own exit (0) is what tells a
+    call that ENDED from one still running, and the leftover worker is still killed."""
+    result = gate("exhausted", GATE_CALL_TIMEOUT="2")
+    assert result.returncode == 2
+    assert "cause=provider-empty-response" in result.stderr, result.stderr
+    assert "cause=timeout" not in result.stderr
+    assert "raising GATE_CALL_TIMEOUT cannot help" in result.stderr
+    assert "free tier" in result.stderr  # the provider's own words, verbatim
+
+    grandchild = int((gate.tmp / "grandchild.pid").read_text().strip())
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(grandchild, 9)
+        pytest.fail(f"grandchild {grandchild} outlived the call")
+
+
+def test_an_empty_reply_that_returns_promptly_is_the_same_cause(gate) -> None:
+    result = gate("exhausted_fast")
+    assert result.returncode == 2
+    assert "cause=provider-empty-response" in result.stderr, result.stderr
+    assert "cause=no-verdict" not in result.stderr
+
+
+def test_a_slow_provider_still_running_at_the_budget_is_still_a_timeout(gate) -> None:
+    """What must remain possible: a timeout that IS a slow provider is reported as one. The wedged
+    stub is still running when the group is killed, so its exit is the signal, never 0."""
+    result = gate("wedged", GATE_CALL_TIMEOUT="2")
+    assert "cause=timeout" in result.stderr
+    assert "cause=provider-empty-response" not in result.stderr
 
 
 def test_the_success_path_is_unchanged_by_all_of_this(gate) -> None:

@@ -81,7 +81,6 @@ import gate_timeouts  # noqa: E402
 import metrics_sink as sink  # noqa: E402
 import plugin_release  # noqa: E402
 import proc_group  # noqa: E402
-import guard_scope  # noqa: E402
 import skill_contract  # noqa: E402
 import subprocess_check  # noqa: E402
 import verifier_attempts  # noqa: E402
@@ -129,6 +128,11 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
     "provider-payment-required": ("error", "http-402"),
     "provider-unreachable": ("error", "provider-unreachable"),
     "no-verdict": ("error", "unparseable"),
+    # `unparseable`, not `timeout`: the call RETURNED and there was nothing in it to read, which is
+    # the state that token names; recording it as a timeout would reinstate the wrong remedy (raise
+    # the budget) the cause was split off to end. Not a token of its own - firstmate owns that
+    # vocabulary (§6d). The distinction lives on the gate's `cause=` line and its verbatim output.
+    "provider-empty-response": ("error", "unparseable"),
     # Not `unparseable`: the reply parsed fine. What failed is the CLAIM that a provider
     # produced it, so it is an error whose cause is the gate not having run.
     "implausible-latency": ("error", "other"),
@@ -1802,6 +1806,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     provenance.add_argument("phase_ref")
 
+    spool = sub.add_parser(
+        "spool",
+        help="list the writes firstmate's seal turned away; --drain replays them (issue #98)",
+    )
+    spool.add_argument(
+        "--phase", default=None, help="a two-digit phase; default every phase"
+    )
+    spool.add_argument(
+        "--drain",
+        action="store_true",
+        help="replay the queued writes now; exit 1 while any is still refused",
+    )
+
     return parser
 
 
@@ -1897,7 +1914,39 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
             sink.note(f"provenance: no record for {args.phase_ref!r} yet")
         else:
             print(json.dumps(provenance_report(read.record), indent=2, sort_keys=True))
+    elif args.command == "spool":
+        return _spool_command(args.phase, args.drain)
     return None
+
+
+def _spool_command(phase: str | None, drain: bool) -> bool:
+    """Report the queue, and replay it when asked. Reports the OUTCOME: what landed, what did not."""
+    waiting = sink.queued(phase)
+    if not waiting:
+        print(
+            f"{sink.PREFIX} spool: nothing queued at {sink.spool_path()}",
+            file=sys.stderr,
+        )
+        return True
+    for entry in waiting:
+        print(
+            f"{sink.PREFIX} spool: phase {entry.get('phase')} refused at {entry.get('refused_at')}: "
+            f"{' '.join(str(a) for a in entry.get('argv') or [])}",
+            file=sys.stderr,
+        )
+    if not drain:
+        print(
+            f"{sink.PREFIX} spool: {len(waiting)} write(s) waiting. Reopen the phase "
+            f"(`fm-pipeline-metrics.sh set <phase> --reopen closed:=null`), then `spool --drain`.",
+            file=sys.stderr,
+        )
+        return True
+    landed, remaining = sink.drain(phase)
+    print(
+        f"{sink.PREFIX} spool: drained - {landed} landed, {remaining} still refused.",
+        file=sys.stderr,
+    )
+    return remaining == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1953,6 +2002,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(_defect_failure_message(args), file=sys.stderr)
         return 1
+    if args.command == "spool" and ok is False:
+        return 1  # an operator asked for a drain and something is still refused: say so in the exit
     return 0
 
 
@@ -2028,6 +2079,13 @@ def _defect_failure_message(args: argparse.Namespace) -> str:
 
 
 if __name__ == "__main__":
-    # What a clean run does NOT establish (issue #97). Every command here but `defect` is
-    # fail-open, so exit 0 says the emission was attempted and never that the record changed.
-    raise SystemExit(guard_scope.run(__file__, main))
+    # NOT routed through `guard_scope.run`, and that is a decision rather than an omission. This
+    # module carries a scope statement in `guard_scope.toml` - what a clean run does NOT establish
+    # (issue #97) - but emitting it on the clean branch would break a documented contract:
+    # `AVENGER_METRICS_OFF=1` records none deliberately and SILENTLY (CLAUDE.md 6d), and most
+    # callers are hooks that discard stderr, so the statement would be noise where it is read and a
+    # broken promise where it is not. `scripts/guard_proof.py` carries the matching entry in
+    # `EMISSION_EXCEPTIONS`, which is what keeps a statement-without-emission honest rather than
+    # invisible. The one thing this module REFUSES - a spec round for a gate that reached no
+    # verdict - carries its own reason where somebody is being told a verdict.
+    raise SystemExit(main())

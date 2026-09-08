@@ -59,8 +59,16 @@ for spec in "${SPECS[@]:-}"; do
   # The ONE machine gate, read through the one module that decides what its stamp means (including
   # how a legacy fidelity_verdict reads). Never re-derived here: this used to be a second copy of
   # that rule, and a second copy is the one that drifts.
-  GATE_STATE="$(python3 "$SCRIPT_DIR/spec_gate_state.py" status "$spec" 2>/dev/null)"
-  if [ "$GATE_STATE" != "approved" ]; then
+  # `status` is bound to the BYTES (issue #97): an `approved` whose body no longer hashes to what
+  # the gate recorded reads `stale`, so a spec edited after its approval cannot pass here on the
+  # strength of a value written over other text. The reader's own notes (an unrecorded hash, a
+  # stale body) are on stderr, and they are kept - a clean token with the note discarded is the
+  # over-read result this check exists to refuse.
+  GATE_STATE="$(python3 "$SCRIPT_DIR/spec_gate_state.py" status "$spec")"
+  if [ "$GATE_STATE" = "stale" ]; then
+    echo "  ✗ spec_gate is 'stale' — the body changed after the gate approved it; the approval is of bytes this spec no longer has. Re-gate it or record a disclosed exception." >&2
+    record_fail "spec-gate:$spec"
+  elif [ "$GATE_STATE" != "approved" ]; then
     echo "  ✗ spec_gate is '$GATE_STATE' — the spec gate never approved this spec." >&2
     record_fail "spec-gate:$spec"
   fi
@@ -486,23 +494,52 @@ fi
 # 2) Test suite. Exit 5 = "no tests collected" -> not a failure.
 #    Pre-commit runs the phase suites only; --full (CI) also runs the feature-level e2e tests, which
 #    are slow, need the assembled system, and have nothing useful to say about an uncommitted edit.
-if [ "$FULL" -eq 1 ]; then
-  echo "• tests: pytest -q (incl. e2e)"
-  pytest -q; pc=$?
-else
-  # The declared test roots, minus each root's own `e2e/`, from the one file that assembles them
-  # (`test_root_args.sh`, which `hook_verifier.sh` also sources). This branch used to hardcode
-  # `--ignore=tests/e2e` with no root: on a project whose tests are not at `tests/` the ignore
-  # matched nothing on disk and the pre-commit gate collected the feature-level e2e suite the
-  # comment above says it deliberately excludes.
-  if ! test_root_pytest_args "$SCRIPT_DIR"; then
-    echo "  $TEST_ROOT_SCOPE — keeping the whole-tree scope" >&2
+#
+#    TWO THINGS THIS STEP USED TO LEAVE TO CHANCE (issue #98, folded from agents#31). It ran a bare
+#    `pytest -q` and read its exit code: an intermittent hang that exited 0 with no summary line read
+#    as a pass, and WHICH `pytest` ran was whatever PATH said - three phase-1 tests failed under a bare
+#    `python3` and passed under the venv, and nothing pinned which invocation was load-bearing. So the
+#    suite now runs THROUGH `suite_outcome.py`, the one module that decides RAN versus STOPPED (a run
+#    with no runner summary is INCOMPLETE, exit 86, never a pass), and it runs as `python3 -m pytest`
+#    under the SAME interpreter every other check in this file uses, which the step announces by
+#    path. The two are one function so a test can slice it out and drive it the way this file does.
+#
+#    AND WHICH ROOTS it runs are the project's DECLARED ones, minus each root's own `e2e/`, from the
+#    one file that assembles them (`test_root_args.sh`, which `hook_verifier.sh` also sources). The
+#    pre-commit branch used to hardcode `--ignore=tests/e2e` with no root: on a project whose tests
+#    are not at `tests/` that ignore matched nothing on disk and this gate collected the
+#    feature-level e2e suite the comment above says it deliberately excludes (issue #120).
+suite_step() {
+  local full="$1" pc interpreter
+  interpreter="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || echo 'python3 (could not be asked for its path)')"
+  if [ "$full" -eq 1 ]; then
+    echo "• tests: python3 -m pytest -q (incl. e2e), through suite_outcome.py; interpreter: $interpreter"
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q; pc=$?
+  else
+    if ! test_root_pytest_args "$SCRIPT_DIR"; then
+      echo "  $TEST_ROOT_SCOPE — keeping the whole-tree scope" >&2
+    fi
+    echo "• tests: python3 -m pytest -q ${TEST_ROOT_ARGS[*]} ($TEST_ROOT_SCOPE), through suite_outcome.py; interpreter: $interpreter"
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?
   fi
-  echo "• tests: pytest -q ${TEST_ROOT_ARGS[*]} ($TEST_ROOT_SCOPE)"
-  pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?
-fi
-if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
-[ "$pc" -eq 5 ] && echo "  (no tests collected — skipping)"
+  # Publish the outcome this step OBSERVED, on the one name a later step reads. `pc` is local, so
+  # the mutation gate below cannot see it; it used to read `$pc` directly and, once this became a
+  # function, aborted the whole script under `set -u` with `pc: unbound variable` on any repo whose
+  # cosmic-ray `module-path` actually resolves. Publishing is explicit and the read defaults, so a
+  # later refactor that stops calling this step degrades to "unknown" rather than to a dead script.
+  SUITE_PC="$pc"
+  if [ "$pc" -eq 86 ]; then
+    # Not a red suite: there is no result to read. A watchdog kill, or a run that stopped before it
+    # said how many tests it ran, and an exit code of 0 changes nothing about that.
+    echo "✗ tests: the suite did NOT COMPLETE - killed by its watchdog, or over before it stated what it ran. A suite that did not finish is not a suite that passed." >&2
+    record_fail "tests:incomplete"
+    return 0
+  fi
+  if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
+  [ "$pc" -eq 5 ] && echo "  (no tests collected — skipping)"
+  return 0
+}
+suite_step "$FULL"
 
 # 3) Mutation gate via cosmic-ray (CI / --full only). Fail closed: an errored run stops.
 #    Same contract as scripts/hook_mutation.sh: baseline first, diff-scoped, deterministic verdict
@@ -758,7 +795,7 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
     # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
     # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
     # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
-    if [ "$pc" -eq 5 ]; then
+    if [ "${SUITE_PC:-}" = "5" ]; then
       echo "  (no tests collected — nothing for mutation to measure, skipping)"
     # Baseline first: a mutant counts as killed whenever the test command fails, so a broken suite
     # would score a perfect 1.0. No kill means anything until the unmutated suite is green.

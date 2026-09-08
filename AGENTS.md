@@ -129,7 +129,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    point: a runbook naming a single gate (`fidelity`) read a collapsed spec, which carries `gate`,
    as STALE while it was freshly approved, and sent operators to re-gate work that was fine. The
    same call is what `pipeline_state.py` and `verifier_precheck.py` ask, so the runbook cannot
-   disagree with the pipeline about one spec.
+   disagree with the pipeline about one spec. **`status` is bound to the bytes too**: an `approved`
+   whose body moved on prints `stale` and exits 1, so no reader of the status token - `gate_ci.sh`,
+   the resolver, the re-gate hook - passes a stamp written over other text (issue #97).
 3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
    counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
    call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`
@@ -174,10 +176,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
    **An amendment is OWED after a fix pass, not merely available** (issue #51):
-   `scripts/verdict_currency.py`, run from `pipeline_state.py` before a feature may report `done`
-   and from `gate_ci.sh --full`, refuses a feature whose tracked files changed after its **newest**
-   verdict landed with no phase recording an amendment. The ship gate owns both findings and fixes
-   while it runs, so it changed verified code and touched no artifact, and the verdict went on
+   `scripts/verdict_currency.py`, run from `pipeline_state.py` before a feature may report `done`,
+   from `gate_ci.sh --full` and from `hook_verifier.sh` at the handover, refuses a feature whose
+   tracked files changed after its **newest** verdict with no phase recording an amendment. **A
+   verdict is bound to a HEAD** (issue #97): every `verifier_evidence.py record` run carries the
+   commit it stood on, so an uncommitted verdict anchors on the newest recorded head and a branch
+   that moved past it makes the verdict stale, not passing; the close refuses to carry it. The ship
+   gate owns both findings and fixes while it runs, so it changed verified code and touched no artifact, and the verdict went on
    asserting a file was byte-identical after the fix commit changed it. **Never a rewritten
    verdict** - that restates a verification nobody performed. `docs/` and the feature's own
    `tests/e2e/<feature>/` are excluded by design, and anything git cannot answer enforces nothing
@@ -259,7 +264,11 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    one still carrying the template's `R<n>.<k>.<m>` syntax counts as nothing - and that the phase
    suite is green, and either failing REVERTS the stamp to `status: in-progress`
    (`scripts/spec_done_guard.py`) before failing the hook. So stamp `done` LAST, after the mapping
-   rows and a green suite. Three states fail the hook but leave the stamp exactly as written,
+   rows and a green suite. **A stamp that stands is then BOUND to those bytes**: the hook writes
+   `done_digest:` over the spec's own `test-mapping.md` and its own test directory, and the
+   handover precheck holds it - edit either after `done` and the remedy is to stamp `done` again
+   through a tool write, which re-checks and re-binds (issue #97). Three states fail the hook but
+   leave the stamp exactly as written,
    because the revert acts only on evidence scoped to the same thing it rewrites: a spec whose every
    declared requirement is `binding: none` owes no row (4a) - a spec declaring no requirement at all
    is its own stop, not that exemption; a red suite that could only be run repository-wide; and

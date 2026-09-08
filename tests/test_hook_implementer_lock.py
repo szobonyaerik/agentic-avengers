@@ -185,6 +185,56 @@ def test_break_glass_proceeds_and_is_audited(project: Path) -> None:
     assert "zombie" in logged
 
 
+def test_the_refusal_names_the_scoped_bypass_not_the_unscoped_one(
+    project: Path,
+) -> None:
+    """Issue #98: `GATE_BYPASS` alone waives EVERY gate the run reaches, and the refusal used to
+    print exactly that form, so an operator following the printed remedy waived far more than one
+    dead lock. The scoped form existed and worked; only the text was wrong."""
+    activity(project, started())
+    result = spawn(project)
+    assert result.returncode == 2
+    assert 'GATE_BYPASS_GATES="implementer-lock"' in result.stderr
+    # The unscoped form is not offered as the remedy: it appears only as the thing being warned about.
+    remedy_lines = [ln for ln in result.stderr.splitlines() if "GATE_BYPASS=" in ln]
+    assert remedy_lines, result.stderr
+    assert all("GATE_BYPASS_GATES=" in ln for ln in remedy_lines), remedy_lines
+
+
+def test_the_scoped_bypass_the_refusal_names_actually_clears_the_lock(
+    project: Path,
+) -> None:
+    activity(project, started())
+    result = spawn(
+        project,
+        GATE_BYPASS_GATES="implementer-lock",
+        GATE_BYPASS="the other implementer was killed with TaskStop before this hook recorded kills",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    logged = (project / "gate-overrides.log").read_text(encoding="utf-8")
+    assert "gate:implementer-lock" in logged
+
+
+def test_a_bypass_scoped_to_another_gate_does_not_clear_this_one(project: Path) -> None:
+    activity(project, started())
+    result = spawn(
+        project, GATE_BYPASS_GATES="spec-gate", GATE_BYPASS="aimed elsewhere"
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not (project / "gate-overrides.log").exists()
+
+
+def test_a_taskstop_the_harness_reported_opens_the_lock(project: Path) -> None:
+    """The measured case: a killed implementer, no SubagentStop, lock held four hours."""
+    activity(
+        project,
+        started(),
+        {"ts": when(1), "event": "TaskStop", "agent_id": "a1"},
+    )
+    result = spawn(project)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 # --- the hook is wired to an event that can actually refuse ---------------------------------------
 
 

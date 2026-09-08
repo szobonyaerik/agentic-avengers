@@ -640,3 +640,107 @@ class TestAllowlists:
     def test_it_never_gates(self):
         """Growth is a REPORT. A blocking check would be answered with a bypass, not attention."""
         assert guard_scope.main(["allowlists", "--root", str(ROOT)]) == guard_scope.OK
+
+
+class TestAllowlistSizeAtThePointOfUse:
+    """A guard quietened by an allowlist reports that allowlist's size beside its own clean line
+    (issue #97). `gate_ci.sh` reports every allowlist in one place a reader of one guard's output
+    never sees; the size belongs where the clean result is read."""
+
+    def test_a_guard_with_an_allowlist_emits_its_size_on_a_clean_result(
+        self, capsys, monkeypatch
+    ):
+        monkeypatch.delenv(guard_scope.BASE_ENV, raising=False)
+        guard_scope.clean("guard_proof.py", 0)
+        err = capsys.readouterr().err
+        assert "allowlist guard-exemptions:" in err
+        assert "entr(ies)" in err
+        assert "growth not measured" in err
+
+    def test_a_guard_no_allowlist_quietens_emits_no_allowlist_line(self, capsys):
+        guard_scope.clean("interface_drift.py", 0)
+        assert (
+            "allowlist" not in capsys.readouterr().err.split("Does NOT establish")[-1]
+        )
+
+    @pytest.mark.subprocess(
+        "git is the authority for what an allowlist looked like at a ref; a stubbed git would "
+        "only test the stub"
+    )
+    def test_the_delta_is_measured_when_ci_names_a_base(self, tmp_path, monkeypatch):
+        """Its own repository, deliberately - never this checkout.
+
+        Read against the working tree, this test asserted a property of wherever it happened to
+        run: `guard_proof.py`'s throwaway copy carries no `.git`, so the measurement it claims to
+        pin came back UNKNOWABLE there and the guard could not be proved by going red.
+        """
+        root = tmp_path / "repo"
+        (root / "tests").mkdir(parents=True)
+        run = lambda *a: subprocess.run(  # noqa: E731
+            ["git", *a], cwd=str(root), check=True, capture_output=True
+        )
+        run("init", "-q", "-b", "main")
+        run("config", "user.email", "p@example.com")
+        run("config", "user.name", "p")
+        (root / "tests" / "test_waved.py").write_text("MARK\n", encoding="utf-8")
+        write_inventory(
+            root,
+            ONE_GUARD
+            + '\n[[allowlist]]\nid = "x"\nglob = "tests/**/*.py"\nmarker = "MARK"\n'
+            'guard = "thing.py"\nwhat = "things waved through"\n',
+        )
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        monkeypatch.setenv(guard_scope.BASE_ENV, "HEAD")
+
+        (line,) = guard_scope.allowlist_lines("thing.py", root=root)
+
+        assert "against 'HEAD'" in line
+        assert "UNKNOWABLE" not in line
+
+    def test_a_base_git_cannot_resolve_is_unknowable_never_no_growth(self, monkeypatch):
+        monkeypatch.setenv(guard_scope.BASE_ENV, "no-such-ref-anywhere")
+        (line,) = guard_scope.allowlist_lines("guard_proof.py")
+        assert "UNKNOWABLE" in line
+        assert "no growth" not in line
+
+    def test_the_emission_never_moves_the_exit_code(self, monkeypatch):
+        monkeypatch.setenv(guard_scope.BASE_ENV, "no-such-ref-anywhere")
+        for code in (0, 1, 2):
+            assert guard_scope.clean("guard_proof.py", code) == code
+
+    def test_the_shell_emit_path_carries_the_same_line(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "guard_scope.py"),
+                "emit",
+                "subprocess_check.py",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert "allowlist subprocess-declarations:" in result.stderr
+
+    def test_growth_surfaces_as_a_ci_finding_not_only_a_log_line(
+        self, tmp_path, monkeypatch
+    ):
+        """Under GitHub Actions a workflow command puts the growth on the pull request's checks."""
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        inventory = guard_scope.Inventory(
+            statements={},
+            allowlists=(
+                guard_scope.Allowlist(
+                    id="x", marker="M", what="things", guard="g.py", file="f.txt"
+                ),
+            ),
+        )
+        lines = guard_scope._render_growth(inventory, {"x": (1, 3)}, "main")
+        assert any(
+            line.startswith("::warning title=allowlist grew::") for line in lines
+        )
+        monkeypatch.delenv("GITHUB_ACTIONS")
+        lines = guard_scope._render_growth(inventory, {"x": (1, 3)}, "main")
+        assert not any(line.startswith("::warning") for line in lines)

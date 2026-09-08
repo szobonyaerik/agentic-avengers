@@ -70,10 +70,11 @@ limits = [
 ]
 
 [guard."verdict_currency.py"]
-proves = "that the feature owes no amendment for production code changed after its newest verdict."
+proves = "that the feature owes no amendment for production code committed after its newest verdict - the commit a landed verdict.json arrived in, or the head an open verdict's evidence was recorded at."
 limits = [
   "WHICH phase owes the correction - the pipeline does not know which production file belongs to which phase",
-  "anything when git cannot answer: it fails OPEN and says so, rather than passing invisibly",
+  "an UNCOMMITTED edit made after the verification at the same head: it asks git what landed, and a working-tree change is not a landing",
+  "anything when git cannot answer, or when no verdict is committed and no run recorded a head: it fails OPEN and says so, rather than passing invisibly",
   "anything about `docs/` or the feature's own e2e tree, which are excluded by design",
 ]
 
@@ -85,17 +86,20 @@ limits = [
 ]
 
 [guard."verifier_evidence.py"]
-proves = "that the verdict's chain matches recorded runs whose logs hash to their stored digests, over specs and tests that have not changed since."
+proves = "that the verdict's chain matches recorded runs whose logs hash to their stored digests, over specs and tests that have not changed since, each run naming the commit it stood on where git could say."
 limits = [
+  "that the tree the runs stood on is the tree that is here: the recorded head is an ANCHOR for verdict_currency, and production source is outside the subject digest by design",
   "that the runs were HONEST - there is no secret here, so an agent determined to fabricate a log and its digest still can",
   "that a committed log carries no secret: redaction is by pattern, a reduction of risk and never a guarantee",
   "anything about a phase outside the change's scope, which is counted and named rather than read for a verdict",
 ]
 
 [guard."verifier_precheck.py"]
-proves = "that every requirement id owed a trace has a row, that each row names a test which exists and is not skipped, and that every spec's gate stamp is fresh."
+proves = "that every requirement id owed a trace has a row, that each row names a test which exists, is not skipped and (where the test lists any id) lists the row's id, that every spec's gate stamp is fresh, and that every bound `done` stamp still names the mapping and tests here now."
 limits = [
   "that a row's PROSE matches the test it names - a row asserting the opposite of its own running test passes",
+  "a row whose test lists NO requirement id, which can corroborate nothing and is counted rather than held",
+  "a `done` stamp carrying no digest - stamped before the rule, or through a write no hook sees - which is counted rather than held",
   "anything about a test tree it cannot read: definition and skip detection are Python-specific, and an unreadable tree is not held at all",
   "anything about coverage or correctness, which it deliberately never judges",
 ]
@@ -135,6 +139,14 @@ limits = [
   "whether the spec CONTRADICTS the contracts it carries - it assembles the block and never judges against it",
 ]
 
+[guard."spec_gate_state.py"]
+proves = "that a spec reading `approved` carries the one machine gate's stamp AND that its body still hashes to the bytes that stamp was written over - an edited body reads `stale`, never `approved`."
+limits = [
+  "that the approval was RIGHT - it reads a stamp and a hash, it does not review a spec",
+  "anything about a body no gate ever hashed: an UNRECORDED stamp stays `approved` on the applicability boundary, and the CLI says so on stderr",
+  "the human sign-off (`review_status`), which is a separate question this never reads",
+]
+
 [guard."spec_rubric.py"]
 proves = "that the writer's brief rendered whole, derived line by line from the gate's own sources - the blocking table the verdict comes from, the requirement counter, the criterion field the gate checks, and the two prompt sections lifted verbatim."
 limits = [
@@ -160,9 +172,10 @@ limits = [
 ]
 
 [guard."spec_done_guard.py"]
-proves = "that a stamp newly written into `status: done` is backed by a real mapping row and a green phase suite, and is reverted when it is not."
+proves = "that a stamp newly written into `status: done` is backed by a real mapping row and a green phase suite, is reverted when it is not, and once it stands is bound to the bytes of its mapping and its own tests."
 limits = [
-  "a stamp written through Bash (`sed -i`, a heredoc, `python3 -c`): this is a PostToolUse hook and only tool writes reach it",
+  "a stamp written through Bash (`sed -i`, a heredoc, `python3 -c`): this is a PostToolUse hook and only tool writes reach it, so such a stamp is bound to nothing and is counted, not held",
+  "the tests of a spec with no per-spec test directory: there the digest covers the mapping alone, and `bind` says so",
   "a spec already `done` at HEAD, which has shipped and is never rewritten",
   "any of the pipeline's other stamps - it binds `status: done` and does not generalise",
 ]
@@ -222,17 +235,19 @@ limits = [
 ]
 
 [guard."implementer_liveness.py"]
-proves = "that no second implementer was spawned into a working copy already holding a live one, read from the stage's own SubagentStop."
+proves = "that no second implementer was spawned into a working copy already holding a live one - a start with no SubagentStop, no harness-reported TaskStop, and a harness process the kernel still knows."
 limits = [
   "anything that is not a verdict - no jq, no python3, an unreadable payload or no activity log lets the spawn through and says so",
   "a stage started any way other than the spawn tool this hook sees",
   "what a live implementer is DOING: only that it started and has not stopped",
+  "an agent that died inside a harness still alive without a TaskStop - a crash, an interrupt - which only the age ceiling bounds",
+  "a start row written before harness pids were recorded, which the process check cannot see and judges by the ceiling alone",
 ]
 
 # --- the gates' own machinery -----------------------------------------------------------------------
 
 [guard."gate_runner.py"]
-proves = "that the verdict came from a resolvable model of a declared family over a named transport, inside its budget, with the call and any failure cause recorded."
+proves = "that the verdict came from a resolvable model of a declared family over a named transport, inside its budget, with the call and any failure cause recorded - an empty reply named as empty, a call still running at the budget named as a timeout."
 limits = [
   "that the verdict is CORRECT - this is transport and attribution, never review",
   "cross-family independence when a same-family waiver is in force: that is an audited override, not a gate that passed",
@@ -344,9 +359,9 @@ limits = [
 ]
 
 [guard."hook_verifier.sh"]
-proves = "that at this phase's handover every precheck, required-skill audit, execution-evidence record, Breaker obligation, carried-items row, amendment and defect emission was asked for and answered, and that verdict.json reads `pass`."
+proves = "that at this phase's handover every precheck, required-skill audit, execution-evidence record, verdict-currency check, Breaker obligation, carried-items row, amendment and defect emission was asked for and answered, that verdict.json reads `pass`, and that a `done` stamp it let stand was bound to the bytes it checked."
 limits = [
-  "that the VERDICT is right - this hook checks that the Verifier's artifact exists, is fresh and passes; no model runs here and the judging happens in chat",
+  "that the VERDICT is right - this hook checks that the Verifier's artifact exists, is fresh, still describes the committed tree, and passes; no model runs here and the judging happens in chat",
   "anything about a phase whose trigger never fired: this is a PostToolUse hook on a spec stamp and a handover write, so work landed any other way is unseen",
   "that the phase is free of defects - it holds a floor on what was RECORDED, never a ceiling on what exists",
 ]
@@ -374,6 +389,7 @@ limits = [
   "that the mutation gate MEASURED anything: with no comparison base resolvable it reports `did-not-run` and is counted rather than blocking, even under enforce, because no remedy exists there (CLAUDE.md 3a)",
   "anything a model judges - no model runs here by design; the spec gate and the Verifier are in chat",
   "that the suite is adequate: a green suite proves the tests pass, never that any of them would notice the defect its guard exists for",
+  "that the announced interpreter is the project's intended one: the suite runs under the same python3 as every other check here, and that path is printed, not checked against a declaration",
 ]
 
 [guard."hook_mutation.sh"]
@@ -393,11 +409,20 @@ limits = [
   "that the measurements the stamp carries are right - only when they were taken",
 ]
 
+[guard."hook_activity.sh"]
+proves = "that a TaskStop row in .agent-activity.jsonl records a stop the harness itself reported as successful, never a TaskStop that was merely attempted."
+limits = [
+  "a stop performed any way the harness reports through no tool response - a crash, an interrupt, a session that died",
+  "the harness pid a start row carries: recorded from this hook's own ancestry and checked by implementer_liveness.py, never verified here",
+  "anything on a recorded row, which is this hook's clean result and deliberately carries no statement: it prints nothing by contract (a declared exception in `guard_proof.EMISSION_EXCEPTIONS`)",
+]
+
 [guard."hook_implementer_lock.sh"]
 proves = "that no second implementer was spawned into a working copy already holding a live one."
 limits = [
   "anything that is not a verdict - an unreadable payload, a missing interpreter or an unusable pattern lets the spawn through and says so",
   "a crashed agent past its age-out, whose lock is deliberately released rather than held forever",
+  "a lock cleared under GATE_BYPASS_GATES=implementer-lock, which is an audited override and not a check that passed",
 ]
 
 [guard."hook_plugin_release.sh"]

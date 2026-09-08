@@ -21,6 +21,12 @@ never heard of. Both directions are deliberate; neither is silent.
 Matching is longest-prefix on a token boundary, so `hy` matches `hy-large` but never `hyperion-x`,
 and a new short alias cannot quietly swallow an unrelated vendor's models.
 
+Router prefixes are stripped first, and that is what makes opencode's FREE tier a cross-family
+option rather than an unknown vendor (issue #98): `opencode/hy3-free` is tencent and
+`opencode/mimo-v2.5-free` is xiaomi, both independent of an Anthropic author with no key and no
+balance. Config and docs used to name paid routers only, so an exhausted paid quota read as "no
+second family reachable" and nearly bought a same-family waiver that was never needed.
+
     python3 scripts/model_vendors.py family <model-id>     print the family, exit 1 if unknown
 
 Stdlib only — this is imported by gate_runner.py, which ships vendored.

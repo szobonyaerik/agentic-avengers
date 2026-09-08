@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from metrics_support import DOUBLE, read_calls, stub_sink  # noqa: F401 — fixture
+from metrics_support import DOUBLE, read_calls, real_sink, stub_sink  # noqa: F401 — fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -52,13 +52,16 @@ def test_off_switch_is_silent(tmp_path, monkeypatch, capsys):
 def test_writes_go_through_and_are_encoded_by_type(stub_sink):  # noqa: F811
     _, store, log = stub_sink
 
-    assert sink.add("07", "gate_calls", id="g", latency_ms=1200, failure_cause=None) is True
+    assert (
+        sink.add("07", "gate_calls", id="g", latency_ms=1200, failure_cause=None)
+        is True
+    )
 
     add = [call for call in read_calls(log) if call[0] == "add"][-1]
     assert add[:3] == ["add", "07", "gate_calls"]
-    assert "id=g" in add                      # a string is passed verbatim
-    assert "latency_ms:=1200" in add          # a number is raw JSON
-    assert "failure_cause:=null" in add       # and so is an explicit absence
+    assert "id=g" in add  # a string is passed verbatim
+    assert "latency_ms:=1200" in add  # a number is raw JSON
+    assert "failure_cause:=null" in add  # and so is an explicit absence
     assert (store / "phase-07.json").exists()
 
 
@@ -100,7 +103,7 @@ def test_a_hanging_writer_is_bounded_and_then_abandoned(tmp_path, monkeypatch, c
     started = time.monotonic()
     assert sink.run("show", "07") is None
     assert [sink.add("07", "defects", id=f"D{n}") for n in range(10)] == [False] * 10
-    assert time.monotonic() - started < 5   # one timeout paid, not eleven
+    assert time.monotonic() - started < 5  # one timeout paid, not eleven
 
     errors = capsys.readouterr().err
     assert "no further metrics are recorded" in errors
@@ -151,7 +154,10 @@ def test_nothing_is_ever_written_to_stdout(stub_sink, monkeypatch):  # noqa: F81
         % str(ROOT / "scripts")
     )
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", program], capture_output=True, text=True, check=False,
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
     assert result.stdout == ""
@@ -168,9 +174,11 @@ def test_diagnostics_reach_the_log_file(tmp_path, monkeypatch):
 
 
 def test_an_unwritable_log_is_not_a_second_failure(tmp_path, monkeypatch):
-    monkeypatch.setenv("AVENGER_METRICS_LOG", str(tmp_path / "missing-dir" / "metrics.log"))
+    monkeypatch.setenv(
+        "AVENGER_METRICS_LOG", str(tmp_path / "missing-dir" / "metrics.log")
+    )
 
-    sink.note("nowhere to put this")   # must not raise
+    sink.note("nowhere to put this")  # must not raise
 
 
 def test_a_record_that_already_exists_is_not_reopened(stub_sink):  # noqa: F811
@@ -190,7 +198,9 @@ def test_a_phase_opens_from_this_projects_predecessor(stub_sink):  # noqa: F811
 
     assert sink.ensure("09") is True
 
-    init = [call for call in read_calls(log) if call[0] == "init" and call[1] == "09"][-1]
+    init = [call for call in read_calls(log) if call[0] == "init" and call[1] == "09"][
+        -1
+    ]
     assert "--from" in init and init[init.index("--from") + 1] == "07"
 
 
@@ -238,9 +248,24 @@ def test_the_writer_is_resolved_from_the_project_env_file(tmp_path, monkeypatch)
     )
 
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "pipeline_metrics.py"), "defect",
-         "--phase-ref", "07", "--id", "D1", "--summary", "a leak", "--found-by", "verifier"],
-        capture_output=True, text=True, env=env, cwd=str(project), check=False,
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "pipeline_metrics.py"),
+            "defect",
+            "--phase-ref",
+            "07",
+            "--id",
+            "D1",
+            "--summary",
+            "a leak",
+            "--found-by",
+            "verifier",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(project),
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -259,3 +284,167 @@ def test_an_exported_writer_still_wins_over_the_env_file(tmp_path, monkeypatch):
     monkeypatch.setenv("AVENGER_METRICS_CMD", str(exported))
 
     assert sink.cli() == str(exported)
+
+
+# --- a write the seal turned away is queued, never destroyed (issue #98) --------------------------
+#
+# firstmate seals a closed record and refuses, exit 3, any write that would move a measurement. The
+# refusal is right. This side used to answer it by logging a line and dropping the entry, so a phase
+# closed too early lost five spec-gate rounds permanently. Now the exact argv waits in a spool and
+# lands the moment the record is reopened.
+
+
+def _spool(tmp_path) -> Path:
+    return tmp_path / "project" / sink.SPOOL_NAME
+
+
+def _close(store: Path, phase: str) -> None:
+    import json
+
+    path = store / f"phase-{int(phase):02d}.json"
+    record = json.loads(path.read_text())
+    record["closed"] = "2026-09-06T11:00:00Z"
+    path.write_text(json.dumps(record))
+
+
+def test_a_write_the_seal_refused_is_queued_verbatim_and_reported_as_not_landed(
+    stub_sink,  # noqa: F811
+    monkeypatch,
+    capsys,
+):
+    _, store, log = stub_sink
+    assert sink.ensure("07") is True
+    _close(store, "07")
+    monkeypatch.setenv("DOUBLE_SEAL", "1")
+
+    assert (
+        sink.add("07", "gate_calls", id="g1", latency_ms=1200) is False
+    )  # it did NOT land
+
+    (entry,) = sink.queued("07")
+    assert entry["argv"] == ["add", "07", "gate_calls", "id=g1", "latency_ms:=1200"]
+    err = capsys.readouterr().err
+    assert "QUEUED" in err
+    assert "--reopen closed:=null" in err
+    import json
+
+    assert json.loads((store / "phase-07.json").read_text())["gate_calls"] == []
+
+
+def test_the_queue_drains_into_the_reopened_record_in_order(stub_sink, monkeypatch):  # noqa: F811
+    import json
+
+    _, store, log = stub_sink
+    assert sink.ensure("07") is True
+    _close(store, "07")
+    monkeypatch.setenv("DOUBLE_SEAL", "1")
+    assert sink.add("07", "gate_calls", id="g1") is False
+    assert sink.add("07", "gate_calls", id="g2") is False
+    assert [e["argv"][3] for e in sink.queued("07")] == ["id=g1", "id=g2"]
+
+    assert sink.run("set", "07", "--reopen", "closed:=null")[0] == 0
+
+    # The next ordinary write replays the queue first, then lands itself.
+    assert sink.add("07", "gate_calls", id="g3") is True
+    ids = [
+        e["id"] for e in json.loads((store / "phase-07.json").read_text())["gate_calls"]
+    ]
+    assert ids == ["g1", "g2", "g3"]
+    assert sink.queued("07") == []
+    assert not _spool(log.parent).exists()
+
+
+def test_a_still_sealed_record_keeps_the_queue_and_says_how_many_wait(
+    stub_sink,  # noqa: F811
+    monkeypatch,
+):
+    _, store, _ = stub_sink
+    assert sink.ensure("07") is True
+    _close(store, "07")
+    monkeypatch.setenv("DOUBLE_SEAL", "1")
+    assert sink.add("07", "gate_calls", id="g1") is False
+
+    landed, remaining = sink.drain("07")
+    assert (landed, remaining) == (0, 1)
+    assert len(sink.queued("07")) == 1
+
+
+def test_a_refusal_that_is_not_the_seal_is_not_queued(stub_sink, monkeypatch, capsys):  # noqa: F811
+    """A key the writer does not know fails identically on replay; a queue that can never drain is
+    the loss with extra steps. Only the seal - a refusal reopening cures - is queued."""
+    assert sink.ensure("07") is True
+    monkeypatch.setenv("DOUBLE_REFUSE", "add")
+    assert sink.add("07", "gate_calls", id="g1") is False
+    assert sink.queued("07") == []
+    assert "QUEUED" not in capsys.readouterr().err
+
+
+def test_the_spool_is_per_phase(stub_sink, monkeypatch):  # noqa: F811
+    _, store, _ = stub_sink
+    assert sink.ensure("07") is True and sink.ensure("08") is True
+    _close(store, "07")
+    monkeypatch.setenv("DOUBLE_SEAL", "1")
+    assert sink.add("07", "gate_calls", id="g1") is False
+    assert (
+        sink.add("08", "gate_calls", id="h1") is True
+    )  # phase 08 is open and unaffected
+    assert [e["phase"] for e in sink.queued()] == ["07"]
+
+
+def test_the_operator_command_lists_and_drains(stub_sink, monkeypatch, capsys):  # noqa: F811
+    import json
+
+    import pipeline_metrics as metrics
+
+    _, store, _ = stub_sink
+    assert sink.ensure("07") is True
+    _close(store, "07")
+    monkeypatch.setenv("DOUBLE_SEAL", "1")
+    assert sink.add("07", "gate_calls", id="g1") is False
+
+    assert metrics.main(["spool"]) == 0
+    assert "id=g1" in capsys.readouterr().err
+    assert (
+        metrics.main(["spool", "--drain"]) == 1
+    )  # still sealed: still refused, and the exit says so
+    assert sink.run("set", "07", "--reopen", "closed:=null")[0] == 0
+    assert metrics.main(["spool", "--drain"]) == 0
+    assert [
+        e["id"] for e in json.loads((store / "phase-07.json").read_text())["gate_calls"]
+    ] == ["g1"]
+    assert sink.queued() == []
+
+
+def test_the_real_writers_seal_is_the_refusal_this_queues(real_sink):  # noqa: F811
+    """The claim the double cannot make: firstmate's actual seal refusal is recognised as one, and
+    a record reopened with firstmate's own --reopen receives the queued write."""
+    import json
+
+    project, home = real_sink
+    assert sink.ensure("07") is True
+    assert (
+        sink.set_fields(
+            "07", opened="2026-09-06T10:00:00Z", closed="2026-09-06T11:00:00Z"
+        )
+        is True
+    )
+    row = dict(
+        id="s1-a1-spec-gate",
+        stage="spec-gate",
+        spec="1.1",
+        attempt=1,
+        model="m/x",
+        model_family="f",
+        latency_ms=1200,
+        verdict="GO",
+        failure_cause=None,
+        note="n",
+    )
+    assert sink.add("07", "gate_calls", **row) is False
+    assert len(sink.queued("07")) == 1
+    assert sink.show("07")["gate_calls"] == []
+
+    assert sink.run("set", "07", "--reopen", "closed:=null")[0] == 0
+    assert sink.drain("07") == (1, 0)
+    assert [e["id"] for e in sink.show("07")["gate_calls"]] == ["s1-a1-spec-gate"]
+    del json
