@@ -897,6 +897,26 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
   that finding. `amendments.py due` is untouched by a deferral: an amendment is a change already
   made, and a deferral is a change deliberately not made. A phase with a prose-only *Done when*
   cannot defer, and nothing else about how it closes changes (§ applicability).
+- **A condition no gate can evaluate is DECLARED, and a passing verdict repeats it** (issue #116).
+  `faithful-rep` phase 3's deciding condition is what a person SEES - the captain can watch
+  `handstand_hold` hold, no pike, no tumble, no feet on the mat - and nothing rendered during
+  verification: 162 tests, 23 recorded runs, `verdict: pass`. The verdict was honest about its tests
+  and silent about its blind spot, so `pass` read as though the criterion had been checked, and two
+  visual defects shipped through that silence, both found by a person looking at phase close. So
+  every row of the table carries a third column, `verification`, from a **closed** vocabulary of two
+  - `gate-verifiable` or `human-observed` - and a value it does not know is named rather than
+  guessed at, because guessing either way either hides a criterion nobody checks or invents a
+  disclosure nobody wrote. Each `human-observed` condition is then carried **verbatim** in the
+  verdict's `unverified_by_gate` (an extension made at the schema, `skills/verifier-triage`) with
+  `verified_by_this_verdict: false`, and named on the contract card, which is where the next phase
+  reads it. `scripts/verifier_precheck.py` - the mechanical check that already decides verdicts -
+  refuses a row that declares neither and a `pass` that omits one, on the applicability boundary: a
+  plan this change does not write is counted and named, never blocked, and a prose-only *Done when*
+  stays exactly as #115 left it. **What it does not decide, said rather than implied**: a row
+  declared `gate-verifiable` is taken at its word, so a wrong declaration is invisible here; what is
+  closed is the row that declares nothing. The second half of the issue - a checkpoint frame plus a
+  perceptual assertion, so a rendered condition could stop being `human-observed` at all - is a
+  separate decision the issue itself defers.
 - Ids are **scoped by the card that declared them**, so `OBS-1` on two cards is two items and the ids
   already in use keep working. Which card is in force is `spec_gate_context.prior_phase`'s decision,
   imported rather than re-derived: this ledger and the spec gate's CONTEXT block must not disagree

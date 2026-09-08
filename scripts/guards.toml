@@ -1612,6 +1612,36 @@ replace = '''
         return Decision(
             BLOCKS,'''
 
+# --- a criterion no gate can evaluate is declared, and a pass says so (issue #116) ----------------
+
+[[guard]]
+id = "done-when.human-observed-is-declared"
+implements = "scripts/done_when.py"
+defect = "faithful-rep phase 3's deciding Done when condition is what the captain SEES, and nothing rendered during verification: 162 tests, 23 recorded runs, `verdict: pass`. Nothing on the row said a gate could not evaluate it, so the pass read as though the criterion had been checked and two visual defects shipped through that silence."
+tests = ["tests/test_visual_criterion_disclosure.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = """
+    for condition in declared:
+        if condition.verification in VERIFICATION:
+            continue"""
+replace = """
+    for condition in declared:
+        if True:
+            continue"""
+
+[[guard]]
+id = "done-when.pass-carries-what-it-did-not-check"
+implements = "scripts/done_when.py"
+defect = "The declaration alone is a promise: `pass` is read on the verdict and on the contract card, not on plan.md. A verdict that declares a human-observed condition and then says nothing about it is the same silent pass one document over."
+tests = ["tests/test_visual_criterion_disclosure.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = """
+    owed = {c.id: c.outcome for c in human_observed(phase_dir)}"""
+replace = """
+    owed = {}"""
+
 [[guard]]
 id = "done-when.prose-only-cannot-defer"
 implements = "scripts/done_when.py"

@@ -500,10 +500,15 @@ def test_an_undecidable_breaker_check_is_not_reported_as_a_breaker_that_never_ra
     """
     write_spec(project, criticality="critical")
     attempts(project, [(1, 0, "pass")])
+    # Guarded on `__main__` because the real script's exit comes from its CLI, never from being
+    # imported: `doc_read_path` reads this module's READERS, so a stub that detonated at import
+    # time would fail whichever check imported it rather than the branch under test.
     (project / "scripts" / "breaker_gate.py").write_text(
         "import sys\n"
-        "print('[breaker_gate] the check could not be decided: boom', file=sys.stderr)\n"
-        "raise SystemExit(2)\n"
+        "READERS = []\n"
+        "if __name__ == '__main__':\n"
+        "    print('[breaker_gate] the check could not be decided: boom', file=sys.stderr)\n"
+        "    raise SystemExit(2)\n"
     )
 
     result = run_hook(project)

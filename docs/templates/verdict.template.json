@@ -17,6 +17,14 @@
     "reading reported complete and missed two instances; a probe that drove one axis of two scoped a",
     "fix round that closed half a defect. scripts/verifier_precheck.py refuses a finding without it.",
     "",
+    "`unverified_by_gate` is the fourth extension, at the schema (issue #116): every `human-observed`",
+    "condition of the phase's Done when, carried verbatim from plan.md's table, each stating that",
+    "THIS verdict did not verify it. faithful-rep phase 3 passed on 162 tests and 23 recorded runs",
+    "with nothing rendered, over a Done when that is what the captain SEES; the pass was honest",
+    "about its tests and silent about its blind spot, and two visual defects shipped through that",
+    "silence. scripts/verifier_precheck.py refuses a `pass` that omits one, and the same list goes",
+    "on the contract card. A gate-verifiable condition belongs to the ordinary verdict and never here.",
+    "",
     "A finding's `status` has a fourth value, `deferred`, with `deferred_to` naming the owning phase",
     "(issue #115). It resolves the finding ONLY when the phase's carried.json records a deferral",
     "naming it - `scripts/carried_items.py defer`, gated on the phase's structured Done when and",
@@ -71,6 +79,13 @@
       "waiver_reason": null,
       "waived_by": null,
       "waived_at": null
+    }
+  ],
+  "unverified_by_gate": [
+    {
+      "id": "DW-<n>",
+      "outcome": "<the plan's Done when row, verbatim - a paraphrase is where a limitation softens>",
+      "verified_by_this_verdict": false
     }
   ],
   "mutation": {

@@ -62,11 +62,14 @@ limits = [
 ]
 
 [guard."done_when.py"]
-proves = "that a finding against a requirement tagged with one of this phase's Done when conditions is refused deferral, and that a Done when with no table, an uncarried condition or a tag naming no condition decides nothing rather than clearing."
+proves = "that a finding against a requirement tagged with one of this phase's Done when conditions is refused deferral, that a Done when with no table, an uncarried condition or a tag naming no condition decides nothing rather than clearing, and that every condition declares whether a gate can evaluate it, with each `human-observed` one carried verbatim by a passing verdict and named on the card."
 limits = [
   "that the requirements TAGGED are the right ones - the tagging is the spec writer's claim, gated with the spec, never derived from the prose",
   "anything about a finding with no requirement id - the id is the only mechanical link to a condition, and `--no-requirement` is the caller's explicit statement, not a check",
   "whether the prose Done when and the table agree - both are authored, and nothing reads the prose",
+  "that a `gate-verifiable` declaration is TRUE - the row is taken at its word, so a visual condition declared gate-verifiable discloses nothing and this notices nothing; what is closed is the row that declares neither",
+  "that any gate actually evaluates a `gate-verifiable` condition - the declaration says a gate CAN, never that one did",
+  "anything about a Done when that is prose only, which stays UNDECIDABLE exactly as issue #115 left it, and anything about a plan this change does not write, which is counted and named",
 ]
 
 [guard."verdict_currency.py"]
@@ -95,13 +98,14 @@ limits = [
 ]
 
 [guard."verifier_precheck.py"]
-proves = "that every requirement id owed a trace has a row, that each row names a test which exists, is not skipped and (where the test lists any id) lists the row's id, that every spec's gate stamp is fresh, and that every bound `done` stamp still names the mapping and tests here now."
+proves = "that every requirement id owed a trace has a row, that each row names a test which exists, is not skipped and (where the test lists any id) lists the row's id, that every spec's gate stamp is fresh, that every bound `done` stamp still names the mapping and tests here now, and that every Done when condition in scope declares whether a gate can evaluate it, with a passing verdict carrying the ones no gate can."
 limits = [
   "that a row's PROSE matches the test it names - a row asserting the opposite of its own running test passes",
   "a row whose test lists NO requirement id, which can corroborate nothing and is counted rather than held",
   "a `done` stamp carrying no digest - stamped before the rule, or through a write no hook sees - which is counted rather than held",
   "anything about a test tree it cannot read: definition and skip detection are Python-specific, and an unreadable tree is not held at all",
   "anything about coverage or correctness, which it deliberately never judges",
+  "whether a Done when condition declared `gate-verifiable` really is one - it refuses the row that declares neither, never a wrong declaration",
 ]
 
 [guard."pipeline_metrics.py"]

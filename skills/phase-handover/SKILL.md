@@ -94,6 +94,11 @@ Mirror the gate record out of `verdict.json`, `amendments.json` and `exceptions.
   exception says a rule the pipeline would otherwise owe is not owed for this phase, and **recording
   one is manual**: nothing creates the entry, so a forgotten one stays invisible until a later phase
   wedges on it. Carrying them forward is what puts that in front of the next phase instead.
+- **What this verdict did not verify** — the phase's `human-observed` *Done when* conditions, ids
+  and one line each, copied from the verdict's `unverified_by_gate` (`python3 scripts/done_when.py
+  show <phase-dir>`). `scripts/verifier_precheck.py` refuses a card that omits one: a `pass` over a
+  criterion only a person can judge reads as a criterion that was checked, and the card is where the
+  next phase reads it.
 - **Findings carried as known-open at the verification attempt cap** — one line each, with the
   finding id. The cap (3 attempts, `scripts/verifier_attempts.py`) means some findings are carried
   rather than fixed, and this card is the only place that stays visible. A carried finding recorded

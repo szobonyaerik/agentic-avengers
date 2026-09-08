@@ -818,6 +818,36 @@ clear: no table (prose only), a declared condition no requirement carries, a tag
 - each names its remedy, and a phase in that state simply cannot defer, which changes nothing else
 about how it closes (§3a).
 
+**A condition no gate can evaluate is DECLARED, and a passing verdict repeats it** (issue #116).
+Phase 3's deciding condition is what a person SEES - the captain can watch `handstand_hold` hold, no
+pike, no tumble, no feet on the mat - and **nothing rendered during verification**: 162 tests, 23
+recorded runs, `verdict: pass`. The verdict was honest about its tests and silent about its blind
+spot, so `pass` read as though the criterion had been checked; two visual defects shipped through
+that silence (`dips` renders one bar through the athlete's torso, `australian_pullups` renders its
+bar end-on at 7.7 degrees), both found by a person looking at phase close, not by a gate. The worker
+volunteered the limitation on its card - **a worker that did not would produce an identical-looking
+verdict**. So the row that DEFINES a condition carries a third column, `verification`, from a
+**closed** vocabulary of two: `gate-verifiable` or `human-observed`. A value the table does not know
+is a finding naming what was invented, because guessing `gate-verifiable` hides a criterion nobody
+checks and guessing `human-observed` invents a disclosure nobody wrote. Each `human-observed`
+condition is carried **verbatim** in the verdict's `unverified_by_gate` - an extension made at the
+schema (`skills/verifier-triage`), holding the outcome plus `verified_by_this_verdict: false` - and
+named on the contract card, so `pass` reads as *"pass on everything I can check, and here is what I
+cannot"*. `scripts/verifier_precheck.py`, the mechanical check that already decides verdicts,
+refuses a row that declares neither and a `pass` that omits one; nothing new runs, and no model
+decides any of it. **Diff-scoped on the declaration** (§3a): the obligation lives on `plan.md`'s
+row, so a plan this change does not write is counted and named rather than blocked, which is what
+lets a repository full of pre-rule plans adopt it, while a phase named outright - the handover hook,
+the one moment the phase is closing - is held whole. A **prose-only** *Done when* is UNDECIDABLE as
+#115 defined it and is left exactly there: the remedy for it is the table, which is #115's finding
+to make, and a second, weaker copy of that rule is the drift defect. **What this does NOT decide,
+said rather than implied** (§11): a row declared `gate-verifiable` is taken at its word, so a visual
+condition mis-declared as one discloses nothing and nothing here notices - what is closed is the row
+that declares nothing at all - and the declaration says a gate CAN evaluate the condition, never
+that one did. Closing the gap itself for rendered output - a checkpoint frame plus a cheap
+perceptual assertion, which would make such a condition `gate-verifiable` in fact - is the second
+half of the issue and a separate decision the issue itself defers.
+
 **The fourth disposition is `deferred`, and it is the same slot again**, not a parallel ledger:
 `scripts/carried_items.py defer` records a `deferred-finding` row on the card backed by a record in
 `carried.json`'s `deferrals` list carrying the owning phase and the finding's **measurement
