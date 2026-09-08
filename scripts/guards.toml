@@ -268,7 +268,7 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
-    read = read_record(phase)
+    read = open_record(phase)
     if not read.usable:
         if read.state == RECORD_UNREADABLE:'''
 replace = '''
@@ -284,7 +284,7 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
-        read = read_record(phase)
+        read = open_record(phase)
         if not read.usable:
             if read.state == RECORD_UNREADABLE:
                 sink.note(
@@ -298,11 +298,25 @@ replace = '''
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
-        after = read_record(phase)
+        after = open_record(phase)
         if after.usable:
             _stamp(phase, spec_rounds=_spec_rounds(after.record))'''
 replace = '''
         _stamp(phase, spec_rounds=_spec_rounds(sink.show(phase)))'''
+
+[[guard]]
+id = "metrics-emission.a-report-creates-no-record"
+implements = "scripts/pipeline_metrics.py"
+defect = "The `provenance` report resolved an absent record by OPENING it: `metrics_sink.ensure` runs `init <phase> --project <name> --from <previous>`, so reporting on a phase that never ran created a record for it, seeded from another phase's open findings and pending hypotheses, with a null `elapsed_minutes` - the exact population issue #120 counts, manufactured by the instrument built to detect it, while the command printed that there was no record."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        read = read_record(phase)
+        if read.state == RECORD_NOT_CONFIGURED:'''
+replace = '''
+        read = open_record(phase)
+        if read.state == RECORD_NOT_CONFIGURED:'''
 
 [[guard]]
 id = "metrics-emission.off-is-not-an-unreadable-record"
@@ -385,7 +399,7 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
-        read = read_record(phase)
+        read = open_record(phase)
         if not read.usable:
             if read.state == RECORD_UNREADABLE:
                 sink.note(

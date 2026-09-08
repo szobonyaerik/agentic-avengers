@@ -256,12 +256,16 @@ def test_emission_switched_off_is_not_reported_as_an_unreadable_record(
 
 
 def test_the_four_record_states_are_told_apart_at_one_place(stub_sink, monkeypatch):
-    """Every state named once, by the accessor every caller in the module reads through.
+    """Every state named once, by the two accessors every caller in the module reads through.
 
     `sink.show` answers a bare `None` to all four, and each was patched into a caller's own `None`
-    check one review round at a time. This drives the four against a real writer: present, absent
-    (resolved by opening it, which is the write the caller was making anyway), unreadable, and not
-    configured.
+    check one review round at a time. This drives the four against a real writer: present, absent,
+    unreadable, and not configured.
+
+    Absence and unreadability are the pair a READ cannot separate - only opening the record can,
+    and that is a write - so `read_record` reports what it found and `open_record`, which every
+    writer uses, resolves it. Both are driven here, because the split is what keeps a reporter from
+    creating a record and a writer from reading a refusal as an empty one.
 
     Red when a state stops being distinguished: two of the four collapse onto one answer and the
     callers below go back to guessing which.
@@ -272,7 +276,13 @@ def test_the_four_record_states_are_told_apart_at_one_place(stub_sink, monkeypat
 
     absent = metrics.read_record("05")
     assert absent.state == metrics.RECORD_ABSENT
-    assert absent.usable and absent.record.get("phase") == "05"
+    assert absent.record == {}, (
+        "a pure read reports absence and creates nothing to report"
+    )
+
+    opened = metrics.open_record("05")
+    assert opened.state == metrics.RECORD_ABSENT
+    assert opened.usable and opened.record.get("phase") == "05"
 
     metrics.record_phase_open(str(phase_dir))
     present = metrics.read_record("05")
@@ -280,7 +290,7 @@ def test_the_four_record_states_are_told_apart_at_one_place(stub_sink, monkeypat
     assert present.usable and present.record.get("opened") is not None
 
     monkeypatch.setenv("DOUBLE_REFUSE", "show")
-    unreadable = metrics.read_record("05")
+    unreadable = metrics.open_record("05")
     assert unreadable.state == metrics.RECORD_UNREADABLE
     assert not unreadable.usable and unreadable.record == {}
 
@@ -1372,6 +1382,123 @@ def test_the_provenance_report_does_not_call_metrics_off_an_unreadable_record(
     assert captured.out == ""
     assert "no record readable" not in captured.err
     assert "no metrics writer is configured" in captured.err
+
+
+def test_the_provenance_report_creates_no_record_for_a_phase_that_has_none(
+    stub_sink, capsys
+):
+    """A report READS. Resolving absence by opening the record made it a writer.
+
+    `sink.ensure` runs `init <phase> --project <name> --from <previous>`, so asking what the
+    pipeline stamped for a phase that never ran created a record for it - seeded from an earlier
+    phase's ledger, with a null `elapsed_minutes`. That is the exact population issue #120 counts,
+    manufactured by the instrument built to detect it, and the message the command printed was
+    false as of the moment it printed it.
+
+    Red when a reader picks the opening accessor back up: `phase-09.json` exists after a command
+    that only asked a question.
+    """
+    project, store, log = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    capsys.readouterr()
+
+    assert metrics.main(["provenance", "09"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no record for '09' yet" in captured.err
+    assert not (store / "phase-09.json").exists(), (
+        "a report must not create the record it reports on"
+    )
+    assert [call for call in read_calls(log) if call[:1] == ["init"]] == [
+        ["init", "05", "--project", "unit-test"]
+    ], "the only record opened is the one phase-open opened"
+
+
+def test_the_provenance_report_still_reads_a_record_that_exists(stub_sink, capsys):
+    """The green case the split must not cost: a phase with a record still reports on it."""
+    project, _, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    capsys.readouterr()
+
+    assert metrics.main(["provenance", "05"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert "opened" in report["scalars_by_pipeline"]
+
+
+def test_a_ref_that_names_no_phase_is_a_usage_error_not_a_record_state(
+    stub_sink, capsys
+):
+    """An unresolvable ref never reached the record, so it is not one of the four read states.
+
+    Reported as an unreadable record it sends its reader to repair a writer that is working
+    perfectly, when the remedy is the argument - the same mis-diagnosis the states were named to
+    remove, one layer further out.
+
+    Red when the ref borrows a record state again: the exit code says success and the message
+    blames the writer.
+    """
+    stub_sink
+    assert metrics.main(["provenance", "docs/features/demo"]) == metrics.USAGE_ERROR
+
+    err = capsys.readouterr().err
+    assert "does not resolve to a phase" in err
+    assert "remedy is the ARGUMENT" in err
+    assert "no record readable" not in err
+    assert metrics.DEFECT_BAD_PHASE_REF not in err, (
+        "a report is not a lost defect, and the defect markers are read by stages"
+    )
+
+
+def test_a_dropped_gate_call_says_so_rather_than_reading_as_a_run_that_made_none(
+    stub_sink, monkeypatch, capsys
+):
+    """`gate_calls[]` is where a call that reached no verdict belongs, so losing one must be said.
+
+    A writer emitting one stray line on stdout answers None to every read while `add` keeps
+    working, and reads fail exactly while the writer misbehaves - which is when those failure
+    causes matter most. Dropping the row is right, because filing it under a record that says
+    nothing puts it at attempt 1, where `sink.add` converges by id and it REPLACES the first
+    attempt's row. Silence is what is not.
+
+    Red when the drop goes quiet: a run that lost every gate call reads like one that made none.
+    """
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    verdict(phase_dir, 1)
+    metrics.record_phase_open(str(phase_dir))
+    monkeypatch.setenv("AVENGER_METRICS_PHASE", "05")
+    monkeypatch.setenv("AVENGER_METRICS_STAGE", "verifier")
+    before = stored(store, "05")["gate_calls"]
+    capsys.readouterr()
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    assert metrics.record_gate_call(model="m", latency_ms=10, verdict="pass") is False
+
+    err = capsys.readouterr().err
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    assert "gate call not recorded" in err
+    assert stored(store, "05")["gate_calls"] == before
+
+
+def test_a_gate_call_stays_silent_when_emission_is_deliberately_off(
+    stub_sink, monkeypatch, capsys
+):
+    """The other half of the same rule: a configured choice is not a failure and must not speak."""
+    project, _, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    monkeypatch.setenv("AVENGER_METRICS_PHASE", "05")
+    capsys.readouterr()
+
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+    assert metrics.record_gate_call(model="m", latency_ms=10, verdict="pass") is False
+
+    assert "gate call not recorded" not in capsys.readouterr().err
 
 
 # ── 8. one landing rule, and one argument per declared root ────────────────────────────────────────

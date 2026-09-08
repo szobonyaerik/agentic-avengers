@@ -342,8 +342,16 @@ def record_gate_call(
             or stage_from_rubric(rubric)
         )
         spec = resolve_spec(spec_path, target)
-        read = read_record(phase)
+        read = open_record(phase)
         if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"gate call not recorded for phase {phase}: the record could not be READ, and "
+                    f"a call is filed under the attempt the record says is in flight - taken for a "
+                    f"record holding nothing it would be filed under attempt 1, where `sink.add` "
+                    f"converges by id and a later call REPLACES the first attempt's row. Nothing "
+                    f"is written; this call is lost rather than another one overwritten."
+                )
             return False
         attempt = _attempt(read.record, stage, spec, spec_path)
         token, failure_cause = _outcome(verdict, cause)
@@ -500,7 +508,7 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
         except (OSError, ValueError):
             return None
 
-        read = read_record(phase)
+        read = open_record(phase)
         if not read.usable:
             if read.state == RECORD_UNREADABLE:
                 sink.note(
@@ -526,7 +534,7 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
             bytes_by_round=rounds,
         ):
             return None
-        after = read_record(phase)
+        after = open_record(phase)
         if after.usable:
             _stamp(phase, spec_rounds=_spec_rounds(after.record))
         keep(path, "metrics", body)
@@ -762,24 +770,44 @@ class RecordRead(NamedTuple):
 
 
 def read_record(phase: str) -> RecordRead:
-    """The phase's record, with the state of the read NAMED rather than inferred from a `None`.
+    """The phase's record, READ. This creates nothing, and no caller of it may.
 
     Not configured is asked FIRST and is never a failure: emission off, no writer resolvable, or a
     writer this process already abandoned all answer `None` to every call, and nothing was read
     because nothing was asked. A read-failure diagnostic there sends its reader to repair a writer
     they deliberately do not have.
 
-    Absence is RESOLVED rather than guessed at, because `sink.show` cannot tell "no record yet" from
-    "the writer refused": opening it answers the question, and it is the write every caller here was
-    about to make anyway - `sink.add` and `sink.set_fields` both `ensure` first, so nothing is
-    created that the caller was not already creating. A record still unreadable after that is the
-    genuine failure, and `usable` is false for it: its contents are unknown, never empty.
+    A read alone cannot tell "no record yet" from "the writer refused" - `sink.show` answers `None`
+    to both - and the only thing that could tell them apart is OPENING the record, which is a write.
+    So a pure read reports what it can honestly claim, that it found no record, and `open_record` is
+    where a caller that is about to write asks the question a write may ask.
     """
     if not sink.enabled():
         return RecordRead(RECORD_NOT_CONFIGURED, {})
     record = sink.show(phase)
-    if record is not None:
-        return RecordRead(RECORD_PRESENT, record)
+    if record is None:
+        return RecordRead(RECORD_ABSENT, {})
+    return RecordRead(RECORD_PRESENT, record)
+
+
+def open_record(phase: str) -> RecordRead:
+    """The record a WRITER is about to write to, opened when it does not exist yet.
+
+    Every caller here goes on to write, and `sink.add`/`sink.set_fields` both `ensure` first, so
+    this opens nothing they were not already opening. It is a separate function from `read_record`
+    rather than a flag on it because the difference is whether the caller may CREATE a record: a
+    reporter that picked up the wrong default would fabricate the very population issue #120
+    counts - a phase record with a null `elapsed_minutes`, for a phase that never ran, seeded from
+    another phase's ledger by `init --from`.
+
+    Opening is also what tells the two states apart. An absent record is opened and returned with
+    its contents; one that is STILL not readable after a successful open is the genuine failure, and
+    `usable` is false for it - its contents are unknown, never empty, which is what stops a refused
+    read re-stamping a sealed close or narrowing a series the record already holds.
+    """
+    read = read_record(phase)
+    if read.state != RECORD_ABSENT:
+        return read
     if sink.ensure(phase):
         opened = sink.show(phase)
         if opened is not None:
@@ -792,7 +820,7 @@ def record_phase_open(phase_dir: str) -> bool:
     phase = resolve_phase(phase_dir)
     if phase is None:
         return False
-    read = read_record(phase)
+    read = open_record(phase)
     if not read.usable:
         return False
     record_plugin_version(phase)
@@ -990,7 +1018,7 @@ def record_phase_close(phase_dir: str) -> bool:
     if why is not None:
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
-    read = read_record(phase)
+    read = open_record(phase)
     if not read.usable:
         if read.state == RECORD_UNREADABLE:
             sink.note(
@@ -1111,7 +1139,7 @@ def _record_provenance(phase: str, names: set[str]) -> bool:
     switched off writes nothing and says nothing, since there is no row anywhere to narrow.
     """
     try:
-        read = read_record(phase)
+        read = open_record(phase)
         if not read.usable:
             if read.state == RECORD_UNREADABLE:
                 sink.note(
@@ -1589,7 +1617,7 @@ def record_skill_load(
     stage = observing_stage(stage)
     identity = f"{stage}:{skill}"
     if not loaded:
-        read = read_record(phase)
+        read = open_record(phase)
         if not read.usable:
             return False
         for entry in read.record.get("skill_loads") or []:
@@ -1798,16 +1826,16 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_phase_close(args.phase_dir)
     elif args.command == "provenance":
         phase = _phase_of_ref(args.phase_ref)
-        read = read_record(phase) if phase else RecordRead(RECORD_UNREADABLE, {})
+        if phase is None:
+            raise UnresolvablePhaseRef(args.phase_ref)
+        read = read_record(phase)
         if read.state == RECORD_NOT_CONFIGURED:
             sink.note(
                 f"provenance: nothing to report for {args.phase_ref!r} - no metrics writer is "
                 f"configured, so this project keeps no phase record for anyone to have written."
             )
-        elif read.state == RECORD_ABSENT:
+        elif read.state != RECORD_PRESENT:
             sink.note(f"provenance: no record for {args.phase_ref!r} yet")
-        elif read.state == RECORD_UNREADABLE:
-            sink.note(f"provenance: no record readable for {args.phase_ref!r}")
         else:
             print(json.dumps(provenance_report(read.record), indent=2, sort_keys=True))
     return None
@@ -1849,7 +1877,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ok = _dispatch(args)
     except UnresolvablePhaseRef:
-        print(_defect_phase_ref_message(args), file=sys.stderr)
+        print(
+            _defect_phase_ref_message(args)
+            if args.command == "defect"
+            else _phase_ref_message(args),
+            file=sys.stderr,
+        )
         return USAGE_ERROR
     except Exception as exc:  # noqa: BLE001 — measurement never fails the thing it measures
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
@@ -1883,6 +1916,22 @@ def _defect_lost(args: argparse.Namespace) -> str:
         f"{args.identifier} (found_by={args.found_by}) was NOT written to the metrics record. This "
         "is the single field the record exists for and it cannot be reconstructed once the run is "
         "over."
+    )
+
+
+def _phase_ref_message(args: argparse.Namespace) -> str:
+    """What any non-`defect` command whose ref names no phase says: the ARGUMENT is the cause.
+
+    A ref that resolves to nothing never reached the record, so it is not one of the four states a
+    read can be in and must not borrow one: reported as an unreadable record it sends its reader to
+    repair a writer that is working perfectly, which is the same mis-diagnosis those states were
+    named to remove, one layer further out.
+    """
+    return (
+        f"{sink.PREFIX} {args.command}: {args.phase_ref!r} does not resolve to a phase, so there "
+        "was no record to read. The metrics writer was never reached and nothing about it is known "
+        "to be wrong - the remedy is the ARGUMENT: name an existing phase directory (or a path "
+        "inside one), such as docs/features/<feature>/phases/<n>-<slug>, or the phase number."
     )
 
 
