@@ -32,6 +32,7 @@ from metrics_support import (  # noqa: F401
     real_sink,
     stored,
     stub_sink,
+    write_spec,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1225,6 +1226,152 @@ def test_a_verifier_gate_call_is_filed_under_the_attempt_in_flight(
         c for c in stored(store, "05")["gate_calls"] if c.get("stage") == "verifier"
     )
     assert call["attempt"] == 3
+
+
+def test_a_failed_read_never_narrows_a_specs_round_history(stub_sink, monkeypatch):
+    """`bytes_by_round` is rewritten from what it already holds, so a failed read must not write.
+
+    `sink.show` answers None on a non-zero exit AND on output that is not JSON, not only when the
+    writer is dead - a writer emitting one stray line on stdout answers None to every read while
+    every WRITE still lands, which is the state driven here. Read as `{}`, the series starts empty,
+    the cache short-circuit is skipped because it is falsy, and the upsert replaces every earlier
+    round of that spec with this one - the growth series this exists to expose, deleted by the
+    emitter that measures it.
+
+    Red when the read goes back to a bare `None`: five rounds become one and the call reports
+    success.
+    """
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    metrics.record_spec_round(str(spec), verdict="approved")
+    spec.write_text(
+        "---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8"
+    )
+    assert metrics.record_spec_round(str(spec), verdict="approved") == 2
+    before = stored(store, "08")["specs"][0]["bytes_by_round"]
+
+    spec.write_text(
+        "---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 80, encoding="utf-8"
+    )
+    real_show, real_ensure = metrics.sink.show, metrics.sink.ensure
+    monkeypatch.setattr(metrics.sink, "show", lambda phase_: None)
+    monkeypatch.setattr(metrics.sink, "ensure", lambda phase_: True)
+    assert metrics.record_spec_round(str(spec), verdict="approved") is None
+
+    monkeypatch.setattr(metrics.sink, "show", real_show)
+    monkeypatch.setattr(metrics.sink, "ensure", real_ensure)
+    assert stored(store, "08")["specs"][0]["bytes_by_round"] == before
+    assert metrics.record_spec_round(str(spec), verdict="approved") == 3, (
+        "the body was not cached, so the next verdict still records the round"
+    )
+
+
+def test_a_failed_read_after_the_write_does_not_stamp_spec_rounds_at_one(
+    stub_sink, monkeypatch
+):
+    """The round lands; the count taken afterwards must not be invented from a failed read.
+
+    `_spec_rounds` answers its `default=1` for a record it was handed nothing for, and `_stamp`
+    then names `spec_rounds` on the provenance row as pipeline-written. A spec on its third round
+    is recorded as having taken one, with no error anywhere, on the field the ratchet hypothesis is
+    judged by.
+
+    Red when the read goes back to a bare `None`: `spec_rounds` is stamped 1 against a
+    `bytes_by_round` of three.
+    """
+    project, store, _ = stub_sink
+    spec = write_spec(project, 8, "8.1", "- R8.1.1 one\n")
+    metrics.record_spec_round(str(spec), verdict="approved")
+    spec.write_text(
+        "---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 40, encoding="utf-8"
+    )
+    metrics.record_spec_round(str(spec), verdict="approved")
+
+    written = {"specs": False}
+    real_add, real_show = metrics.sink.add, metrics.sink.show
+
+    def add(phase_, collection, *args, **kwargs):
+        landed = real_add(phase_, collection, *args, **kwargs)
+        written["specs"] = written["specs"] or collection == "specs"
+        return landed
+
+    monkeypatch.setattr(metrics.sink, "add", add)
+    monkeypatch.setattr(
+        metrics.sink, "show", lambda p: None if written["specs"] else real_show(p)
+    )
+
+    spec.write_text(
+        "---\nfeature: demo\n---\n" + "- R8.1.1 one\n" * 80, encoding="utf-8"
+    )
+    assert metrics.record_spec_round(str(spec), verdict="approved") == 3
+
+    record = stored(store, "08")
+    assert len(record["specs"][0]["bytes_by_round"]) == 3
+    assert record["spec_rounds"] != 1, (
+        "a count the read could not answer is left alone, never stamped at the default"
+    )
+
+
+def test_a_failed_read_does_not_file_a_gate_call_over_an_earlier_one(
+    stub_sink, monkeypatch
+):
+    """A gate call's id carries its attempt, and `sink.add` converges by id.
+
+    Read as `{}`, `_attempt` finds no concluded attempt and files the call under 1 - so a call from
+    a later attempt upserts ONTO the first attempt's entry. One gate call overwritten rather than
+    added, in the collection every failure cause is read out of.
+
+    Red when the read goes back to a bare `None`: the round-1 entry is replaced.
+    """
+    project, store, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    verdict(phase_dir, 1)
+    metrics.record_phase_open(str(phase_dir))
+    assert metrics.record_verification_attempts(str(phase_dir)) == 1
+
+    monkeypatch.setenv("AVENGER_METRICS_PHASE", "05")
+    monkeypatch.setenv("AVENGER_METRICS_STAGE", "verifier")
+    assert metrics.record_gate_call(model="first", latency_ms=900, verdict="pass")
+    before = [c for c in stored(store, "05")["gate_calls"] if c["stage"] == "verifier"]
+    assert [c["attempt"] for c in before] == [2]
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    assert (
+        metrics.record_gate_call(model="second", latency_ms=100, verdict="pass")
+        is False
+    )
+
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    after = [c for c in stored(store, "05")["gate_calls"] if c["stage"] == "verifier"]
+    assert after == before, (
+        "an unreadable record must not overwrite a recorded gate call"
+    )
+
+
+def test_the_provenance_report_does_not_call_metrics_off_an_unreadable_record(
+    stub_sink, monkeypatch, capsys
+):
+    """The last command still deciding what a bare `None` meant, one over from the close stamp.
+
+    With no writer configured nothing was read because nothing was asked, so "no record readable"
+    names a cause that does not apply and prescribes a retry that answers identically forever.
+
+    Red when the state collapses: `provenance` reports an unreadable record on a machine that is
+    recording nothing on purpose.
+    """
+    project, _, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    capsys.readouterr()
+
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+    assert metrics.main(["provenance", "05"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no record readable" not in captured.err
+    assert "no metrics writer is configured" in captured.err
 
 
 # ── 8. one landing rule, and one argument per declared root ────────────────────────────────────────

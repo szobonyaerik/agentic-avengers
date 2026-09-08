@@ -113,10 +113,12 @@ FEATURE="$(derive_feature "$FILE" || true)"
 # the phase landing — this hook still has to check the suite, the verdict, amendments and carried
 # items below, any of which can still route the phase back. Stamping here recorded `closed` and
 # `elapsed_minutes` for phases that were not, in fact, done: an open amendment, a further Verifier
-# finding, a blocked handover, nothing pushed. `commands/avenger-run.md` §5 stamps the close itself,
-# directly, right after the per-phase commit actually lands — the one moment this hook cannot see.
-# `record_phase_close` also refuses the write itself while the phase directory is still uncommitted,
-# so a caller that got the ordering wrong fails the write rather than recording a false close.
+# finding, a blocked handover, nothing pushed. `hook_phase_close.sh` stamps it instead, on the commit
+# that lands the phase - a `PostToolUse` hook on `Bash` runs after the commit, which is the moment
+# this hook cannot see - with `commands/avenger-run.md` §5 the other emitter and the only one on
+# opencode. `record_phase_close` also refuses the write itself until the contract card is COMMITTED
+# and nothing under the phase directory is uncommitted, so a caller that got the ordering wrong
+# fails the write rather than recording a false close.
 
 # Layout: tests/<feature>/<n>-<slug>/... ; fall back to tests/<slug> for repos on the older layout.
 TESTPATH=""

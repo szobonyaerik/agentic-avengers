@@ -342,8 +342,10 @@ def record_gate_call(
             or stage_from_rubric(rubric)
         )
         spec = resolve_spec(spec_path, target)
-        record = sink.show(phase)
-        attempt = _attempt(record, stage, spec, spec_path)
+        read = read_record(phase)
+        if not read.usable:
+            return False
+        attempt = _attempt(read.record, stage, spec, spec_path)
         token, failure_cause = _outcome(verdict, cause)
         return sink.add(
             phase,
@@ -498,8 +500,19 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
         except (OSError, ValueError):
             return None
 
-        record = sink.show(phase)
-        rounds = list(_spec_entry(record, spec).get("bytes_by_round") or [])
+        read = read_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"spec round not recorded for {spec}: the record could not be READ, and "
+                    f"`bytes_by_round` is rewritten from what it already holds - taken for an "
+                    f"empty series the upsert would replace every earlier round of this spec with "
+                    f"this one, and the growth this measures is exactly the history it would "
+                    f"delete. Nothing is written and the body is not cached, so the next verdict "
+                    f"records the round."
+                )
+            return None
+        rounds = list(_spec_entry(read.record, spec).get("bytes_by_round") or [])
         counted = previous(path, "metrics")
         if counted is not None and normalized(counted) == normalized(body) and rounds:
             return len(rounds)  # this exact body is already one of the rounds above
@@ -513,7 +526,9 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
             bytes_by_round=rounds,
         ):
             return None
-        _stamp(phase, spec_rounds=_spec_rounds(sink.show(phase)))
+        after = read_record(phase)
+        if after.usable:
+            _stamp(phase, spec_rounds=_spec_rounds(after.record))
         keep(path, "metrics", body)
         return len(rounds)
     except Exception as exc:  # noqa: BLE001
@@ -1783,11 +1798,18 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_phase_close(args.phase_dir)
     elif args.command == "provenance":
         phase = _phase_of_ref(args.phase_ref)
-        record = sink.show(phase) if phase else None
-        if record is None:
+        read = read_record(phase) if phase else RecordRead(RECORD_UNREADABLE, {})
+        if read.state == RECORD_NOT_CONFIGURED:
+            sink.note(
+                f"provenance: nothing to report for {args.phase_ref!r} - no metrics writer is "
+                f"configured, so this project keeps no phase record for anyone to have written."
+            )
+        elif read.state == RECORD_ABSENT:
+            sink.note(f"provenance: no record for {args.phase_ref!r} yet")
+        elif read.state == RECORD_UNREADABLE:
             sink.note(f"provenance: no record readable for {args.phase_ref!r}")
         else:
-            print(json.dumps(provenance_report(record), indent=2, sort_keys=True))
+            print(json.dumps(provenance_report(read.record), indent=2, sort_keys=True))
     return None
 
 

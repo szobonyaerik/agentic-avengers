@@ -277,6 +277,34 @@ replace = '''
         if read.state == RECORD_UNREADABLE:'''
 
 [[guard]]
+id = "metrics-emission.a-failed-read-never-narrows-a-number"
+implements = "scripts/pipeline_metrics.py"
+defect = "`bytes_by_round` is rewritten from what the record already holds, and `sink.show` answers None on a non-zero exit AND on output that is not JSON. Read as an empty series, the upsert replaced every earlier round of a spec with the current one and `spec_rounds` was then stamped at `_spec_rounds`' `default=1` and named on the provenance row as pipeline-written - a spec on its fifth round recorded as having taken one, with no error anywhere, on the field the ratchet hypothesis is judged by (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        read = read_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"spec round not recorded for {spec}: the record could not be READ, and "'''
+replace = '''
+        read = RecordRead(RECORD_PRESENT, sink.show(phase) or {})
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"spec round not recorded for {spec}: the record could not be READ, and "'''
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        after = read_record(phase)
+        if after.usable:
+            _stamp(phase, spec_rounds=_spec_rounds(after.record))'''
+replace = '''
+        _stamp(phase, spec_rounds=_spec_rounds(sink.show(phase)))'''
+
+[[guard]]
 id = "metrics-emission.off-is-not-an-unreadable-record"
 implements = "scripts/pipeline_metrics.py"
 defect = "`sink.show` answers None for a writer that is switched OFF or simply not installed as well as for a record it could not read, so closing a landed phase with `AVENGER_METRICS_OFF=1` - the documented normal state of a standalone install with no firstmate home - told the operator its record could not be READ and prescribed waiting for the next close stamp. Nothing was read and nothing ever would be: a confident wrong cause with an unavailable remedy, on every landing commit (issue #120)."
@@ -359,11 +387,15 @@ file = "scripts/pipeline_metrics.py"
 find = '''
         read = read_record(phase)
         if not read.usable:
-            if read.state == RECORD_UNREADABLE:'''
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"provenance not recorded for phase {phase}: the record could not be read, and "'''
 replace = '''
         read = RecordRead(RECORD_PRESENT, sink.show(phase) or {})
         if not read.usable:
-            if read.state == RECORD_UNREADABLE:'''
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"provenance not recorded for phase {phase}: the record could not be read, and "'''
 
 [[guard]]
 id = "metrics-emission.provenance-first-stamp"
