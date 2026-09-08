@@ -124,7 +124,9 @@ tests = ["tests/test_phase_artifacts.py", "tests/test_verifier_precheck.py"]
 [[guard.mutation]]
 file = "scripts/phase_artifacts.py"
 find = """
-    for candidate in sorted(feature_dir.glob(f"phases/*/specs/{directory.name}/test-mapping.md")):"""
+    for candidate in sorted(
+        feature_dir.glob(f"phases/*/specs/{directory.name}/test-mapping.md")
+    ):"""
 replace = """
     for candidate in []:"""
 
