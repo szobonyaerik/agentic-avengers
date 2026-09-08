@@ -854,6 +854,56 @@ amendment is a change already made, a deferral a change deliberately not made.
 caught a clip containing no exercise, against the cyclic cut its *Done when* names; this gate refuses
 exactly that finding, and telling stages to care less would have shipped it.
 
+### 4i. A phase that says it changes no behaviour PROVES it (issue #107)
+grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change - a package split and a
+rename, `work_kind: migration` on both specs - and shipped **three changes to live trading
+behaviour** through verification and a 283-test suite: a capacity guard's `max_open_orders -
+open_orders_now` became `+` (12 open against a cap of 10 computed 22 instead of -2, and ten more
+live orders would have gone out), and a `.get(<asset>, 0)` insufficient-balance sentinel became `1`
+at three sites (an absent balance read as a fabricated holding). **Nothing compared behaviour against
+the contract the phase had declared.** `skills/tdd` already defined `migration` and `refactor` as
+behaviour-preserving - the rule existed and nothing enforced it, this repository's recurring shape.
+
+**The contract is `work_kind`, not a new axis beside it.** The plan's per-phase `Work kind` line is
+carried by the Spec Writer into each spec's own frontmatter, where the implementer and the gates
+already read it. `migration` and `refactor` carry it; **a phase that declares neither is untouched.**
+
+When declared, `scripts/behaviour_drift.py` holds the phase's diff to it. The semantic surface -
+literals, arithmetic/comparison/boolean/unary operators, membership and identity tests, control-flow
+edges (`if`, `else`, loops, `try`/`except:<builtin>`/`finally`, early returns, `raise`, `assert`,
+`with`, `match`, comprehension filters) - is reduced by `scripts/behaviour_atoms.py` to **atoms with
+no identifier in them**, so a rename can never change one. Every changed atom cites what authorised
+it - `# behaviour: R<n>.<k>.<m>` on the statement or compound-statement HEADER; for a REMOVAL, on its
+OWN line where the statement was, since a citation trailing a surviving statement speaks only for
+that statement and used to clear every deletion beside it; for a NEW file, once in its header - and the id must be one a
+spec in the phase declares (`requirement_cap.declared_ids`), so a citation of an id nobody declared
+authorises nothing and says so. The other route is the disclosed-exception ledger (`--rule
+behaviour-change`), subject one atom key (`+op:Add`, `-literal:int:0`) or the phase. **An uncited
+change is BLOCKING, never a warning**: a warning on a phase that claims to be safe is the state
+those three guards shipped in.
+
+**What a refactor actually does stays free, with no allowlist**: a rename changes no atom, a
+reformat changes no AST, a block cut and pasted cancels when the two sides READ alike (git's own
+rename evidence, one level down), a helper extracted or inlined cancels by containment. Accounting
+is **definition by definition** - netting a tree into one multiset hid two of the three measured
+defects, and a git hunk is a property of the DIFF, since git coalesces adjacent changes into one
+even at `-U0` and the `0` in a line added under a rewritten statement then cancels the `0` the
+rewrite removed. A top-level definition is the smallest unit that cannot do that while a reformat
+still cancels.
+
+**One owner, at the point of decision**: `spec-done` and `handover` in `hook_verifier.sh`, and
+diff-scoped from `gate_ci.sh`. Deliberately **not** folded into `scripts/interface_drift.py`, the
+alternative home that was measured: that guard asks whether a NAME resolves in the source tree - one
+document, one tree, no base and no diff - while this is a two-sided comparison against a base ref
+with its own citation grammar and cancellation rules. On the applicability boundary (§3a): an
+untouched phase is counted and named, a spec already `status: done` at HEAD has shipped and is not
+re-bound, a ledger exception closes a phase or a key; in CI the base is the branch, so it binds only
+when EVERY touched phase is under the contract, since a pull request mixing greenfield and no-change
+phases cannot be attributed file by file. **What a clean result does not establish is emitted on its
+own clean line** (§11), including the one limit worth naming here: cancellation is per definition, so
+an atom removed and an IDENTICAL atom added in the same definition cancel - the change still blocks
+on its other half, but the pair is not shown.
+
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.
 

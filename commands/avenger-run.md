@@ -666,6 +666,10 @@ procedure and the triage step in `skills/pipeline-retrospective`.
 - Respect `work_kind` (greenfield | migration | refactor) for the implementer's test mode. It is in
   **the spec's own frontmatter** — no stage opens a second document for it.
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.
+  **`migration` and `refactor` are also the zero-behaviour-change contract**: `behaviour_drift.py`
+  compares the phase's diff against its base at `spec-done` and at handover, and an uncited literal,
+  operator or control-flow change BLOCKS. If the phase turns out to need a behaviour change, that is
+  greenfield work — route the spec back for a requirement the implementer can cite, never a bypass.
 - Integration-level tests by default; a `narrow` test needs written justification in `test-mapping.md`.
 - **Documentation cost is read frequency, not size.** Each stage reads what
   `skills/pipeline-conventions` § *The document read path* gives it and no more — the contract card

@@ -20,6 +20,12 @@ readers: avenger-spec-writer @ per spec; phase-handover @ per phase (the next ph
     - 1.1 <subslug> — <one line>
     - 1.2 <subslug> — <one line>   <!-- a phase may have several specs; a simple phase has only 1.1 -->
 - **Scope**: in — …; out (deferred) — …
+- **Work kind**: greenfield | migration | refactor
+  <!-- migration and refactor are ZERO-BEHAVIOUR-CHANGE: the Spec Writer carries this into every
+       spec's `work_kind`, and scripts/behaviour_drift.py then holds the phase's diff to it - each
+       literal, operator or control-flow edge that changes cites the requirement that authorised
+       it. Any intended behaviour change in such a phase is greenfield work with its own
+       requirement. Say it here, at the phase, before a spec is written. -->
 - **Touches**: <!-- real paths -->
 - **Done when**: <!-- outcome that proves the phase works; the Verifier runs once here. KEEP THE
   PROSE - it is what a human reads. The table below is the same Done when in the form a gate reads:

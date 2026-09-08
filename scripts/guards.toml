@@ -1141,6 +1141,65 @@ find = '''
 replace = '''
         if False'''
 
+# --- behaviour drift: a no-change phase proves it -------------------------------------------------
+
+[[guard]]
+id = "behaviour-drift.uncited-change"
+implements = "scripts/behaviour_drift.py"
+defect = "grid-bot-platform okx-migration phase 1 was mandated zero behaviour change and shipped `-` as `+` and a `0` sentinel as `1` at three sites, through verification and 283 green tests, because nothing compared the diff's semantic surface against the declared contract (issue #107)."
+tests = ["tests/test_behaviour_drift.py"]
+[[guard.mutation]]
+file = "scripts/behaviour_drift.py"
+find = """
+        if removed_uncited or added_uncited:"""
+replace = """
+        if False:"""
+
+[[guard]]
+id = "behaviour-drift.hunk-masking"
+implements = "scripts/behaviour_drift.py"
+defect = "A hunk is a property of the diff: git coalesces adjacent changes into one even at `-U0`, so the `0` in a line added under a rewritten statement cancels the `0` the rewrite removed - issue #107's own masking, one level down, and the state this module was in before `split_by_owner`."
+tests = ["tests/test_behaviour_drift.py"]
+[[guard.mutation]]
+file = "scripts/behaviour_drift.py"
+find = """
+    old_runs = _runs(hunk.old_lines(), old_owner)"""
+replace = """
+    return [hunk]
+    old_runs = _runs(hunk.old_lines(), old_owner)"""
+
+[[guard]]
+id = "behaviour-drift.literal-extraction"
+implements = "scripts/behaviour_atoms.py"
+defect = "The extraction layer is where a drift guard goes blind while reporting clean (issue #97): grid-bot-platform's own guard read a keyword-only `*` as multiplication until it moved from tokens to the AST. A constant that is not extracted is a `10` that can become `9` unseen."
+tests = ["tests/test_behaviour_drift.py"]
+[[guard.mutation]]
+file = "scripts/behaviour_atoms.py"
+find = """
+    def visit_Constant(self, node: ast.Constant) -> None:
+        self._add(f"literal:{type(node.value).__name__}:{node.value!r}", node)"""
+replace = """
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            return
+        self._add(f"literal:{type(node.value).__name__}:{node.value!r}", node)"""
+
+[[guard]]
+id = "behaviour-drift.removal-citation-scope"
+implements = "scripts/behaviour_drift.py"
+defect = "A citation cleared EVERY removed atom in its definition, so a comment written for a rewritten line - `rem = cap - a  # behaviour: R1.1.1 rename only` - silently authorised the deletion of the if/raise guard beside it: issue #107's own shape, produced by the guard built for it."
+tests = ["tests/test_behaviour_drift.py"]
+[[guard.mutation]]
+file = "scripts/behaviour_drift.py"
+find = """
+        if not code:
+            whole.extend(ids)
+            continue"""
+replace = """
+        whole.extend(ids)
+        if not code:
+            continue"""
+
 # --- the Verifier's bookkeeping ------------------------------------------------------------------------------------
 
 [[guard]]

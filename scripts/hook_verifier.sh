@@ -436,6 +436,41 @@ if [ "$TRIGGER" = "spec-done" ]; then
   fi
 fi
 
+# Behaviour drift (issue #107): a phase whose specs declare `work_kind: migration` or `refactor`
+# has SAID it changes no behaviour, and one measured phase then altered three live trading guards -
+# `-` became `+`, a `0` sentinel became `1` at three sites - through verification and 283 green
+# tests, because nothing compared behaviour against the declared contract. behaviour_drift.py
+# diffs the semantic surface (literals, operators, control-flow edges, per definition) against HEAD
+# holds every change to a citation: a `# behaviour: R<id>` comment naming a requirement a spec in
+# the phase declares, or a disclosed exception on the ledger. An uncited change BLOCKS.
+#
+# Asked at BOTH triggers. At `spec-done` because it is the first moment the code exists and the
+# implementer still owns it - and only when the stamp is a TRANSITION ($STAMP_BINDS), since a spec
+# already done at HEAD has shipped (§3a). At `handover` because that is the phase close the issue
+# names, and a spec-done check a phase drove around must not be the last word. A phase declaring no
+# contract exits 0 and says so; nothing here reverts the `done` stamp, for the same reason the
+# fixture and interface checks do not.
+if [ "$TRIGGER" = "handover" ] || [ "$STAMP_BINDS" = "1" ]; then
+  if [ "$TRIGGER" = "handover" ]; then BD_PHASE="$(dirname "$FILE")"; else BD_PHASE="$(dirname "$(dirname "$(dirname "$FILE")")")"; fi
+  python3 "$SD/behaviour_drift.py" check "$BD_PHASE"; bd_rc=$?
+  if [ "$bd_rc" -eq 1 ]; then
+    fail "verifier:behaviour-drift" \
+      "verifier ($TRIGGER): this phase declares behaviour preserved (work_kind migration/refactor)" \
+      "and its diff changes the semantic surface without citing what authorised it (named above)." \
+      "Cite the requirement on the changed statement with \`# behaviour: R<n>.<k>.<m>\`, or record" \
+      "a disclosed exception: scripts/applicability.py record <phase-dir> --rule behaviour-change" \
+      "--subject=<+key|-key|phase> --reason-file <f>. An uncited change to a no-change phase is" \
+      "the defect that shipped three altered trading guards." \
+      "$STAMP_NOTE"
+  elif [ "$bd_rc" -ne 0 ]; then
+    fail "verifier:behaviour-drift-undecidable" \
+      "verifier ($TRIGGER): whether this phase kept its behaviour contract could not be DECIDED" \
+      "(cause above) - a spec, a ledger or a source file could not be read or parsed. A check that" \
+      "cannot read the tree cannot clear it, so this fails closed. Fix what it named." \
+      "$STAMP_NOTE"
+  fi
+fi
+
 [ "$TRIGGER" = "handover" ] || exit 0
 
 PHASE_DIR="$(dirname "$FILE")"

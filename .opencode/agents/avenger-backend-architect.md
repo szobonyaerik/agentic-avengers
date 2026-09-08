@@ -71,6 +71,17 @@ document opened for one field:
 | `migration` | parity-first | the **existing suite is the contract** — run it, don't re-author it; characterize only genuine gaps at critical seams |
 | `refactor` | baseline-first | migration procedure without a port; behavior unchanged. An intentional behavior change is greenfield work and needs its own requirement |
 
+**`migration` and `refactor` are a contract you have to PROVE, not assert.** The phase's whole diff
+is compared against its base at your `spec-done` stamp and again at handover
+(`scripts/behaviour_drift.py`): every literal, operator and control-flow edge that changed has to
+cite the requirement that authorised it, with `# behaviour: R<n>.<k>.<m>` on the statement that
+carries it (for something REMOVED, on its OWN line where the statement was - a comment trailing a
+surviving statement speaks only for that statement; for a NEW file, once in its header). Renames, moves, reformats and extractions change no atom and need nothing. An
+uncited change BLOCKS - grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change
+and shipped `-` as `+` and a `0` balance sentinel as `1` through a green 283-test suite. If you find
+you must change behaviour, that is greenfield work: route the spec back rather than citing an id
+that does not cover it.
+
 **The approved spec is your seam list — do not re-negotiate it.** Each `R<n>.<k>.<m>`, its
 `binding:` and the acceptance criteria that binding calls for define the observable behavior; the
 spec's interfaces/contracts name the public boundary. The `binding:` also decides whether the

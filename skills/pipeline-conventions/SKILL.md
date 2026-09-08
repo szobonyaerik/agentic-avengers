@@ -1703,6 +1703,80 @@ The implementer loads `skills/tdd/SKILL.md` on every spec and picks the mode fro
 - **Refactor** → baseline-first parity: use the migration procedure without porting tests; behavior
   remains unchanged unless a separate greenfield requirement explicitly says otherwise.
 
+## A phase that says it changes no behaviour PROVES it (issue #107)
+
+grid-bot-platform, okx-migration phase 1, 27 Aug 2026. The phase was mandated zero behaviour change -
+a package split and a rename, `work_kind: migration` on both specs - and it shipped three changes to
+live trading behaviour, each of which passed verification and a 283-test suite: a capacity guard's
+`max_open_orders - open_orders_now` became `+` (12 open against a cap of 10 computed 22 instead of
+-2, and ten more live orders would have been placed), and a `.get(<asset>, 0)` insufficient-balance
+sentinel became `1` at three sites in two files (an absent balance read as a fabricated holding, and
+the guard could not fire). **Nothing compared behaviour against the contract the phase declared.**
+The diff was wide and shallow by design, review attention went where behaviour was *expected* to
+change, and no automated layer asked the claim itself. `skills/tdd` already said what `migration` and
+`refactor` mean - behaviour preserved, "any intentional behavior change is greenfield work and must
+be specified explicitly" - so the rule existed and nothing enforced it, which is this repository's
+recurring shape.
+
+**The contract is `work_kind`, not a new axis beside it.** A phase declares its shape once, in the
+plan's `Work kind` line, and the Spec Writer carries it into each spec's own frontmatter, where the
+implementer and the gates already read it. `migration` and `refactor` carry the contract;
+`greenfield` is the one mode in which behaviour is expected to change, and **a phase that declares no
+contract is untouched by all of this.**
+
+**When it is declared, `scripts/behaviour_drift.py` holds the diff to it.** The semantic surface -
+literals, arithmetic/comparison/boolean/unary operators, membership and identity tests, and
+control-flow edges (`if`, `else`, loops, `try`/`except:<builtin>`/`finally`, early returns, `raise`,
+`assert`, `with`, `match`/`case`, comprehension filters) - is reduced by `scripts/behaviour_atoms.py`
+to **atoms with no identifier in them**, so a rename can never change one. Every atom that changed
+against the base cites what authorised it: `# behaviour: R<n>.<k>.<m>` on the statement (or
+compound-statement HEADER, so a comment inside a branch never authorises the condition above it);
+for something REMOVED, on a new line of the hunk that removed it - and a citation speaks only for
+what it is attached to, so one on its OWN line is the record of a removal ("this guard is gone on
+purpose") and clears the definition's removals, while one TRAILING a surviving statement clears only
+the removals of the old line that statement replaced; for a NEW file, once in its header. The id must be one a spec in the
+phase declares - `requirement_cap.declared_ids`, the reader the cap and the precheck already share -
+so a citation of an id nobody declared authorises nothing and says so. The other route is the
+disclosed-exception ledger (`--rule behaviour-change`), subject either one atom key (`+op:Add`,
+`-literal:int:0`) or the phase itself. **An uncited change is BLOCKING, never a warning** - a warning
+on a phase that claims to be safe is the state those three guards shipped in.
+
+**What must stay free is what a refactor actually does**, and it is free without an allowlist:
+a rename changes no atom; a reformat changes no AST; a block cut here and pasted there cancels when
+the two sides READ alike; a helper extracted or inlined cancels by containment. Everything is
+accounted **definition by definition**, never as one pool and never per git hunk: netting a whole
+tree into one multiset hid two of the three measured defects (the `0`s that became `1`s disappeared
+against `0`s the same phase legitimately added elsewhere), and a hunk is a property of the diff -
+git coalesces adjacent changes into one even at `-U0`, so a rewritten statement and an unrelated new
+line under it arrive together and the new line's `0` cancels the rewritten one's. A top-level
+definition is the smallest unit that cannot do that while a reformat still cancels.
+
+**Where it is asked**: `spec-done` and `handover` in `hook_verifier.sh` - the first moment the code
+exists and the implementer still owns it, and the phase close - and diff-scoped from `gate_ci.sh`.
+One owner, at the point of decision, never at each caller. It is **not** in `interface_drift.py`,
+which was measured as the alternative home: that guard asks whether a NAME the spec's Interfaces
+block claims resolves in the source tree - one document against one tree, no base, no diff - while
+this one is a two-sided comparison against a base ref with its own citation grammar and its own
+cancellation rules. Folding them would put a file with two unrelated failure modes on the same
+trigger.
+
+**On the applicability boundary** (§ *The applicability boundary*): a phase this change does not
+touch is counted and named, never blocked; a spec already `status: done` at HEAD has shipped and is
+not re-bound; a ledger exception closes a phase or one atom key. In CI the base is the branch, so it
+runs only when **every** touched phase is under the contract - a pull request mixing a greenfield
+phase with a no-change one cannot be attributed file by file, and it says so rather than holding
+greenfield work to a contract it never declared.
+
+**What a clean result does NOT establish** (§ *A guard says what a clean result does not establish*),
+emitted on the guard's own clean line: a move, in either direction; a change carried entirely by
+identifiers (`fetch(a, b)` becoming `fetch(b, a)`, `.total` becoming `.subtotal`); **both halves of a
+change inside one definition** - an atom removed and an identical atom added there cancel, so the
+change still blocks on its other half but the pair is not shown; that a cited change is correct, or
+that an uncited-looking one is wrong (it asks for a citation, it neither proves nor refutes
+equivalence); anything that is not Python, which is counted and named rather than parsed; and, in
+session, anything the phase committed before its close, since the comparison is against HEAD unless
+`BEHAVIOUR_BASE` names the phase's base.
+
 ## A `status: done` stamp is not a completion signal by itself (issue #68)
 
 A spec's own implementer writes `status: done` into its frontmatter, and used to keep working

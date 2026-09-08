@@ -90,7 +90,8 @@ FILENAME = "exceptions.json"
 #: `verifier_precheck.py` (the stale-stamp check — the only remedy that clears it without a live gate
 #: provider), `spec-review` and `verdict` by `pipeline_state.py`, `requirement-cap` by
 #: `requirement_cap.py`, `breaker` by `breaker_gate.py`, `execution-evidence` by
-#: `verifier_evidence.py`. That is the same rule this module states about a ledger entry: one nothing
+#: `verifier_evidence.py`, `behaviour-change` by `behaviour_drift.py`. That is the same rule this
+#: module states about a ledger entry: one nothing
 #: reads is an exception that does not exist, and it would be discovered as a phase wedged on a rule
 #: someone believed was waived. So a further entry is a deliberate edit here **together with the call
 #: site that reads it**, never ahead of one. The cost gate is deliberately absent: it needs the
@@ -103,6 +104,10 @@ RULES: dict[str, str] = {
     "requirement-cap": "the requirement cap's split trigger on a spec",
     "breaker": "a Breaker record owed by a phase that resolves to criticality: critical",
     "execution-evidence": "the recorded transcript proving a phase's verification actually ran",
+    "behaviour-change": (
+        "one change to the semantic surface of a phase whose work_kind preserves "
+        "behaviour, or that whole contract for the phase"
+    ),
 }
 
 #: Every document the read-path table governs declares who reads it, in the document. JSON has no
@@ -118,6 +123,7 @@ READERS = [
     "phase-handover @ per phase",
     "breaker_gate.py @ per phase, resolving the Breaker obligation",
     "verifier_evidence.py @ per phase, resolving the execution-evidence obligation",
+    "behaviour_drift.py @ per phase, resolving cited behaviour changes",
 ]
 
 

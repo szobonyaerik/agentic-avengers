@@ -55,7 +55,14 @@ feature: <feature>
 phase: <n>-<slug>
 spec: <n>.<k>-<subslug>
 depends_on: [<prior spec ids, e.g. 1.1, 1.2>]
-work_kind: greenfield | migration | refactor   # the implementer's test mode — carried HERE
+work_kind: greenfield | migration | refactor   # the implementer's test mode — carried HERE.
+                                              # migration|refactor is ALSO the zero-behaviour-change
+                                              # contract: scripts/behaviour_drift.py holds the phase's
+                                              # diff to it and blocks an uncited literal, operator or
+                                              # control-flow change. Take it from the plan's phase
+                                              # `Work kind`. An intended behaviour change inside such a
+                                              # phase needs its OWN requirement here for the
+                                              # implementer to cite - or the phase is greenfield.
 criticality: standard | critical   # required — absent/blank/unrecognised resolves to `critical`, announced
                                    # as the default it is (issue #101). `standard` is a deliberate opt-out.
 status: draft

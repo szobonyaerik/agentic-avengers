@@ -5,7 +5,13 @@ spec: <n>.<k>-<subslug>
 depends_on: []
 work_kind: greenfield    # <!-- greenfield | migration | refactor — the implementer's tdd mode.
                          #      CARRIED HERE, not looked up in task-analysis.md: a stage that fires
-                         #      per spec must never open a second document for one field. -->
+                         #      per spec must never open a second document for one field.
+                         #      migration and refactor are ALSO the zero-behaviour-change contract:
+                         #      scripts/behaviour_drift.py then holds the phase's whole diff to it,
+                         #      and a literal, operator or control-flow edge that changes without
+                         #      citing a requirement (`# behaviour: R<n>.<k>.<m>` on the statement)
+                         #      is a BLOCKING finding. An intended behaviour change here is
+                         #      greenfield work: give it a requirement in this spec and cite it. -->
 status: draft
 spec_gate: pending       # <!-- pending | approved | blocked — THE machine gate, set by
                          #      scripts/hook_spec_gate.sh. It replaced `fidelity_verdict` and the
