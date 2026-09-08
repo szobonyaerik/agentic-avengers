@@ -511,6 +511,10 @@ fi
 #    feature-level e2e suite the comment above says it deliberately excludes (issue #120).
 suite_step() {
   local full="$1" pc interpreter
+  # Sourced HERE as well as at the top of this file, and that is deliberate: this function is
+  # SLICED OUT and driven standalone by tests/test_gate_ci_suite_step.py, which supplies only
+  # SCRIPT_DIR and record_fail. A step whose test harness cannot run it is a step nothing checks.
+  . "$SCRIPT_DIR/test_root_args.sh"
   interpreter="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || echo 'python3 (could not be asked for its path)')"
   if [ "$full" -eq 1 ]; then
     echo "• tests: python3 -m pytest -q (incl. e2e), through suite_outcome.py; interpreter: $interpreter"

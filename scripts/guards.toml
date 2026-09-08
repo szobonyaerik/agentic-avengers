@@ -513,9 +513,9 @@ tests = ["tests/test_phase_record_instrument.py"]
 [[guard.mutation]]
 file = "scripts/gate_ci.sh"
 find = '''
-  pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
 replace = '''
-  pytest -q --ignore=tests/e2e; pc=$?'''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?'''
 
 [[guard]]
 id = "suite-population.one-declaration"
@@ -1423,9 +1423,9 @@ tests = ["tests/test_gate_ci_suite_step.py"]
 [[guard.mutation]]
 file = "scripts/gate_ci.sh"
 find = '''
-    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?'''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
 replace = '''
-    pytest -q --ignore=tests/e2e; pc=$?'''
+    pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
 
 # --- the suite's outcome crosses the step boundary on a published name (issue #98 review round) ----
 
