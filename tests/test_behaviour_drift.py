@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import behaviour_atoms  # noqa: E402
 import behaviour_drift  # noqa: E402
+import spec_gate_cache  # noqa: E402
 
 GUARD = """\
 MAX = 10
@@ -961,8 +962,25 @@ status: {status}
 
 HOOK_MAPPING = """| requirement | test | level |
 |---|---|---|
-| R1.1.1 | test_capacity | integration |
+| R1.1.1 | test_capacity - R1.1.1 | integration |
 """
+
+
+def write_hook_spec(spec_dir: Path, status: str) -> None:
+    """Write the fixture spec and stamp its gate the way `spec_gate_cache.py` leaves an approval.
+
+    `verifier_precheck.py` runs ahead of this guard at the handover trigger and refuses a spec whose
+    gate stamp is not bound to the body on disk, so a hand-written `spec_gate: approved` line leaves
+    the hook stopping before the behaviour contract is ever asked. That check is not what these
+    tests are about; stamping it honestly is how the repository's own hook tests reach the branch
+    under test.
+    """
+    path = spec_dir / "spec.md"
+    path.write_text(HOOK_SPEC.format(status=status), encoding="utf-8")
+    stamped = spec_gate_cache.stamp(
+        path.read_text(encoding="utf-8"), "gate", "APPROVED"
+    )
+    path.write_text(stamped, encoding="utf-8")
 
 
 def hook_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -975,7 +993,7 @@ def hook_project(tmp_path: Path) -> tuple[Path, Path]:
     spec_dir.mkdir(parents=True)
     (root / "app").mkdir()
     (root / "app" / "guard.py").write_text(GUARD, encoding="utf-8")
-    (spec_dir / "spec.md").write_text(HOOK_SPEC.format(status="in-progress"))
+    write_hook_spec(spec_dir, "in-progress")
     (spec_dir / "test-mapping.md").write_text(HOOK_MAPPING)
     tests = root / "tests" / "demo" / "1-core"
     tests.mkdir(parents=True)
@@ -1011,7 +1029,7 @@ def run_hook(root: Path, written: Path) -> subprocess.CompletedProcess:
 def test_the_spec_done_trigger_blocks_an_uncited_change(tmp_path: Path) -> None:
     """A green suite and a recorded mapping are no longer enough for a no-change phase."""
     root, spec_dir = hook_project(tmp_path)
-    (spec_dir / "spec.md").write_text(HOOK_SPEC.format(status="done"))
+    write_hook_spec(spec_dir, "done")
 
     result = run_hook(root, spec_dir / "spec.md")
 
@@ -1041,7 +1059,7 @@ def test_the_hook_lets_the_same_phase_through_once_the_change_is_cited(
         GUARD.replace("cap - open_orders", "cap + open_orders  # behaviour: R1.1.1"),
         encoding="utf-8",
     )
-    (spec_dir / "spec.md").write_text(HOOK_SPEC.format(status="done"))
+    write_hook_spec(spec_dir, "done")
 
     result = run_hook(root, spec_dir / "spec.md")
 
