@@ -132,6 +132,7 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import guard_scope  # noqa: E402
+from measurement_claims import MEASURED_OVER, MEASURED_OVER_FIELD, universals  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -1157,10 +1158,40 @@ def _unfiled_line(phase_dir: Path, item: Item) -> str:
     )
 
 
+def unmeasured_claims(items: list[Item]) -> list[str]:
+    """Forward-claim rows that quantify universally and carry no `measured_over:` field (#117).
+
+    The phase-3 card of one measured feature told phase 4 that "every limb the model calls support is
+    now on its bearing surface" - contradicting its own FWD-4 four lines above and false on the
+    measurements. Its author caught it before commit, under a standing instruction to name what was
+    measured and over what set; that is evidence the instruction helps and is not enforcement. The
+    set rides in the row itself, as `measured_over: <set>` in any cell, so a later phase reads the
+    claim and its scope together. Only `forward-claim` rows are held: an open finding's title points
+    at a verdict entry, which carries its own `method`, and a pre-rule three-column row has no kind
+    to be held by.
+    """
+    out: list[str] = []
+    for item in items:
+        if item.kind.strip(EMPHASIS).lower() != "forward-claim":
+            continue
+        words = universals(item.row)
+        if words and not MEASURED_OVER_FIELD.search(item.row):
+            quoted = ", ".join(f"'{w}'" for w in words)
+            out.append(
+                f"{item.id} quantifies universally ({quoted}) and names no `{MEASURED_OVER}:` "
+                f"set. A scope claim carries the set it was measured over IN THE ROW - "
+                f"`{MEASURED_OVER}: <the files, clips, ids or cases actually checked>` - or is "
+                f"narrowed to what was measured. 'Every limb ... is now on its bearing surface' "
+                f"was written four lines below the FWD row that contradicted it."
+            )
+    return out
+
+
 def phase_problems(phase_dir: Path) -> list[str]:
     """Every obligation for one closed phase, as lines. Empty means clean."""
     out: list[str] = []
     items, says_none, present = declared(phase_dir)
+    out.extend(f"{phase_dir}/handover.md: {line}" for line in unmeasured_claims(items))
     if not present:
         out.append(
             f"{phase_dir}/handover.md: no `## {SECTION_HEADING}` section - the card does not say "
@@ -1437,6 +1468,16 @@ def _dispatch(args: argparse.Namespace) -> int:
                 f"section with neither an item nor an explicit `none` row. Say which.",
                 file=sys.stderr,
             )
+            return OWED
+        unmeasured = unmeasured_claims(items)
+        if unmeasured:
+            print(
+                f"[carried_items] {args.phase_dir}/handover.md carries a forward claim wider than "
+                f"its measurement:",
+                file=sys.stderr,
+            )
+            for line in unmeasured:
+                print(f"  x {line}", file=sys.stderr)
             return OWED
         for item in items:
             print(item.describe())

@@ -24,6 +24,136 @@
 # [[exempt]] is the other half of the closed set: a file the enforcement surfaces invoke that decides
 # nothing. Every entry needs a reason, and an exemption nothing invokes any more is itself a finding.
 
+# --- a claim carries its measurement (issue #96) --------------------------------------------------
+
+[[guard]]
+id = "measurement-claims.criterion-drives"
+implements = "scripts/measurement_claims.py"
+defect = "An implementer told to sweep two adapters for a defect class swept by READING which exception clauses had been narrowed, reported complete, and missed two instances - one able to leave a live position with no stop order. A criterion that does not name what it drives is satisfied by reading."
+tests = ["tests/test_measurement_claims.py", "tests/test_hook_spec_gate.py"]
+[[guard.mutation]]
+file = "scripts/measurement_claims.py"
+find = '''
+        if not _DRIVES_FIELD.search(text):'''
+replace = '''
+        if False:'''
+
+[[guard]]
+id = "measurement-claims.finding-method"
+implements = "scripts/measurement_claims.py"
+defect = "A probe set what a collaborator RETURNS and never what it RAISES, and a fix round scoped from it closed half the defect. A finding that states no method leaves the unstated axis reading as measured."
+tests = ["tests/test_measurement_claims.py", "tests/test_verifier_precheck.py"]
+[[guard.mutation]]
+file = "scripts/measurement_claims.py"
+find = '''
+        if not (isinstance(method, str) and method.strip()):'''
+replace = '''
+        if False:'''
+
+[[guard]]
+id = "measurement-claims.universal-set"
+implements = "scripts/measurement_claims.py"
+defect = "Amendment A7 claimed 'nothing in the catalogue can turn waypoints red' against a four-field measurement; six of ten captures do. The quantifier outlived the measurement because nothing asked for the set it was measured over."
+tests = ["tests/test_measurement_claims.py", "tests/test_amendments.py", "tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/measurement_claims.py"
+find = '''
+    if not words or _has_set(measured_over):
+        return None'''
+replace = '''
+    if True:
+        return None'''
+
+[[guard]]
+id = "measurement-claims.code-is-not-prose"
+implements = "scripts/measurement_claims.py"
+defect = "`None`, `all(rows)` and `only_once` inside backticks are identifiers, not claims about the world; a detector that read them as universals would refuse ordinary prose and be answered with a bypass."
+tests = ["tests/test_measurement_claims.py"]
+[[guard.mutation]]
+file = "scripts/measurement_claims.py"
+find = '''
+    prose = _INLINE_CODE.sub(" ", text or "")'''
+replace = '''
+    prose = text or ""'''
+
+[[guard]]
+id = "amendments.universal-reason-carries-its-set"
+implements = "scripts/amendments.py"
+defect = "Three consecutive amendments in one phase asserted a scope wider than their author had measured, each caught by a verifier and none by the author, each costing a round to correct a document. The refusal at write time is the whole fix; an `open` that recorded the reason without asking for the set is the state the instances were written in."
+tests = ["tests/test_amendments.py"]
+[[guard.mutation]]
+file = "scripts/amendments.py"
+find = '''
+    problem = claim_problem(reason, measured)
+    if problem is not None:'''
+replace = '''
+    problem = None
+    if problem is not None:'''
+
+[[guard]]
+id = "carried-items.universal-forward-claim-carries-its-set"
+implements = "scripts/carried_items.py"
+defect = "A contract card told the next phase that 'every limb the model calls support is now on its bearing surface', four lines below the FWD row that contradicted it and false on the measurements. It was caught by its author under a standing instruction - evidence the instruction helps and is not enforcement."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+        if words and not MEASURED_OVER_FIELD.search(item.row):'''
+replace = '''
+        if False:'''
+
+[[guard]]
+id = "verifier-precheck.finding-method"
+implements = "scripts/verifier_precheck.py"
+defect = "A verifier finding with no `method` reads 'sweep complete' whether the sweep drove the code or read it. The precheck decides the absence for zero tokens; a precheck that dropped the verdict's problems would leave the field optional in practice while the schema calls it required."
+tests = ["tests/test_verifier_precheck.py"]
+[[guard.mutation]]
+file = "scripts/verifier_precheck.py"
+find = '''
+    if verdict_in_scope:
+        out.extend(verdict)'''
+replace = '''
+    if False:
+        out.extend(verdict)'''
+
+[[guard]]
+id = "spec-gate.criterion-drives-refused"
+implements = "scripts/hook_spec_gate.sh"
+defect = "The gate that refuses a criterion naming nothing it drives has to be the SPEC GATE, before either paid call, because that is the last moment the writer still owns the criterion - and a hook that ran the check and then continued anyway would be an instruction with a shebang on it, the exact shape issue #96 is about. Declared when this change put the step in the hook and found the hook itself carried no proof it guards anything."
+tests = ["tests/test_hook_spec_gate.py"]
+[[guard.mutation]]
+file = "scripts/hook_spec_gate.sh"
+find = """
+python3 "$SD/measurement_claims.py" spec "$FILE"; drives_rc=$?"""
+replace = """
+drives_rc=0"""
+
+[[guard]]
+id = "spec-gate.closed-set-is-rendered"
+implements = "scripts/hook_spec_gate.sh"
+defect = "The line the writer reads on a block named the closed set by hand, and it still named FOUR categories after `false-acknowledgement` and `unevidenced-universal` had been added to `spec_gate_triage.BLOCKING`. A rejected spec was told a rule the gate does not apply - a document asserting behaviour nothing enforces, inside the gate that enforces it."
+tests = ["tests/test_hook_spec_gate.py"]
+[[guard.mutation]]
+file = "scripts/hook_spec_gate.sh"
+find = """
+BLOCKING_SET="$(python3 "$SD/spec_gate_triage.py" categories 2>/dev/null | grep -v '^note$' | paste -sd', ' - )""""
+replace = """
+BLOCKING_SET="missing-requirement, contradiction, untestable-criterion, unhandled-critical-edge-case""""
+
+[[guard]]
+id = "spec-rubric.fails-closed-never-half-a-rubric"
+implements = "scripts/spec_rubric.py"
+defect = "The writer is primed from the gate's own sources so the two cannot drift, and a DRIFTED copy is worse than none - the writer is then held to a standard nobody applies. A renamed heading or an unreadable prompt that rendered a partial brief would be exactly that copy, delivered at every spawn and believed. Declared when issue #96 added the criterion field to the brief and found this renderer was one of the pipeline's undeclared enforcement surfaces."
+tests = ["tests/test_spec_rubric.py"]
+[[guard.mutation]]
+file = "scripts/spec_rubric.py"
+find = '''
+        body = section(text, heading)
+        if body is None:'''
+replace = '''
+        body = section(text, heading) or ""
+        if False:'''
+
 # --- carried items: a handover's forward-looking claims -------------------------------------------
 
 [[guard]]

@@ -233,14 +233,20 @@ with the verdict taken out of the model's hands entirely:
 3. **Decide** (`scripts/spec_gate_triage.py`) — derives the verdict deterministically. **No model
    decides whether a spec is blocked.**
 
-**The blocking set is CLOSED — exactly five things block:** a **missing requirement**, an internal
-**contradiction**, an **untestable criterion**, an **unhandled critical edge case**, and a
-**false acknowledgement**. Everything else
+**The blocking set is CLOSED — exactly six things block:** a **missing requirement**, an internal
+**contradiction**, an **untestable criterion**, an **unhandled critical edge case**, a
+**false acknowledgement**, and an **unevidenced universal** (a universal claim about how EXISTING
+code behaves, justifying a requirement, with no evidence beside it - §12). Everything else
 is a **note**; **notes never block** and land in the spec's known-open list (`spec-notes.md`, read
 once by the implementer). It is closed *mechanically*: a category the table does not know is a hard
 failure naming what was invented, never a judgement call — guessing "blocking" reinstates the ratchet
 and guessing "note" deletes a finding. A sixth category is a deliberate edit to
-`spec_gate_triage.BLOCKING`; **`false-acknowledgement` is the fifth, added by exactly that route.**
+`spec_gate_triage.BLOCKING`; **`false-acknowledgement` is the fifth and `unevidenced-universal` the
+sixth, each added by exactly that route.**
+**The line the gate prints to a rejected writer is RENDERED from that table, never restated**: it
+named four categories for as long as the fifth and sixth existed, so a rejected spec was told a
+rule the gate does not apply - a document asserting behaviour nothing enforces, inside the gate
+that enforces it (§12's own class).
 
 **`false-acknowledgement` — a reply must not assert a change that was not made.** Three write paths
 in one measured phase answered a **suppressed** write with a success reply, and **one requirement
@@ -1521,3 +1527,29 @@ allowlist, and the drift guard blind to `in` / `not in` / `is` / `is not` is
 grid-bot-platform's. It never fails a run: growth is often legitimate, and a blocking check would
 be answered with a bypass rather than with the attention this exists to buy. An unknowable
 comparison says so and is never reported as "no growth".
+
+### 12. A claim carries its measurement - a check states its method (issue #96)
+Every stage in one measured feature made the same mistake in a different costume: **a partial
+measurement written up as a complete result.** A sweep done by READING two adapters reported complete
+and missed two instances; a probe set what a collaborator *returns* and never what it *raises*, and a
+fix round scoped from it closed half the defect; an approved spec justified narrowing a handler with
+"only calls X, Y and float()" - false, past the gate, both reviews and the grill; a differential test
+was trusted past what it can detect ("both sides fail identically, so it is not a divergence"). Folded
+in from #117: three consecutive amendments and one contract card claimed a scope wider than their
+author had measured. **Five of seven were caught by a human reading artifacts against source, one by
+a gate, none by a test.** The rule: **a check states its method, a criterion names what it drives,
+and a scope claim carries the set it was measured over as a FIELD.** `scripts/measurement_claims.py`
+owns it and is asked at the point of decision: `hook_spec_gate.sh` refuses an acceptance criterion
+with no `drives:` before any paid call (presence only - `drives: undriven (<why>)` passes, because
+what that declaration must carry is **issue #116's decision, left open here**); `verifier_precheck.py`
+refuses a finding with no `method` (held for a verdict the diff writes or a phase named at handover,
+counted otherwise, under `--all` too); `amendments.py open` and `carried_items.py declared` refuse a
+universal - a CLOSED, pinned vocabulary, matched outside inline code - with no `measured_over`, on
+new records and the phase's own card only; the spec gate blocks an `unevidenced-universal`, asked
+about the evidence and never the truth. Parity tests state their blind spot in runtime output
+(`skills/tdd`); this repo's own four differential checks - `stage_effort.py`, `doc_read_path.py
+--contract`, `guard_scope.py allowlists`, `plugin_release.py check` - declare it in
+`guard_scope.toml` and emit it on their clean result. **Three
+instances are instruction only**, said rather than implied: a grep count for reading, an enumerated
+list taken as complete, a single-sample proof of a negative. Canonical statement in
+`skills/pipeline-conventions`.
