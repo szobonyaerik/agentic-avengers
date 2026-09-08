@@ -1379,3 +1379,7 @@ reason = "Appends one line per subagent start/stop to .agent-activity.jsonl. A r
 [[exempt]]
 file = "scripts/hook_auto_cleanup.sh"
 reason = "Removes the run's scratch state at session end. It has nothing to be wrong about: a cleanup that fails leaves files behind, which no gate depends on."
+
+[[exempt]]
+file = "scripts/pipeline_metrics.py"
+reason = "The pipeline's measurement writer. It decides nothing and may not: writing metrics can never fail a phase (CLAUDE.md 6d), so every call from a hook exits 0 and a refused write is swallowed and logged. It reached this inventory's scope when `carried_items.py` began emitting a deferral count through it; the checks that read its record and CAN fail a phase - `metrics-emission.defect-floor` and `metrics-emission.close-stamp` - are declared, and they are where a producer that stopped producing is caught."
