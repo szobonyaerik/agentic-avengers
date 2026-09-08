@@ -34,6 +34,18 @@ Three properties, each one a distinct way a fabricated pass used to get through:
    disk is a verdict written against a different set of runs, and it does not pass. A verdict that
    names no chain at all is the state this module exists to refuse.
 
+4. **It is bound to a HEAD.** Every entry records the commit the working copy stood on when the
+   command ran (`head`), and that commit is in the chain. A fix pass that commits after the
+   verification moves HEAD past every recorded run, and `verdict_currency.py` reads the newest
+   recorded head as the anchor for a verdict that is not yet committed - so the phase close can ask
+   "did the tree move after this was verified" at the one moment it used to have no answer (issue
+   #97, folded #122: a fix round moved the head while a run was open and only a human reading two
+   heads side by side noticed). A run recorded where git cannot answer carries NO `head`, and says
+   so on stderr: a verdict bound to nothing is a stated absence, never a fabricated commit. **What
+   this does not bind**, said rather than implied: an uncommitted edit made after the run at the
+   SAME head is invisible to it - the subject digest covers specs and tests, and production source
+   is deliberately outside both (see `SUBJECT_GLOBS`).
+
 Plus a floor: a run recording **0 ms** did not fork a process. `PROCESS_FLOOR_MS` is the same kind of
 rule `gate_plausibility.py` applies to a provider call - a number that contradicts itself is refused
 rather than believed.
@@ -81,6 +93,7 @@ import hashlib
 import json
 import math
 import os
+import subprocess  # noqa: S404 - git is the only thing that can say which commit a run stood on
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -181,6 +194,44 @@ def budget_s() -> int:
             f"{BUDGET_ENV}={raw!r} must be a positive number of seconds"
         )
     return value
+
+
+# --- the head: which commit the evidence was recorded on --------------------------------------------
+
+
+def git_head(root: Path) -> str | None:
+    """The commit the working copy at `root` stands on, or None when git cannot answer.
+
+    None is a stated absence - no repository, no git, an unborn branch - and the entry then carries
+    no `head` at all rather than a placeholder something downstream could mistake for a commit.
+    """
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed executable, list argv, no shell
+            ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    head = proc.stdout.strip() if proc.returncode == 0 else ""
+    return head or None
+
+
+def latest_head(phase_dir: Path) -> str | None:
+    """The head of the NEWEST recorded run that carries one, or None. Raises EvidenceError on a
+    record it cannot read - a corrupt transcript is an error, never a phase with no head."""
+    runs = [
+        entry
+        for entry in load(Path(phase_dir))["runs"]
+        if isinstance(entry, dict)
+        and isinstance(entry.get("head"), str)
+        and entry["head"]
+    ]
+    if not runs:
+        return None
+    return max(runs, key=lambda entry: entry.get("seq") or 0)["head"]
 
 
 # --- the subject: what the evidence was recorded against -------------------------------------------
@@ -299,20 +350,22 @@ def entry_digest(entry: dict, previous: str) -> str:
     Only the fields that say WHAT RAN and WHAT CAME BACK are in the hash. A note is prose and does
     not change what happened, so editing one must not invalidate the chain.
     """
-    payload = json.dumps(
-        {
-            "seq": entry.get("seq"),
-            "kind": entry.get("kind"),
-            "argv": entry.get("argv"),
-            "exit_code": entry.get("exit_code"),
-            "elapsed_ms": entry.get("elapsed_ms"),
-            "output_sha256": entry.get("output_sha256"),
-            "subject_digest": entry.get("subject_digest"),
-            "recorded_at": entry.get("recorded_at"),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    fields = {
+        "seq": entry.get("seq"),
+        "kind": entry.get("kind"),
+        "argv": entry.get("argv"),
+        "exit_code": entry.get("exit_code"),
+        "elapsed_ms": entry.get("elapsed_ms"),
+        "output_sha256": entry.get("output_sha256"),
+        "subject_digest": entry.get("subject_digest"),
+        "recorded_at": entry.get("recorded_at"),
+    }
+    # The head is in the chain WHEN RECORDED, and absent from the payload when it is not: a record
+    # written before heads existed must still hash to the chain it carries, or upgrading would
+    # refuse every committed transcript as "edited after it was written".
+    if "head" in entry:
+        fields["head"] = entry.get("head")
+    payload = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256((previous + "\n" + payload).encode("utf-8")).hexdigest()
 
 
@@ -416,6 +469,14 @@ def record(
     log_file = logs / f"{seq:02d}-{kind}.log"
     log_file.write_text(stored, encoding="utf-8")
 
+    head = git_head(base)
+    if head is None:
+        print(
+            f"[verifier_evidence] git cannot say what HEAD {base} stands on, so this run is bound "
+            f"to no commit - `verdict_currency` will have no recorded head to anchor on for it.",
+            file=sys.stderr,
+        )
+
     entry = {
         "seq": seq,
         "kind": kind,
@@ -429,6 +490,8 @@ def record(
         "subject_digest": subject_digest(phase, base),
         "recorded_at": _now(),
     }
+    if head is not None:
+        entry["head"] = head
     if stored_note:
         entry["note"] = stored_note
     data["runs"].append(entry)

@@ -58,8 +58,16 @@ for spec in "${SPECS[@]:-}"; do
   # The ONE machine gate, read through the one module that decides what its stamp means (including
   # how a legacy fidelity_verdict reads). Never re-derived here: this used to be a second copy of
   # that rule, and a second copy is the one that drifts.
-  GATE_STATE="$(python3 "$SCRIPT_DIR/spec_gate_state.py" status "$spec" 2>/dev/null)"
-  if [ "$GATE_STATE" != "approved" ]; then
+  # `status` is bound to the BYTES (issue #97): an `approved` whose body no longer hashes to what
+  # the gate recorded reads `stale`, so a spec edited after its approval cannot pass here on the
+  # strength of a value written over other text. The reader's own notes (an unrecorded hash, a
+  # stale body) are on stderr, and they are kept - a clean token with the note discarded is the
+  # over-read result this check exists to refuse.
+  GATE_STATE="$(python3 "$SCRIPT_DIR/spec_gate_state.py" status "$spec")"
+  if [ "$GATE_STATE" = "stale" ]; then
+    echo "  ✗ spec_gate is 'stale' — the body changed after the gate approved it; the approval is of bytes this spec no longer has. Re-gate it or record a disclosed exception." >&2
+    record_fail "spec-gate:$spec"
+  elif [ "$GATE_STATE" != "approved" ]; then
     echo "  ✗ spec_gate is '$GATE_STATE' — the spec gate never approved this spec." >&2
     record_fail "spec-gate:$spec"
   fi

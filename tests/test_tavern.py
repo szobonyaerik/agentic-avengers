@@ -81,12 +81,15 @@ def project(tmp_path):
             continue
         copied.add(module)
         shutil.copy(sibling, root / "scripts" / sibling.name)
-        # `import x` AND `from x import y`: both are how a sibling is pulled in, and a walk that
-        # reads only the first goes blind the moment a sibling is added with the other spelling —
-        # which reaches the server as a feature with no `stage`, exactly the shape this fixture was
-        # widened for the first time. A name that is not a sibling file is skipped above.
+        # BOTH import forms. The walk followed `import x` only, so the first sibling reached
+        # through `from x import y` was missed - `suite_outcome` reaching `proc_group` - and the
+        # resolver died at import, arriving here as a feature with no `stage` rather than as an
+        # import error. An extraction layer that stops at the first form it knows is the same
+        # defect this repository keeps finding elsewhere (issue #97).
         pending.extend(
-            re.findall(r"^(?:import|from) ([a-z_]+)", sibling.read_text(), re.M)
+            re.findall(
+                r"^(?:import|from) ([a-z_][a-z0-9_]*)", sibling.read_text(), re.M
+            )
         )
     (root / ".agent-activity.jsonl").write_text(
         json.dumps(

@@ -485,7 +485,11 @@ with every check green. `trace_claims` now holds the minimum - the named test **
 phase's own test tree and is **not skipped**. **What it does not do is stated rather than implied**:
 it does not read a row's prose against a test's assertions, so a row whose words contradict its
 existing, running test still passes; generating the claim from the test is the better fix and this
-is not it. Test definition and skip detection are Python-specific, so a tree that yields no test
+is not it. **It does hold the row's PAIRING** (issue #97, folded #122): `skills/tdd` asks every test
+to list the ids it covers, so each row's ids are paired with each row's tests and the test's own
+text is read - a test that lists ids and NOT the row's is a finding, and a test that lists none is
+counted and named, never held, since a corpus written before that instruction is exactly that
+shape. Test definition and skip detection are Python-specific, so a tree that yields no test
 definitions at all is **not held** - an unreadable scope, not a violated one. **An artifact that
 exists and cannot be OPENED is the other case, and it is a FINDING** (`read_artifact`): a
 `test-mapping.md`, a test file or a spec whose read is refused - a dangling symlink, a mode-000
@@ -599,7 +603,15 @@ phase records an amendment, which is exactly the remedy it prescribes, and it **
 anything git cannot answer** — no repository, no committed verdict to anchor on — saying so on
 stderr rather than passing invisibly. What it does NOT claim: the pipeline does not know which
 production file belongs to which phase, so this asks whether the feature owes a correction, never
-which phase owes it.
+which phase owes it. **A verdict is bound to a HEAD** (issue #97, folded #122): every run
+`verifier_evidence.py record` makes carries the commit the working copy stood on, in the chain where
+git could say, so a verdict not yet committed anchors on the newest head its evidence recorded and
+`hook_verifier.sh` asks this check at the handover - the moment it used to have no anchor and step
+aside, and the moment the folded instance happened in. A verdict the branch has moved past is stale,
+not passing, and the close refuses to carry it. A committed verdict keeps the commit it landed in as
+its anchor, deliberately not its evidence head, since the phase's own commit lands after its
+verification and carries the verified source. What it does not see is stated: an uncommitted edit at
+the same head, since it asks git what LANDED.
 
 ### 4e. Skills are delivered, not requested — pointer plus evidenced load
 The pipeline delegates core behaviour to 13 skills and used to delegate by *asking*: "Load
@@ -1083,6 +1095,20 @@ written through Bash (`sed -i`, a heredoc, `python3 -c`) never reaches it. It bi
 specifically and does not generalize to the pipeline's other stamps; the only reliable completion
 signal in this harness remains the agent/task notification, never a written marker.
 
+**And a stamp that stands NAMES THE BYTES it certified** (issue #97, folded #121). Both stamps do.
+The gate's: `spec_gate: approved` is written with `gate_gated_hash` over one body, and
+`spec_gate_state.status_of`, the one reader, answers **`stale`** - derived, never written - the
+moment the body no longer hashes to it, so `gate_ci.sh`, `pipeline_state.py` and the hook have no
+second freshness question to forget; a spec edited after approval used to pass CI's stamp check on
+the value alone. An unrecorded hash stays `approved` on the boundary and the CLI says so; a stamp
+the cache cannot bind to any body at all - two frontmatter parsers disagreeing - fails closed as not
+approved, because "we could not tell" is not "it is fine". The implementer's: after the mapping and the suite pass, the hook runs `spec_done_guard.py bind`, which
+writes `done_digest:` over the spec's own `test-mapping.md` and its own test directory, and
+`verifier_precheck.py` holds every bound `done` to it at handover - a `done` bound to different bytes
+is stamped again through a tool write, which re-checks and re-binds. With no per-spec test directory
+the digest covers the mapping alone and `bind` says so; a `done` with no digest (pre-rule, or written
+through Bash, the door #102 names) is counted, never held.
+
 **So that signal is now PRODUCED, and something acts on it.** Making the stamp self-correcting did
 not make it a completion signal, and issue #68's own fix direction rules out the remedy of telling
 people not to wait on one — that is a sentence claiming behaviour nothing enforces.
@@ -1493,9 +1519,14 @@ is what shipped. The one shape that recurs here is the attribute chain, and that
 nine allowlist entries instead of a fix to its extraction layer, and that lands as nine lines of
 routine-looking maintenance. `guard_scope.py allowlists [--base REF]` counts each declared allowlist
 now against its size at the merge-base and reports the delta from `gate_ci.sh`, where a reviewer
-reads it. It never fails a run: growth is often legitimate, and a blocking check would be answered
-with a bypass rather than with the attention this exists to buy. An unknowable comparison says so and
-is never reported as "no growth".
+reads it - and **each guard an allowlist quietens reports that allowlist's size, and its growth
+against `$GUARD_SCOPE_BASE`, beside its own clean line**, since a reader of one guard's output never
+sees the CI step; under GitHub Actions a growth line is also a `::warning` annotation, so it lands on
+the pull request as a finding rather than in a log nobody opens. `interface_drift.py` carries no
+allowlist, and the drift guard blind to `in` / `not in` / `is` / `is not` is
+grid-bot-platform's. It never fails a run: growth is often legitimate, and a blocking check would
+be answered with a bypass rather than with the attention this exists to buy. An unknowable
+comparison says so and is never reported as "no growth".
 
 ### 12. A claim carries its measurement - a check states its method (issue #96)
 Every stage in one measured feature made the same mistake in a different costume: **a partial

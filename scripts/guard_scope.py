@@ -290,9 +290,61 @@ def clean(name: str, code: int, *, ok: int = OK, stream=None) -> int:
     try:
         found, why = resolve(name)
         print(found.render() if found else notice(name, why), file=target)
+        for line in allowlist_lines(name):
+            print(line, file=target)
     except Exception:  # noqa: BLE001 - an emission failure may never become a verdict
         pass
     return code
+
+
+#: Where a guard's own emission finds the base to measure allowlist growth against. Set by CI
+#: (`.github/workflows/pipeline-gates.yml`) to the pull request's base; unset, the emission reports
+#: the size alone and says the delta was not measured.
+BASE_ENV = "GUARD_SCOPE_BASE"
+
+
+def allowlist_lines(name: str, root: Path | None = None) -> list[str]:
+    """The size, and the growth against `$GUARD_SCOPE_BASE`, of every allowlist THIS guard is
+    quietened with - emitted beside the guard's own clean result (issue #97).
+
+    `gate_ci.sh` reports every allowlist in one place, and a reader of one guard's output never sees
+    that place: the size belongs where the clean result is read, at the point of use. Never raises,
+    for the same reason `clean` never does - a report may not become a verdict. Empty for a guard no
+    allowlist quietens.
+    """
+    try:
+        base_root = Path(root) if root else _root()
+        inventory = load(inventory_path(base_root / "scripts"))
+        mine = [entry for entry in inventory.allowlists if entry.guard == _name(name)]
+        if not mine:
+            return []
+        now = sizes(base_root, inventory)
+        ref = (os.environ.get(BASE_ENV) or "").strip()
+        measured = growth(base_root, inventory, ref) if ref else None
+        lines: list[str] = []
+        for entry in mine:
+            size = now.get(entry.id, 0)
+            if not ref:
+                delta = f"growth not measured ({BASE_ENV} unset)"
+            elif measured is None:
+                delta = f"growth against {ref!r} UNKNOWABLE - git could not resolve a merge-base"
+            else:
+                before, current = measured.get(entry.id, (size, size))
+                change = current - before
+                delta = (
+                    f"GREW +{change} against {ref!r} ({before} -> {current})"
+                    if change > 0
+                    else f"no growth against {ref!r}"
+                )
+            lines.append(
+                f"[{_name(name)}] allowlist {entry.id}: {size} entr(ies) - {entry.what}; {delta}. "
+                f"An allowlist is how this guard gets quietened."
+            )
+        return lines
+    except Exception as exc:  # noqa: BLE001 - a report may never become a verdict
+        return [
+            f"[{_name(name)}] allowlist sizes UNAVAILABLE ({exc!r}) - not measured, not clean."
+        ]
 
 
 def run(name: str, entry, *, ok: int = OK) -> int:
@@ -513,11 +565,16 @@ def _render_growth(
         entry = by_id[key]
         delta = now - before
         if delta > 0:
-            lines.append(
-                f"[guard_scope] ALLOWLIST GREW: {key} +{delta} ({before} -> {now}) - {entry.what}. "
+            grew = (
+                f"ALLOWLIST GREW: {key} +{delta} ({before} -> {now}) - {entry.what}. "
                 f"An allowlist is how {entry.guard} gets quietened; a fix at its extraction layer is "
                 f"the alternative this line exists to make somebody weigh."
             )
+            lines.append(f"[guard_scope] {grew}")
+            # In CI the growth is a FINDING on the pull request, not a line in a log nobody opens:
+            # a workflow command puts it in the checks summary and on the diff. Still never a gate.
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                lines.append(f"::warning title=allowlist grew::{grew}")
         else:
             lines.append(f"[guard_scope] allowlist {key}: {now} entr(ies), no growth.")
     return lines
@@ -557,6 +614,8 @@ def main(argv: list[str] | None = None) -> int:
         # fail a gate would be documentation with a veto.
         found, why = resolve(args.name)
         print(found.render() if found else notice(args.name, why), file=sys.stderr)
+        for line in allowlist_lines(args.name):
+            print(line, file=sys.stderr)
         return OK
 
     try:

@@ -1185,6 +1185,232 @@ def test_a_green_phase_suite_still_passes_the_same_gate(project: Path) -> None:
     )
 
 
+# ── the `done` stamp is BOUND to the bytes the hook checked (issue #97, folded #121) ──
+
+
+def test_a_stamp_the_hook_lets_stand_is_bound_to_its_mapping_and_tests(
+    project: Path,
+) -> None:
+    """RED before the fix: the hook passed and the stamp named nothing - an edit one second later
+    left `done` standing over work the checks had never seen."""
+    import spec_done_guard
+
+    spec_path = write_done_spec(project, mapping="row")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "done_digest:" in spec_path.read_text()
+    assert "bound `status: done`" in result.stderr
+    assert spec_done_guard.bound(spec_path) is True
+
+    mapping = spec_path.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text() + "| R1.1.2 | test_more | integration | later |\n"
+    )
+    assert spec_done_guard.bound(spec_path) is False
+
+
+def test_a_reverted_stamp_is_never_bound(project: Path) -> None:
+    spec_path = write_done_spec(project, mapping="header-only")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "done_digest:" not in spec_path.read_text()
+
+
+def test_a_stamp_already_done_at_head_is_not_bound_either(project: Path) -> None:
+    """Shipped is shipped: a spec `done` at HEAD is counted, never rewritten - not even with a key."""
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "done_digest:" not in spec_path.read_text()
+
+
+def _ship_with_a_stale_digest(project: Path) -> Path:
+    """A shipped, BOUND spec whose mapping then changed - the state a route-back produces.
+
+    Locked-after-verify allows adding a case to a verified phase, so this is ordinary work, not an
+    abuse: the spec is committed `done`, the hook bound it, and a later edit to `test-mapping.md`
+    leaves the recorded digest naming bytes that are no longer there.
+    """
+    import spec_done_guard
+
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=True)
+    spec_done_guard.bind(spec_path)
+    mapping = spec_path.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text()
+        + "| R1.1.2 | test_x.py::test_more | integration | route-back |\n"
+    )
+    assert spec_done_guard.bound(spec_path) is False
+    return spec_path
+
+
+def test_the_prescribed_remedy_re_binds_a_shipped_stamp(project: Path) -> None:
+    """RED before the fix: binding rode `stamp_is_new`, false for every committed `done`, so the
+    remedy both `verifier_precheck` and `spec_done_guard` prescribe - write the spec again - reached
+    this hook, printed `already stamped done at HEAD`, bound nothing, and left the precheck finding
+    standing on every later run. A documented remedy that silently no-ops is the class #97 closes."""
+    import spec_done_guard
+
+    spec_path = _ship_with_a_stale_digest(project)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert spec_done_guard.bound(spec_path) is True
+    assert "re-binding" in result.stderr
+
+
+def test_re_binding_a_shipped_stamp_never_rewrites_the_stamp_itself(
+    project: Path,
+) -> None:
+    """The whole reason the bind path needed its own evidence: `status: done` on a shipped spec is
+    the single evidence `applicability.spec_shipped` reads, and rewriting it is the wedge (§3a)."""
+    spec_path = _ship_with_a_stale_digest(project)
+
+    run_spec_done_hook(project, spec_path)
+
+    assert "status: done" in spec_path.read_text()
+
+
+def test_a_shipped_stamp_whose_mapping_does_not_hold_is_left_exactly_as_it_arrived(
+    project: Path,
+) -> None:
+    """The re-bind is withheld, not failed. Refusing a write that passed before this path existed
+    would be a new block on closed work, and the precheck already reports the stale digest."""
+    import spec_done_guard
+
+    spec_path = _ship_with_a_stale_digest(project)
+    (spec_path.parent / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+    )
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "WITHHELD" in result.stderr
+    assert "status: done" in spec_path.read_text()
+    assert spec_done_guard.bound(spec_path) is False
+
+
+def test_a_shipped_stamp_carrying_no_digest_is_still_never_bound(project: Path) -> None:
+    """The rebind path acts on a RECORDED digest that no longer matches, and on nothing else. A
+    stamp with no digest was never checked by this hook, so binding one now would invent a
+    certification - it stays counted, never held, exactly as the precheck reports it."""
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "done_digest:" not in spec_path.read_text()
+    assert "re-binding" not in result.stderr
+
+
+# ── a verdict is bound to a HEAD, and the close refuses to carry a stale one (#97, #122) ──
+
+
+def _git(project: Path, *args: str) -> str:
+    return subprocess.run(  # noqa: S603
+        ["git", "-C", str(project), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _commit_all(project: Path, message: str) -> None:
+    _git(project, "add", "-A")
+    _git(project, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
+
+
+def _commit_paths(project: Path, message: str, *paths: str) -> None:
+    """A fix round commits the source it touched, never the phase's open verdict or evidence."""
+    _git(project, "add", "--", *paths)
+    _git(project, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
+
+
+def open_verified_phase(project: Path) -> None:
+    """Source committed, then a passing verdict recorded at that head and left uncommitted."""
+    _git(project, "init", "-q")
+    (project / "src.py").write_text("def f():\n    return 1\n")
+    write_spec(project)
+    _commit_all(project, "phase 1 implementation")
+    attempts(project, [(1, 0, "pass")])
+
+
+def test_a_fix_round_that_moves_the_head_past_an_open_verdict_does_not_close(
+    project: Path,
+) -> None:
+    """RED before the fix: the handover never compared the verified head against the branch."""
+    open_verified_phase(project)
+    (project / "src.py").write_text("def f():\n    return 2  # fix round\n")
+    _commit_paths(project, "review gate: fix", "src.py")
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "STALE" in result.stderr
+    assert "amendment" in result.stderr
+    assert "do NOT rewrite verdict.json" in result.stderr
+
+
+def test_an_open_verdict_over_an_unmoved_head_still_closes(project: Path) -> None:
+    open_verified_phase(project)
+    result = run_hook(project)
+    assert result.returncode == 0, result.stderr
+
+
+def test_recording_the_amendment_lets_the_phase_close(project: Path) -> None:
+    open_verified_phase(project)
+    (project / "src.py").write_text("def f():\n    return 2\n")
+    _commit_paths(project, "review gate: fix", "src.py")
+    (phase_dir(project) / "amendments.json").write_text(
+        json.dumps({"phase": "1-demo", "amendments": []})
+    )
+    result = run_hook(project)
+    assert result.returncode == 0, result.stderr
+
+
+# ── the suite is the expensive step, so it runs after the free ones ──────────────────────────────
+
+
+def test_a_bookkeeping_finding_stops_the_handover_without_paying_for_the_suite(
+    project: Path,
+) -> None:
+    """RED before the fix: the handover ran the phase suite first and the precheck after it.
+
+    The suite is the one step here that costs wall clock — roughly a minute on a measured phase —
+    and nothing below it reads a bookkeeping finding, so a phase whose mapping is broken paid for a
+    full run to be told something static and free. The sentinel is the measurement: a suite that ran
+    leaves it behind.
+    """
+    write_spec(project)
+    spec = phase_dir(project) / "specs" / "1.1-a" / "spec.md"
+    spec.write_text(spec.read_text().replace("## Acceptance criteria", "## Criteria"))
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    sentinel = project / "suite-ran"
+    (tests / "test_marker.py").write_text(
+        f"def test_marker():\n    open({str(sentinel)!r}, 'w').close()\n"
+    )
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "pre-check" in result.stderr
+    assert not sentinel.exists(), (
+        "the phase suite ran before a finding that cannot depend on it"
+    )
+
+
 # ── a deferred finding is resolved by its record, never by its stamp (issue #115) ────────────────
 
 DONE_WHEN_PLAN = """---
