@@ -698,6 +698,18 @@ find = '''
 replace = '''
     pytest -q --ignore=tests/e2e; pc=$?'''
 
+# --- the suite's outcome crosses the step boundary on a published name (issue #98 review round) ----
+
+[[guard]]
+id = "gate-ci.suite-outcome-published-not-borrowed"
+implements = "scripts/gate_ci.sh"
+defect = "Making the suite a function made its exit code `local`, and the mutation gate below still read that name directly. Under `set -uo pipefail` the whole script aborts with `pc: unbound variable` the moment the branch is evaluated - invisible in this repository, where cosmic-ray's `module-path` does not resolve so the branch is never taken, and fatal in every consumer whose does. A step reads what the previous step PUBLISHED, never a name it happens to share."
+tests = ["tests/test_gate_ci_suite_step.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''    if [ "${SUITE_PC:-}" = "5" ]; then'''
+replace = '''    if [ "$pc" -eq 5 ]; then'''
+
 # --- fixture realism ---------------------------------------------------------------------------------------------------------------------------------
 
 [[guard]]

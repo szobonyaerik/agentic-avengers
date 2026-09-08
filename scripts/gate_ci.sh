@@ -500,6 +500,12 @@ suite_step() {
     echo "• tests: python3 -m pytest -q --ignore=tests/e2e, through suite_outcome.py; interpreter: $interpreter"
     python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?
   fi
+  # Publish the outcome this step OBSERVED, on the one name a later step reads. `pc` is local, so
+  # the mutation gate below cannot see it; it used to read `$pc` directly and, once this became a
+  # function, aborted the whole script under `set -u` with `pc: unbound variable` on any repo whose
+  # cosmic-ray `module-path` actually resolves. Publishing is explicit and the read defaults, so a
+  # later refactor that stops calling this step degrades to "unknown" rather than to a dead script.
+  SUITE_PC="$pc"
   if [ "$pc" -eq 86 ]; then
     # Not a red suite: there is no result to read. A watchdog kill, or a run that stopped before it
     # said how many tests it ran, and an exit code of 0 changes nothing about that.
@@ -603,7 +609,7 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
     # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
     # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
     # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
-    if [ "$pc" -eq 5 ]; then
+    if [ "${SUITE_PC:-}" = "5" ]; then
       echo "  (no tests collected — nothing for mutation to measure, skipping)"
     # Baseline first: a mutant counts as killed whenever the test command fails, so a broken suite
     # would score a perfect 1.0. No kill means anything until the unmutated suite is green.

@@ -146,3 +146,46 @@ def test_e2e_is_excluded_on_the_fast_floor_and_included_under_full(
     assert "--ignore=tests/e2e" in (fast / "module-ran").read_text()
     _run(full, stdout="3 passed in 0.10s\n", exit_code=0, full=1)
     assert "--ignore=tests/e2e" not in (full / "module-ran").read_text()
+
+
+# --- the suite outcome crosses the step boundary on a published name (issue #98 review round) ------
+
+
+def _mutation_scope_guard_line() -> str:
+    """The one line in the mutation gate that reads the suite's exit code.
+
+    The mutation gate is top-level code, not a function, so there is no callable to slice. What is
+    under test is the single expression that used to read a name the suite step had made local.
+    """
+    for line in GATE_CI.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("if [") and "no tests collected" not in stripped:
+            if "SUITE_PC" in stripped or '"$pc"' in stripped:
+                if "-eq 5" in stripped or '= "5"' in stripped:
+                    return stripped
+    raise AssertionError(
+        "the mutation gate no longer reads the suite's exit code at all"
+    )
+
+
+def test_the_mutation_gate_survives_a_suite_step_that_published_nothing():
+    """`suite_step()` declares its exit code `local`, so the mutation gate cannot see that name.
+
+    Reading it directly aborted the WHOLE script under `set -uo pipefail` with `pc: unbound
+    variable` - invisible in this repository, where cosmic-ray's `module-path` does not resolve and
+    the branch is never taken, and fatal in any consumer whose does. The gate must reach a decision
+    with the suite's outcome unpublished rather than kill the run.
+    """
+    body = (
+        "set -uo pipefail\n"
+        "suite_step() { local pc; pc=5; }\n"
+        "suite_step\n"
+        f"{_mutation_scope_guard_line()} echo SKIPPED; else echo RAN; fi\n"
+        "echo REACHED_THE_END\n"
+    )
+    proc = subprocess.run(
+        ["bash", "-c", body], capture_output=True, text=True, check=False
+    )
+    assert "unbound variable" not in proc.stderr, proc.stderr
+    assert "REACHED_THE_END" in proc.stdout, (proc.stdout, proc.stderr)
+    assert proc.returncode == 0, (proc.returncode, proc.stderr)
