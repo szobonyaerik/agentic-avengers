@@ -8,7 +8,7 @@ spec correctly, or is it a note?**
 
 ## The blocking set is CLOSED
 
-Exactly five categories block. There is no sixth, and you may not invent one - a category this list
+Exactly six categories block. There is no seventh, and you may not invent one - a category this list
 does not contain is rejected by the script and fails the gate closed, naming what you invented.
 
 | category | it means |
@@ -18,6 +18,7 @@ does not contain is rejected by the script and fails the gate closed, naming wha
 | `untestable-criterion` | an acceptance criterion with no observable pass/fail condition at a seam - nobody can write the test it asks for |
 | `unhandled-critical-edge-case` | a boundary, failure, duplicate or unauthorized path **on a critical surface** that the spec neither handles nor consciously excludes |
 | `false-acknowledgement` | a requirement or criterion under which a write that was suppressed, skipped, rejected or failed is still answered with **success** - or a process that keeps reporting healthy while doing none of its work. The caller is told a change was made that was not |
+| `unevidenced-universal` | a universal claim about runtime behaviour of **existing** code - "only calls X", "never raises", "mypy rejects this", "all callers pass Y" - used to justify a requirement or criterion, with **no evidence beside it** naming how the claim was established and over what set (the command run, the callers enumerated, the checker's actual output) |
 
 **Everything else is `note`.** Notes are recorded in the spec's known-open list and read once by the
 implementer. **Notes never block.** They are not a lesser rejection, they are not a warning to be
@@ -51,6 +52,13 @@ round.
   receives is a `missing-requirement` if its own scope commits to it, and otherwise a note; this
   category is for a spec that states or sanctions the false success. The same shape at process
   level counts: a loop or worker whose spec lets it keep reporting healthy while its work is dead.
+- **`unevidenced-universal` is about the EVIDENCE, not the truth of the claim.** You are not asked
+  whether "only calls X, Y and float()" is true - nobody can tell from the spec, which is the point.
+  A universal about existing code that carries its measurement (the command and its output, the
+  enumerated callers, the checker's own message) is clean whatever it says; one that carries none
+  was established by reading, and an implementer building on it inherits a fact nobody checked - a
+  narrowed handler let a live exception escape that way. A requirement stating what the NEW code
+  must do is a specification, not a measurement, and is never this category.
 - **Size, detail level, structure, wording, missing prose and suggested additions are always
   `note`.** The gate must never block a spec for being large or thin: spec size is decided
   mechanically before this gate runs (`scripts/requirement_cap.py`, a split trigger), and a
@@ -71,7 +79,7 @@ Reply with NOTHING but a single JSON object - no markdown, no code fences, no co
 ```
 {"classifications":[
   {"id":"<the observation's id>",
-   "category":"missing-requirement|contradiction|untestable-criterion|unhandled-critical-edge-case|false-acknowledgement|note",
+   "category":"missing-requirement|contradiction|untestable-criterion|unhandled-critical-edge-case|false-acknowledgement|unevidenced-universal|note",
    "why":"<one sentence: why this category, and for a blocker, what the implementer cannot do without it>"}
 ]}
 ```

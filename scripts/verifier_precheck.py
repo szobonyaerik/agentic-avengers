@@ -53,6 +53,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -80,6 +81,7 @@ from applicability import (  # noqa: E402
     report_unenforced,
     touched,
 )
+from measurement_claims import finding_problems  # noqa: E402
 from requirement_cap import declared_bindings  # noqa: E402
 import spec_gate_state  # noqa: E402 — the one place "is this spec gated" is decided
 
@@ -331,8 +333,31 @@ def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:
     return record.describe() if record else None
 
 
-def check_phase(phase_dir: Path) -> list[str]:
+def verdict_problems(phase_dir: Path) -> list[str]:
+    """Every finding in the phase's verdict.json that names no `method` (issue #96).
+
+    A sweep done by reading reported complete and missed two instances; a probe that drove one axis
+    of two scoped a fix round that closed half a defect. The finding says HOW - what was driven, over
+    which axes - and its absence is bookkeeping about the verdict, decided here like every other
+    absence on it. An unreadable verdict is a finding of its own, never a clean result.
+    """
+    target = Path(phase_dir) / "verdict.json"
+    if not target.is_file():
+        return []
+    try:
+        verdict = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"{target}: cannot be read ({exc}) - UNDECIDABLE, not clean."]
+    return [f"{target}: {line}" for line in finding_problems(verdict)]
+
+
+def check_phase(phase_dir: Path, *, verdict_in_scope: bool = True) -> list[str]:
     """Every mechanical finding for one phase, as lines. Empty means clean.
+
+    `verdict_in_scope` is the applicability boundary for the verdict's own bookkeeping: a phase the
+    diff touches for another reason - an amendment opened on a closed phase - carries a verdict this
+    change did not write, and its findings are counted rather than held. A phase named outright (the
+    handover hook) and a verdict the diff writes are held whole.
 
     The mappings here and the phase's test files inside `trace_claims` are opened once each: there
     is deliberately no preliminary sweep re-reading them to discover unreadable ones — the reader
@@ -343,6 +368,16 @@ def check_phase(phase_dir: Path) -> list[str]:
     is a larger change than this check warrants.
     """
     out: list[str] = []
+    verdict = verdict_problems(phase_dir)
+    if verdict_in_scope:
+        out.extend(verdict)
+    else:
+        report_unenforced(
+            "verifier_precheck",
+            len(verdict),
+            f"{phase_dir}/verdict.json is not written by this diff; its findings' `method` is "
+            f"counted, not held",
+        )
     specs = sorted(phase_dir.glob("specs/*/spec.md"))
     if not specs:
         return out
@@ -404,14 +439,17 @@ def phase_dirs(root: Path) -> list[Path]:
     )
 
 
-def changed_phase_dirs(root: Path) -> list[Path] | None:
-    """The phases the current diff touches, or None when git cannot say what changed.
+def changed_phase_dirs(root: Path, scope: set[str] | None) -> list[Path] | None:
+    """The phases `scope` touches, or None when git could not say what changed.
 
     None is not "nothing changed" and must never be read as one: the scope is unknowable, so the
     caller enforces nothing and says so. Falling back to every phase would hold a repository hostage
     to history it has not touched, which is the whole reason this is scoped.
+
+    The scope is passed in rather than fetched here because `main` asks git the same question twice -
+    once for which phases to visit, once for whether each phase's verdict is one this diff writes -
+    and two calls could disagree about the tree.
     """
-    scope = changed_paths(Path(root))
     if scope is None:
         return None
     return [phase for phase in phase_dirs(root) if touched(phase, scope)]
@@ -426,15 +464,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", type=Path)
     args = parser.parse_args(argv)
 
+    # Which phases' VERDICTS are held whole. A named phase always is; under `--all` and in the
+    # diff-scoped sweep only a verdict the diff itself writes is, because the verdict is a document
+    # class every consumer repo already has on disk and a full audit would fail its build over
+    # verdicts written before the `method` rule existed (carried_items' precedent, CLAUDE.md §4f).
+    scope = None
     if args.all:
         targets, mode = phase_dirs(args.root), "--all: every phase under docs/features/"
+        scope = changed_paths(Path(args.root)) or set()
     elif args.phases:
         targets, mode = (
             list(args.phases),
             "the phase directories named on the command line",
         )
     else:
-        scoped = changed_phase_dirs(args.root)
+        scope = changed_paths(Path(args.root))
+        scoped = changed_phase_dirs(args.root, scope)
         if scoped is None:
             print(
                 f"[verifier_precheck] git cannot say what changed under {args.root}, so the scope "
@@ -461,7 +506,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"[verifier_precheck] no such phase directory: {phase}", file=sys.stderr
             )
             return ERROR
-        findings.extend(check_phase(Path(phase)))
+        findings.extend(
+            check_phase(
+                Path(phase),
+                verdict_in_scope=scope is None
+                or touched(Path(phase) / "verdict.json", scope),
+            )
+        )
 
     if not findings:
         return CLEAN

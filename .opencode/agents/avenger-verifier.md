@@ -194,8 +194,15 @@ it. Record the amendment ids folded into a verdict in its `amendments` array.
    adversarial findings and the `execution` block naming the transcript they came from, to
    `docs/features/<feature>/phases/<n>-<slug>/verdict.json` (schema and procedure in
    `skills/verifier-triage`; template at `docs/templates/verdict.template.json`). Each finding is
-   self-contained: a deterministic `id`, the `instruction` for the routed agent, and its own
-   `break_glass` waiver (default `false`). The top-level `routed` array is *derived* from findings
+   self-contained: a deterministic `id`, the `instruction` for the routed agent, its **`method`** -
+   how the defect was established and how the fix is to be confirmed, naming what was DRIVEN and
+   over which axes (a probe that set what a collaborator returns and never what it raises scoped a
+   fix round that closed half a defect; the unstated axis is the unmeasured one) - and its own
+   `break_glass` waiver (default `false`). `scripts/verifier_precheck.py` refuses a finding with no
+   `method`. "Sweep X for this class" as an instruction names the method it wants driven, never
+   read; a grep count is not a reading of the criteria it counts; and an enumerated set of files is
+   a claim - name how it was derived (`git diff --name-only`, a tree search), not the list alone.
+   The top-level `routed` array is *derived* from findings
    still `open` and unwaived. Set `execution.chain` from
    `verifier_evidence.py chain <phase-dir>` — a verdict that names no transcript, or names one that
    does not match the record on disk, is refused by the hook and by CI. Record everything else by

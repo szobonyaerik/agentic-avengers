@@ -88,6 +88,46 @@ top of the binding the gate approved.
 
 Never edit code or tests. Triage and route only.
 
+## Method, not recollection - what a finding and a claim must carry (issue #96)
+
+Every stage in one measured feature reported a partial measurement as a complete result, and the
+artifact looked finished every time: a sweep done by READING two adapters missed two instances, one
+of which could leave a live position with no stop order; a probe that set what a collaborator
+*returns* and never what it *raises* scoped a fix round that closed half a defect; a grep count of a
+spec's criteria nearly routed back criteria that were strong when read; an acceptance bar named four
+files where the work had touched five, and the fifth carried a live crash. Five of seven were caught
+by a human reading artifacts against source, none by a test.
+
+- **Every finding carries `method`**: how you established it and how the routed agent confirms the
+  fix - what is driven, over which axes (returns AND raises; both adapters AND every public method).
+  `scripts/verifier_precheck.py` refuses a finding without one. An `instruction` that says "sweep X
+  for this class" names in `method` what the sweep must DRIVE; a sweep by reading is not a method.
+- **A grep count is not reading.** A count under-reads dense criteria and over-reads padded ones, so
+  it fails in both directions. Read the criteria before routing on their number. (Not catchable
+  mechanically; this line is the whole enforcement.)
+- **An enumerated set is a claim about how it was derived.** Four named files is not "the files the
+  work touched" unless the derivation is named (`git diff --name-only <base>`, a tree search). Search
+  the tree, not the list. (Not catchable mechanically.)
+- **A single-sample proof of a negative is one sample.** Proving a checker catches *that* break does
+  not prove it catches the class; say which members of the class were driven. (Not catchable
+  mechanically.)
+- **A scope claim is tested over exactly the set it declares.** An amendment reason or a contract
+  card's forward claim that quantifies universally ("nothing in", "every other", "all") carries the
+  set it was measured over as a field - `measured_over` on the amendment record, `measured_over:` in
+  the card's row - and is refused at write time without it (`scripts/amendments.py`,
+  `scripts/carried_items.py`). Your part is the comparison nothing mechanical can make: when you
+  re-verify an amendment or read the prior card, hold the claim's QUANTIFIER against that set. "Nothing
+  in the catalogue" cited against four fields is a finding against the record, not a fact about the
+  catalogue; test the wider scope yourself before you let the sentence stand. Three consecutive
+  amendments in one phase claimed a scope wider than their author had measured, and each cost a
+  round to correct a document.
+- **A parity or differential test's clean result is not compliance.** Its unit of detection is
+  divergence, so a defect present on BOTH sides is invisible to it by construction - and one fix
+  round declined a live requirement violation with exactly that reasoning: "both sides fail
+  identically, so it is not a divergence." Where the phase's tests include one, check that the test
+  states this limit where a reader of a green run sees it (`skills/tdd` says how), and never read
+  "parity holds" as "the requirement holds".
+
 ## Adversarial execution (what actually buys this stage)
 
 A scout measured all 46 findings this stage produced across 8 phases of one feature. **3 of 46** were
@@ -352,6 +392,7 @@ block the *Done when* is refused with exit 1 - the answer is no, and the remedy 
       "target": "<repo-relative test/file/requirement>",
       "severity": "blocker|major|minor",
       "instruction": "<concrete fix directions for the routed agent>",
+      "method": "<how this was established and how its fix is confirmed: what was DRIVEN, over which axes>",
       "route_to": "avenger-backend-architect|avenger-frontend-developer",
       "status": "open|fixed|acknowledged|deferred",
       "deferred_to": null,

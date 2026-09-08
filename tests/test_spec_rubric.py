@@ -29,6 +29,7 @@ pytestmark = pytest.mark.subprocess(
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import measurement_claims  # noqa: E402
 import spec_rubric  # noqa: E402
 from requirement_cap import DEFAULT_MAX  # noqa: E402
 from spec_gate_triage import BLOCKING, NOTE  # noqa: E402
@@ -68,6 +69,20 @@ def test_the_brief_tells_the_writer_size_can_never_block_it() -> None:
     rendered = spec_rubric.render().lower()
     assert "no gate will ever block your spec for being large" in rendered
     assert "split" in rendered
+
+
+def test_the_criterion_field_reaches_the_writer_from_the_module_that_checks_it() -> None:
+    """Issue #96: the spec gate refuses a criterion naming nothing it drives BEFORE either paid call,
+    so a writer never told the field exists learns it by rejection - the exact cost this brief was
+    built to remove. The field name is read from `measurement_claims`, never typed into this prose,
+    so renaming it there cannot leave the brief teaching the old spelling."""
+    rendered = spec_rubric.render()
+    assert f"`{measurement_claims.DRIVES}:`" in rendered
+    assert "scripts/measurement_claims.py" in rendered
+    assert f"{measurement_claims.DRIVES}: undriven" in rendered, (
+        "the writer must be told the escape hatch exists, or a criterion that genuinely cannot be "
+        "driven is answered with more prose"
+    )
 
 
 def test_each_prompt_section_is_carried_verbatim() -> None:

@@ -77,7 +77,15 @@ observation** - do not manufacture one per area, and do not restate the spec bac
 - **Cost** - a requirement whose implied test must spawn a subprocess, or whose runtime scales with
   the size of the suite, without the spec marking and justifying it in a sentence.
 - **Claims** - a line described as additive that would reject a value an existing caller already
-  passes. That is a breaking change wearing the wrong label.
+  passes. That is a breaking change wearing the wrong label. Also a **universal claim about how
+  existing code behaves** - "the method only calls X, Y and float()", "this never raises", "mypy
+  rejects this", "all callers pass a string" - used to justify a requirement, a narrowed handler or
+  a criterion: report whether evidence sits beside it naming how the claim was established and over
+  what set (a command and its output, the callers enumerated, the checker's own message). One
+  approved spec's "only calls X, Y and float()" was written by reading, was false, and produced a
+  live regression; a second claimed mypy rejects a change it accepts. Report the claim and whether
+  it carries evidence - do not judge whether the claim is true, and do not report a requirement
+  stating what the NEW code must do, which is a specification rather than a measurement.
 - **Acknowledgements** - a requirement or criterion under which a write that is suppressed, skipped,
   rejected or failed is still answered with success, so the caller cannot tell the two apart; or a
   loop, worker or poller that goes on reporting healthy while its work is dead. Suppressing a write
