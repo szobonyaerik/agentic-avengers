@@ -154,7 +154,7 @@ def test_at_the_cap_with_every_finding_fixed_is_resolved(phase: Path) -> None:
 
 
 def test_at_the_cap_with_every_finding_waived_is_resolved(phase: Path) -> None:
-    """Waiving the remainder is one of the three remedies the cap's own message names. The Verifier
+    """Waiving the remainder is one of the four remedies the cap's own message names. The Verifier
     records a waiver by leaving the finding in place with `break_glass`, so a check that demanded an
     empty array left CI permanently red with no action that could clear it."""
     archive(phase, 1, 6)
@@ -212,11 +212,11 @@ def test_the_cap_can_be_raised_for_one_call(phase: Path) -> None:
     assert main(["check", str(phase), "--max", "5"]) == 0
 
 
-def test_the_stop_message_offers_the_three_honest_ways_out(
+def test_the_stop_message_offers_the_four_honest_ways_out(
     phase: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A cap with no named remedy is just a wall. Carry, waive, or escalate — and a fourth attempt
-    is not one of the three."""
+    """A cap with no named remedy is just a wall. Carry, defer, waive, or escalate — and a fourth
+    attempt is not one of the four."""
     archive(phase, 1, 6)
     archive(phase, 2, 2)
     verdict(phase, 3, 8)
@@ -224,8 +224,9 @@ def test_the_stop_message_offers_the_three_honest_ways_out(
     err = capsys.readouterr().err
     assert "KNOWN-OPEN" in err
     assert "waive" in err
+    assert "defer" in err
     assert "escalate" in err
-    assert "A fourth attempt is not one of the three" in err
+    assert "A fourth attempt is not one of the four" in err
 
 
 def test_the_stop_message_shows_the_trickle(
@@ -282,7 +283,7 @@ def test_a_malformed_attempt_is_an_error_and_never_the_cap(
     err = capsys.readouterr().err
     assert "N/A" in err and "verdict.json" in err
     assert "NOT the attempt cap" in err
-    assert "A fourth attempt is not one of the three" not in err, (
+    assert "A fourth attempt is not one of the four" not in err, (
         "the cap's remedies cannot repair an unreadable record, so they must not be prescribed for it"
     )
 
@@ -351,7 +352,7 @@ def test_a_genuine_cap_still_exits_1_with_its_remedies(
     verdict(phase, 3, 8)
 
     assert main(["check", str(phase)]) == 1
-    assert "A fourth attempt is not one of the three" in capsys.readouterr().err
+    assert "A fourth attempt is not one of the four" in capsys.readouterr().err
 
 
 def test_an_unexpected_failure_is_reported_as_an_error_not_a_cap(
@@ -371,3 +372,82 @@ def test_an_unexpected_failure_is_reported_as_an_error_not_a_cap(
     err = capsys.readouterr().err
     assert "RuntimeError: the disk went away" in err
     assert "the loop was never judged" in err
+
+
+# --- the fourth disposition: `deferred` resolves a finding only when the ledger backs it ----------
+
+
+def test_a_deferred_finding_nothing_backs_is_still_unresolved(phase: Path) -> None:
+    """The Verifier writes the stamp; a stamp that resolved a finding by being written would be a
+    waiver by omission under a new name."""
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": 3,
+                "verdict": "pass",
+                "findings": [
+                    {
+                        "id": "abcdef123456",
+                        "status": "deferred",
+                        "deferred_to": "6-staging",
+                    }
+                ],
+            }
+        )
+    )
+    assert attempts(phase)[-1].unresolved == 1
+    assert main(["check", str(phase)]) == 1
+
+
+def test_a_deferred_finding_the_ledger_backs_is_resolved(phase: Path) -> None:
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": 3,
+                "verdict": "pass",
+                "findings": [
+                    {
+                        "id": "abcdef123456",
+                        "status": "deferred",
+                        "deferred_to": "6-staging",
+                    }
+                ],
+            }
+        )
+    )
+    (phase / "carried.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "discharges": [],
+                "deferrals": [
+                    {
+                        "id": "abcdef123456",
+                        "finding": "abcdef123456",
+                        "owner": "6-staging",
+                        "measurement": "7.7 deg between bar axis and view direction",
+                    }
+                ],
+            }
+        )
+    )
+    assert attempts(phase)[-1].unresolved == 0
+    assert main(["check", str(phase)]) == 0
+
+
+def test_the_stop_message_offers_deferral_as_the_fourth_way_out(
+    phase: Path, capsys
+) -> None:
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": 3,
+                "verdict": "fail",
+                "findings": [{"id": "f", "status": "open"}],
+            }
+        )
+    )
+    assert main(["check", str(phase)]) == 1
+    err = capsys.readouterr().err
+    assert "defer a finding that does NOT block this phase's Done when" in err
+    assert "not one of the four" in err

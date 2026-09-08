@@ -236,7 +236,7 @@ def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(
     assert result.returncode == 2
     assert "could not be DECIDED" in result.stderr
     assert "not the cap itself" in result.stderr
-    assert "A fourth attempt is not one of the three" not in result.stderr
+    assert "A fourth attempt is not one of the four" not in result.stderr
     assert "KNOWN-OPEN" not in result.stderr
 
 
@@ -1391,3 +1391,176 @@ def test_a_bookkeeping_finding_stops_the_handover_without_paying_for_the_suite(
     assert not sentinel.exists(), (
         "the phase suite ran before a finding that cannot depend on it"
     )
+
+
+# ── a deferred finding is resolved by its record, never by its stamp (issue #115) ────────────────
+
+DONE_WHEN_PLAN = """---
+feature: demo
+readers: x
+---
+### Phase 1 — demo
+- **Done when**: the demo demos.
+
+  | done-when | outcome |
+  |-----------|---------|
+  | DW-1 | the demo demos |
+
+### Phase 2 — later
+- **Done when**: later.
+"""
+
+DEFERRED_CARD = (
+    "# handover\n\n## Open items\n"
+    "| id | kind | title | where |\n|---|---|---|---|\n"
+    "| deadbeef0001 | deferred-finding | the bar renders end-on | carried.json#deferrals (owner 2-later) |\n"
+)
+
+
+def write_bound_spec(project: Path) -> None:
+    """A spec whose R1.1.1 carries DW-1 and whose R1.1.2 does not, gate-stamped like `write_spec`."""
+    spec_dir = phase_dir(project) / "specs" / "1.1-a"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    path = spec_dir / "spec.md"
+    path.write_text(
+        "---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\ncriticality: standard\n---\n\n# Spec\n\n"
+        "## Requirements\n"
+        "- R1.1.1 — `binding: none` — `done_when: DW-1` — the bound one. Enforced by: nothing\n"
+        "- R1.1.2 — `binding: none` — the unbound one. Enforced by: nothing\n\n"
+        "## Acceptance criteria\n\nDone.\n"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(project / "scripts" / "spec_gate_cache.py"),
+            "stamp",
+            str(path),
+            "gate",
+            "APPROVED",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def deferred_pass(project: Path, spec_id: str = "R1.1.2") -> None:
+    (project / "docs" / "features" / "demo" / "plan.md").write_text(
+        DONE_WHEN_PLAN, encoding="utf-8"
+    )
+    write_bound_spec(project)
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "verdict": "pass",
+                "findings": [
+                    {
+                        "id": "deadbeef0001",
+                        "spec_id": spec_id,
+                        "status": "deferred",
+                        "deferred_to": "2-later",
+                    }
+                ],
+                "execution": {
+                    "evidence": "verification-evidence.json",
+                    "chain": record_evidence(project),
+                },
+            }
+        )
+    )
+
+
+def defer(project: Path, *extra: str) -> subprocess.CompletedProcess:
+    record = project / "record.md"
+    record.write_text(
+        "the bar renders end-on\n7.7 deg between bar axis and view direction\n",
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(project / "scripts" / "carried_items.py"),
+            "defer",
+            str(phase_dir(project)),
+            "deadbeef0001",
+            "--to",
+            "2-later",
+            "--record-file",
+            str(record),
+            "--finding",
+            "deadbeef0001",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "AVENGER_METRICS_OFF": "1"},
+    )
+
+
+def test_a_pass_over_a_deferred_stamp_nothing_backs_does_not_close(
+    project: Path,
+) -> None:
+    deferred_pass(project)
+
+    result = run_hook(project, DEFERRED_CARD, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 2
+    assert "deadbeef0001" in result.stderr
+    assert "nothing behind it" in result.stderr
+    assert (
+        "verifier:deferred-unbacked" in result.stderr
+        or "A stamp alone is an open finding" in result.stderr
+    )
+
+
+def test_a_recorded_deferral_with_its_row_lets_the_phase_close(project: Path) -> None:
+    deferred_pass(project)
+    recorded = defer(project)
+    assert recorded.returncode == 0, recorded.stderr
+
+    result = run_hook(project, DEFERRED_CARD, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 0, result.stderr
+    assert "1 deferral(s)" in result.stderr
+
+
+def test_a_recorded_deferral_with_no_row_on_the_card_does_not_close(
+    project: Path,
+) -> None:
+    deferred_pass(project)
+    assert defer(project).returncode == 0
+
+    result = run_hook(project, AVENGER_METRICS_OFF="1")  # the default card says `none`
+
+    assert result.returncode == 2
+    assert "no `deferred-finding` row" in result.stderr
+
+
+def test_a_finding_that_blocks_the_done_when_cannot_be_deferred_and_the_phase_does_not_close(
+    project: Path,
+) -> None:
+    deferred_pass(project, spec_id="R1.1.1")
+    refused = defer(project)
+    assert refused.returncode == 1
+    assert (
+        "blocks this phase's *Done when*" in refused.stderr and "DW-1" in refused.stderr
+    )
+
+    result = run_hook(project, DEFERRED_CARD, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 2
+    assert "nothing behind it" in result.stderr
+
+
+def test_a_pre_rule_phase_with_no_done_when_table_closes_exactly_as_before(
+    project: Path,
+) -> None:
+    """The applicability boundary: a phase that never deferred anything is untouched by the rule."""
+    write_spec(project)
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 0, result.stderr
+    assert "0 deferral(s)" in result.stderr

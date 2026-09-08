@@ -10,7 +10,13 @@
     "head of the hash chain over verification-evidence.json's recorded runs; the gates refuse a pass",
     "whose chain does not match the transcript on disk. `run` no longer carries a family comparison:",
     "the cross-family reading pass it described is gone, and a field asserting an independence",
-    "nothing performs reads as coverage that is not there."
+    "nothing performs reads as coverage that is not there.",
+    "",
+    "A finding's `status` has a fourth value, `deferred`, with `deferred_to` naming the owning phase",
+    "(issue #115). It resolves the finding ONLY when the phase's carried.json records a deferral",
+    "naming it - `scripts/carried_items.py defer`, gated on the phase's structured Done when and",
+    "carrying the measurement. The stamp alone is an open finding; `bypassed` stays false, since a",
+    "deferral is not a waiver."
   ],
   "feature": "<feature>",
   "phase": "<n>-<slug>",
@@ -54,6 +60,7 @@
       "instruction": "<concrete fix directions for the routed agent>",
       "route_to": "avenger-backend-architect",
       "status": "open",
+      "deferred_to": null,
       "break_glass": false,
       "waiver_reason": null,
       "waived_by": null,

@@ -133,6 +133,218 @@ replace = """
   *)
     exit 0 ;;"""
 
+[[guard]]
+id = "mutation-gate.tree-restore"
+implements = "scripts/hook_mutation.sh"
+defect = "cosmic-ray exec mutates source IN PLACE and reverts in a `finally`; the hook's kill path SIGTERMs then SIGKILLs the process group, and neither runs a `finally`, so the mutant applied at that moment stayed on disk and was committed as authored code - four times in one phase, three under `verdict: pass`, in live trading code (issue #95). cleanup() removed a temp directory and never touched the tree."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+restore_tree() {
+  [ "$RESTORE_DONE" -eq 0 ] || return 0
+  [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0"""
+replace = """
+restore_tree() {
+  return 0"""
+
+[[guard]]
+id = "mutation-gate.the-restore-verdict-outlives-its-signal"
+implements = "scripts/hook_mutation.sh"
+defect = "The kill handler stayed installed across the restore, and bash delivers a deferred trap the instant the foreground child returns - one command before its exit code is read. The handler ran first, re-entered `restore_tree`, found `SNAP` already cleared and returned 0, so `TREE_CORRUPTED` was still 0 and the hook exited 0 under advisory with no TREE INTEGRITY line, over a tree the restore had just found altered. The verdict was computed and thrown away: issue #95's own silent clean pass, reached through the code added to close it."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+  trap 'RESTORE_SIGNALLED=1' TERM INT
+  classify_tree"""
+replace = """
+  classify_tree"""
+
+[[guard]]
+id = "mutation-gate.reap-before-the-tree-is-judged"
+implements = "scripts/hook_mutation.sh"
+defect = "The tree was judged while the cosmic-ray group could still write to it. The reap polled the LEADER, which this shell reaps asynchronously while the workers it spawned keep running the test command, so it reported the work stopped and the restore then hashed and copied a tree something else was still writing."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && group_has_live_member "$pgid"; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  # Unconditional, as in proc_group.py"""
+replace = """
+  while false; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  # Unconditional, as in proc_group.py"""
+
+[[guard]]
+id = "mutation-gate.a-corpse-is-not-a-live-worker"
+implements = "scripts/hook_mutation.sh"
+defect = "Liveness was decided by `kill -0`, which succeeds for a ZOMBIE: an entry in the process table that runs no code. After the SIGKILL, `wait` collects the leader this shell owns and the test-command process it spawned is reparented to PID 1 - cleared in milliseconds under launchd or systemd, NEVER cleared in a PID namespace whose PID 1 is an ordinary non-reaping process, which is what a plain `docker run` CI container is. The reap then reported a worker holding a tree nothing was holding, which produces the UNKNOWN state: the one this pipeline defines as `inspect the working tree by hand` and refuses to let GATE_BYPASS waive, over a tree the restore had proved intact."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """'$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }'"""
+replace = """'$1 == g { found = 1 } END { exit !found }'"""
+
+[[guard]]
+id = "mutation-gate.budget-validated"
+implements = "scripts/hook_mutation.sh"
+defect = "MUTATION_HOOK_BUDGET_S arrived from the environment unvalidated and went straight into bash arithmetic. A non-numeric value left REMAINING_S unset, and the next expansion under `set -u` exited 1 before the budget check, the snapshot and exec - the whole gate and its tree guard skipped with no record written, and exit 1 is not the blocking code, so `enforce` did not stop either."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+case "$MUTATION_HOOK_BUDGET_S" in
+  ''|*[!0-9]*) budget_config_error ;;"""
+replace = """
+case "$MUTATION_HOOK_BUDGET_S" in
+  a-value-no-operator-writes) budget_config_error ;;"""
+
+[[guard]]
+id = "mutation-gate.restore-claim"
+implements = "scripts/hook_mutation.sh"
+defect = "The hook read every non-2 exit from `restore` as `the tree differed and every file is back`, so a restore killed by a signal or crashing on a traceback - which exits 1, the code that means restored - told the operator the working tree was clean while a mutant was still applied in it."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+    if [ "$rc" -eq 1 ]; then
+      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict.""""
+replace = """
+    if true; then
+      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict.""""
+
+[[guard]]
+id = "mutation-gate.ci-restore-claim"
+implements = "scripts/gate_ci.sh"
+defect = "CI collapsed `restore` exit 1 and exit 2 into one code and printed `every in-scope file was put back from the pre-exec snapshot` for both, so a checkout whose read-only in-scope file could not be written back was reported as cleaned."
+tests = ["tests/test_gate_ci_mutation_tree.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+    if [ "$tc" -eq 1 ]; then
+      echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2"""
+replace = """
+    if [ "$tc" -ne 0 ]; then
+      echo "  ✗ mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree changed; every" >&2"""
+
+[[guard]]
+id = "mutation-gate.ci-kill-path-restore"
+implements = "scripts/gate_ci.sh"
+defect = "`gate_ci.sh` ran `cosmic-ray exec` in the foreground with no signal handling, so the restore happened only after a normal return. agents/avenger-verifier.md has the Verifier run `gate_ci.sh --full` in the LIVE working copy, so an interrupted or timed-out agent Bash call left the mutant applied in the implementer's uncommitted tree - issue #95's damage model in the one checkout nobody discards."
+tests = ["tests/test_gate_ci_mutation_tree.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+  trap _mg_on_signal TERM INT"""
+replace = """
+  trap - TERM INT"""
+
+[[guard]]
+id = "mutation-gate.ci-restore-runs-under-its-traps"
+implements = "scripts/gate_ci.sh"
+defect = "The traps were cleared BEFORE the normal-path restore, so the one command answering the snapshot ran at the default signal disposition. A timed-out agent Bash call - the Verifier runs `gate_ci.sh --full` in the live working copy - killed the shell at 143 with the restore in flight: no classification, no `inspect it by hand`, and a mutant left on disk through the code added to remove it. bash delivers a trap the moment the foreground command returns, before the lines that classify it, which is why the handler reads whether the restore ever REPORTED rather than assuming it did."
+tests = ["tests/test_gate_ci_mutation_tree.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+  _mg_restore
+  local tc=$?
+  trap - TERM INT"""
+replace = """
+  trap - TERM INT
+  _mg_restore
+  local tc=$?"""
+
+[[guard]]
+id = "mutation-gate.snapshot-armed-late"
+implements = "scripts/hook_mutation.sh"
+defect = "`SNAP` was armed BEFORE the snapshot command ran, while `restore_tree` asked only that the directory existed. `snapshot()` mkdirs `<out>/files` as its first action, so the whole write was a window where SNAP named a manifest-less directory - and a signal arriving there restored against nothing, reported `NOT every file could be put back` and exited 2 under advisory, while exec had provably never started."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then"""
+replace = """
+SNAP="$WORK/tree"
+if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then"""
+
+[[guard]]
+id = "mutation-gate.bypass-never-waives-a-dirty-tree"
+implements = "scripts/hook_mutation.sh"
+defect = "`fail_tree` honoured GATE_BYPASS for EVERY tree outcome. An unscoped break-glass (GATE_BYPASS_GATES is opt-in) over a restore that could not write back onto a read-only in-scope file, or a restore that never completed, exited 0 through the audited path with the cosmic-ray mutant still on disk - issue #95's damage model surviving the fix for it. A restore having RUN is not a restore having SUCCEEDED."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+    if [ "$TREE_STATE" = "restored" ]; then
+      bypass_and_exit "mutation:tree-corrupted"
+    fi"""
+replace = """
+    bypass_and_exit "mutation:tree-corrupted\""""
+
+[[guard]]
+id = "mutation-gate.ci-bypass-never-waives-a-dirty-tree"
+implements = "scripts/gate_ci.sh"
+defect = "CI's end-of-run break-glass waived `mutation:tree-corrupted` whatever the tree guard had established, so an override aimed at a flaky gate turned a checkout still holding a cosmic-ray mutant into a green run - in the live working copy the Verifier runs `gate_ci.sh --full` in."
+tests = ["tests/test_gate_ci_mutation_bypass.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = """
+if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ] && [ "$TREE_UNCLEAN" -ne 0 ]; then"""
+replace = """
+if [ "$fail" -ne 0 ] && [ -n "${GATE_BYPASS:-}" ] && false; then"""
+
+[[guard]]
+id = "mutation-gate.restore-crash"
+implements = "scripts/mutation_exec_guard.py"
+defect = "`main` had no exception boundary, so an uncaught exception exited 1 - the same code that tells the caller the tree differed and every file was put back. A restore that crashed part-way was read as one that completed, and the hook printed the successful-restoration line over a tree that still held the mutant."
+tests = ["tests/test_mutation_exec_guard.py"]
+[[guard.mutation]]
+file = "scripts/mutation_exec_guard.py"
+find = """
+    try:
+        return main(argv)
+    except Exception as exc:  # noqa: BLE001 - any crash is an unknown tree, and that is fail-closed
+        print(f"{TAG} unexpected failure: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ERROR"""
+replace = """
+    return main(argv)"""
+
+[[guard]]
+id = "mutation-gate.tree-compare"
+implements = "scripts/mutation_exec_guard.py"
+defect = "A restore that puts the files back but reports the tree intact lets the hook read a corrupted run as a clean one: the mutant is gone from disk, and the verdict computed over a run that left it there stands. A tree that had to be restored is a tree that differed, and the caller must hear it."
+tests = ["tests/test_mutation_exec_guard.py", "tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/mutation_exec_guard.py"
+find = """
+    if not differed:
+        print(f"{TAG} tree intact: every in-scope file hashes as it did before exec")
+        return OK
+"""
+replace = """
+    print(f"{TAG} tree intact: every in-scope file hashes as it did before exec")
+    return OK
+"""
+
+[[guard]]
+id = "mutation-gate.exec-budget"
+implements = "scripts/hook_mutation.sh"
+defect = "An exec the hook could tell would not finish inside its budget was started anyway and killed mid-mutant. Where the kill can be predicted - the baseline's measured wall clock times the pending mutants, against what the budget has left - exec is refused up front and recorded as `did-not-run`, rather than begun and cut short with a mutant applied (issue #95)."
+tests = ["tests/test_hook_mutation.py"]
+[[guard.mutation]]
+file = "scripts/hook_mutation.sh"
+find = """
+if [ "$bc" -eq 1 ]; then
+  tail -3 "$TMP" >&2"""
+replace = """
+if false; then
+  tail -3 "$TMP" >&2"""
+
 # --- the requirement cap ---------------------------------------------------------------------------
 
 [[guard]]
@@ -662,9 +874,155 @@ tests = ["tests/test_verifier_attempts.py"]
 [[guard.mutation]]
 file = "scripts/verdict_findings.py"
 find = '''
-        and not f.get("break_glass")'''
+        if not isinstance(f, dict) or f.get("break_glass"):'''
 replace = '''
-        and True'''
+        if not isinstance(f, dict):'''
+
+[[guard]]
+id = "verdict-findings.deferral-must-be-backed"
+implements = "scripts/verdict_findings.py"
+defect = "A `status: deferred` finding is the fourth disposition (issue #115), and the Verifier writes the stamp. Read on sight, a stamp resolves a finding by being written - a waiver by omission with a new name - so it resolves one only when the phase's carried.json records a deferral naming it, gated on the Done when and carrying the measurement."
+tests = ["tests/test_verifier_attempts.py"]
+[[guard.mutation]]
+file = "scripts/verdict_findings.py"
+find = '''
+        elif status == DEFERRED and str(f.get("id") or "") not in backed:'''
+replace = '''
+        elif False:'''
+
+[[guard]]
+id = "done-when.blocking-finding-is-not-deferrable"
+implements = "scripts/done_when.py"
+defect = "A finding against a requirement that carries a condition of this phase's Done when is this phase's to fix. faithful-rep phase 3's amendment A3 caught a clip containing no exercise, against the cyclic cut the Done when names; a deferral gate that let it through would have shipped it, and telling stages to care less is exactly the weakening issue #115 forbids."
+tests = ["tests/test_done_when.py", "tests/test_deferral_replay.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+    if blocking:
+        return Decision(
+            BLOCKS,'''
+replace = '''
+    if False:
+        return Decision(
+            BLOCKS,'''
+
+[[guard]]
+id = "done-when.prose-only-cannot-defer"
+implements = "scripts/done_when.py"
+defect = "A Done when that is prose only, or a declared condition no requirement carries, cannot say what a finding would block. Read as clear, every finding becomes deferrable by leaving the table unwritten or one requirement untagged - the exact silent pass this whole item exists to remove."
+tests = ["tests/test_done_when.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+    if uncarried:
+        return Decision(
+            UNDECIDABLE,'''
+replace = '''
+    if False:
+        return Decision(
+            UNDECIDABLE,'''
+
+[[guard]]
+id = "carried-items.deferred-row-is-backed"
+implements = "scripts/carried_items.py"
+defect = "A `deferred-finding` row on the card with no record behind it names no owner and carries no measurement, and a record with no row is off the read path. Either one lets a deferral vanish between the phase that made it and the phase that owes it."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+        for identifier in sorted(rows - set(records)):
+            out.append('''
+replace = '''
+        for identifier in sorted(set()):
+            out.append('''
+
+[[guard]]
+id = "carried-items.deferred-is-recarried-not-declined"
+implements = "scripts/carried_items.py"
+defect = "A deferred finding owned by a later phase, declined by a phase in between, is dropped on the way: the owner is never asked. Declining it is refused; it is re-carried with its measurement byte-for-byte, which is what binds the owner."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    if (
+        how == "declined"
+        and item.is_deferred()
+        and _owner_number(item.owner or "") > _phase_number(phase_dir)
+    ):'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "carried-items.recarry-is-unconditional"
+implements = "scripts/carried_items.py"
+defect = "Re-carrying gated on the Done when. It decides nothing - the record crosses byte-for-byte, still owed to the same later phase - and the gate cannot even be asked here: a deferral's requirement ids belong to the phase that raised it, while the gate matches them against the conditions THIS phase's specs tag, so BLOCKS was unreachable and a clean result established nothing. Gated, an intermediate phase whose own Done when is prose only could not answer the inherited row at all: declining it is refused for an item a later phase owns, built/tested need a fix that does not exist, and the close had only GATE_BYPASS left."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    carried = dict(source)
+    carried["recarried_by"] = Path(phase_dir).name'''
+replace = '''
+    _decide_or_refuse(phase_dir, list(source.get("spec_ids") or []), f"{item_id}")
+    carried = dict(source)
+    carried["recarried_by"] = Path(phase_dir).name'''
+
+[[guard]]
+id = "carried-items.a-superseded-deferred-stamp-does-not-outlive-the-finding"
+implements = "scripts/carried_items.py"
+defect = "A `status: deferred` stamp on an ARCHIVED attempt was held against the phase forever, even after a later attempt fixed the finding. The remedy the message prescribes does not exist there - `defer` refuses a finding whose requirement carries a Done when condition, and an archived attempt is not edited - so a phase with nothing open could close only under GATE_BYPASS. Each finding is judged by the LAST record that states anything about it, the rule verifier_attempts._check already follows."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+            if identifier in resolved:
+                continue'''
+replace = '''
+            if False:
+                continue'''
+
+[[guard]]
+id = "carried-items.unreadable-verdict-does-not-abort-the-sweep"
+implements = "scripts/carried_items.py"
+defect = "`check` sweeps every phase in one pass. A verdict it cannot parse in ONE phase - an untouched one, outside the diff - propagated out of the sweep, so nothing was reported about any other phase, including the phases with real owed items."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = '''
+    try:
+        out.extend(f"{phase_dir}: {line}" for line in deferral_problems(phase_dir))
+    except CarriedError as exc:
+        out.append(f"{phase_dir}: {exc}")'''
+replace = '''
+    out.extend(f"{phase_dir}: {line}" for line in deferral_problems(phase_dir))'''
+
+[[guard]]
+id = "done-when.tag-stops-at-the-prose-after-it"
+implements = "scripts/done_when.py"
+defect = "A `done_when:` capture that swallowed spaces and hyphens read the rest of a plain-dash declaration line as condition ids. Those name nothing the plan declares, so every such phase went UNDECIDABLE and lost deferral silently - and a tail that happened to mention another condition id read as carrying it, clearing a finding that should have been undecidable."
+tests = ["tests/test_done_when.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+    r"done[_-]when:[ \t`]*([A-Za-z0-9._-]+(?:[ \t]*,[ \t]*[A-Za-z0-9._-]+)*)",'''
+replace = '''
+    r"done[_-]when:[ \t`]*([A-Za-z0-9._\-, \t]+)",'''
+
+[[guard]]
+id = "done-when.table-ends-where-the-table-ends"
+implements = "scripts/done_when.py"
+defect = "The condition scan ran to the end of the phase section, so every row of any LATER table under the same heading - a spec list, a risk table - became a phantom condition no requirement carries, and a plan that declared its conditions correctly still read as undecidable."
+tests = ["tests/test_done_when.py"]
+[[guard.mutation]]
+file = "scripts/done_when.py"
+find = '''
+        if not cells:
+            if seen_header:
+                break
+            continue'''
+replace = '''
+        if not cells:
+            continue'''
 
 # --- the override log --------------------------------------------------------------------------------------------------------
 
@@ -1409,3 +1767,6 @@ find = '''
 replace = '''
         for line in []:
             print(line, file=target)'''
+[[exempt]]
+file = "scripts/pipeline_metrics.py"
+reason = "The pipeline's measurement writer. It decides nothing and may not: writing metrics can never fail a phase (CLAUDE.md 6d), so every call from a hook exits 0 and a refused write is swallowed and logged. It reached this inventory's scope when `carried_items.py` began emitting a deferral count through it; the checks that read its record and CAN fail a phase - `metrics-emission.defect-floor` and `metrics-emission.close-stamp` - are declared, and they are where a producer that stopped producing is caught."
