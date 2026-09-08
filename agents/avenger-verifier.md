@@ -39,6 +39,10 @@ python3 scripts/verifier_evidence.py record <phase-dir> --kind suite -- pytest -
 python3 scripts/verifier_evidence.py record <phase-dir> --kind adversarial -- <the command that drives the real path>
 ```
 
+**Run the suite with the command this project declares** — `scripts/verifier_precheck.py` refuses a
+`pass` whose recorded `suite` run is not the `test:` command in `.no-mistakes.yaml`, or cannot be
+read at all (issue #119).
+
 It runs the command in its own process group, captures its output to a log beside the record, and
 stores the argv, the exit code, the measured wall clock, the sha256 of that output and a digest of
 the specs and tests it ran against. Your exit code is the command's own — the recorder never

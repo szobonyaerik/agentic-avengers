@@ -2097,3 +2097,115 @@ def test_recording_helper_spend_never_raises(stub_sink, monkeypatch):  # noqa: F
         )
         is False
     )
+
+
+# --- which command the suite behind a pass actually ran (issue #119) -------------------------------
+
+
+def _command_phase(
+    project: Path, *, declared: str | None, argv: list[str] | None
+) -> Path:
+    phase_dir = project / "docs" / "features" / "demo" / "phases" / "3-real-frames"
+    phase_dir.mkdir(parents=True)
+    if declared is not None:
+        (project / ".no-mistakes.yaml").write_text(
+            f'commands:\n  test: "{declared}"\n', encoding="utf-8"
+        )
+    if argv is not None:
+        (phase_dir / "verification-evidence.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "phase": "3-real-frames",
+                    "runs": [{"seq": 1, "kind": "suite", "argv": argv, "exit_code": 0}],
+                }
+            ),
+            encoding="utf-8",
+        )
+    return phase_dir
+
+
+def test_the_command_that_ran_is_recorded_beside_the_declared_one(stub_sink):  # noqa: F811
+    """Issue #119: an improvised run that passes was indistinguishable in the record from the
+    declared run passing, because nothing recorded which command was used."""
+    project, store, _log = stub_sink
+    phase_dir = _command_phase(
+        project, declared="pytest --cov", argv=["pytest", "-q", "tests/demo"]
+    )
+
+    assert metrics.record_test_command(str(phase_dir))
+    assert metrics.record_test_command(str(phase_dir))  # idempotent by id
+
+    rows = [
+        r for r in stored(store, "03")["gate_calls"] if r["stage"] == "test-command"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["id"] == "p03-test-command"
+    assert rows[0]["verdict"] == "NO-GO"
+    assert "declared=pytest --cov" in rows[0]["note"]
+    assert "ran=pytest -q tests/demo" in rows[0]["note"]
+    assert set(rows[0]) <= {
+        "id",
+        "stage",
+        "spec",
+        "attempt",
+        "model",
+        "model_family",
+        "latency_ms",
+        "verdict",
+        "failure_cause",
+        "note",
+    }
+
+
+def test_the_declared_command_actually_run_records_go(stub_sink):  # noqa: F811
+    project, store, _log = stub_sink
+    phase_dir = _command_phase(
+        project, declared="pytest --cov", argv=["pytest", "--cov", "tests/demo"]
+    )
+    assert metrics.record_test_command(str(phase_dir))
+    [row] = [
+        r for r in stored(store, "03")["gate_calls"] if r["stage"] == "test-command"
+    ]
+    assert row["verdict"] == "GO"
+
+
+def test_a_run_nothing_could_read_is_recorded_unknown_never_guessed(stub_sink):  # noqa: F811
+    """`unknown` is a named state. Recording the declared command as if it had run is the defect."""
+    project, store, _log = stub_sink
+    phase_dir = _command_phase(project, declared="pytest --cov", argv=None)
+    assert metrics.record_test_command(str(phase_dir))
+    [row] = [
+        r for r in stored(store, "03")["gate_calls"] if r["stage"] == "test-command"
+    ]
+    assert "ran=unknown" in row["note"]
+    assert row["verdict"] == "NO-GO"
+
+
+def test_a_project_declaring_nothing_records_undeclared_and_judges_nothing(  # noqa: F811
+    stub_sink,
+):
+    """A `GO` here would read as a comparison that was made. There is nothing to compare."""
+    project, store, _log = stub_sink
+    phase_dir = _command_phase(project, declared=None, argv=["pytest", "-q"])
+    assert metrics.record_test_command(str(phase_dir))
+    [row] = [
+        r for r in stored(store, "03")["gate_calls"] if r["stage"] == "test-command"
+    ]
+    assert "declared=undeclared" in row["note"]
+    assert row["verdict"] == metrics.NO_VERDICT
+
+
+def test_an_unreadable_declaration_is_kept_apart_from_no_declaration(stub_sink):  # noqa: F811
+    """ "Has no test command" and "nobody could tell what it is" have different remedies."""
+    project, store, _log = stub_sink
+    phase_dir = _command_phase(project, declared=None, argv=["pytest", "-q"])
+    (project / ".no-mistakes.yaml").write_text(
+        'test: "pytest --cov"\ncommands:\n  test: "pytest -q"\n', encoding="utf-8"
+    )
+    assert metrics.record_test_command(str(phase_dir))
+    [row] = [
+        r for r in stored(store, "03")["gate_calls"] if r["stage"] == "test-command"
+    ]
+    assert "declared=unreadable" in row["note"]
+    assert row["verdict"] == metrics.NO_VERDICT

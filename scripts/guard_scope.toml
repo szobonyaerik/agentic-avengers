@@ -98,7 +98,7 @@ limits = [
 ]
 
 [guard."verifier_precheck.py"]
-proves = "that every requirement id owed a trace has a row, that each row names a test which exists, is not skipped and (where the test lists any id) lists the row's id, that every spec's gate stamp is fresh, that every bound `done` stamp still names the mapping and tests here now, and that every Done when condition in scope declares whether a gate can evaluate it, with a passing verdict carrying the ones no gate can."
+proves = "that every requirement id owed a trace has a row, that each row names a test which exists, is not skipped and (where the test lists any id) lists the row's id, that every spec's gate stamp is fresh, that every bound `done` stamp still names the mapping and tests here now, that every Done when condition in scope declares whether a gate can evaluate it with a passing verdict carrying the ones no gate can, and that a passing verdict's recorded `suite` run is the test command the project declares."
 limits = [
   "that a row's PROSE matches the test it names - a row asserting the opposite of its own running test passes",
   "a row whose test lists NO requirement id, which can corroborate nothing and is counted rather than held",
@@ -107,6 +107,9 @@ limits = [
   "anything about coverage or correctness, which it deliberately never judges",
   "whether a Done when condition declared `gate-verifiable` really is one - it refuses the row that declares neither, never a wrong declaration",
   "that a CARRIED spec's mapping is the right one: a spec directory of that name under this feature is taken to be the same spec, and its rows count toward the traced set only - never toward the row-to-test check, which is held against this phase's own tests",
+  "anything about no-mistakes' own feature-close `test` step: it reads the declared command out of `.no-mistakes.yaml` and the RUN out of the transcript this pipeline writes, so a project whose config no-mistakes could not see (it reads `main` regardless of the default branch) still improvises there and this says nothing about it - that half is upstream",
+  "that two SPELLINGS of one command are the same command: the comparison is a prefix over the argv, so `python3 -m pytest --cov` and the declared flags in another order are both refused, which is the safe direction and is named in the finding rather than resolved",
+  "that the declared command is the RIGHT one, or that it was read from a real YAML parse: these scripts are stdlib-only, so the `test:` key is read by line and two disagreeing declarations are reported UNDECIDABLE rather than resolved",
 ]
 
 [guard."pipeline_metrics.py"]
