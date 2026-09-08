@@ -90,6 +90,7 @@ from applicability import (  # noqa: E402
     report_unenforced,
     touched,
 )
+import done_when  # noqa: E402 — the one owner of a phase's structured *Done when*
 from measurement_claims import finding_problems  # noqa: E402
 from requirement_cap import declared_bindings  # noqa: E402
 import spec_done_guard  # noqa: E402 — the one place "what does this `done` certify" is decided
@@ -502,13 +503,38 @@ def verdict_problems(phase_dir: Path) -> list[str]:
     return [f"{target}: {line}" for line in finding_problems(verdict)]
 
 
-def check_phase(phase_dir: Path, *, verdict_in_scope: bool = True) -> list[str]:
+def done_when_problems(phase_dir: Path, *, plan_in_scope: bool = True) -> list[str]:
+    """A *Done when* condition no gate can evaluate is declared, and a `pass` repeats it (#116).
+
+    Two obligations, one rule, and `done_when.py` owns both readings. The DECLARATION lives on the
+    plan's row, so it is held on the plan's own applicability (`plan_in_scope`): a plan this change
+    does not write is a plan written before the rule, counted and named rather than blocked (§3a).
+    The DISCLOSURE lives on the verdict and the card this phase is closing - artifacts this phase
+    writes, over conditions its plan already declares `human-observed` - so it rides the phase like
+    every other finding here, and is never softened by how old the plan is.
+    """
+    declaration = done_when.declaration_problems(phase_dir)
+    if not plan_in_scope:
+        report_unenforced(
+            "verifier_precheck",
+            len(declaration),
+            f"{phase_dir}'s plan.md is not written by this diff; its undeclared *Done when* "
+            f"condition(s) are counted, not held",
+        )
+        declaration = []
+    return declaration + done_when.disclosure_problems(phase_dir)
+
+
+def check_phase(
+    phase_dir: Path, *, verdict_in_scope: bool = True, plan_in_scope: bool = True
+) -> list[str]:
     """Every mechanical finding for one phase, as lines. Empty means clean.
 
     `verdict_in_scope` is the applicability boundary for the verdict's own bookkeeping: a phase the
     diff touches for another reason - an amendment opened on a closed phase - carries a verdict this
     change did not write, and its findings are counted rather than held. A phase named outright (the
-    handover hook) and a verdict the diff writes are held whole.
+    handover hook) and a verdict the diff writes are held whole. `plan_in_scope` is the same
+    boundary one document over, for the *Done when*'s own declaration (`done_when_problems`).
 
     The mappings here and the phase's test files inside `trace_claims` are opened once each: there
     is deliberately no preliminary sweep re-reading them to discover unreadable ones — the reader
@@ -519,6 +545,7 @@ def check_phase(phase_dir: Path, *, verdict_in_scope: bool = True) -> list[str]:
     is a larger change than this check warrants.
     """
     out: list[str] = []
+    out.extend(done_when_problems(phase_dir, plan_in_scope=plan_in_scope))
     verdict = verdict_problems(phase_dir)
     if verdict_in_scope:
         out.extend(verdict)
@@ -610,6 +637,25 @@ def changed_phase_dirs(root: Path, scope: set[str] | None) -> list[Path] | None:
     return [phase for phase in phase_dirs(root) if touched(phase, scope)]
 
 
+def plan_in_scope(phase_dir: Path, scope: set[Path] | None) -> bool:
+    """Whether this change writes the plan a phase's *Done when* lives in (issue #116).
+
+    Deliberately NOT `verdict_in_scope`'s rule. A verdict is written by the phase that is closing,
+    so a phase named outright is evidence enough to hold its verdict whole; a **plan** was written
+    phases earlier, so "the handover hook named this phase" says nothing about whether its plan was
+    written after the `verification` column existed. Asking git directly - from the plan's own
+    location, so a named phase anywhere resolves its own repository - is the only evidence that
+    answers the question. A scope git cannot state holds nothing, exactly like everywhere else here.
+    """
+    plan = done_when.plan_path(phase_dir)
+    if plan is None:
+        return False
+    if scope is not None:
+        return touched(plan, scope)
+    local = changed_paths(plan.parent)
+    return local is not None and touched(plan, local)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phases", nargs="*", type=Path)
@@ -666,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
                 Path(phase),
                 verdict_in_scope=scope is None
                 or touched(Path(phase) / "verdict.json", scope),
+                plan_in_scope=plan_in_scope(Path(phase), scope),
             )
         )
 

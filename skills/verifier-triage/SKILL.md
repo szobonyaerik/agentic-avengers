@@ -405,6 +405,8 @@ block the *Done when* is refused with exit 1 - the answer is no, and the remedy 
       "waived_at": null
     }
   ],
+  "unverified_by_gate": [ { "id": "DW-<n>", "outcome": "<the plan's Done when row, verbatim>",
+                            "verified_by_this_verdict": false } ],
   "mutation": { "enabled": false, "language": "python|java|cpp", "score": 0.0, "threshold": 0.0,
                 "policy": "enforce|advisory", "survivors": [] },
   "routed": [ { "to": "avenger-backend-architect|avenger-frontend-developer", "finding_id": "<hash>",
@@ -417,6 +419,14 @@ block the *Done when* is refused with exit 1 - the answer is no, and the remedy 
 `binding: e2e` (traced by the journey listing the id) plus `binding: integration`. A `binding: none` id
 is outside the count and never appears in `untraced`, so a phase with unbound requirements still
 reports `traced == requirements`.
+
+`unverified_by_gate` is what makes a `pass` read as *"pass on everything I can check, and here is what
+I cannot"* (issue #116): every `human-observed` row of the phase's *Done when* table
+(`python3 scripts/done_when.py show <phase-dir>`), copied **verbatim** with
+`verified_by_this_verdict: false`, and the same ids on the contract card —
+`scripts/verifier_precheck.py` refuses a `pass` that omits one, and a paraphrase is where a
+limitation becomes a caveat. A `gate-verifiable` condition never appears here: it belongs to the rest
+of the verdict.
 
 `gamed-test` covers the tautological / implementation-coupled / missing-edge patterns above; name the
 exact pattern in the finding's `instruction`. If the mutation gate is off (the default), set

@@ -56,6 +56,29 @@ Undecidable is never "clear". The remedy for a prose-only *Done when* is to stru
 phase written before this rule existed simply cannot defer - which changes nothing else about how
 it closes (§3a: a rule binds what is open, and an old phase never had deferral to lose).
 
+## A condition no gate can evaluate says so, and the pass repeats it (issue #116)
+
+Phase 3's deciding condition is what a person SEES: the captain can watch `handstand_hold` hold, no
+pike, no tumble, no feet on the mat. The verifier proved execution, ran 162 tests and recorded 23
+runs, and **nothing rendered during verification**. `verdict: pass` was honest about its tests and
+silent about its blind spot, so it read as though the criterion had been checked; two defects
+shipped through that silence - `dips` renders one bar through the athlete's torso,
+`australian_pullups` renders its bar end-on at 7.7 degrees - both found by a person looking, at
+phase close, not by a gate.
+
+So the row that DEFINES a condition also declares which of two it is, from a closed vocabulary:
+
+    | done-when | outcome | verification |
+    |-----------|---------|--------------|
+    | DW-1 | `handstand_hold` holds - no pike, no tumble, no feet on the mat | human-observed |
+    | DW-2 | a cyclic clip loops from a real-frame cut, residual 2-9 mm | gate-verifiable |
+
+`declaration_problems` holds every row to that declaration, and `disclosure_problems` holds a
+`pass` to carrying each `human-observed` condition verbatim in `unverified_by_gate`, with the same
+list on the contract card. Both are wired into `verifier_precheck.py`, the mechanical check that
+already decides verdicts, on the applicability boundary: a plan this change does not write is
+counted and named, never blocked, and a prose-only *Done when* is left exactly where #115 left it.
+
 ## What this does NOT decide, said rather than implied
 
 It reads ids, never prose: a finding whose `spec_id` is tagged blocks and one whose is not does
@@ -74,6 +97,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -113,6 +137,29 @@ def slugify(title: str) -> str:
 #: The table's header cell - the contract with `docs/templates/plan.template.md`.
 TABLE_HEADER = "done-when"
 
+#: The header cell of the condition's THIRD column, and the closed vocabulary it may hold (issue
+#: #116). `faithful-rep` phase 3's deciding condition was what a person sees on screen - the captain
+#: can watch `handstand_hold` hold - and the verifier ran 162 tests over 23 recorded runs with
+#: nothing rendered. The verdict was `pass`: honest about its tests, silent about its blind spot, so
+#: it read as if the criterion had been checked. Two defects shipped through that silence, both found
+#: by a person looking at phase close.
+#:
+#: So a condition says which of the two it is, on the row where it is defined. The set is CLOSED and
+#: small for the reason every closed set here is closed: a value the table does not know is a hard
+#: failure naming what was invented, because guessing `gate-verifiable` hides a criterion nobody
+#: checks and guessing `human-observed` invents a disclosure nobody wrote.
+VERIFICATION_HEADER = "verification"
+GATE_VERIFIABLE = "gate-verifiable"
+HUMAN_OBSERVED = "human-observed"
+VERIFICATION: tuple[str, ...] = (GATE_VERIFIABLE, HUMAN_OBSERVED)
+
+#: The verdict's field, and the one place it is spelled. It is an extension to the frozen verdict
+#: schema made AT the schema (`skills/verifier-triage`), and it holds each `human-observed`
+#: condition verbatim plus the statement that this verdict did not verify it - so `pass` reads as
+#: "pass on everything I can check, and here is what I cannot".
+UNVERIFIED_FIELD = "unverified_by_gate"
+VERIFIED_KEY = "verified_by_this_verdict"
+
 #: A condition id. `DW-1` is the template's shape; any id a later stage can grep for qualifies, and a
 #: template placeholder (`DW-<n>`) does not.
 CONDITION_ID = re.compile(r"\A[A-Za-z][A-Za-z0-9._-]*\Z")
@@ -138,10 +185,17 @@ PHASE_NUMBER = re.compile(r"^(\d+)-")
 
 
 class Condition(NamedTuple):
-    """One row of the *Done when* table."""
+    """One row of the *Done when* table.
+
+    `verification` is the row's own declaration (issue #116), and it has three states rather than
+    two: one of `VERIFICATION` is a declaration; `""` is a table that HAS the column and a row that
+    left it blank; and `None` is a table with no such column at all - the shape every plan written
+    before this rule has, which is counted rather than held (§3a).
+    """
 
     id: str
     outcome: str
+    verification: str | None = None
 
 
 class Decision(NamedTuple):
@@ -198,6 +252,7 @@ def conditions(section: str) -> list[Condition] | None:
     """
     out: list[Condition] = []
     seen_header = False
+    column: int | None = None
     for line in section.splitlines():
         cells = _cells(line)
         if not cells:
@@ -207,6 +262,16 @@ def conditions(section: str) -> list[Condition] | None:
         head = cells[0].strip("*`_ \t").lower()
         if head == TABLE_HEADER:
             seen_header = True
+            # Found by NAME, never by position: a table that gains a column keeps reading, and a
+            # plan written before the column existed yields None here rather than a wrong cell.
+            column = next(
+                (
+                    index
+                    for index, cell in enumerate(cells)
+                    if cell.strip("*`_ \t").lower() == VERIFICATION_HEADER
+                ),
+                None,
+            )
             continue
         if not seen_header:
             continue
@@ -215,8 +280,24 @@ def conditions(section: str) -> list[Condition] | None:
         identifier = cells[0].strip("*`_ \t")
         if "<" in identifier or ">" in identifier or not CONDITION_ID.match(identifier):
             continue
-        out.append(Condition(identifier, cells[1] if len(cells) > 1 else ""))
+        verification = None
+        if column is not None:
+            raw = cells[column] if column < len(cells) else ""
+            verification = raw.strip("*`_ \t").lower()
+        out.append(
+            Condition(identifier, cells[1] if len(cells) > 1 else "", verification)
+        )
     return out if seen_header else None
+
+
+def plan_path(phase_dir: Path) -> Path | None:
+    """The `plan.md` a phase's *Done when* lives in, or None when the phase is outside the layout.
+
+    One resolver, so the reader below and the caller that decides whether the plan is inside this
+    change's scope (`verifier_precheck.main`) can never disagree about which file was read.
+    """
+    where = layout(Path(phase_dir))
+    return None if where is None else where[0] / "plan.md"
 
 
 def declared_conditions(phase_dir: Path) -> list[Condition] | None:
@@ -226,13 +307,12 @@ def declared_conditions(phase_dir: Path) -> list[Condition] | None:
     resolve the same file. A phase outside the layout, a missing plan and a plan with no heading for
     this phase all read as "no table": nothing structured was declared.
     """
-    where = layout(Path(phase_dir))
+    plan = plan_path(phase_dir)
     number = phase_number(phase_dir)
-    if where is None or number is None:
+    if plan is None or number is None:
         return None
-    feature_dir, _phase = where
     try:
-        text = (feature_dir / "plan.md").read_text(encoding="utf-8")
+        text = plan.read_text(encoding="utf-8")
     except OSError:
         return None
     section = plan_section(text, number)
@@ -282,6 +362,131 @@ def bound_requirements(phase_dir: Path) -> dict[str, set[str]]:
         for requirement, tags in tagged_requirements(text).items():
             for tag in tags:
                 out.setdefault(tag, set()).add(requirement)
+    return out
+
+
+def human_observed(phase_dir: Path) -> list[Condition]:
+    """The conditions this phase declares no gate can evaluate. Empty when it declares none."""
+    declared = declared_conditions(phase_dir) or []
+    return [c for c in declared if c.verification == HUMAN_OBSERVED]
+
+
+def declaration_problems(phase_dir: Path) -> list[str]:
+    """Every *Done when* row that does not say whether a gate can evaluate it (issue #116).
+
+    Two shapes, one finding each, because their remedies differ: a table with **no** `verification`
+    column is a plan written before this rule, and a column with a blank or invented cell is a plan
+    written after it that left the question open. A phase with no table at all is UNDECIDABLE as
+    issue #115 defined it and is not held here: the remedy for a prose-only *Done when* is the
+    table, which is #115's finding to make and not a second copy of it.
+    """
+    declared = declared_conditions(phase_dir)
+    if not declared:
+        return []
+    name = Path(phase_dir).name
+    out: list[str] = []
+    for condition in declared:
+        if condition.verification in VERIFICATION:
+            continue
+        if condition.verification is None:
+            out.append(
+                f"{name}: *Done when* {condition.id} declares no `{VERIFICATION_HEADER}` - "
+                f"plan.md's table for this phase has no such column, so nothing says whether a gate "
+                f"can evaluate '{condition.outcome}'. A criterion no gate can express passes "
+                f"unexamined under a verdict that reads as complete (issue #116). Add the column "
+                f"(docs/templates/plan.template.md) and give every row "
+                f"`{GATE_VERIFIABLE}` or `{HUMAN_OBSERVED}`."
+            )
+        elif not condition.verification:
+            out.append(
+                f"{name}: *Done when* {condition.id} leaves its `{VERIFICATION_HEADER}` cell "
+                f"empty. Blank is not `{GATE_VERIFIABLE}`: say which it is."
+            )
+        else:
+            out.append(
+                f"{name}: *Done when* {condition.id} declares `{condition.verification}`, which is "
+                f"not one of {', '.join(VERIFICATION)}. The vocabulary is closed; a value it does "
+                f"not know is named rather than guessed at, because guessing `{GATE_VERIFIABLE}` "
+                f"hides a criterion nobody checks and guessing `{HUMAN_OBSERVED}` invents a "
+                f"disclosure nobody wrote."
+            )
+    return out
+
+
+def _entries(verdict: dict) -> tuple[list[dict], str | None]:
+    """(`unverified_by_gate`'s entries, a finding when the field is not the shape it must be)."""
+    raw = verdict.get(UNVERIFIED_FIELD, [])
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        return [], (
+            f"`{UNVERIFIED_FIELD}` is not a list of entries. It is the field a reader of `pass` "
+            f"consults for what this verdict did NOT check; a shape nothing can read discloses "
+            f"nothing."
+        )
+    return raw, None
+
+
+def disclosure_problems(phase_dir: Path) -> list[str]:
+    """A `pass` must carry every `human-observed` condition, and the card beside it must too.
+
+    The declaration alone would be a promise: `pass` is read on the verdict, and the next phase
+    reads the contract card. So the same closed list has to appear in both, and the outcome is
+    carried **verbatim** - a paraphrase is where a limitation becomes a caveat.
+
+    Only a `pass` is held. A `fail` claims nothing about the phase's conditions, and a verdict that
+    is missing or unreadable is `verifier_precheck.verdict_problems`' finding, made once, there.
+    A card that has not been written yet owes nothing: it is checked when it exists.
+    """
+    owed = {c.id: c.outcome for c in human_observed(phase_dir)}
+    if not owed:
+        return []
+    target = Path(phase_dir) / "verdict.json"
+    try:
+        verdict = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(verdict, dict) or verdict.get("verdict") != "pass":
+        return []
+    entries, malformed = _entries(verdict)
+    if malformed is not None:
+        return [f"{target}: {malformed}"]
+    stated = {str(entry.get("id")): entry for entry in entries}
+    out: list[str] = []
+    for identifier, outcome in owed.items():
+        entry = stated.get(identifier)
+        if entry is None:
+            out.append(
+                f"{target}: `verdict: pass` over a *Done when* that declares {identifier} "
+                f"`{HUMAN_OBSERVED}`, and `{UNVERIFIED_FIELD}` does not name it. A pass that is "
+                f"silent about its blind spot reads as one that checked it. Carry the condition: "
+                f'{{"id": "{identifier}", "outcome": "<the plan\'s outcome verbatim>", '
+                f'"{VERIFIED_KEY}": false}}.'
+            )
+            continue
+        if entry.get("outcome") != outcome:
+            out.append(
+                f"{target}: `{UNVERIFIED_FIELD}` states {identifier} as "
+                f"'{entry.get('outcome')}', and plan.md's row says '{outcome}'. It is carried "
+                f"verbatim, because a summary is where a limitation is softened into a caveat."
+            )
+        if entry.get(VERIFIED_KEY) is not False:
+            out.append(
+                f"{target}: `{UNVERIFIED_FIELD}` entry {identifier} does not say "
+                f"`{VERIFIED_KEY}: false`. The field exists to state what this verdict did not "
+                f"establish; an entry that claims otherwise is the silence it replaces."
+            )
+    card = Path(phase_dir) / "handover.md"
+    if card.is_file():
+        try:
+            text = card.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return out + [f"{card}: unreadable ({exc}) - UNDECIDABLE, not clean."]
+        missing = [identifier for identifier in owed if identifier not in text]
+        if missing:
+            out.append(
+                f"{card}: the card does not name {', '.join(missing)}, which this phase's verdict "
+                f"declares it did not verify. The card is what the next phase reads; a disclosure "
+                f"only in verdict.json reaches nobody."
+            )
     return out
 
 
@@ -361,7 +566,12 @@ def _show(phase_dir: Path) -> int:
     bound = bound_requirements(phase_dir)
     for condition in declared:
         carriers = ", ".join(sorted(bound.get(condition.id, ()))) or "(no requirement)"
-        print(f"{condition.id}: {condition.outcome}\n    carried by: {carriers}")
+        print(
+            f"{condition.id} [{condition.verification or 'undeclared'}]: {condition.outcome}\n"
+            f"    carried by: {carriers}"
+        )
+    for line in declaration_problems(phase_dir):
+        print(line, file=sys.stderr)
     for tag in sorted(set(bound) - {condition.id for condition in declared}):
         print(f"{tag}: tagged in a spec but declared by no row", file=sys.stderr)
     return CLEAR

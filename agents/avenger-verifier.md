@@ -101,6 +101,11 @@ it fails, say so and let it be fixed mechanically:
 python3 scripts/verifier_precheck.py <phase-dir>
 ```
 
+**A `pass` says what it could not check.** Every `human-observed` row of the phase's *Done when*
+(`python3 scripts/done_when.py show <phase-dir>`) goes into the verdict's `unverified_by_gate`
+verbatim with `verified_by_this_verdict: false`, and onto the contract card; the pre-check refuses a
+`pass` that omits one, because a verdict silent about its blind spot reads as one that checked it.
+
 ## The attempt cap: 3 per phase, and route-backs are BUNDLED
 
 `scripts/verifier_attempts.py check <phase-dir>` stops the loop at three attempts. One measured

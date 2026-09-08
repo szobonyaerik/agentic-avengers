@@ -271,8 +271,10 @@ agentic-avengers/
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
 │   │                          the phase does not close; and DEFERRED findings - real, not this
 │   │                          phase's Done when, owned by a later phase, measurement attached
-│   ├── done_when.py           a phase's Done when as a table beside its prose, and the one decision
-│   │                          read from it: does this finding block the phase, or may it be deferred
+│   ├── done_when.py           a phase's Done when as a table beside its prose, and the two decisions
+│   │                          read from it: does this finding block the phase, or may it be deferred;
+│   │                          and which conditions no gate can evaluate, which a `pass` then carries
+│   │                          verbatim in `unverified_by_gate` instead of passing over in silence
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
 │   ├── breaker_gate.py        the Breaker's record: a phase resolving to `criticality: critical` does
 │   │                          not close without a valid breaker.json (a vacuous one is refused like

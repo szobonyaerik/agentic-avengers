@@ -34,11 +34,17 @@ readers: avenger-spec-writer @ per spec; phase-handover @ per phase (the next ph
   table the phase cannot defer at all, and nothing else about how it closes changes. One row per
   condition, stable ids; the Spec Writer tags the requirements that make each one true with
   `done_when: DW-<n>` on their declaration line. REPLACE THE PLACEHOLDER ROW - a `<n>` id is not a
-  condition. -->
+  condition.
+  `verification` is a CLOSED vocabulary of two and EVERY row declares one (issue #116):
+  `gate-verifiable` - some gate in this pipeline can evaluate it - or `human-observed` - none can,
+  because it is what a person sees, hears or judges. A `human-observed` condition is then carried
+  verbatim in the verdict's `unverified_by_gate` and named on the contract card, so `pass` reads as
+  "pass on everything I can check, and here is what I cannot" instead of as a criterion that was
+  checked. `scripts/verifier_precheck.py` refuses a row that declares neither. -->
 
-  | done-when | outcome |
-  |-----------|---------|
-  | DW-<n> | <one condition, as something someone can watch happen> |
+  | done-when | outcome | verification |
+  |-----------|---------|--------------|
+  | DW-<n> | <one condition, as something someone can watch happen> | <gate-verifiable or human-observed> |
 
 ## Risks & mitigations
 <!-- how the ORDERING mitigates risk -->

@@ -71,7 +71,10 @@ Order riskiest/most foundational first. The Verifier runs once per phase, after 
   keep it outcome-level here.) **Keep the prose, and give each condition a row** in the table the
   template carries beside it (`| done-when | outcome |`, ids `DW-<n>`): that table is the form a gate
   reads when a Verifier finding asks to be deferred out of the phase (`scripts/done_when.py`), and a
-  phase whose *Done when* is prose only cannot defer at all.
+  phase whose *Done when* is prose only cannot defer at all. **Every row also declares
+  `verification`** — `gate-verifiable` or `human-observed` — because a condition only a person can
+  judge otherwise passes under a verdict that reads as complete (`scripts/verifier_precheck.py`
+  refuses a row that declares neither, and a `pass` that does not carry the `human-observed` ones).
 
 ### Phase 2 — <slug>
 ...

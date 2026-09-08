@@ -95,7 +95,9 @@ of the phase's *Done when* conditions true - a `done_when: DW-<n>` tag naming th
 DEFERRED to a later phase (`scripts/done_when.py`): tagged blocks, untagged may leave with its
 measurement. Every condition the plan declares for the phase must be carried by at least one
 requirement, or nothing can be deferred from it - check with `python3 scripts/done_when.py show
-<phase-dir>` before you finish the phase's specs.
+<phase-dir>` before you finish the phase's specs. That same command prints each condition's
+`verification`: a `human-observed` one is still tagged and still blocks a deferral, and what changes
+is that no gate can evaluate it, so the verdict must carry it (`scripts/verifier_precheck.py`).
 - R<n>.<k>.1 — `binding: e2e` — `done_when: DW-<n>` — <single behavior an end user can observe>
 - R<n>.<k>.2 — `binding: integration` — <behavior visible only under concurrency / fault injection /
   schema migration>. Why an e2e cannot see it: <one sentence>.
