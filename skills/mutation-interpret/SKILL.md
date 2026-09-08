@@ -1,15 +1,17 @@
 ---
 name: mutation-interpret
-description: How to run and interpret the mutation gate per language. It runs in `advisory` mode by default - deterministic, diff-scoped, and never blocking - and with the Verifier's cross-family reading pass removed it is the pipeline's only systematic signal about non-discriminating tests - still advisory, still not a wall. Use whenever MUTATION_POLICY is advisory or enforce.
+description: How to run and interpret the mutation gate per language. It runs in `advisory` mode by default - deterministic, diff-scoped, and never blocking on the SCORE (a tree cosmic-ray exec left changed fails the run under every policy) - and with the Verifier's cross-family reading pass removed it is the pipeline's only systematic signal about non-discriminating tests - still advisory, still not a wall. Use whenever MUTATION_POLICY is advisory or enforce.
 ---
 
 # mutation-interpret
 
 The mutation gate runs in **`advisory` mode by default**: it computes the score, reports the score
-and its survivors, and **never blocks**. It is an *extra* signal of test strength, **not** a
-dedicated reader for gamed tests; there is none. The cross-family reading pass that did that job
-was removed and nothing inherits it, so this gate is named as *partial cover* alongside
-`skills/tdd` and the human spec-review, never as a replacement (`skills/verifier-triage`).
+and its survivors, and **never blocks**. The policy governs the SCORE and nothing else - see
+*Tree integrity* below for the outcome that fails the run whatever the policy is set to. It is an
+*extra* signal of test strength, **not** a dedicated reader for gamed tests; there is none. The
+cross-family reading pass that did that job was removed and nothing inherits it, so this gate is
+named as *partial cover* alongside `skills/tdd` and the human spec-review, never as a replacement
+(`skills/verifier-triage`).
 
 It used to be off by default. It is on because it is deterministic (`scripts/mutation_score.py`,
 never a model), diff-scoped (`scripts/mutation_scope.py`, over the working
@@ -48,6 +50,30 @@ These are *recommendations for teams that opt in*; the default is `off`. The C++
 slow; advisory keeps the loop moving for the weakest-tooled stack without pretending the gate is as
 strong there. The threshold is the `MUTATION_MIN_SCORE` environment variable (default `0.85`), set the
 same way as the policy; the Python tool config lives in `cosmic-ray.toml` at the repo root.
+
+## Tree integrity — never advisory
+`cosmic-ray exec` mutates source **in place** and reverts each mutant in a `finally`. A hook killed
+mid-mutant runs no `finally`, and one measured phase committed four such mutants as authored code
+(issue #95). Both readers now bracket every `exec` with `scripts/mutation_exec_guard.py`: a snapshot
+of the files the session can write before, an explicit restore-and-compare after — on the kill path
+too — and a **tree that differed fails the hook under every policy**. `advisory` governs how much
+authority the *score* has; a corrupted tree is not a score. **Nothing from such a run is a verdict**
+— re-run it. Read the next line before you re-run, because only one of three says the tree is clean:
+`TREE INTEGRITY FAILED` followed by *every in-scope file has been put back* is the restored case;
+`NOT RESTORED` names files the restore could not write back; and `TREE INTEGRITY UNKNOWN` means the
+restore itself did not complete (a signal, a crash), so **what is on disk was never established**.
+`TREE INTEGRITY UNKNOWN` also covers a cosmic-ray process group that had not stopped when the tree
+was checked, since a tree something may still be writing to is established no better than one whose
+restore crashed. The last two both tell you to inspect the working tree by hand before committing
+anything, neither claims a restoration, and **`GATE_BYPASS` will not waive either of them** - only
+the restored case, the one where the mutant is provably gone (`skills/pipeline-conventions`, under
+the mutation gate, states that rule once). The hook also refuses to start `exec` when the
+baseline's wall clock times the pending mutants would not fit `MUTATION_HOOK_BUDGET_S` (default: the
+hook's `hooks.json` timeout); that refusal is recorded as `did-not-run`, and the remedy is a faster
+test command, a narrower scope, or raising the budget and the hook timeout together. A
+`MUTATION_HOOK_BUDGET_S` that is not a positive integer number of seconds is a **configuration
+error**: the hook stops naming the value and records `did-not-run`, rather than dying in bash
+arithmetic before the gate and its tree guard ever run.
 
 ## Surviving mutants
 Each survivor is a behavior no test catches. For each:
