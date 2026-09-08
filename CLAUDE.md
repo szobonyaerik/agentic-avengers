@@ -1548,6 +1548,51 @@ a captain's waiver. `tag` refuses a class the set does not know, naming what was
 species is a deliberate edit to `CLASSES`. **It is the metric, not a gate** — nothing fails a phase
 over an unclassified override; what it will not do is report three species as one number again.
 
+### 6f. Delegation is bounded - do not delegate a question a command answers (issue #118)
+A stage held **five helper agents at once**. Two captures of the harness panel ninety minutes apart
+showed **identical timers and token counts on all five** - frozen, not progressing - while the
+parent's own progress artifact had not moved for 64 minutes and its process stayed alive, so every
+liveness check read the run as healthy. The largest had spent **1h 8m and 341.4k tokens deciding
+whether two amendment ids were marked done**, which is one `grep`; three of the five were questions
+a shell command answers. The parent looked correct throughout, because delegating rather than
+guessing is what the pipeline wants everywhere else. An operator read the panel, told it to abandon
+the helpers and run the checks itself, and **it resumed within a minute** - a human doing timeout
+detection.
+
+**Two rules.** *Do not delegate a question a command answers* - a file's contents, a field's value,
+a test summary, a timestamp, whether an id is marked done. **What is still worth delegating is a
+genuine re-measurement**: re-running a suite, reading a large artifact set, a search whose breadth is
+the point. And *a helper you do dispatch declares a budget* - `Budget: 5m` on a line of its own in
+the prompt - *and is abandoned past it*.
+
+**Stated once, in `skills/pipeline-conventions`, which every stage is required to load**; the eleven
+agent definitions carry a pointer, never a copy, and `required_skills.py verify` now fails a
+canonical agent whose declared line drops that skill, because the audit can only prove the load of a
+skill the stage declares. **What is mechanism**: `scripts/hook_helper_budget.sh` at `PreToolUse` -
+the one event that can refuse - blocks a dispatch that declares **no** budget, blocks a declared
+budget over `HELPER_BUDGET_MAX_S` (a budget nothing bounds is a presence check), and blocks a
+dispatch made while an existing helper is **already past its own declared budget**, which is the
+measured state exactly. `avenger-*` stages are the chain, not helpers, and are not bound.
+**What is INSTRUCTION and not mechanism, said rather than implied**: abandoning an overrunning
+helper *mid-wait* - the harness exposes no timeout on a delegation and fires no event inside a
+blocked parent, so what is mechanised is that the next dispatch cannot proceed over the top of it;
+and whether a question has a one-command answer, which is a judgement no static rule makes.
+
+**Who it binds**: under Claude Code the canonical `avenger-*` stages carry no spawn tool, so the
+dispatching party is the **orchestrating session** - `/avenger-run` in the main thread, an operator
+by hand, or any project-grounded agent given a spawn tool - and that is where the refusal lands.
+Rule 1 still reaches every stage: one that cannot spawn a helper can still be handed the question
+and should still run the command.
+
+**Helper spend is recorded**, two `gate_calls` rows per helper, each at the moment it is observed:
+`helper-dispatch` with the declared budget, and `helper-spend` at `SubagentStop` carrying elapsed
+time in `latency_ms` and `NO-GO` when it overran. Tokens are recorded **where the harness reports
+them**, which today it does not, so that field says `unrecorded` rather than `0`. **A dispatch row
+with no matching spend row IS the helper that never came back** - which is why the dispatch is
+emitted separately and never reconstructed at the close. `HELPER_BUDGET_OFF=1` disables the refusal,
+`HELPER_SPEND_OFF=1` the recording; opencode carries neither hook (`tool.execute.after` is after the
+fact).
+
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode
 adapter with `python3 scripts/sync_opencode.py`. Never hand-edit `.opencode/` — `agents/` and

@@ -322,6 +322,26 @@ def undeclared(root: Path) -> list[str]:
     ]
 
 
+#: The skill that carries the rules EVERY stage runs under - the chain, the gates, the read path,
+#: the applicability boundary, and (issue #118) the rule that a question a command answers is not
+#: delegated. A rule put in one shared skill is only delivered to the stages that require it, and
+#: `audit` proves the load only for a skill the stage's own line declares. So a canonical agent that
+#: drops it does not merely lose a document: every shared rule silently stops binding that stage,
+#: with the audit reporting clean. That is the promise-versus-enforcement gap this module exists to
+#: close, one level up, so it is checked rather than assumed.
+SHARED_RULES_SKILL = "pipeline-conventions"
+
+
+def without_shared_rules(root: Path) -> list[str]:
+    """Canonical agents whose declared line does not name the shared-rules skill."""
+    return [
+        stage
+        for stage in stages(root)
+        if skill_contract.contract_line(stage, root) is not None
+        and SHARED_RULES_SKILL not in required_for(stage, root)
+    ]
+
+
 def missing(root: Path) -> list[tuple[str, str]]:
     """(stage, skill) for every required skill that is absent or unreadable."""
     out: list[tuple[str, str]] = []
@@ -441,8 +461,9 @@ def main(argv: list[str] | None = None) -> int:
         return _audit(args.all, args.stage)
 
     silent = undeclared(args.root)
+    unshared = without_shared_rules(args.root)
     gaps = missing(args.root)
-    if not silent and not gaps:
+    if not silent and not unshared and not gaps:
         return OK
     if silent:
         print(
@@ -453,6 +474,19 @@ def main(argv: list[str] | None = None) -> int:
         for stage in silent:
             print(
                 f"  ✗ agents/{stage}.md has no `Required skills` line", file=sys.stderr
+            )
+    if unshared:
+        print(
+            f"required_skills: a canonical agent does not require skills/{SHARED_RULES_SKILL}, so "
+            f"every rule that skill carries stops binding that stage - and the audit reports clean, "
+            f"because it can only prove the load of a skill the stage declares:",
+            file=sys.stderr,
+        )
+        for stage in unshared:
+            print(
+                f"  x agents/{stage}.md omits skills/{SHARED_RULES_SKILL} from its "
+                f"`Required skills` line",
+                file=sys.stderr,
             )
     if gaps:
         print(

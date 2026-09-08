@@ -2005,3 +2005,95 @@ def test_a_phase_with_no_ledger_records_zero_deferrals(stub_sink):  # noqa: F811
     assert metrics.record_deferrals(str(phase_dir))
     [row] = [r for r in stored(store, "03")["gate_calls"] if r["stage"] == "deferral"]
     assert "deferred=0 recarried=0" in row["note"]
+
+
+# --- helper spend: the cost that used to land on the account and on nothing else (issue #118) ------
+
+
+def test_a_helper_dispatch_is_recorded_the_moment_it_happens(stub_sink):  # noqa: F811
+    """Five helpers were measured frozen for 90 minutes and NONE of them returned, so a record
+    written only when a helper finishes cannot see the case at all. The dispatch is the row that
+    says the helper existed."""
+    _, store, _ = stub_sink
+    assert (
+        metrics.record_helper_dispatch(
+            "08", agent_type="general-purpose", budget_s=300, token="abc12345"
+        )
+        is True
+    )
+    row = stored(store, "08")["gate_calls"][0]
+    assert row["stage"] == metrics.HELPER_DISPATCH_STAGE
+    assert row["verdict"] == metrics.NO_VERDICT  # a dispatch judges nothing
+    assert "agent=general-purpose" in row["note"] and "budget_s=300" in row["note"]
+
+
+def test_a_repeated_dispatch_emission_converges_on_one_row(stub_sink):  # noqa: F811
+    _, store, _ = stub_sink
+    for _ in range(3):
+        metrics.record_helper_dispatch(
+            "08", agent_type="Explore", budget_s=60, token="deadbeef"
+        )
+    assert len(stored(store, "08")["gate_calls"]) == 1
+
+
+def test_a_helper_that_overran_its_budget_is_recorded_as_a_NO_GO(stub_sink):  # noqa: F811
+    _, store, _ = stub_sink
+    metrics.record_helper_spend(
+        "08", agent_type="general-purpose", token="t1", elapsed_s=4080, budget_s=300
+    )
+    row = stored(store, "08")["gate_calls"][0]
+    assert row["stage"] == metrics.HELPER_SPEND_STAGE
+    assert row["verdict"] == "NO-GO"
+    assert (
+        row["latency_ms"] == 4080 * 1000
+    )  # elapsed time, in the field that means duration
+    assert "elapsed_s=4080" in row["note"]
+
+
+def test_a_helper_inside_its_budget_is_recorded_as_a_GO(stub_sink):  # noqa: F811
+    _, store, _ = stub_sink
+    metrics.record_helper_spend(
+        "08", agent_type="Explore", token="t2", elapsed_s=40, budget_s=300
+    )
+    assert stored(store, "08")["gate_calls"][0]["verdict"] == "GO"
+
+
+def test_an_unmeasured_token_count_is_named_absent_rather_than_zero(stub_sink):  # noqa: F811
+    """`tokens=0` would read as a free helper rather than an unmeasured one."""
+    _, store, _ = stub_sink
+    metrics.record_helper_spend(
+        "08", agent_type="Explore", token="t3", elapsed_s=40, budget_s=300, tokens=None
+    )
+    note = stored(store, "08")["gate_calls"][0]["note"]
+    assert f"tokens={metrics.HELPER_UNRECORDED}" in note
+
+
+def test_a_helper_with_no_declared_budget_is_not_judged_against_an_invented_one(
+    stub_sink,
+):  # noqa: F811
+    _, store, _ = stub_sink
+    metrics.record_helper_spend(
+        "08", agent_type="Explore", token="t4", elapsed_s=4080, budget_s=None
+    )
+    row = stored(store, "08")["gate_calls"][0]
+    assert row["verdict"] == metrics.NO_VERDICT
+    assert f"budget_s={metrics.HELPER_UNRECORDED}" in row["note"]
+
+
+def test_recording_helper_spend_never_raises(stub_sink, monkeypatch):  # noqa: F811
+    """Measurement may never fail the phase it measures (CLAUDE.md 6d)."""
+    monkeypatch.setattr(
+        sink, "add", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    assert (
+        metrics.record_helper_spend(
+            "08", agent_type="Explore", token="t5", elapsed_s=1, budget_s=1
+        )
+        is False
+    )
+    assert (
+        metrics.record_helper_dispatch(
+            "08", agent_type="Explore", budget_s=1, token="t6"
+        )
+        is False
+    )

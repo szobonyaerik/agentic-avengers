@@ -163,14 +163,31 @@ def _key(entry: dict) -> tuple[str, str]:
     return (str(entry.get("agent_type") or ""), str(entry.get("agent_id") or ""))
 
 
-def live(root: Path, *, now: datetime | None = None) -> list[dict]:
-    """Every implementer that started, has not stopped, and is not older than the ceiling.
+def when_of(entry: dict) -> datetime | None:
+    """When an activity row happened, or None when it cannot be placed in time.
+
+    Public because `helper_budget.py` pairs a run against a dispatch row in the same log, and a
+    second parser for the same timestamps would be a second answer to when a thing happened.
+    """
+    return _when(entry)
+
+
+def live(
+    root: Path, *, now: datetime | None = None, pattern: re.Pattern[str] | None = None
+) -> list[dict]:
+    """Every agent of `pattern` that started, has not stopped, and is not older than the ceiling.
+
+    `pattern` defaults to the implementers, which is this module's own subject. It is a parameter
+    because WHAT IS STILL RUNNING is one question with one answer - a start with no stop, whose
+    harness process still exists, that no `TaskStop` ended, inside an age ceiling - and
+    `helper_budget.py` asks it of a different set of agents. A second copy of that reading in the
+    other caller is the drift this repository keeps paying for.
 
     Raises `LivenessUnknown` when there is no log to read: the activity hook may be off, or this may
     not be a pipeline run, and a lock that reads "I cannot see" as "all clear" means nothing.
     """
     path = log_path(root)
-    pattern = agents_pattern()
+    pattern = pattern if pattern is not None else agents_pattern()
     ceiling = max_age_s()
     moment = now or datetime.now(timezone.utc)
     try:

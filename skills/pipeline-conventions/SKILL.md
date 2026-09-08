@@ -1941,6 +1941,83 @@ the only reliable completion signal in this harness is the agent/task notificati
 marker and never process polling. What changed is narrower: the one marker this issue was filed
 about now corrects itself instead of trusting the writer.
 
+## Delegation is bounded - do not delegate a question a command answers (issue #118)
+
+A stage held **five helper agents at once**. Two captures of the harness panel ninety minutes apart
+showed **identical timers and token counts on all five** - frozen, not progressing - while the
+parent's own progress artifact had not moved for 64 minutes and its process stayed alive, so every
+liveness check read the run as healthy. The largest helper had spent **1h 8m and 341.4k tokens
+deciding whether two amendment ids were marked done**, which is one `grep`. Three of the five were
+questions a shell command answers. An operator eventually read the panel and told the parent to
+abandon the helpers and run the checks itself; **it resumed within a minute.** That is a human doing
+timeout detection.
+
+The parent looked correct the whole time: it delegated rather than guessing, which is the behaviour
+the pipeline wants everywhere else. The cost landed on the account rather than on any recorded
+metric, so an hour of it left no trace in the retrospective.
+
+**Two rules, and neither is a matter of taste.**
+
+**1. Do not delegate a question a command answers.** Run the command. Non-exhaustive, and every one
+of these was observed being delegated or is the same shape as one that was:
+
+- a **file's contents** - `cat`, `sed -n`
+- a **field's value** in frontmatter, JSON or a config - `grep`, `python3 -c`, `jq`
+- a **test summary** - the suite's own last line
+- a **timestamp**, or whether one file is newer than another - `ls -l`, `git log -1`
+- **whether an id is marked done** - `grep` for the id
+
+**What is still worth delegating is a genuine re-measurement**: re-running a suite, reading a large
+artifact set, a search whose breadth is the point, a review that needs judgement over many files.
+The test is not "is this work" but "does one command already answer it".
+
+**2. A helper you do dispatch declares a budget, and you abandon it past that budget.** Put a line
+of its own in the delegation prompt:
+
+```
+Budget: 5m
+```
+
+Seconds when bare; `s`, `m` and `h` accepted; at most `HELPER_BUDGET_MAX_S` (default 1800), because
+a budget nothing bounds is a presence check. When the budget passes and the helper has not returned,
+**stop it and answer the question yourself** - that is what the operator did by hand, and waiting is
+what cost the hour.
+
+**What is mechanism and what is instruction, stated rather than implied.**
+`scripts/hook_helper_budget.sh` decides two halves at `PreToolUse` on the spawn - the one event that
+can refuse and the last moment the remedy exists. A dispatch that declares **no** budget is refused,
+naming the line to add; and a dispatch made while an existing helper is **already past its own
+declared budget** is refused, naming that helper and the remedy. That second refusal is the observed
+state exactly: helpers accumulating while the earliest was an hour over. It binds every spawn that
+is **not** an `avenger-*` pipeline stage - the stage chain is the pipeline's own sequence, bounded by
+its phase, not an ad-hoc sub-question.
+
+**Abandoning an overrunning helper mid-wait is INSTRUCTION, not mechanism.** The harness exposes no
+timeout on a delegation and fires no event inside a parent that is blocked waiting on one, so
+nothing can interrupt the wait itself; what is mechanised is that the *next* dispatch cannot proceed
+over the top of it. And **whether a question has a one-command answer is a judgement no static rule
+makes** - rule 1 is carried by this skill, which every stage is required to load and
+`required_skills.py audit` proves it loaded. Neither of those is claimed to be enforced.
+
+**Who this actually binds, stated rather than assumed.** Under Claude Code the canonical
+`avenger-*` stages carry no spawn tool at all, so the dispatching party is the **orchestrating
+session** - `/avenger-run` in the main thread, an operator working by hand, or any agent a project
+grounds with a spawn tool. That is where the refusal lands. Rule 1 still reaches every stage,
+because a stage that cannot spawn a helper can still be handed the same question and should still
+run the command.
+
+**Helper spend is recorded, so this is measurable rather than anecdotal.** Two `gate_calls` rows per
+helper, both written at the moment they are observed: `helper-dispatch` at the spawn, carrying the
+declared budget, and `helper-spend` at `SubagentStop`, carrying elapsed time in `latency_ms` and a
+`NO-GO` verdict when it overran. Tokens are recorded **where the harness reports them**, which today
+it does not, so that field says `unrecorded` rather than `0`. A dispatch row with **no matching
+spend row is the helper that never came back** - which is why the dispatch is recorded separately
+and not reconstructed at the close.
+
+`HELPER_BUDGET_OFF=1` disables the refusal; `HELPER_SPEND_OFF=1` disables the recording;
+`GATE_BYPASS_GATES="helper-budget" GATE_BYPASS="<reason>"` waives the gate once, audited. opencode
+carries neither hook: its adapter hooks `tool.execute.after`, which is after the fact.
+
 ## Driving the chain (`/avenger-run`)
 
 The chain can be walked by hand, one stage at a time, or driven by `commands/avenger-run.md`, which

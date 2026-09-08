@@ -620,6 +620,37 @@ repo's own two-sided checks declare it in `scripts/guard_scope.toml`. Three inst
 **instruction only** and say so: a grep count substituted for reading, an enumerated list taken as
 complete, and a single-sample proof of a negative.
 
+## Delegation is bounded - do not delegate a question a command answers (issue #118)
+
+A stage held five helper agents at once. Two captures of the harness panel ninety minutes apart
+showed identical timers and token counts on all five - frozen, not progressing - while the parent's
+own progress artifact had not moved for 64 minutes and its process stayed alive, so every liveness
+check read the run as healthy. The largest had spent **1h 8m and 341.4k tokens deciding whether two
+amendment ids were marked done**, which is one `grep`. Three of the five were questions a shell
+command answers. The parent looked correct throughout: it delegated rather than guessing, which is
+what the pipeline wants everywhere else. An operator read the panel, told it to abandon the helpers
+and run the checks itself, and it resumed within a minute - a human doing timeout detection.
+
+**Two rules, carried in `skills/pipeline-conventions` and pointed at by every stage.**
+
+1. **Do not delegate a question a command answers**: a file's contents, a field's value, a test
+   summary, a timestamp, whether an id is marked done. Run the command. What is still worth
+   delegating is a genuine re-measurement - re-running a suite, reading a large artifact set, a
+   search whose breadth is the point.
+2. **A helper you do dispatch declares a budget** - `Budget: 5m` on a line of its own in the prompt -
+   **and is abandoned past it.**
+
+**What is mechanism**: a `PreToolUse` hook refuses a helper dispatch that declares no budget, one
+whose declared budget exceeds `HELPER_BUDGET_MAX_S`, and one made while another helper is already
+past its own declared budget. Pipeline stages are the chain rather than helpers and are not bound.
+**What is instruction and not mechanism**: abandoning an overrunning helper *mid-wait* - the harness
+exposes no timeout on a delegation and fires no event inside a blocked parent - and whether a
+question has a one-command answer, which no static rule decides.
+
+**The rule that travels:** a helper's cost is invisible unless something records it. Every dispatch
+and every return is written to the phase record as it happens, and a dispatch with no matching
+return is the helper that never came back.
+
 ## Environment
 | var | default | effect |
 |---|---|---|
@@ -650,6 +681,10 @@ complete, and a single-sample proof of a negative.
 | `GUARD_SCOPE_BASE` | unset | a ref to measure allowlist growth against (`scripts/guard_scope.py allowlists`). Unset, sizes are reported without a comparison. Growth is a SIGNAL and never a failure: a guard quietened with new allowlist entries has been weakened, not maintained, and a blocking check would be answered with a bypass rather than with a reviewer's attention |
 | `IMPLEMENTER_MAX_AGE_S` | `14400` | seconds after which an implementer that started and never recorded a stop is presumed dead, so a crashed agent cannot hold the lock forever |
 | `IMPLEMENTER_LOCK_OFF` | unset | `1` disables the second-implementer refusal (Claude Code hook only; opencode has no pre-spawn event) |
+| `HELPER_AGENTS` | every spawn that is not an `avenger-*` stage | which subagent types the helper budget binds (`scripts/helper_budget.py`, issue #118). The stage chain is the pipeline's own sequence, bounded by its phase, not an ad-hoc sub-question |
+| `HELPER_BUDGET_MAX_S` | `1800` | ceiling on a DECLARED helper budget, because `Budget: 10h` satisfies a presence check and bounds nothing. The measured runaway helpers ran 27 to 68 minutes |
+| `HELPER_BUDGET_OFF` | unset | `1` disables the helper-dispatch refusal (Claude Code hook only; opencode has no pre-spawn event) |
+| `HELPER_SPEND_OFF` | unset | `1` disables the per-helper spend row written at `SubagentStop`. Measurement only - it never blocks anything |
 | `SUBPROC_CHECK_PATHS` | `tests/` | os.pathsep-separated roots the subprocess cost check scans; an absent root scans nothing (CLEAN, reported on stderr) |
 | `LESSONS_AGENTS` | `avenger-` | which subagents get the lessons pointer (Claude Code hook only) |
 | `LESSONS_OFF` | unset | `1` disables the lessons pointer everywhere |

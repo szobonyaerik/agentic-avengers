@@ -628,6 +628,103 @@ def record_plugin_version(phase: str) -> bool:
         return False
 
 
+#: What a helper agent's two rows are stamped with. No model decides either of them: the dispatch is
+#: observed by `scripts/hook_helper_budget.sh` at `PreToolUse` and the return by
+#: `scripts/hook_helper_spend.sh` at `SubagentStop`.
+HELPER_DISPATCH_STAGE = "helper-dispatch"
+HELPER_SPEND_STAGE = "helper-spend"
+HELPER_MODEL = "none (scripts/helper_budget.py)"
+
+#: A number the harness did not report is named as absent rather than defaulted to zero. Token
+#: counts are the case that matters: the harness panel shows them and the hook payload does not
+#: carry them, so `tokens=0` would read as a free helper rather than as an unmeasured one.
+HELPER_UNRECORDED = "unrecorded"
+
+
+def record_helper_dispatch(
+    phase: str, *, agent_type: str, budget_s: int, token: str
+) -> bool:
+    """Record that a helper agent was dispatched, and with what declared budget (issue #118).
+
+    Emitted at the DISPATCH rather than at the phase close, and separately from the spend row, for
+    the reason the issue exists: five helpers were measured frozen for 90 minutes and none of them
+    ever returned, so a record written only when a helper finishes cannot see the case. A dispatch
+    row with no matching `helper-spend` row IS the helper that never came back, and the count of
+    dispatches is the number `compare` had no way to ask for at all.
+
+    Not a new top-level field: firstmate's schema is closed and its producer contract is "add no
+    key" (pipeline-conventions §6d). This follows `record_plugin_version` and
+    `record_triage_decision` - an ordinary `gate_calls` row on existing keys, with the detail in
+    `note`. `verdict` is `NO_VERDICT` because a dispatch judges nothing; the budget check's own
+    verdict is the hook's exit code, and a refused dispatch never reaches this at all.
+    """
+    try:
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{HELPER_DISPATCH_STAGE}-{token}",
+            stage=HELPER_DISPATCH_STAGE,
+            spec=None,
+            attempt=1,
+            model=HELPER_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=_clean(f"agent={agent_type} budget_s={budget_s}"),
+        )
+    except Exception as exc:  # noqa: BLE001 - measurement never fails the phase it measures
+        sink.note(f"helper dispatch not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
+def record_helper_spend(
+    phase: str,
+    *,
+    agent_type: str,
+    token: str,
+    elapsed_s: int,
+    budget_s: int | None,
+    tokens: int | None = None,
+) -> bool:
+    """Record what a returning helper actually spent: its elapsed time, and its tokens if reported.
+
+    `latency_ms` carries the elapsed time because that is the field that already means "how long
+    this took", and the verdict says whether it stayed inside the budget its dispatch declared -
+    `NO-GO` for a helper that overran, which is the row a retrospective is looking for. A helper
+    with no paired dispatch (spawned before this rule, or under `HELPER_BUDGET_OFF=1`) has no
+    declared budget, so it is recorded as `NO_VERDICT` with the budget named absent rather than
+    judged against a number nobody stated.
+    """
+    try:
+        if budget_s is None:
+            verdict = NO_VERDICT
+        else:
+            verdict = "NO-GO" if elapsed_s > budget_s else "GO"
+        note = (
+            f"agent={agent_type} elapsed_s={elapsed_s} "
+            f"budget_s={HELPER_UNRECORDED if budget_s is None else budget_s} "
+            f"tokens={HELPER_UNRECORDED if tokens is None else tokens}"
+        )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{HELPER_SPEND_STAGE}-{token}",
+            stage=HELPER_SPEND_STAGE,
+            spec=None,
+            attempt=1,
+            model=HELPER_MODEL,
+            model_family=None,
+            latency_ms=max(0, int(elapsed_s)) * 1000,
+            verdict=verdict,
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 - measurement never fails the phase it measures
+        sink.note(f"helper spend not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 # --- verification attempts, suite size, phase boundaries -----------------------------------------
 
 
