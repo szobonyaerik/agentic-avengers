@@ -34,9 +34,14 @@
 #
 #   IMPLEMENTER_AGENTS      regex of subagent_type values this binds (unanchored, case-insensitive).
 #   IMPLEMENTER_MAX_AGE_S   seconds after which a start with no stop is presumed dead (default 4h),
-#                           so a crashed agent cannot hold the lock forever.
+#                           so a crashed agent cannot hold the lock forever. Consulted only after the
+#                           two OBSERVED endings `implementer_liveness.py` checks first: a TaskStop
+#                           the harness reported, and a harness process that no longer exists.
 #   IMPLEMENTER_LOCK_OFF=1  disable the refusal entirely.
-#   GATE_BYPASS="reason"    proceed anyway; audited in gate-overrides.log.
+#   GATE_BYPASS_GATES="implementer-lock" GATE_BYPASS="reason"
+#                           proceed anyway, waiving THIS gate alone; audited in gate-overrides.log.
+#                           GATE_BYPASS by itself also proceeds, but waives every gate the run reaches
+#                           (bypass_log.sh) - the refusal names the scoped form for that reason.
 #
 # opencode does not carry this: its adapter hooks `tool.execute.after`, which is after the fact and
 # has no pre-spawn event to refuse at.
@@ -100,8 +105,14 @@ printf '%s\n' \
   "its own implementer writes it and then keeps working (issue #68). The signal is the agent's own" \
   "stop event, which is what this check reads." \
   "" \
-  "If that agent is already gone and its stop was never recorded, it ages out of the lock after" \
-  "\$IMPLEMENTER_MAX_AGE_S (default 4 hours), or re-run with GATE_BYPASS=\"<reason>\" - visible and" \
-  "logged to gate-overrides.log." >&2
+  "If that agent is already gone, this check should have seen it: a stop the harness reported through" \
+  "the TaskStop tool, or a harness process that no longer exists, both release the lock on their own." \
+  "A start that shows neither ages out after \$IMPLEMENTER_MAX_AGE_S (default 4 hours). To clear a" \
+  "lock you KNOW is dead before then, waive THIS gate and no other:" \
+  "" \
+  "  GATE_BYPASS_GATES=\"implementer-lock\" GATE_BYPASS=\"<reason>\" <the spawn>" \
+  "" \
+  "Visible, and logged to gate-overrides.log. GATE_BYPASS on its own waives EVERY gate this run" \
+  "reaches, which is far more than one dead lock." >&2
 
 exit 2

@@ -122,6 +122,11 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
     "provider-payment-required": ("error", "http-402"),
     "provider-unreachable": ("error", "provider-unreachable"),
     "no-verdict": ("error", "unparseable"),
+    # `unparseable`, not `timeout`: the call RETURNED and there was nothing in it to read, which is
+    # the state that token names; recording it as a timeout would reinstate the wrong remedy (raise
+    # the budget) the cause was split off to end. Not a token of its own - firstmate owns that
+    # vocabulary (§6d). The distinction lives on the gate's `cause=` line and its verbatim output.
+    "provider-empty-response": ("error", "unparseable"),
     # Not `unparseable`: the reply parsed fine. What failed is the CLAIM that a provider
     # produced it, so it is an error whose cause is the gate not having run.
     "implausible-latency": ("error", "other"),
@@ -765,6 +770,58 @@ def record_mutation_unavailable(phase_dir: str, reason: str) -> bool:
         return False
 
 
+#: Deferrals in `gate_calls[]` (issue #115), on the precedent `record_plugin_version` and
+#: `record_mutation_unavailable` set for a fact firstmate's closed schema has no field for: an
+#: ordinary row on EXISTING keys, the counts in `note`. A phase that defers everything must be as
+#: visible as one that fixes everything, and the record is where that is read.
+DEFERRAL_STAGE = "deferral"
+DEFERRAL_MODEL = "none (scripts/carried_items.py)"
+
+
+def record_deferrals(phase_dir: str) -> bool:
+    """Record how many findings this phase deferred and how many it re-carried. Never fails the phase.
+
+    Idempotent by id: `carried_items.py defer`/`recarry` emit it the moment the fact is decided, and
+    `hook_verifier.sh` emits it again at the handover, so the row converges on the final counts
+    rather than appending one per call. Deferred and re-carried are counted separately because they
+    are different facts - a phase that originated five deferrals and one that passed five along both
+    read `deferred=5` if they were folded together.
+    """
+    try:
+        import carried_items  # lazy: carried_items emits through this module
+
+        phase = resolve_phase(phase_dir)
+        if phase is None:
+            return False
+        records = carried_items.deferrals(Path(phase_dir))
+        here = Path(phase_dir).name
+        originated = [r for r in records if str(r.get("origin") or here) == here]
+        recarried = [r for r in records if str(r.get("origin") or here) != here]
+        owners = sorted({str(r.get("owner")) for r in records if r.get("owner")})
+        note = (
+            f"deferred={len(originated)} recarried={len(recarried)} "
+            f"owners={','.join(owners) or '-'} "
+            f"ids={','.join(str(r.get('id')) for r in records) or '-'}"
+        )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{DEFERRAL_STAGE}",
+            stage=DEFERRAL_STAGE,
+            spec=None,
+            attempt=1,
+            model=DEFERRAL_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"deferrals not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 def record_phase_close(phase_dir: str) -> bool:
     """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
 
@@ -1158,6 +1215,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     required.add_argument("--stage", required=True)
 
+    deferrals = sub.add_parser(
+        "deferrals", help="record how many findings a phase deferred and re-carried"
+    )
+    deferrals.add_argument("phase_dir")
+
     defect = sub.add_parser("defect", help="record a defect and what caught it")
     defect.add_argument(
         "--phase-ref",
@@ -1181,6 +1243,19 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("phase-open", "phase-close"):
         boundary = sub.add_parser(name, help=f"stamp the phase {name.split('-')[1]}")
         boundary.add_argument("phase_dir")
+
+    spool = sub.add_parser(
+        "spool",
+        help="list the writes firstmate's seal turned away; --drain replays them (issue #98)",
+    )
+    spool.add_argument(
+        "--phase", default=None, help="a two-digit phase; default every phase"
+    )
+    spool.add_argument(
+        "--drain",
+        action="store_true",
+        help="replay the queued writes now; exit 1 while any is still refused",
+    )
 
     return parser
 
@@ -1224,6 +1299,8 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_mutation_survivors(args.phase_dir, args.score)
     elif args.command == "mutation-unavailable":
         record_mutation_unavailable(args.phase_dir, args.reason)
+    elif args.command == "deferrals":
+        record_deferrals(args.phase_dir)
     elif args.command == "skill-load":
         phase = _phase_of_ref(args.phase_ref) or current_phase()
         if phase:
@@ -1259,7 +1336,39 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
         record_phase_close(args.phase_dir)
+    elif args.command == "spool":
+        return _spool_command(args.phase, args.drain)
     return None
+
+
+def _spool_command(phase: str | None, drain: bool) -> bool:
+    """Report the queue, and replay it when asked. Reports the OUTCOME: what landed, what did not."""
+    waiting = sink.queued(phase)
+    if not waiting:
+        print(
+            f"{sink.PREFIX} spool: nothing queued at {sink.spool_path()}",
+            file=sys.stderr,
+        )
+        return True
+    for entry in waiting:
+        print(
+            f"{sink.PREFIX} spool: phase {entry.get('phase')} refused at {entry.get('refused_at')}: "
+            f"{' '.join(str(a) for a in entry.get('argv') or [])}",
+            file=sys.stderr,
+        )
+    if not drain:
+        print(
+            f"{sink.PREFIX} spool: {len(waiting)} write(s) waiting. Reopen the phase "
+            f"(`fm-pipeline-metrics.sh set <phase> --reopen closed:=null`), then `spool --drain`.",
+            file=sys.stderr,
+        )
+        return True
+    landed, remaining = sink.drain(phase)
+    print(
+        f"{sink.PREFIX} spool: drained - {landed} landed, {remaining} still refused.",
+        file=sys.stderr,
+    )
+    return remaining == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1310,6 +1419,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(_defect_failure_message(args), file=sys.stderr)
         return 1
+    if args.command == "spool" and ok is False:
+        return 1  # an operator asked for a drain and something is still refused: say so in the exit
     return 0
 
 

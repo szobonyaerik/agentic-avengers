@@ -113,6 +113,34 @@ if [ "$cap_rc" -ne 0 ]; then
   fi
 fi
 
+# --- 2b. Mechanical: every acceptance criterion names what it DRIVES (no model, always) ----------
+# Issue #96: "sweep both adapters for this class" is satisfied by reading, because reading is cheaper
+# and its output is indistinguishable from the real thing until someone runs the code. An implementer
+# told to sweep two adapters swept by reading, reported complete, and missed two instances. So a
+# criterion carries a `drives:` field naming the seam, command or planted input its test pushes
+# through, and its absence is decided here - before any paid call, while the writer still owns the
+# criterion. Presence only: `drives: undriven (<why>)` passes, because whether a criterion may be
+# undriven and what that declaration must carry is issue #116's decision, not this gate's. A spec the
+# gate already approved, or that an implementer has taken up, is COUNTED and named rather than held
+# (the applicability boundary, CLAUDE.md 3a): the remedy is not available to a stage that has ended.
+python3 "$SD/measurement_claims.py" spec "$FILE"; drives_rc=$?
+if [ "$drives_rc" -ne 0 ]; then
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    exec "$SD/bypass_log.sh" "spec-gate-criterion-drives"
+  elif [ "$drives_rc" -eq 2 ]; then
+    echo "spec-gate: whether every acceptance criterion names what it drives could not be DECIDED" >&2
+    echo "  (cause named above). This is not a missing field and no model has judged it; a file it" >&2
+    echo "  cannot read is a file it cannot clear, so this fails closed. Fix what it named." >&2
+    exit 2
+  else
+    echo "spec-gate: an acceptance criterion names nothing it drives (named above) - a sweep by" >&2
+    echo "  reading looks identical to one by driving until someone runs the code." >&2
+    echo "  route_back: avenger-spec-writer, to add \`drives: <seam | command | planted input>\` to" >&2
+    echo "  each named criterion - or \`drives: undriven (<why>)\` where nothing can be driven." >&2
+    exit 2
+  fi
+fi
+
 # --- 3. Preconditions for the model half --------------------------------------------------------
 # The hook must be able to outlive the calls it wraps (it makes TWO), and the runner must be the
 # shipped one rather than whatever sits at that path. Both fail closed.
@@ -153,9 +181,15 @@ fi
 
 # Diff-scoped re-gate: only for a spec that was approved AND has reached the implementer. A spec
 # still in draft has no settled text to protect, so it is always gated whole.
+#
+# `stale` is the status an approved spec READS AS the moment its body moves on from the bytes the
+# gate approved (spec_gate_state.status_of, issue #97) - which on a spec write is exactly the state
+# that owes a diff-scoped re-gate. Reading `approved` alone here would gate the whole spec again
+# and hand the reviewer text it had already passed, the sampling defect the kept body exists to stop.
+GATE_STATUS="$(python3 "$SD/spec_gate_state.py" status "$FILE" 2>/dev/null)"
 TARGET="$FILE"
 BUNDLE=""
-if [ "$(python3 "$SD/spec_gate_state.py" status "$FILE" 2>/dev/null)" = "approved" ] &&
+if { [ "$GATE_STATUS" = "approved" ] || [ "$GATE_STATUS" = "stale" ]; } &&
    grep -qE '^status:[[:space:]]*(done|in-progress)[[:space:]]*$' "$FILE" 2>/dev/null &&
    PREV=$(python3 "$SD/spec_gate_cache.py" previous "$FILE" gate 2>/dev/null); then
   BUNDLE="$(mktemp "${TMPDIR:-/tmp}/spec-gate-bundle.XXXXXX")"
@@ -527,6 +561,10 @@ if [ "$decided" -eq 0 ]; then
   # over an unchanged body cannot double-count it.
   python3 "$SD/pipeline_metrics.py" spec-round "$FILE" --verdict approved >/dev/null 2>&1 || true
   echo "spec-gate: APPROVED ($FILE)" >&2
+  # Issue #97: a clean result states what it does NOT establish, in the RUNTIME OUTPUT a later stage
+  # reads. APPROVED is the one this gate produces that gets over-read - a block already says what it
+  # found. Never moves the exit code.
+  python3 "$SD/guard_scope.py" emit hook_spec_gate.sh >/dev/null || true
   exit 0
 fi
 
@@ -540,7 +578,11 @@ python3 "$SD/spec_gate_cache.py" stamp "$FILE" gate BLOCKED "$REPORT" "$GATE_ATT
 python3 "$SD/pipeline_metrics.py" spec-round "$FILE" --verdict blocked >/dev/null 2>&1 || true
 [ -n "${GATE_BYPASS:-}" ] && bypass_and_exit
 echo "spec-gate: BLOCKED — route back to avenger-spec-writer" >&2
-echo "--- blocking findings (the closed set: missing requirement, contradiction, untestable criterion, unhandled critical edge case) ---" >&2
+# The closed set is RENDERED from the table that derives the verdict, never restated here: this line
+# named four categories after the fifth and sixth had been added, which is a document asserting a rule
+# nothing enforces - the class issue #96 is about, in the gate that enforces it.
+BLOCKING_SET="$(python3 "$SD/spec_gate_triage.py" categories 2>/dev/null | grep -v '^note$' | paste -sd', ' - )"
+echo "--- blocking findings (the closed set: ${BLOCKING_SET:-see scripts/spec_gate_triage.py BLOCKING}) ---" >&2
 cat "$REPORT" >&2
 echo "--- end blocking findings ---" >&2
 exit 2

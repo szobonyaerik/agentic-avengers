@@ -1826,3 +1826,75 @@ def test_closing_a_phase_twice_keeps_the_first_answer(stub_sink):  # noqa: F811
     assert len([call for call in read_calls(log) if call[:1] == ["set"]]) == before, (
         "a phase already closed issues no second write at all"
     )
+
+
+# --- deferrals are counted in the phase record (issue #115) ----------------------------------------
+
+
+def test_deferrals_ride_gate_calls_on_existing_keys_and_converge(stub_sink):  # noqa: F811
+    """A phase that defers everything must be as visible as one that fixes everything - on a
+    `gate_calls[]` row, `record_plugin_version`'s precedent, since firstmate's schema is closed."""
+    project, store, _log = stub_sink
+    phase_dir = project / "docs" / "features" / "demo" / "phases" / "3-real-frames"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "carried.json").write_text(
+        json.dumps(
+            {
+                "phase": "3-real-frames",
+                "discharges": [],
+                "deferrals": [
+                    {
+                        "id": "FWD-1",
+                        "finding": None,
+                        "owner": "6-staging",
+                        "measurement": "x",
+                        "origin": "3-real-frames",
+                    },
+                    {
+                        "id": "FWD-4",
+                        "finding": None,
+                        "owner": "4-support",
+                        "measurement": "y",
+                        "origin": "3-real-frames",
+                    },
+                    {
+                        "id": "OLD-1",
+                        "finding": None,
+                        "owner": "6-staging",
+                        "measurement": "z",
+                        "origin": "2-support",
+                    },
+                ],
+            }
+        )
+    )
+
+    assert metrics.record_deferrals(str(phase_dir))
+    assert metrics.record_deferrals(str(phase_dir))  # idempotent by id
+
+    rows = [r for r in stored(store, "03")["gate_calls"] if r["stage"] == "deferral"]
+    assert len(rows) == 1
+    assert rows[0]["id"] == "p03-deferral"
+    assert "deferred=2" in rows[0]["note"] and "recarried=1" in rows[0]["note"]
+    assert "owners=4-support,6-staging" in rows[0]["note"]
+    assert set(rows[0]) <= {
+        "id",
+        "stage",
+        "spec",
+        "attempt",
+        "model",
+        "model_family",
+        "latency_ms",
+        "verdict",
+        "failure_cause",
+        "note",
+    }
+
+
+def test_a_phase_with_no_ledger_records_zero_deferrals(stub_sink):  # noqa: F811
+    project, store, _log = stub_sink
+    phase_dir = project / "docs" / "features" / "demo" / "phases" / "3-real-frames"
+    phase_dir.mkdir(parents=True)
+    assert metrics.record_deferrals(str(phase_dir))
+    [row] = [r for r in stored(store, "03")["gate_calls"] if r["stage"] == "deferral"]
+    assert "deferred=0 recarried=0" in row["note"]

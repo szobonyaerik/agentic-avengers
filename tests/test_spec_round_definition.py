@@ -42,7 +42,7 @@ from pathlib import Path
 
 import pytest
 
-from metrics_support import stub_sink  # noqa: F401
+from metrics_support import DOUBLE, stub_sink  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -179,13 +179,7 @@ def gated(tmp_path: Path):
         )
     )
     double = tmp_path / "fm-pipeline-metrics.sh"
-    double.write_text(
-        (ROOT / "tests" / "metrics_support.py")
-        .read_text(encoding="utf-8")
-        .split("DOUBLE = r'''")[1]
-        .split("'''")[0],
-        encoding="utf-8",
-    )
+    double.write_text(DOUBLE, encoding="utf-8")
     double.chmod(0o755)
 
     spec = (

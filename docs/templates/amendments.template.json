@@ -7,6 +7,9 @@
     "Ordinary amendments are BATCHED and re-verified together at phase close. A security-relevant",
     "one is NEVER batched - it is owed re-verification immediately, because the cost argument that",
     "justifies batching does not apply to a credential already in a log.",
+    "A reason that quantifies universally carries the set it was measured over as `measured_over`,",
+    "a field the Verifier holds the claim against (issue #117): 'nothing in the catalogue' was written",
+    "against a four-field diff and cost two rounds to falsify. `open` refuses the reason without it.",
     "Do not hand-edit: `amendments.py open` and `amendments.py close` own this file, and",
     "`amendments.py due` is what the verifier hook and CI read."
   ],
@@ -21,6 +24,7 @@
       "requirements": ["R<n>.<k>.<m>"],
       "security": false,
       "reason": "<why the change was made, from the reason file>",
+      "measured_over": ["<the set a universal claim in the reason was checked over - required when the reason says all/every/nothing/never/always/only/...; null otherwise>"],
       "status": "pending",
       "opened_at": "YYYY-MM-DDThh:mm:ssZ",
       "verified_at": null,

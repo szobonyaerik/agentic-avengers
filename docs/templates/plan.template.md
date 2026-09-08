@@ -3,7 +3,7 @@ feature: <feature>
 type: implementation-plan
 status: draft
 created: YYYY-MM-DD
-readers: avenger-spec-writer @ per spec; phase-handover @ per phase (the next phase's entry only)
+readers: avenger-spec-writer @ per spec; phase-handover @ per phase (the next phase's entry only); carried_items.py @ per deferral (this phase's Done when table only)
 ---
 
 # Implementation Plan: <Feature>
@@ -27,7 +27,18 @@ readers: avenger-spec-writer @ per spec; phase-handover @ per phase (the next ph
        it. Any intended behaviour change in such a phase is greenfield work with its own
        requirement. Say it here, at the phase, before a spec is written. -->
 - **Touches**: <!-- real paths -->
-- **Done when**: <!-- outcome that proves the phase works; the Verifier runs once here -->
+- **Done when**: <!-- outcome that proves the phase works; the Verifier runs once here. KEEP THE
+  PROSE - it is what a human reads. The table below is the same Done when in the form a gate reads:
+  a finding may be DEFERRED out of this phase only when the requirement it is against carries
+  none of these conditions (scripts/done_when.py, scripts/carried_items.py defer). Without the
+  table the phase cannot defer at all, and nothing else about how it closes changes. One row per
+  condition, stable ids; the Spec Writer tags the requirements that make each one true with
+  `done_when: DW-<n>` on their declaration line. REPLACE THE PLACEHOLDER ROW - a `<n>` id is not a
+  condition. -->
+
+  | done-when | outcome |
+  |-----------|---------|
+  | DW-<n> | <one condition, as something someone can watch happen> |
 
 ## Risks & mitigations
 <!-- how the ORDERING mitigates risk -->

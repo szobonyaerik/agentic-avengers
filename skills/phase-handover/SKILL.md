@@ -101,6 +101,12 @@ Mirror the gate record out of `verdict.json`, `amendments.json` and `exceptions.
 - `verdict: pass` with `bypassed: true` means the phase passed only because findings were **waived**.
   Name each waived finding (id / who / when / reason) — a visible bypass, never a silent green.
   One line per finding on the card; the reasoning, if any, goes in the archive.
+- **Deferred findings** — the `Deferred:` line counts them and names each owner, from
+  `carried.json#deferrals` (`python3 scripts/carried_items.py deferred <phase-dir>`). A deferred
+  finding is real, does not block this phase's *Done when* (gated by `scripts/done_when.py`), and a
+  later phase owns it; each one also has a `deferred-finding` row in *Open items* carrying it to the
+  next phase with its measurement. A phase that defers everything is as visible here as one that
+  fixes everything, which is the point of the line.
 - Mutation is **`advisory` by default** — it runs and reports, and never blocks. If it ran, record the
   score and the policy on the frontmatter line; if it did not, write `n/a (off)` rather than leaving
   it blank.
@@ -179,7 +185,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 | id | kind | one-line title | where the detail lives |
 |---|---|---|---|
 | OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
-| FWD-<n> | forward-claim | <what a later phase must handle> | this card |
+| FWD-<n> | forward-claim | <what a later phase must handle> | this card; measured_over: <set> if the claim quantifies universally |
 
 ### Next phase
 <next-phase-slug> — needs from this phase: <the one or two things it depends on>.
@@ -217,12 +223,41 @@ by `scripts/carried_items.py` from `scripts/hook_verifier.sh` and from `gate_ci.
   spec, `tested`, or `declined` with a stated reason. An item that still applies further out is
   declined there and **re-carried on that phase's own card** - that is how a claim about phases 9-12
   survives without being owed to all four at once.
+- **A `deferred-finding` row is a real finding this phase did not fix, with its measurement.** It is
+  recorded FIRST (`python3 scripts/carried_items.py defer <phase-dir> <id> --to <n>-<slug>
+  --record-file <f> [--finding <verdict-id>] [--spec-id R... | --no-requirement]`), which refuses a
+  finding that blocks this phase's *Done when* (`scripts/done_when.py`, from the plan's
+  `| done-when |` table and the specs' `done_when:` tags) and refuses an owner that is not a later
+  planned phase; the row is written as the command prints it. Row and record are checked against
+  each other at close. The next phase answers such a row owned by a phase further out with
+  `python3 scripts/carried_items.py recarry <phase-dir> <id>` - the record is copied byte-for-byte
+  and the discharge is recorded as `declined` with the structural reason; declining it by hand is
+  refused, because dropping a real finding on the way to its owner is what this exists to make
+  impossible. **Re-carrying is unconditional**: the *Done when* gate is not asked again against
+  your phase. It matches a finding's requirement ids against the conditions your own specs tag, and
+  an inherited deferral carries the ids of the phase that raised it, so it could only ever answer
+  CLEAR here - and refusing on an undecidable *Done when* left a phase whose own *Done when* is
+  prose only with no way to answer an inherited row at all. The gate binds where its ids belong: at
+  `defer` time, in the phase raising the finding. Fixing it early
+  (`--as built|tested`) is always allowed.
 
-- **On the LAST card there is no next phase, so a forward claim must name an ISSUE.** If your `next:`
+- **On the LAST card there is no next phase, so a forward claim - or a deferred finding - must name
+  an ISSUE.** If your `next:`
   is `e2e` or `ship`, nobody inherits this table, and a claim owed to nobody is the state phase 8's
   prediction was in. Put an issue reference on the row - `#<number>` or an issue URL - and the phase
   closes; `python3 scripts/carried_items.py filed <phase-dir>` is what checks it. It is a presence
   check: nothing judges whether the claim was worth carrying.
+
+- **A forward claim that quantifies universally carries the set it was measured over, in the
+  row.** "Every limb the model calls support is now on its bearing surface" was written on one
+  measured card four lines below the FWD row that contradicted it, false on the measurements, and
+  caught only because its author was under a standing instruction to say what was measured and over
+  what set - evidence the instruction helps and is not enforcement (issue #117, folded into #96).
+  So a `forward-claim` row whose text says *all*, *every*, *nothing*, *never*, *always*, *only*,
+  *identical*, *unchanged* (the closed set in `scripts/measurement_claims.py`) carries
+  `measured_over: <the clips, files, ids or cases actually checked>` in any of its cells, or is
+  narrowed to what was measured; `carried_items.py declared` refuses the card otherwise. The next
+  phase's spec writer and the Verifier then hold the claim's quantifier against that set.
 
 An id belongs to the card that declared it, so `OBS-1` here and `OBS-1` on the next phase's card are
 different items; the ids you already use keep working. Never write a prediction into the summary, a
@@ -319,7 +354,8 @@ verdict (plus any waived findings), the mutation line, an **Open items section t
 phase carries forward or explicitly says `none`**, and a `next` value (a phase slug, `e2e` if this
 was the last phase, or `ship`). `python3 scripts/doc_read_path.py check .` is clean, and
 `python3 scripts/carried_items.py declared <phase-dir>`, `… due <phase-dir>`,
-`… filed <phase-dir>` and `python3 scripts/breaker_gate.py due <phase-dir>` all exit 0.
+`… filed <phase-dir>`, `… deferred <phase-dir>` and `python3 scripts/breaker_gate.py due <phase-dir>`
+all exit 0.
 
 **And the codemap has been regenerated** — `python3 scripts/codemap.py . --lang <langs> --output
 codebase`, unconditionally, as the last action of the phase (`avenger-handover` Step 4). The phase you

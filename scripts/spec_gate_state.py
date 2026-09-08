@@ -57,9 +57,27 @@ only: every spec stamped before the gate cache existed is UNRECORDED, and routin
 spec gate would park `/avenger-run` on shipped work whose remedy nobody asked for - a wedge, not a
 gate.
 
+**The stamp names the bytes it approved, and `status_of` reads it that way** (issue #97, folded
+#121). The value `spec_gate: approved` and the hash `gate_gated_hash` are written together by the
+same gate over the same body, so an `approved` whose hash no longer matches the body is not an
+approval of THIS body - it is an approval of a body the spec no longer has. Readers used to be free
+to ask for the value alone: `gate_ci.sh` read `status` and never asked about freshness, so a spec
+edited after its approval passed CI's stamp check, and the clickup-agents / faithful-rep instances
+in #121 all produced a PASS from a stamp that described other bytes. `status_of()` now answers
+**`stale`** for that shape, a fourth, DERIVED state that nothing writes: `set` refuses it, because
+it is a fact about the body and the hash, not a value an author chooses. Any reader that asks "is
+this spec approved" through this module therefore gets the answer bound to the bytes, and there is
+no second freshness question for it to forget to ask. `status(fields)` still exists for callers
+that hold only the frontmatter and cannot see the body; it says so in its docstring, and it is the
+weaker answer.
+
+An UNRECORDED stamp stays `approved` here, on the boundary above - but the CLI **says so** on
+stderr, because a clean `approved` over a hash nobody recorded is exactly the over-read clean result
+issue #97 is about.
+
 Usage:
-    spec_gate_state.py status <spec.md>    print pending|approved|blocked; exit 0 approved,
-                                           1 not approved, 2 unreadable
+    spec_gate_state.py status <spec.md>    print pending|approved|blocked|stale; exit 0 approved,
+                                           1 not approved (stale included), 2 unreadable
     spec_gate_state.py set <spec.md> <pending|approved|blocked>
                                            stamp it, inserting the key when it is absent
     spec_gate_state.py freshness <spec.md> print fresh|stale|unrecorded; exit 0 fresh, 1 not fresh,
@@ -74,6 +92,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
 import spec_gate_cache  # noqa: E402 — the module that owns the hash a gate records
 
 APPROVED_EXIT = 0
@@ -84,12 +103,18 @@ PENDING = "pending"
 APPROVED = "approved"
 BLOCKED = "blocked"
 
+#: The states a gate WRITES. `set` accepts exactly these.
 STATES = (PENDING, APPROVED, BLOCKED)
 
 #: The three answers `freshness()` gives about a spec's gate stamp. See the module docstring.
 FRESH = "fresh"
 STALE = "stale"
 UNRECORDED = "unrecorded"
+
+#: Every answer `status_of` can give: the written states plus the one DERIVED from the body and the
+#: recorded hash disagreeing. `stale` is never written - it is what an `approved` READS AS once the
+#: body has moved on from the bytes the gate approved.
+STATUSES = (*STATES, STALE)
 
 #: The single stamp the one gate writes.
 GATE_FIELD = "spec_gate"
@@ -114,7 +139,12 @@ def frontmatter(text: str) -> dict[str, str]:
 
 
 def status(fields: dict[str, str]) -> str:
-    """The spec's gate status, from the current stamp or derived from the legacy pair."""
+    """The spec's gate status FROM ITS FRONTMATTER ALONE, current stamp or derived legacy pair.
+
+    This is the weaker question: it cannot see the body, so it cannot tell an approval of this body
+    from an approval of the body the spec used to have. A caller holding the file asks `status_of`,
+    which folds the recorded hash in and answers `stale` for that shape.
+    """
     current = fields.get(GATE_FIELD, "").strip().lower()
     if current in STATES:
         return current
@@ -130,11 +160,33 @@ def status(fields: dict[str, str]) -> str:
 
 
 def status_of(path: Path) -> str:
-    """The gate status of a spec on disk. An unreadable spec is `pending`, never approved."""
+    """The gate status of a spec on disk, BOUND TO ITS BODY. Unreadable is `pending`, never approved.
+
+    `approved` is answered only while the body still hashes to what the gate recorded. A body that
+    has moved on answers `stale` (§ module docstring): the stamp's value is true of other bytes. A
+    stamp with no recorded hash at all is UNRECORDED drift, unknowable rather than proven, and stays
+    `approved` on the applicability boundary - `main` names that on stderr so the clean token is not
+    read as more than it is.
+
+    UNDECIDABLE is the third shape and it fails closed as `pending`, never `approved`: this module's
+    frontmatter reader and the cache's are two different parsers, so a spec one accepts and the
+    other refuses (a CRLF block, a file that ends at its closing `---`) carries a stamp that cannot
+    be bound to any bytes at all. "We could not tell" is not "it is fine" - and answering `stale`
+    there would assert a drift nobody observed.
+    """
     try:
-        return status(frontmatter(path.read_text(encoding="utf-8")))
-    except OSError:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return PENDING
+    current = status(frontmatter(text))
+    if current != APPROVED:
+        return current
+    bound = freshness(path)
+    if bound == STALE:
+        return STALE
+    if bound is None:
+        return PENDING
+    return current
 
 
 def freshness(path: Path) -> str | None:
@@ -149,14 +201,16 @@ def freshness(path: Path) -> str | None:
     """
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     try:
         block, body = spec_gate_cache.split_spec(text)
     except ValueError:
         return None
     current = spec_gate_cache.body_hash(body)
-    recorded = [spec_gate_cache.stored_hash(block, gate) for gate in spec_gate_cache.GATES]
+    recorded = [
+        spec_gate_cache.stored_hash(block, gate) for gate in spec_gate_cache.GATES
+    ]
     if any(h == current for h in recorded):
         return FRESH
     if any(h is not None for h in recorded):
@@ -180,6 +234,18 @@ def stamp_fresh(path: Path) -> bool | None:
 GATE_LINE = re.compile(rf"^{GATE_FIELD}:.*$", re.MULTILINE)
 
 
+def _unbindable(path: Path) -> bool:
+    """True for the one shape `status_of` fails closed on that is NOT an ordinary pending spec: an
+    approved stamp this module can read and the cache cannot bind to any body."""
+    if freshness(path) is not None:
+        return False
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return status(frontmatter(text)) == APPROVED
+
+
 def stamped(text: str, state: str) -> str:
     """The spec with `spec_gate:` set to `state`, inserting the key when it is absent."""
     match = FRONTMATTER.match(text)
@@ -187,7 +253,9 @@ def stamped(text: str, state: str) -> str:
         raise ValueError("no YAML frontmatter")
     block = match.group(1)
     line = f"{GATE_FIELD}: {state}"
-    block = GATE_LINE.sub(line, block) if GATE_LINE.search(block) else f"{block}\n{line}"
+    block = (
+        GATE_LINE.sub(line, block) if GATE_LINE.search(block) else f"{block}\n{line}"
+    )
     return f"---\n{block}\n---" + text[match.end() :]
 
 
@@ -230,9 +298,31 @@ def main(argv: list[str] | None = None) -> int:
         print(state)
         return APPROVED_EXIT if state == FRESH else NOT_APPROVED_EXIT
     state = status_of(path)
+    if state == STALE:
+        print(
+            f"[spec_gate_state] {path}: spec_gate says approved, but the body no longer hashes to "
+            f"the bytes the gate approved - the stamp is true of a body this spec no longer has. "
+            f"Write the spec again to re-gate it, or record a disclosed exception "
+            f"(scripts/applicability.py record <phase-dir> --rule spec-gate ...).",
+            file=sys.stderr,
+        )
+    elif state == PENDING and _unbindable(path):
+        print(
+            f"[spec_gate_state] {path}: carries an approved stamp this reader can see and the gate "
+            f"cache cannot parse, so the stamp is bound to no bytes at all - reported as not "
+            f"approved (fail closed), never as an approval.",
+            file=sys.stderr,
+        )
+    elif state == APPROVED and freshness(path) == UNRECORDED:
+        print(
+            f"[spec_gate_state] {path}: approved, but no gate ever recorded a body hash for it, so "
+            f"whether this body is the one approved is UNKNOWABLE - reported, not held (a stamp "
+            f"that predates the gate cache).",
+            file=sys.stderr,
+        )
     print(state)
     return APPROVED_EXIT if state == APPROVED else NOT_APPROVED_EXIT
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guard_scope.run(__file__, main))

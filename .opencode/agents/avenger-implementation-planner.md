@@ -68,7 +68,10 @@ Order riskiest/most foundational first. The Verifier runs once per phase, after 
 - **Touches**: key files / modules / areas, using real paths from the codebase.
 - **Done when**: the high-level outcome that proves the phase works. (The Spec Writer turns each spec
   into `R<n>.<k>.<m>` ids, a `binding:` each, and the acceptance criteria those bindings call for —
-  keep it outcome-level here.)
+  keep it outcome-level here.) **Keep the prose, and give each condition a row** in the table the
+  template carries beside it (`| done-when | outcome |`, ids `DW-<n>`): that table is the form a gate
+  reads when a Verifier finding asks to be deferred out of the phase (`scripts/done_when.py`), and a
+  phase whose *Done when* is prose only cannot defer at all.
 
 ### Phase 2 — <slug>
 ...
@@ -94,7 +97,10 @@ per-phase specs remain coherent (the spec gate checks each spec against these an
   their `binding:` tiers and the acceptance criteria to the Spec Writer.
 - **A phase's "done when" is a user-observable outcome**, because that is what the `binding: e2e`
   tier turns into a journey. Phrase it as something someone can watch happen, not as a count of
-  requirements met.
+  requirements met. Write it twice in the same section: once as prose, once as the `| done-when |`
+  table with one row per condition. The Spec Writer tags the requirements that carry each condition;
+  a condition no requirement carries makes the phase unable to defer anything, so a condition should
+  be something a requirement CAN make true.
 - **Phase boundaries are gate points.** Each phase ends green (tests pass, mutants killed) before the
   next begins.
 

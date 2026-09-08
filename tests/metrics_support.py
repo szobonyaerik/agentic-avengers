@@ -17,6 +17,11 @@ belongs in a `real_sink` test.
 It does carry one lever the real CLI cannot be asked for: `DOUBLE_REFUSE_KEY` names entry keys it
 refuses, which is how a firstmate too OLD to know a field is reproduced. The installed CLI is always
 the current one, so version skew is the one behaviour only a double can stand in for.
+
+`DOUBLE_SEAL=1` makes it refuse, exit 3, any `set`/`add` on a record whose `closed` is set unless the
+write carries `--reopen` - the shape of the real writer's seal, so the sink's spool (issue #98) has a
+double to be exercised against on a machine without firstmate. Opt-in, so nothing already written
+against the double changes meaning.
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ pytestmark = pytest.mark.subprocess(
 )
 
 #: A writer that records its argv and keeps just enough state for read-modify-write to work.
-DOUBLE = r'''#!/usr/bin/env python3
+DOUBLE = r"""#!/usr/bin/env python3
 import json, os, sys
 
 argv = sys.argv[1:]
@@ -104,6 +109,17 @@ with open(target, encoding="utf-8") as fh:
 if verb == "show":
     json.dump(record, sys.stdout)
     sys.exit(0)
+reopen = "--reopen" in argv
+argv = [a for a in argv if a != "--reopen"]
+if (
+    os.environ.get("DOUBLE_SEAL") == "1"
+    and verb in ("set", "add")
+    and record.get("closed") is not None
+    and not reopen
+):
+    sys.stderr.write("fm-pipeline-metrics: refusing to write phase %s.\nPhase %s closed at %s\n"
+                     % (argv[1], argv[1], record["closed"]))
+    sys.exit(3)
 if verb == "set":
     record.update(parse(argv[2:]))
 elif verb == "add":
@@ -122,14 +138,18 @@ else:
 with open(target, "w", encoding="utf-8") as fh:
     json.dump(record, fh)
 sys.exit(0)
-'''
+"""
 
 
 def read_calls(log: Path) -> list[list[str]]:
     """Every argv the double was invoked with, in order."""
     if not log.exists():
         return []
-    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
+    return [
+        json.loads(line)
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
 
 
 def _reset_sink(monkeypatch) -> None:
@@ -145,7 +165,7 @@ def _clean_env(monkeypatch) -> None:
     monkeypatch.delenv("AVENGER_METRICS_OFF", raising=False)
     for name in ("PHASE", "PHASE_DIR", "SPEC", "SPEC_PATH", "STAGE", "ATTEMPT", "LOG"):
         monkeypatch.delenv(f"AVENGER_METRICS_{name}", raising=False)
-    for name in ("DOUBLE_EXIT", "DOUBLE_REFUSE", "DOUBLE_REFUSE_KEY"):
+    for name in ("DOUBLE_EXIT", "DOUBLE_REFUSE", "DOUBLE_REFUSE_KEY", "DOUBLE_SEAL"):
         monkeypatch.delenv(name, raising=False)
     _reset_sink(monkeypatch)
 
@@ -176,7 +196,14 @@ def firstmate_cli() -> str | None:
     explicit = os.environ.get("FM_PIPELINE_METRICS")
     if explicit and os.access(explicit, os.X_OK):
         return explicit
-    beside = Path.home() / "Documents" / "GitHub" / "firstmate" / "bin" / "fm-pipeline-metrics.sh"
+    beside = (
+        Path.home()
+        / "Documents"
+        / "GitHub"
+        / "firstmate"
+        / "bin"
+        / "fm-pipeline-metrics.sh"
+    )
     if os.access(beside, os.X_OK):
         return str(beside)
     return shutil.which("fm-pipeline-metrics.sh")
@@ -187,7 +214,9 @@ def real_sink(tmp_path, monkeypatch):
     """Point the sink at the real firstmate CLI in a throwaway home. Yields (project, fm_home)."""
     cli = firstmate_cli()
     if cli is None:
-        pytest.skip("firstmate's fm-pipeline-metrics.sh is not available on this machine")
+        pytest.skip(
+            "firstmate's fm-pipeline-metrics.sh is not available on this machine"
+        )
     project = tmp_path / "project"
     project.mkdir()
     home = tmp_path / "fm-home"
@@ -207,14 +236,18 @@ def stored(store_or_home: Path, phase: str) -> dict:
     if direct.exists():
         return json.loads(direct.read_text(encoding="utf-8"))
     return json.loads(
-        (store_or_home / "data" / "pipeline-metrics" / f"phase-{phase}.json").read_text("utf-8")
+        (store_or_home / "data" / "pipeline-metrics" / f"phase-{phase}.json").read_text(
+            "utf-8"
+        )
     )
 
 
 def git_init(project: Path) -> None:
     """A real repo at `project` — `record_phase_close`'s landing check needs one to answer at all."""
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=project, check=True
+    )
     subprocess.run(["git", "config", "user.name", "test"], cwd=project, check=True)
 
 
@@ -226,8 +259,17 @@ def git_land(project: Path, message: str = "land") -> None:
 
 def write_spec(project: Path, phase: int, spec: str, body: str) -> Path:
     """A spec at the layout every emission point derives its phase and spec id from."""
-    path = (project / "docs" / "features" / "demo" / "phases" / f"{phase}-slug"
-            / "specs" / f"{spec}-sub" / "spec.md")
+    path = (
+        project
+        / "docs"
+        / "features"
+        / "demo"
+        / "phases"
+        / f"{phase}-slug"
+        / "specs"
+        / f"{spec}-sub"
+        / "spec.md"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\nfeature: demo\nstatus: draft\n---\n{body}", encoding="utf-8")
     return path

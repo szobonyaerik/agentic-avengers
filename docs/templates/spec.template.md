@@ -32,7 +32,7 @@ criticality:             # <!-- standard | critical — 'critical' runs the Brea
                          #      and a template that pre-filled `standard` made that opt-out the
                          #      template's decision rather than an author's.
                          #      Writing `standard` deliberately is how a phase opts out. -->
-readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
+readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase; carried_items.py @ per deferral (requirement `done_when:` tags only)
 ---
 
 # <Spec title>
@@ -63,8 +63,15 @@ readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
                      own test, and must say in one sentence why an e2e cannot see it.
        none        — structural or build-time. NO test. Name what enforces it (a CI job, a type
                      checker, or nothing — "nothing" is often the right answer).
-     Default to e2e. This tiering is what keeps suite size tied to risk instead of to id count. -->
-- R<n>.<k>.1 — `binding: e2e` — …
+     Default to e2e. This tiering is what keeps suite size tied to risk instead of to id count.
+
+     A requirement that makes one of the phase's Done when conditions true (the `| done-when |`
+     table under this phase in plan.md) also carries `done_when: DW-<n>[, DW-<m>]` on the same line.
+     That tag is what decides whether a Verifier finding against the requirement may be DEFERRED to a
+     later phase (scripts/done_when.py): tagged, it blocks and stays this phase's to fix; untagged,
+     it may leave with its measurement. Every condition the plan declares must be carried by at
+     least one requirement in the phase, or nothing can be deferred from it. -->
+- R<n>.<k>.1 — `binding: e2e` — `done_when: DW-<n>` — …
 - R<n>.<k>.2 — `binding: integration` — … Why an e2e cannot see it: …
 - R<n>.<k>.3 — `binding: none` — … Enforced by: …
 
@@ -75,10 +82,15 @@ readers: spec gate @ on write; implementer @ once; avenger-verifier @ per phase
 
 ## Acceptance criteria
 <!-- For each `integration` requirement and each journey: a pass condition AND at least one
-     fail/edge condition — the implementer needs both to write the red→green slice.
+     fail/edge condition — the implementer needs both to write the red→green slice — AND a
+     `drives:` field naming what the test pushes through: the seam, command or planted input.
+     "Sweep both adapters for this class" is satisfied by reading; `drives:` is what cannot be.
+     scripts/hook_spec_gate.sh refuses a criterion without it before any paid call (issue #96).
+     A criterion nothing can drive (a visual, an external system) declares `drives: undriven (<why>)`
+     rather than being refused; what that declaration must carry is issue #116's decision.
      `binding: none` requirements get none; there is nothing to run. -->
-- R<n>.<k>.2 — passes when: …; fails when: …
-- J1 — passes when: …; fails when: …
+- R<n>.<k>.2 — passes when: …; fails when: … — drives: <seam | command | planted input>
+- J1 — passes when: …; fails when: … — drives: <the user-facing entry point, end to end>
 
 ## Interfaces / contracts
 <!-- real signatures, schemas, error modes -->

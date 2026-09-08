@@ -113,11 +113,17 @@ because you want to check it further: check it now, or raise it now with your un
 At the cap, choose one and say which in the phase `handover.md`:
 
 - **carry** the remaining findings as known-open, or
+- **defer** a finding that is real but does NOT block this phase's *Done when* to the later phase
+  that owns it, with its measurement (`scripts/carried_items.py defer <phase-dir> <finding-id> --to
+  <n>-<slug> --record-file <f> --finding <finding-id>`, then `status: deferred` on the finding - the
+  record resolves the stamp, never the other way; `skills/verifier-triage` § *Deferring a finding*),
+  or
 - **waive** them explicitly (`scripts/bypass_log.sh verifier <finding-id> <waived_by>`), or
 - **escalate** to a human.
 
-A fourth attempt is not one of the three. Some findings being carried rather than fixed is the
-accepted, named trade.
+A fourth attempt is not one of the four. Some findings being carried rather than fixed is the
+accepted, named trade. A finding that blocks the *Done when* is refused deferral by the gate and
+stays yours to route back - deferral is never a way to weaken a check.
 
 ## Amendments — re-verify what changed, not the phase
 
@@ -165,7 +171,11 @@ it. Record the amendment ids folded into a verdict in its `amendments` array.
    default because it is deterministic, needs no model below the threshold, and every
    non-discriminating test this project has caught was caught by it. With the cross-family reading
    pass removed it is now the pipeline's **only** systematic signal about non-discriminating tests —
-   still advisory, still not a wall. If `off`, skip this step entirely — run no mutation tool.
+   still advisory, still not a wall. The policy governs the **score** only: every `cosmic-ray exec`
+   is bracketed by a snapshot and an explicit restore (`scripts/mutation_exec_guard.py`), and a tree
+   that differed fails the run under every policy - you are running this in the live working copy,
+   so read the tree line before the score, and `skills/mutation-interpret` says which of its three
+   outcomes claims the tree is clean. If `off`, skip this step entirely — run no mutation tool.
    Otherwise run `bash scripts/gate_ci.sh --full` and follow `skills/mutation-interpret`. That is
    the hand-run entry point: `scripts/hook_mutation.sh` is a PostToolUse hook, so it only fires on a
    `handover.md` write and reads its target off the hook payload — invoking it from a shell exits
@@ -182,8 +192,15 @@ it. Record the amendment ids folded into a verdict in its `amendments` array.
    adversarial findings and the `execution` block naming the transcript they came from, to
    `docs/features/<feature>/phases/<n>-<slug>/verdict.json` (schema and procedure in
    `skills/verifier-triage`; template at `docs/templates/verdict.template.json`). Each finding is
-   self-contained: a deterministic `id`, the `instruction` for the routed agent, and its own
-   `break_glass` waiver (default `false`). The top-level `routed` array is *derived* from findings
+   self-contained: a deterministic `id`, the `instruction` for the routed agent, its **`method`** -
+   how the defect was established and how the fix is to be confirmed, naming what was DRIVEN and
+   over which axes (a probe that set what a collaborator returns and never what it raises scoped a
+   fix round that closed half a defect; the unstated axis is the unmeasured one) - and its own
+   `break_glass` waiver (default `false`). `scripts/verifier_precheck.py` refuses a finding with no
+   `method`. "Sweep X for this class" as an instruction names the method it wants driven, never
+   read; a grep count is not a reading of the criteria it counts; and an enumerated set of files is
+   a claim - name how it was derived (`git diff --name-only`, a tree search), not the list alone.
+   The top-level `routed` array is *derived* from findings
    still `open` and unwaived. Set `execution.chain` from
    `verifier_evidence.py chain <phase-dir>` — a verdict that names no transcript, or names one that
    does not match the record on disk, is refused by the hook and by CI. Record everything else by

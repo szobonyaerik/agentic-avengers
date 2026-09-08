@@ -54,6 +54,12 @@
         "hooks": [
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_skill_load.sh\"", "timeout": 30 }
         ]
+      },
+      {
+        "matcher": "TaskStop",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_activity.sh\"", "timeout": 10 }
+        ]
       }
     ],
     "Stop": [

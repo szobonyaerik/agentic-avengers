@@ -48,6 +48,7 @@ import amendments  # noqa: E402
 import applicability  # noqa: E402
 import breaker_gate  # noqa: E402
 import criticality as criticality_mod  # noqa: E402
+import done_when  # noqa: E402
 import spec_gate_state  # noqa: E402
 import verdict_currency  # noqa: E402
 
@@ -61,9 +62,9 @@ FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 LEADING_NUMBERS = re.compile(r"\d+")
 # The planner's contractual heading (docs/templates/plan.template.md): `### Phase <n> — <slug>`.
 # Tolerate the dash variants people type; nothing else in a plan looks like this.
-PLAN_PHASE_HEADING = re.compile(
-    r"^###\s*Phase\s+(\d+)\s*[—–-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE
-)
+# What a phase heading in plan.md looks like is owned by `done_when.py`, which reads the same
+# section for the phase's structured *Done when*; a second copy here is the one that drifts.
+PLAN_PHASE_HEADING = done_when.PLAN_PHASE_HEADING
 
 
 class PipelineStateError(Exception):
@@ -197,7 +198,20 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
         "criticality": criticality_mod.resolve(fields).value,
     }
 
-    gate = spec_gate_state.status(fields)
+    # An approval is a claim about a BODY, and this module used to read only the stamp's value
+    # (issue #42). `verifier_precheck` compared the body against the hash the gate recorded and
+    # called a drifted spec UNGATED, so one spec was gated and ungated at once depending on who
+    # asked — and this is the reader that decides what work happens next, so it was the one letting
+    # work proceed on a spec no gate had judged in its current form. `spec_gate_state.status_of`
+    # now folds the hash in and answers `stale` for that shape (issue #97), so there is no second
+    # freshness question here for a reader to forget - the one token IS bound to the bytes.
+    #
+    # STALE only, never UNRECORDED: a spec the gate never hashed is UNKNOWABLE drift rather than
+    # proven drift, and every spec stamped before the gate cache existed is in that state. Routing
+    # those back would park the resolver on shipped work whose remedy nobody asked for, which is the
+    # wedge §3a exists to prevent. The precheck still holds them, because it is diff-scoped and only
+    # ever enforces what the change is responsible for.
+    gate = spec_gate_state.status_of(spec_file)
     if not _excepted(phase, "spec-gate", spec.name):
         if gate == spec_gate_state.PENDING:
             return State(
@@ -205,34 +219,19 @@ def _spec_state(feature: str, phase: Path, spec: Path) -> State | None:
                 reason=f"{spec.name} has not been through the spec gate",
                 **common,
             )
-        if gate != spec_gate_state.APPROVED:
-            return State(
-                stage="spec-writer",
-                reason=f"{spec.name} was blocked by the spec gate",
-                **common,
-            )
-        # An approval is a claim about a BODY, and this module used to read only the stamp's value
-        # (issue #42). `verifier_precheck` compared the body against the hash the gate recorded and
-        # called a drifted spec UNGATED, so one spec was gated and ungated at once depending on who
-        # asked — and this is the reader that decides what work happens next, so it was the one
-        # letting work proceed on a spec no gate had judged in its current form. Both now ask
-        # `spec_gate_state`, which owns the question.
-        #
-        # STALE only, never UNRECORDED: a spec the gate never hashed is UNKNOWABLE drift rather than
-        # proven drift, and every spec stamped before the gate cache existed is in that state.
-        # Routing those back would park the resolver on shipped work whose remedy nobody asked for,
-        # which is the wedge §3a exists to prevent. The precheck still holds them, because it is
-        # diff-scoped and only ever enforces what the change is responsible for.
-        drift = spec_gate_state.freshness(spec_file)
-        if drift in (spec_gate_state.STALE, None):
+        if gate == spec_gate_state.STALE:
             return State(
                 stage="spec-gate",
                 reason=(
                     f"{spec.name} has changed since the gate judged it — the approval describes a "
                     f"body this spec no longer has"
-                    if drift == spec_gate_state.STALE
-                    else f"{spec.name}: gate-stamp freshness could not be decided (fail closed)"
                 ),
+                **common,
+            )
+        if gate != spec_gate_state.APPROVED:
+            return State(
+                stage="spec-writer",
+                reason=f"{spec.name} was blocked by the spec gate",
                 **common,
             )
 
@@ -395,12 +394,11 @@ def _planned_phases(feature_dir: Path) -> list[tuple[int, str]]:
         text = (feature_dir / "plan.md").read_text(encoding="utf-8")
     except OSError:
         return []
-    return [(int(num), title) for num, title in PLAN_PHASE_HEADING.findall(text)]
+    return done_when.planned_phases(text)
 
 
 def _slugify(title: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return slug or "phase"
+    return done_when.slugify(title)
 
 
 def _missing_planned_phase(feature_dir: Path, phases: list[Path]) -> State | None:

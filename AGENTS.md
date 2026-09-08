@@ -129,7 +129,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    point: a runbook naming a single gate (`fidelity`) read a collapsed spec, which carries `gate`,
    as STALE while it was freshly approved, and sent operators to re-gate work that was fine. The
    same call is what `pipeline_state.py` and `verifier_precheck.py` ask, so the runbook cannot
-   disagree with the pipeline about one spec.
+   disagree with the pipeline about one spec. **`status` is bound to the bytes too**: an `approved`
+   whose body moved on prints `stale` and exits 1, so no reader of the status token - `gate_ci.sh`,
+   the resolver, the re-gate hook - passes a stamp written over other text (issue #97).
 3e. **The applicability boundary.** **A mechanical rule binds what is still OPEN; what is CLOSED it
    counts and names, never blocks** (`scripts/applicability.py`). Three evidences of closed, and no
    call site invents a fourth: **untouched** (the diff does not reach it — the one `changed_paths`
@@ -174,10 +176,13 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `gate_ci.sh --full` via `amendments.py due`, not asked for. Without this, one measured phase spent
    verification rounds 3 through 8 re-doing a whole phase for one-line corrections.
    **An amendment is OWED after a fix pass, not merely available** (issue #51):
-   `scripts/verdict_currency.py`, run from `pipeline_state.py` before a feature may report `done`
-   and from `gate_ci.sh --full`, refuses a feature whose tracked files changed after its **newest**
-   verdict landed with no phase recording an amendment. The ship gate owns both findings and fixes
-   while it runs, so it changed verified code and touched no artifact, and the verdict went on
+   `scripts/verdict_currency.py`, run from `pipeline_state.py` before a feature may report `done`,
+   from `gate_ci.sh --full` and from `hook_verifier.sh` at the handover, refuses a feature whose
+   tracked files changed after its **newest** verdict with no phase recording an amendment. **A
+   verdict is bound to a HEAD** (issue #97): every `verifier_evidence.py record` run carries the
+   commit it stood on, so an uncommitted verdict anchors on the newest recorded head and a branch
+   that moved past it makes the verdict stale, not passing; the close refuses to carry it. The ship
+   gate owns both findings and fixes while it runs, so it changed verified code and touched no artifact, and the verdict went on
    asserting a file was byte-identical after the fix commit changed it. **Never a rewritten
    verdict** - that restates a verification nobody performed. `docs/` and the feature's own
    `tests/e2e/<feature>/` are excluded by design, and anything git cannot answer enforces nothing
@@ -267,7 +272,11 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    one still carrying the template's `R<n>.<k>.<m>` syntax counts as nothing - and that the phase
    suite is green, and either failing REVERTS the stamp to `status: in-progress`
    (`scripts/spec_done_guard.py`) before failing the hook. So stamp `done` LAST, after the mapping
-   rows and a green suite. Three states fail the hook but leave the stamp exactly as written,
+   rows and a green suite. **A stamp that stands is then BOUND to those bytes**: the hook writes
+   `done_digest:` over the spec's own `test-mapping.md` and its own test directory, and the
+   handover precheck holds it - edit either after `done` and the remedy is to stamp `done` again
+   through a tool write, which re-checks and re-binds (issue #97). Three states fail the hook but
+   leave the stamp exactly as written,
    because the revert acts only on evidence scoped to the same thing it rewrites: a spec whose every
    declared requirement is `binding: none` owes no row (4a) - a spec declaring no requirement at all
    is its own stop, not that exemption; a red suite that could only be run repository-wide; and
@@ -346,7 +355,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    blocks) · `enforce` (fails closed). An extra signal, and the pipeline's **only** systematic
    signal about non-discriminating tests now that the cross-family reading pass is gone — still
    advisory, still not a wall, and named as partial cover rather than a replacement. When off, no
-   mutation tool runs anywhere.
+   mutation tool runs anywhere. **The policy governs the SCORE only.** `cosmic-ray exec` mutates
+   source in place, so every exec is bracketed by `scripts/mutation_exec_guard.py` - a snapshot
+   before, an explicit restore-and-compare after and on the kill path - and a tree that differed
+   fails the run under every policy, because a mutant left on disk is authored code nobody
+   authored. Its three outcomes and what `GATE_BYPASS` may waive are in
+   `skills/pipeline-conventions`; how to read them is in `skills/mutation-interpret`.
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
    and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
    learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
@@ -558,19 +572,50 @@ silence reads as "no limits".
 into the output a later stage reads. And treat **allowlist growth as a signal** - a guard quietened
 with nine new entries has been weakened, not maintained.
 
+## A claim carries its measurement (issue #96)
+
+Every stage in one measured feature made the same mistake in a different costume: **a partial
+measurement written up as a complete result.** A sweep done by READING two adapters reported complete
+and missed two instances; a probe set what a collaborator *returns* and never what it *raises*, and a
+fix round scoped from it closed half the defect; an approved spec justified narrowing a handler with
+"only calls X, Y and float()" - false, and past the gate, both reviews and the grill. Folded in from
+#117: three consecutive amendments and one contract card claimed a scope wider than their author had
+measured. Five of seven were caught by a human reading artifacts against source, one by a gate, none
+by a test.
+
+**A check states its method, a criterion names what it drives, and a scope claim carries the set it
+was measured over as a FIELD.** `scripts/measurement_claims.py` owns the rule and it is asked at the
+point of decision, never at the close:
+
+- `scripts/hook_spec_gate.sh` refuses an acceptance criterion with no **`drives:`** before any paid
+  call. Presence only - `drives: undriven (<why>)` passes, and what that declaration must carry is
+  issue #116's, deliberately left open.
+- `scripts/verifier_precheck.py` refuses a verdict finding with no **`method`** - what was driven,
+  over which axes.
+- `scripts/amendments.py open` and `scripts/carried_items.py` refuse a universal claim - a closed,
+  pinned vocabulary, matched outside inline code - with no **`measured_over`** set.
+- The spec gate blocks an **`unevidenced-universal`**, the sixth entry in the closed blocking set. It
+  asks about the evidence beside the claim, never about the claim's truth.
+
+Parity and differential tests state their blind spot in **runtime output** (`skills/tdd`); this
+repo's own two-sided checks declare it in `scripts/guard_scope.toml`. Three instances are
+**instruction only** and say so: a grep count substituted for reading, an enumerated list taken as
+complete, and a single-sample proof of a negative.
+
 ## Environment
 | var | default | effect |
 |---|---|---|
-| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip) |
+| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip). It governs the **score** only: a tree `cosmic-ray exec` left changed fails the run under every policy |
 | `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
 | `GATE_TRIAGE_MODEL` | `GATE_MODEL` | the spec gate's cheaper triage pass; must not be the author's family. Unset, it now defaults to `GATE_MODEL` — the model the operator already configured and proved reachable — never to a hardcoded model on its own provider (issue #48) |
 | `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
 | `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
+| `MUTATION_HOOK_BUDGET_S` | the hook's `hooks.json` timeout (600) | seconds `hook_mutation.sh` may spend in total; `cosmic-ray exec` is refused up front when the baseline's measured wall clock times the pending mutants would not fit what is left (`scripts/mutation_exec_guard.py`, issue #95) |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
 | `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
-| `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
+| `GATE_BYPASS` | unset | break-glass: logged, visible, never silent. It waives every gate the run reaches except the mutation tree guard's two not-clean outcomes - a mutant provably still on disk, and a tree nothing established either way - which are refused with the blocking exit and no log line, because that is authored code nobody authored rather than a weak gate signal. Only the tree guard's restored outcome is waivable; `skills/pipeline-conventions` states the rule once |
 | `GATE_CALL_TIMEOUT` | `300` | seconds the provider call gets. The gate hooks refuse to run if their `hooks.json` budget cannot outlive it plus headroom — raise this and raise `hooks/hooks.json` with it |
 | `GATE_MIN_LATENCY_MS` | `250` | milliseconds below which a **reached** gate verdict is presumed not to have run and is refused (`cause=implausible-latency`). One measured phase recorded a 4 ms GO from a model gate and consumed it as a pass. `0` disables the check, loudly |
 | `VERIFIER_EVIDENCE_TIMEOUT` | `1800` | seconds one command recorded through `scripts/verifier_evidence.py` may run before its process group is killed |
