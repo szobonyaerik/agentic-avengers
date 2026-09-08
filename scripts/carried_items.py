@@ -72,6 +72,15 @@ forward-looking claims alongside open findings, and makes it binding**:
    delete a test or move a threshold: the deferral carries the number forward unchanged, and
    there is no command that edits one.
 
+6. **Unparseable is UNDECIDABLE, never nothing-carried** (issue #123). `parse_items` skips a line
+   it cannot read, which is right for prose and wrong for a line plainly meant to be an item: a
+   bullet row, a table row with no usable id. Skipped, it is dropped in SILENCE, so a card carrying
+   one readable row beside one malformed one closed exactly like a card that carried only the
+   readable one - a check that cannot go red. `unreadable_rows` names those lines and every reader
+   of a section refuses on them, distinguishably from the empty section beside it: an empty section
+   is still "state a row or an explicit `none`" and exits 1, while an unparseable one exits 2 and
+   names the lines it could not read.
+
 An id is scoped by the phase directory that declared it, so `OBS-1` on phase 8's card and `OBS-1` on
 phase 9's are different items and the ids already in use keep working unchanged.
 
@@ -83,7 +92,9 @@ because the spec gate's CONTEXT block and this ledger must agree about which car
 
 Usage:
     carried_items.py declared <phase-dir>   what THIS phase's card carries forward
-                                            exit 1 when the card states nothing at all
+                                            exit 1 when the card states nothing at all, and exit 2
+                                            when its section holds item-shaped lines the row parser
+                                            CANNOT READ - unparseable is undecidable, never nothing
     carried_items.py list <phase-dir>       the prior phase's items this phase owes an answer to
     carried_items.py discharge <phase-dir> <item-id> --as built|tested|declined
                                             [--by <spec/test/requirement>] [--reason-file <f>]
@@ -94,8 +105,9 @@ Usage:
 
     `list`, `discharge` and `due` read the PRIOR phase's card, so all three exit 2 - undecidable,
     never exit 1 - when its `## Open items` section is present and states neither an item nor an
-    explicit `none`. The remedy is on that card, and `discharge` cannot reach it. `check` reports
-    the same state as a problem per phase rather than aborting its sweep of the others.
+    explicit `none`, and equally when it holds item-shaped lines the row parser cannot read. The
+    remedy is on that card, and `discharge` cannot reach it. `check` reports the same state as a
+    problem per phase rather than aborting its sweep of the others.
     carried_items.py filed <phase-dir>      exit 1 when a forward claim on the LAST card names no
                                             issue. Clean for every card that has a successor.
     carried_items.py check [--root .] [--all]
@@ -326,6 +338,96 @@ def _kind_and_title(cells: list[str]) -> tuple[str, str]:
     return "item", (cells[1] if len(cells) > 1 else "")
 
 
+#: A markdown list marker, ordered or unordered. A card that writes its items as bullets instead of
+#: table rows is the shape phase 9's real card had, and the row parser reads none of them.
+LIST_MARKER = re.compile(r"\A\s*(?:[-*+]|\d+[.)])\s+(?P<rest>\S.*)\Z")
+
+
+def unreadable_rows(body: str) -> list[str]:
+    """Lines in the section that are ITEM-SHAPED and that `parse_items` cannot read.
+
+    `parse_items` skips what it cannot read, and that is right for the prose a card may legitimately
+    carry above its table - a parser that failed on a sentence would make the section harder to
+    write than the prose it replaces. It is wrong for a line that was plainly MEANT to be an item:
+    a bullet row, a table row whose id cell holds no usable id. Skipped, such a line is dropped in
+    silence, and a card carrying one good row and one malformed one closes exactly like a card that
+    carried only the good one - which is the whole defect (issue #123): an unparseable section and
+    an empty one are indistinguishable, so the check cannot go red.
+
+    Three shapes count, and nothing else does:
+
+    * a table row whose id cell is empty or is not an item id (a template placeholder is NOT one of
+      these - it parses perfectly and is simply not an item, which is a different state with a
+      different remedy, so it keeps its own message);
+    * a list-marker line carrying table pipes - phase 9's `- OBS-1 | ... | ...` exactly;
+    * a list-marker line whose first token is an item id, written as a bullet instead of a row.
+
+    A prose line with no marker and no pipes is not item-shaped and is still skipped in silence.
+    """
+    found: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        bare = stripped.strip("|").strip().lower()
+        if bare == NONE:
+            continue
+        cells = _cells(line)
+        if cells:
+            if _is_placeholder(cells):
+                continue
+            identifier = cells[0].strip(EMPHASIS)
+            if identifier.lower() in {"id", NONE}:
+                continue
+            if set(identifier) <= {"-", ":", " "} and identifier:
+                continue
+            if not ITEM_ID.match(identifier):
+                found.append(stripped)
+            continue
+        marker = LIST_MARKER.match(stripped)
+        if marker is None:
+            continue
+        rest = marker.group("rest")
+        head = rest.split("|", 1)[0].split()
+        first = head[0].strip(EMPHASIS + TOKEN_TRIM) if head else ""
+        if "|" in rest or (first and ITEM_ID.match(first)):
+            found.append(stripped)
+    return found
+
+
+def unreadable(phase_dir: Path) -> list[str]:
+    """The item-shaped lines on one phase's own card that the row parser cannot read.
+
+    A card with no section, or one that cannot be read at all, has no unreadable rows HERE: those
+    are their own states with their own messages, and answering them with "a row could not be
+    parsed" would prescribe a fix to a table nobody wrote.
+    """
+    card = Path(phase_dir) / "handover.md"
+    try:
+        text = card.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    body = section_body(text)
+    return [] if body is None else unreadable_rows(body)
+
+
+def unreadable_message(phase_dir: Path, rows: list[str]) -> str:
+    """Why an unparseable section is UNDECIDABLE, naming the lines it could not read."""
+    listed = "\n".join(f"      {row}" for row in rows[:8])
+    more = f"\n      ... and {len(rows) - 8} more" if len(rows) > 8 else ""
+    return (
+        f"{phase_dir}/handover.md has a `## {SECTION_HEADING}` section holding "
+        f"{len(rows)} line(s) that COULD NOT BE PARSED as items, so what this card carries CANNOT "
+        f"BE DETERMINED. This is not an empty section and it is not `none`: a line the parser "
+        f"cannot read is dropped in silence, and a card carrying one readable row beside one of "
+        f"these closes exactly like a card that carried only the readable one.\n"
+        f"{listed}{more}\n"
+        f"  Rewrite each one as a documented table row - "
+        f"`| <id> | <kind> | <one-line title> | <where the detail lives> |` - or, if the card truly "
+        f"carries nothing, replace the section with a single explicit `none` row."
+    )
+
+
 def parse_items(body: str, phase: str) -> tuple[list[Item], bool]:
     """(the items in a card's section, whether it explicitly says `none`).
 
@@ -400,6 +502,9 @@ def owed(phase_dir: Path) -> list[Item]:
     previous = prior_phase(feature_dir, phase)
     if previous is None:
         return []
+    unparseable = unreadable(previous)
+    if unparseable:
+        raise CarriedError(unreadable_message(previous, unparseable))
     items, says_none, present = declared(previous)
     items = _with_owners(previous, items)
     if present and not items and not says_none:
@@ -1192,11 +1297,18 @@ def phase_problems(phase_dir: Path) -> list[str]:
     out: list[str] = []
     items, says_none, present = declared(phase_dir)
     out.extend(f"{phase_dir}/handover.md: {line}" for line in unmeasured_claims(items))
+    unparseable = unreadable(phase_dir)
     if not present:
         out.append(
             f"{phase_dir}/handover.md: no `## {SECTION_HEADING}` section - the card does not say "
             f"what it carries forward. A row per item, or an explicit `none` row."
         )
+    elif unparseable:
+        # Distinguishable from the empty section below, and reported INSTEAD of it: a card holding
+        # bullet rows is not silent, and telling its author that silence is not none prescribes a
+        # remedy they already attempted. The two states have different remedies and different exit
+        # codes standalone (`declared` exits 2 here, 1 below).
+        out.append(unreadable_message(phase_dir, unparseable))
     elif not items and not says_none:
         out.append(
             f"{phase_dir}/handover.md: the `## {SECTION_HEADING}` section states neither an item "
@@ -1462,6 +1574,11 @@ def _dispatch(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return OWED
+        unparseable = unreadable(args.phase_dir)
+        if unparseable:
+            # UNDECIDABLE, never owed: exit 2, the code this script already reserves for a card it
+            # cannot read. Exit 1 would say "write the section", and the section is written.
+            raise CarriedError(unreadable_message(args.phase_dir, unparseable))
         if not items and not says_none:
             print(
                 f"[carried_items] {args.phase_dir}/handover.md has a `## {SECTION_HEADING}` "

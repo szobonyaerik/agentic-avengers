@@ -91,6 +91,7 @@ from applicability import (  # noqa: E402
     touched,
 )
 import done_when  # noqa: E402 — the one owner of a phase's structured *Done when*
+from phase_artifacts import carried_mapping  # noqa: E402 — one owner of "where is this spec's mapping"
 from measurement_claims import finding_problems  # noqa: E402
 from requirement_cap import declared_bindings  # noqa: E402
 import spec_done_guard  # noqa: E402 — the one place "what does this `done` certify" is decided
@@ -177,6 +178,46 @@ def read_mappings(phase_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
             unreadable.append(finding)
             continue
         texts.append((mapping.parent.name, text or ""))
+    return texts, unreadable
+
+
+def carried_mappings(phase_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """The mappings of specs CARRIED into this phase, plus a finding per unreadable one.
+
+    A spec carried into a later phase arrives with its `spec.md` and, because the phase suite has to
+    run them, its tests - and its `test-mapping.md` stays in the phase that implemented it. Read from
+    this phase alone, the traced set held none of that spec's ids, so EVERY requirement it declares
+    was reported as appearing in no mapping row: a false blocker on correct, shipped work whose only
+    remedy was to duplicate a trace that already exists somewhere else under the feature, and a
+    second copy of a rule is the drift defect (issue #123). So the mapping travels with the spec.
+
+    Deliberately kept OUT of `read_mappings`, and that boundary is the point: these rows feed the
+    TRACED ID set and nothing else. `trace_claims` holds a row against this phase's own test tree,
+    and a carried spec whose tests stayed behind would then produce a fresh false finding - a row
+    naming a test that is real and simply lives elsewhere. Widening the trace set can only remove
+    findings; widening the row check would add them.
+
+    A mapping beside the spec always wins: nothing here overrides one this phase holds.
+    """
+    texts: list[tuple[str, str]] = []
+    unreadable: list[str] = []
+    for spec in sorted(phase_dir.glob("specs/*/spec.md")):
+        if (spec.parent / "test-mapping.md").is_file():
+            continue
+        mapping = carried_mapping(spec)
+        if mapping is None:
+            continue
+        name = f"{mapping.parents[2].name}/specs/{mapping.parent.name}"
+        text, finding = read_artifact(mapping)
+        if finding is not None:
+            unreadable.append(finding)
+            continue
+        print(
+            f"[verifier_precheck] {phase_dir.name}: {spec.parent.name} is carried - its mapping is "
+            f"{name}, and its rows count as this phase's trace",
+            file=sys.stderr,
+        )
+        texts.append((name, text or ""))
     return texts, unreadable
 
 
@@ -561,7 +602,9 @@ def check_phase(
         return out
     mappings, unreadable = read_mappings(phase_dir)
     out.extend(unreadable)
-    traced = traced_ids(mappings)
+    carried, carried_unreadable = carried_mappings(phase_dir)
+    out.extend(carried_unreadable)
+    traced = traced_ids(mappings) | traced_ids(carried)
     claims, unreadable_tests = trace_claims(phase_dir, mappings)
     out.extend(unreadable_tests)
     out.extend(claims)
@@ -577,7 +620,8 @@ def check_phase(
         if untraced:
             out.append(
                 f"{spec}: {len(untraced)} requirement id(s) appear in no test-mapping.md row for "
-                f"this phase: {', '.join(untraced)}. (binding: none ids are exempt and not counted.)"
+                f"this phase, and in none carried with a spec from another phase of this feature: "
+                f"{', '.join(untraced)}. (binding: none ids are exempt and not counted.)"
             )
 
         if not ACCEPTANCE_HEADING.search(body):

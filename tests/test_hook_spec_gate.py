@@ -445,6 +445,84 @@ def test_a_spec_at_the_cap_still_reaches_the_gate(project: Path) -> None:
     assert calls(project) == ["observations", "classifications"]
 
 
+# ── scope resolution runs before the checks whose remedy is re-authoring (issue #123) ────────
+
+
+def test_an_approved_spec_carried_into_a_later_phase_is_not_told_to_split_forever(
+    project: Path,
+) -> None:
+    """The block issue #123 reproduces. A spec is approved under the cap in force when it was
+    written, implemented, and then CARRIED into a later phase - the same bytes, a new path, the
+    implementer's stamp on it. The cap in force there is lower, so it fires on every single write of
+    that file, before any model runs, and prescribes a SPLIT: renumbering requirement ids that
+    test-mapping rows, verdict findings and prior handovers already point at. The remedy does not
+    exist, so the phase cannot proceed at all - a wedge rather than a gate.
+
+    Scope resolution answers first: this gate already judged these exact bytes, so it replays that
+    verdict and ends. Nothing is enforced less - the cap ran over this body when it was approved."""
+    thirteen = "".join(
+        f"- R1.1.{i} — `binding: e2e` — behavior {i}\n" for i in range(1, 14)
+    )
+    spec = write_spec(project, requirements=thirteen)
+    approved = run_hook(
+        project,
+        spec,
+        SPEC_REQUIREMENT_MAX="13",
+        STUB_OBSERVATIONS=OBSERVATION,
+        STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+    assert approved.returncode == 0, approved.stderr
+    assert "spec_gate: approved" in spec.read_text()
+    paid = list(calls(project))
+
+    # The gate fires on a path ending in `/spec.md`, so the carry is a real spec path in the phase
+    # that inherited it - not a renamed file, which the hook would ignore outright.
+    carried = project / "docs" / "phases" / "2-later" / "specs" / "2.1-a" / "spec.md"
+    carried.parent.mkdir(parents=True)
+    carried.write_text(spec.read_text().replace("status: draft", "status: in-progress"))
+
+    result = run_hook(
+        project,
+        carried,
+        STUB_OBSERVATIONS=OBSERVATION,
+        STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SPLIT" not in result.stderr
+    assert calls(project) == paid, (
+        "a body this gate already judged must cost no further call"
+    )
+
+
+def test_the_cap_still_binds_a_body_the_gate_has_not_judged(project: Path) -> None:
+    """The other direction, and the one that matters: scope resolution must not become an escape
+    hatch. A spec whose body moved on at all - here, one more requirement on an approved spec -
+    falls through to every mechanical check below, whole."""
+    twelve = "".join(
+        f"- R1.1.{i} — `binding: e2e` — behavior {i}\n" for i in range(1, 13)
+    )
+    spec = write_spec(project, requirements=twelve)
+    run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+    assert "spec_gate: approved" in spec.read_text()
+
+    spec.write_text(
+        spec.read_text().replace(
+            "- R1.1.12 — `binding: e2e` — behavior 12\n",
+            "- R1.1.12 — `binding: e2e` — behavior 12\n"
+            "- R1.1.13 — `binding: e2e` — behavior 13\n",
+        )
+    )
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+
+    assert result.returncode == 2
+    assert "SPLIT TRIGGER" in result.stderr
+
+
 # ── the paid gate is not re-run on an unchanged body ─────────────────────────
 
 

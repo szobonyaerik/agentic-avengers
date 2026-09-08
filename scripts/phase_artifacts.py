@@ -78,6 +78,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import guard_scope  # noqa: E402
 from applicability import changed_paths, report_unenforced, touched  # noqa: E402
 from spec_done_guard import (  # noqa: E402
     NoRequirementsDeclared,
@@ -138,6 +139,44 @@ def phase_dirs(root: Path) -> list[Path]:
     return sorted(path for path in features.glob("*/phases/*") if path.is_dir())
 
 
+def carried_mapping(spec_path: Path) -> Path | None:
+    """The `test-mapping.md` of a spec CARRIED into this phase, left behind where it was implemented.
+
+    A spec that is carried into a later phase arrives with its `spec.md` and, because the phase suite
+    has to run them, its tests - and its mapping stays in the phase directory it was implemented in.
+    Every reader that looks only beside the spec then reports the same thing about correct, shipped
+    work: `verifier_precheck` calls every one of its requirement ids unmapped, and this sweep says
+    the phase owes a mapping. Both remedies are to write a row that already exists somewhere else
+    under the feature, and a second copy of a trace is not extra safety - it is the drift defect
+    (issue #123).
+
+    Resolution is by the spec's own DIRECTORY NAME, within the same feature and never outside it: a
+    spec directory is `<n>.<k>-<subslug>`, unique per feature by construction, so the same name under
+    another phase is the same spec. The id numbering is deliberately not read - a carried spec keeps
+    its original ids, which is the whole reason renumbering it is unavailable.
+
+    None when the layout is not the canonical one, when nothing else under the feature holds that
+    spec directory, or when the mapping it holds is not a file. Under-report: the reader that asked
+    then behaves exactly as it did before.
+    """
+    spec = Path(spec_path).resolve()
+    directory = spec.parent
+    try:
+        phase_dir = directory.parents[1]
+        feature_dir = phase_dir.parents[1]
+    except IndexError:
+        return None
+    if phase_dir.parent.name != "phases" or feature_dir.parent.name != "features":
+        return None
+    for candidate in sorted(
+        feature_dir.glob(f"phases/*/specs/{directory.name}/test-mapping.md")
+    ):
+        if candidate.parents[2] == phase_dir or not candidate.is_file():
+            continue
+        return candidate
+    return None
+
+
 def _spec_problems(spec_path: Path) -> list[str]:
     """What one `status: done` spec still owes, or why that cannot be decided.
 
@@ -150,6 +189,15 @@ def _spec_problems(spec_path: Path) -> list[str]:
     """
     mapping = spec_path.parent / "test-mapping.md"
     if mapping.is_file():
+        return []
+    carried = carried_mapping(spec_path)
+    if carried is not None:
+        # The mapping travels with the spec: it exists, in the phase that implemented it, and asking
+        # for a second copy beside the carried spec prescribes duplicating a trace.
+        print(
+            f"[phase_artifacts] {spec_path}: carried spec - its mapping is {carried}",
+            file=sys.stderr,
+        )
         return []
     try:
         if not mapping_owed(spec_path):
@@ -286,4 +334,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(guard_scope.run(__file__, main))
