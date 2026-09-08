@@ -1166,10 +1166,11 @@ def record_test_command(phase_dir: str) -> bool:
     `note`. `id` is fixed per phase, so the handover emitting it more than once converges on one
     row instead of appending duplicates.
 
-    The verdict is the comparison itself, and its three values are three different facts: `GO` when
-    the run is the declared command, `NO-GO` when it is a different command or could not be read at
-    all under a declaration, and `NO_VERDICT` when the project declares nothing, because there is
-    then nothing to judge and a `GO` there would read as a comparison that was made.
+    The verdict is the comparison itself: `GO` when the run is the declared command, `NO-GO` when
+    it is a different command or could not be read at all under a declaration, and `NO_VERDICT`
+    when there was nothing to compare against - the project declares nothing, or its declaration
+    could not be read - because a `GO` there would read as a comparison that was made. The note
+    keeps those last two apart (`undeclared` against `unreadable`), so the row says which.
     """
     try:
         import suite_command  # lazy: only the handover asks this
