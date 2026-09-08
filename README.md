@@ -133,6 +133,9 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
           adding one a later gate demands is always allowed.
   mutation (MUTATION_POLICY advisory by default — runs, reports, never blocks | enforce | off)
                  an extra signal, NOT a dedicated reader for gamed tests; there is none
+                 the policy governs the SCORE only: every cosmic-ray exec is bracketed by a
+                 snapshot and an explicit restore (scripts/mutation_exec_guard.py), and a tree
+                 that differed fails the run under every policy (skills/mutation-interpret)
   breaker (criticality: critical) -> counterexample -> implementer adds the test, fixes the code
                  persists breaker.json beside verdict.json - a `clean` verdict naming what it
                  ATTACKED, or `found` naming its counterexample. A critical phase does not close

@@ -171,7 +171,11 @@ it. Record the amendment ids folded into a verdict in its `amendments` array.
    default because it is deterministic, needs no model below the threshold, and every
    non-discriminating test this project has caught was caught by it. With the cross-family reading
    pass removed it is now the pipeline's **only** systematic signal about non-discriminating tests —
-   still advisory, still not a wall. If `off`, skip this step entirely — run no mutation tool.
+   still advisory, still not a wall. The policy governs the **score** only: every `cosmic-ray exec`
+   is bracketed by a snapshot and an explicit restore (`scripts/mutation_exec_guard.py`), and a tree
+   that differed fails the run under every policy - you are running this in the live working copy,
+   so read the tree line before the score, and `skills/mutation-interpret` says which of its three
+   outcomes claims the tree is clean. If `off`, skip this step entirely — run no mutation tool.
    Otherwise run `bash scripts/gate_ci.sh --full` and follow `skills/mutation-interpret`. That is
    the hand-run entry point: `scripts/hook_mutation.sh` is a PostToolUse hook, so it only fires on a
    `handover.md` write and reads its target off the hook payload — invoking it from a shell exits

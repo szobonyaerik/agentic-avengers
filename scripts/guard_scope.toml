@@ -246,6 +246,15 @@ limits = [
   "whether the suite KILLS what remains in scope, which is the scorer's question and not this one's",
 ]
 
+[guard."mutation_exec_guard.py"]
+proves = "that every file the cosmic-ray session could write hashes exactly as it did before exec - and was put back from the pre-exec snapshot where it did not - and that exec was not started when the baseline's measured wall clock times the pending mutants would not fit the hook's remaining budget."
+limits = [
+  "WHO changed a differing file - a test command that rewrites source under module-path reads as corruption, since only the bytes are compared",
+  "that exec will finish: the budget estimate is a LOWER bound, a hung mutant runs to cosmic-ray's own timeout, which is why the restore also runs on the kill path",
+  "anything at all when the hook ITSELF is SIGKILLed before the restore - no code is left to run there",
+  "the index: `git status --porcelain` is recorded and shown, never compared, because an implementer may legitimately stage a file under a running hook",
+]
+
 [guard."plugin_release.py"]
 proves = "that the plugin copy executing right now hashes identical to the source repository's committed HEAD."
 limits = [
