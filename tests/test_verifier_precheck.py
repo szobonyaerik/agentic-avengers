@@ -10,6 +10,7 @@ the tiered-binding rule removed: a `binding: none` requirement is never owed a t
 an untraced id.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -706,3 +707,84 @@ def test_a_phase_that_owes_no_mapping_at_all_is_still_clean(phase: Path) -> None
 
     assert not (phase / "specs" / "1.1-a" / "test-mapping.md").exists()
     assert check_phase(phase) == []
+
+
+# ── a verifier finding names its method (issue #96) ──────────────────────────
+# A sweep done by reading reported complete and missed two instances; a probe that drove one axis of
+# two scoped a fix round that closed half a defect. The finding names HOW - what was driven, over
+# which axes - and its absence is bookkeeping, decided here for no tokens.
+
+
+def write_verdict(phase: Path, findings: list[dict]) -> None:
+    (phase / "verdict.json").write_text(
+        json.dumps({"verdict": "fail", "attempt": 1, "findings": findings}),
+        encoding="utf-8",
+    )
+
+
+def test_a_finding_with_no_method_is_a_finding(phase: Path) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(
+        phase,
+        [{"id": "abc123", "status": "open", "instruction": "sweep both adapters"}],
+    )
+    problems = check_phase(phase)
+    assert any("abc123" in p and "method" in p for p in problems), problems
+
+
+def test_a_finding_that_names_its_method_is_clean(phase: Path) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(
+        phase,
+        [
+            {
+                "id": "abc123",
+                "status": "open",
+                "method": "drove every public method of both adapters",
+            }
+        ],
+    )
+    assert check_phase(phase) == []
+
+
+def test_a_verdict_the_diff_did_not_touch_is_counted_not_enforced(
+    phase: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pre-rule verdict in a phase the diff touches for another reason - an amendment opened on a
+    closed phase - is outside what this change is responsible for. The finding is counted and named,
+    in the boundary's one spelling, and the phase is not blocked over it; a verdict the diff DOES
+    write is held, and so is a phase the hook names outright."""
+    git_repo(tmp_path)
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(phase, [{"id": "abc123", "status": "fixed"}])
+    commit_all(tmp_path)
+    (phase / "amendments.json").write_text("{}")
+    assert main(["--root", str(tmp_path)]) == 0
+    assert "NOT enforced" in capsys.readouterr().err
+    assert main([str(phase)]) == 1, (
+        "the hook names its phase and the whole verdict is held"
+    )
+    write_verdict(
+        phase,
+        [
+            {"id": "abc123", "status": "fixed", "method": "x"},
+            {"id": "def", "status": "open"},
+        ],
+    )
+    assert main(["--root", str(tmp_path)]) == 1, "a verdict this diff writes is held"
+
+
+def test_all_counts_pre_rule_verdicts_rather_than_failing_a_full_audit(
+    phase: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Under `--all` (gate_ci.sh --full) the verdict is a document class every consumer repo already
+    has on disk, so this follows carried_items' precedent rather than the read path's: counted,
+    never a failed build over verdicts written before the rule."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(phase, [{"id": "abc123", "status": "fixed"}])
+    assert main(["--all", "--root", str(tmp_path)]) == 0
+    assert "NOT enforced" in capsys.readouterr().err

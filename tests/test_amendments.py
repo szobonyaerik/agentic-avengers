@@ -258,6 +258,103 @@ def test_a_legacy_ledger_gains_readers_on_the_next_write(
     assert json.loads((phase / "amendments.json").read_text())["readers"]
 
 
+# ── a scope claim carries the set it was measured over (issue #117, folded into #96) ────────────
+
+
+def test_a_reason_that_quantifies_universally_needs_a_measured_set(phase: Path) -> None:
+    """A7 claimed "nothing in the catalogue can turn waypoints red" - six of ten captures do. The
+    sentence was written at document scope over a four-field measurement, and it cost two rounds to
+    falsify. The set is a FIELD on the record, so a claim without one is refused when written."""
+    with pytest.raises(AmendmentError, match="measured_over"):
+        open_amendment(
+            phase, ["R3.3.3"], "nothing in the catalogue can turn waypoints red"
+        )
+
+
+def test_a_universal_reason_with_its_set_is_recorded_with_the_set(phase: Path) -> None:
+    record = open_amendment(
+        phase,
+        ["R3.3.3"],
+        "nothing in the catalogue can turn waypoints red",
+        measured_over=["capture-01", "capture-02", "capture-03"],
+    )
+    assert record["measured_over"] == ["capture-01", "capture-02", "capture-03"]
+    assert load(phase)["amendments"][0]["measured_over"] == record["measured_over"]
+
+
+def test_a_reason_with_no_universal_needs_no_set_and_records_none(phase: Path) -> None:
+    record = open_amendment(
+        phase, ["R8.2.30"], "the scrub was defeated by JSON escaping"
+    )
+    assert record["measured_over"] is None
+
+
+def test_the_cli_takes_the_set_as_a_comma_separated_field(
+    phase: Path, tmp_path: Path, capsys
+) -> None:
+    reason = reason_file(
+        tmp_path, "left every other clip's report bit-for-bit identical"
+    )
+    assert (
+        main(
+            [
+                "open",
+                str(phase),
+                "--requirements",
+                "R3.3.3",
+                "--reason-file",
+                str(reason),
+            ]
+        )
+        == 2
+    )
+    assert "measured_over" in capsys.readouterr().err
+    assert (
+        main(
+            [
+                "open",
+                str(phase),
+                "--requirements",
+                "R3.3.3",
+                "--reason-file",
+                str(reason),
+                "--measured-over",
+                "clip-a, clip-b, clip-c",
+            ]
+        )
+        == 0
+    )
+    assert load(phase)["amendments"][0]["measured_over"] == [
+        "clip-a",
+        "clip-b",
+        "clip-c",
+    ]
+
+
+def test_a_pre_rule_ledger_without_the_field_still_loads_and_lists(phase: Path) -> None:
+    """Records written before the field existed carry no `measured_over`; nothing back-fills and
+    nothing refuses them - the rule binds at write time only."""
+    (phase / "amendments.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "amendments": [
+                    {
+                        "id": "A1",
+                        "requirements": ["R1.1.1"],
+                        "security": False,
+                        "reason": "all callers were updated",
+                        "status": "pending",
+                        "opened_at": "2026-01-01T00:00:00Z",
+                        "verified_at": None,
+                        "evidence": None,
+                    }
+                ],
+            }
+        )
+    )
+    assert [a["id"] for a in pending(phase)] == ["A1"]
+    assert main(["pending", str(phase)]) == 1
 # --- a deferral is not an amendment, and never silences one (issue #115) --------------------------
 
 

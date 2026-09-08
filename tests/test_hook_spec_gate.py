@@ -51,7 +51,7 @@ review_status: pending
 {requirements}
 
 ## Acceptance criteria
-- R1.1.1 — passes when: the caller sees a greeting; fails when: the caller is unauthenticated
+- R1.1.1 — passes when: the caller sees a greeting; fails when: the caller is unauthenticated — drives: GET /greet through the test client
 """
 
 #: A stub gate_runner driven entirely by the environment. It answers the OBSERVE pass with
@@ -376,6 +376,45 @@ def test_an_over_cap_spec_is_told_to_split_before_any_paid_call(project: Path) -
     assert "SPLIT TRIGGER" in result.stderr
     assert "SPLIT this spec — not to shorten it" in result.stderr
     assert calls(project) == [], "the cap must be decided before the gate is paid for"
+
+
+def test_a_criterion_naming_nothing_it_drives_is_refused_before_any_paid_call(
+    project: Path,
+) -> None:
+    """Issue #96: "sweep both adapters for this class" is satisfied by reading, and reading is
+    indistinguishable from driving until someone runs the code. The criterion names what it drives,
+    and its absence is decided mechanically, before the gate is paid for."""
+    spec = write_spec(project)
+    spec.write_text(
+        spec.read_text().replace(" — drives: GET /greet through the test client", "")
+    )
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+    assert result.returncode == 2
+    assert "drives:" in result.stderr and "R1.1.1" in result.stderr
+    assert "route_back: avenger-spec-writer" in result.stderr
+    assert calls(project) == [], (
+        "an undriven criterion is decided before the gate is paid for"
+    )
+
+
+def test_an_undriven_criterion_on_an_already_approved_spec_is_counted_not_blocked(
+    project: Path,
+) -> None:
+    """The applicability boundary: a spec the gate already approved shipped its criteria, and the
+    remedy is unavailable to a stage that has ended. Counted on stderr, and the gate still runs."""
+    spec = write_spec(project)
+    spec.write_text(
+        spec.read_text()
+        .replace(" — drives: GET /greet through the test client", "")
+        .replace("spec_gate: pending", "spec_gate: approved")
+    )
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+    assert "NOT enforced" in result.stderr and "measurement_claims" in result.stderr
+    assert calls(project) == ["observations", "classifications"]
 
 
 def test_a_spec_the_cap_cannot_count_is_not_told_to_split(project: Path) -> None:
@@ -1331,6 +1370,28 @@ def test_a_block_records_it_too(project: Path) -> None:
     )
     assert "BLOCKED" in result.stderr, result.stderr
     assert "x/observer" in attribution(spec)
+
+
+def test_the_blocked_message_renders_the_closed_set_it_does_not_restate_it(
+    project: Path,
+) -> None:
+    """The line naming the closed set was a hand-written copy of `spec_gate_triage.BLOCKING`, and it
+    still named FOUR categories after the fifth and sixth had been added - a document asserting a rule
+    nothing enforces, which is the class issue #96 is about, inside the gate that enforces it. It is
+    rendered from the table that derives the verdict, so a seventh category cannot leave it stale."""
+    import spec_gate_triage
+
+    spec = write_spec(project)
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=BLOCKING
+    )
+
+    assert "BLOCKED" in result.stderr, result.stderr
+    for category in spec_gate_triage.BLOCKING:
+        assert category in result.stderr, (
+            f"the blocked message must name every blocking category; {category} is missing"
+        )
+    assert "note" not in result.stderr.split("--- blocking findings")[1].split("---")[0]
 
 
 def test_a_runner_that_attributes_nothing_leaves_a_named_state_not_a_silent_one(

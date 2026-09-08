@@ -77,7 +77,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 | id | kind | one-line title | where the detail lives |
 |----|------|----------------|------------------------|
 | OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
-| FWD-<n> | forward-claim | <what a later phase must handle, and from which phase it bites> | this card |
+| FWD-<n> | forward-claim | <what a later phase must handle, and from which phase it bites> | this card; measured_over: <set> if universal |
 | <finding-id> | deferred-finding | <title> | carried.json#deferrals (owner <n>-<slug>) |
 
 ## Next phase

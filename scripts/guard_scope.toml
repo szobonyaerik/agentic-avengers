@@ -32,6 +32,16 @@ limits = [
   "anything about a change for which nobody recorded an amendment at all",
 ]
 
+[guard."measurement_claims.py"]
+proves = "that every acceptance criterion in a spec still going through the gate names what it drives, that every finding in a verdict names its method, and that a universal claim on an amendment or a forward-claim row carries the set it was measured over."
+limits = [
+  "that what a `drives:`, `method` or `measured_over` field SAYS is adequate - presence is checked, never content; `drives: undriven (<why>)` and `method: read the source` both pass",
+  "whether a universal claim's quantifier FITS its measured set - that comparison needs the set's members and the world, and it is the Verifier's",
+  "WHICH universal claim a `measured_over` set covers: the field is per RECORD, not per claim, so a multi-KB amendment reason making five scope claims is cleared by naming one set",
+  "a universal spelled outside the closed vocabulary: the set is pinned and deliberately small, so a synonym it does not know passes",
+  "anything about a spec the gate already approved or an implementer has taken up, which is counted and named rather than held",
+]
+
 # --- phase obligations ----------------------------------------------------------------------------
 
 [guard."breaker_gate.py"]
@@ -125,6 +135,15 @@ limits = [
   "whether the spec CONTRADICTS the contracts it carries - it assembles the block and never judges against it",
 ]
 
+[guard."spec_rubric.py"]
+proves = "that the writer's brief rendered whole, derived line by line from the gate's own sources - the blocking table the verdict comes from, the requirement counter, the criterion field the gate checks, and the two prompt sections lifted verbatim."
+limits = [
+  "that the writer READ it: delivery is a `SubagentStart` injection, and a runtime without that event renders the brief from a pointer instead",
+  "that a spec written after reading it will pass - the brief carries the criteria, not a verdict",
+  "anything about the gate's own model passes, which this only quotes",
+  "that the rules it renders are RIGHT: it is a faithful render of `spec_gate_triage.BLOCKING`, `requirement_cap` and `measurement_claims`, so a defect in any of those is reproduced here rather than caught",
+]
+
 [guard."spec_gate_cache.py"]
 proves = "that an already-approved body is not re-judged, and that a rejection never becomes the approved reference."
 limits = [
@@ -154,6 +173,7 @@ limits = [
 proves = "that artifacts in scope declare their readers, that a contract card stays under its byte cap, and that no stage instruction re-acquired a read the table removed."
 limits = [
   "a stage instructed to read something the table never declared - the source check is ONE-DIRECTIONAL",
+  "a claim that is wrong in both the table and the source it is held against: `--contract` compares the two, so a defect shared by both sides is outside what it can see",
   "a document class named only as a bare filename in prose, which it cannot see",
   "anything downstream: in a repository that merely installed the pipeline neither direction of `--contract` runs, and it says so",
 ]
@@ -271,6 +291,7 @@ proves = "that the plugin copy executing right now hashes identical to the sourc
 limits = [
   "anything when no source repository is resolvable: UNKNOWN is reported and never enforced",
   "behaviour - it compares shipped CONTENT, so an in-progress edit reads as `dirty` rather than stale",
+  "a defect present in BOTH the release and the source it is compared against: this is a two-sided comparison, so a bug the source repository also carries reads as perfectly fresh",
 ]
 
 [guard."required_skills.py"]
@@ -286,6 +307,7 @@ proves = "that every stage declares an effort where the harness reads it, and th
 limits = [
   "what any stage actually RAN at - a declared effort is not an observed one, and no retrospective may read this as a measurement",
   "a model silently downgraded because it does not support a level, which only the harness sees",
+  "a level that is WRONG in both the definitions and the documents: this compares the two, so a defect shared by both sides is outside what it can see",
 ]
 
 [guard."guard_proof.py"]
@@ -307,7 +329,18 @@ limits = [
   "anything about a guard that is neither declared in guards.toml nor invoked from an enforcement surface",
   "that the emission is REACHED at runtime: the call is found in the SOURCE, so one on a branch nothing executes counts, and one assembled at runtime does not",
   "that every guard emits: a declared exception is skipped here and named beside the clean result instead",
+  "an allowlist that was already too wide at the comparison base: `allowlists` reports GROWTH against a base, so a defect present on both sides of the comparison is outside what it can see",
   "anything a shell guard spells indirectly - that half is a text match over uncommented lines, so an invocation built from a variable is invisible to it",
+]
+
+[guard."hook_spec_gate.sh"]
+proves = "that this spec write cleared every mechanical check the gate owns - undeclared subprocess spawners, the requirement cap, an acceptance criterion naming nothing it drives - and then that a cross-family observe-plus-triage pass derived APPROVED from the closed blocking set."
+limits = [
+  "that the spec is GOOD: the blocking set is closed on purpose, so everything the observe pass saw outside it is a note that blocked nothing and lands in `spec-notes.md`",
+  "that a `drives:` field is ADEQUATE - presence is checked, never content, and `drives: undriven (<why>)` passes by design (issue #116 owns what that declaration must carry)",
+  "anything about a spec written outside this hook's trigger: a body authored through a shell heredoc fires no gate at all and has zero rounds, not a passing one",
+  "that the CONTEXT the observe pass read was complete - a degraded or unavailable context block is banner-ed into the report and never fails the gate",
+  "that the human half of the wall ran: `review_status` is a separate sign-off, and under SPEC_REVIEW_MODE=auto this gate is the whole wall because nobody is there",
 ]
 
 [guard."hook_verifier.sh"]
