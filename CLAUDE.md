@@ -1155,10 +1155,14 @@ at **3 against 4** on a scratch project with tests at `suite/`, which also means
 feature e2e from the phase verifier hook only ever applied to the default layout.
 `subprocess_check.test_roots()` is the one reader now (the module that owns `SUBPROC_CHECK_PATHS`);
 `pipeline_metrics.test_roots()` imports it and counts EVERY declared root, each minus its own
-`e2e/`, rather than the first - which is the same divergence one notch narrower - and the hook asks
-for it with `--print-roots`, a query
+`e2e/`, rather than the first - which is the same divergence one notch narrower. Both gates ask for
+it with `--print-roots`, a query
 routed deliberately AROUND `guard_scope.run` because it performs no scan and must not borrow a
-gate's clean-result line. A root the hook cannot resolve keeps the previous whole-tree scope and
+gate's clean-result line, and both turn the answer into pytest arguments through
+`scripts/test_root_args.sh`, which owns that translation alone: the in-session phase gate
+(`hook_verifier.sh`) and the pre-commit floor (`gate_ci.sh`) ran different populations for as long
+as it had two copies, since converting only the hook left the floor on the same hardcode. A root
+neither gate can resolve keeps the previous whole-tree scope and
 **says so** rather than silently switching population — counted the same way at both ends
 (`hook_spec_gate.sh` on the first spec write, and the orchestrator's `phase-close` after the phase's
 commit) · the phase's **close** and `elapsed_minutes`, stamped by `hook_phase_close.sh` on the commit

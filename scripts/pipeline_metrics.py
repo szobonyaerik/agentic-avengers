@@ -72,6 +72,7 @@ import subprocess  # noqa: S404 — `git ls-files`, fixed argv, to ask whether t
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -719,13 +720,68 @@ def count_tests() -> int | None:
     return int(match.group(1)) if match else None
 
 
+#: The four states a read of a phase record can be in, and there are no others. `sink.show` answers
+#: a bare `None` for all four, and every caller here used to re-decide which one it meant - one
+#: state at a time, a round of review apart: an unreadable record read as an empty one re-stamped a
+#: sealed close, an absent one read as unreadable dropped the provenance row on the write that would
+#: have created it, and a writer that is simply switched OFF - the documented normal state of a
+#: standalone install with no firstmate home - was diagnosed as a record that could not be read,
+#: prescribing a retry to an operator who had turned emission off on purpose. The decision lives
+#: here now, once, and no caller in this module branches on a `None` again.
+RECORD_PRESENT = "present"
+RECORD_ABSENT = "absent"
+RECORD_UNREADABLE = "unreadable"
+RECORD_NOT_CONFIGURED = "not-configured"
+
+
+class RecordRead(NamedTuple):
+    """One read of a phase record: WHICH state it is in, and the contents when it has any."""
+
+    state: str
+    record: dict
+
+    @property
+    def usable(self) -> bool:
+        """Whether `record` may be read - it exists, whether this call opened it or found it."""
+        return self.state in (RECORD_PRESENT, RECORD_ABSENT)
+
+
+def read_record(phase: str) -> RecordRead:
+    """The phase's record, with the state of the read NAMED rather than inferred from a `None`.
+
+    Not configured is asked FIRST and is never a failure: emission off, no writer resolvable, or a
+    writer this process already abandoned all answer `None` to every call, and nothing was read
+    because nothing was asked. A read-failure diagnostic there sends its reader to repair a writer
+    they deliberately do not have.
+
+    Absence is RESOLVED rather than guessed at, because `sink.show` cannot tell "no record yet" from
+    "the writer refused": opening it answers the question, and it is the write every caller here was
+    about to make anyway - `sink.add` and `sink.set_fields` both `ensure` first, so nothing is
+    created that the caller was not already creating. A record still unreadable after that is the
+    genuine failure, and `usable` is false for it: its contents are unknown, never empty.
+    """
+    if not sink.enabled():
+        return RecordRead(RECORD_NOT_CONFIGURED, {})
+    record = sink.show(phase)
+    if record is not None:
+        return RecordRead(RECORD_PRESENT, record)
+    if sink.ensure(phase):
+        opened = sink.show(phase)
+        if opened is not None:
+            return RecordRead(RECORD_ABSENT, opened)
+    return RecordRead(RECORD_UNREADABLE, {})
+
+
 def record_phase_open(phase_dir: str) -> bool:
     """Stamp when the phase was dispatched and how big the suite was, once."""
     phase = resolve_phase(phase_dir)
-    if phase is None or not sink.ensure(phase):
+    if phase is None:
+        return False
+    read = read_record(phase)
+    if not read.usable:
         return False
     record_plugin_version(phase)
-    record = sink.show(phase) or {}
+    record = read.record
     fields: dict[str, object] = {}
     if record.get("opened") is None:
         fields["opened"] = _now()
@@ -904,14 +960,13 @@ def record_phase_close(phase_dir: str) -> bool:
     SAID, never invented from a later moment, because a stamp is worth what its trigger point is
     worth and "the first commit that touched the directory" is not dispatch.
 
-    Both of those read the record, so both ask `_readable_record` rather than `sink.show(...) or {}`.
-    `sink.show` answers None for a record that does not exist YET and for one the writer refused or
-    returned non-JSON for, and this function decides two different things on that answer. Read as
-    "empty", a transient refusal defeats the converge guard and re-stamps a sealed record, and it
-    prints the never-opened note above - a confident diagnosis prescribing a remedy for a cause that
-    does not apply, on the one field this whole issue exists to repair. So an unreadable record
-    writes NOTHING and says which of the two it was; an ABSENT one is resolved by opening it, which
-    is what `_readable_record` already does for the provenance row.
+    Both of those read the record, so both take the state `read_record` names rather than deciding
+    for themselves what a `None` meant. Read as "empty", a transient refusal defeats the converge
+    guard and re-stamps a sealed record, and it prints the never-opened note above - a confident
+    diagnosis prescribing a remedy for a cause that does not apply, on the one field this whole
+    issue exists to repair. So an unreadable record writes NOTHING and says so; an ABSENT one is
+    opened and written as always; and emission being OFF writes nothing and says nothing, because a
+    writer nobody configured did not fail to read anything.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
@@ -920,16 +975,19 @@ def record_phase_close(phase_dir: str) -> bool:
     if why is not None:
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
-    record = _readable_record(phase)
-    if record is None:
-        sink.note(
-            f"phase {phase} close not recorded: the record could not be READ. A failed read is not "
-            f"an empty record - taken for one it defeats the converge guard below and re-stamps a "
-            f"SEALED record, and it makes a phase that WAS opened look like one nothing ever "
-            f"opened, which is the single state `elapsed_minutes` is left null and explained for. "
-            f"Nothing is written; the next close stamp on this phase records it."
-        )
+    read = read_record(phase)
+    if not read.usable:
+        if read.state == RECORD_UNREADABLE:
+            sink.note(
+                f"phase {phase} close not recorded: the record could not be READ. A failed read is "
+                f"not an empty record - taken for one it defeats the converge guard below and "
+                f"re-stamps a SEALED record, and it makes a phase that WAS opened look like one "
+                f"nothing ever opened, which is the single state `elapsed_minutes` is left null "
+                f"and explained for. Nothing is written; the next close stamp on this phase "
+                f"records it."
+            )
         return False
+    record = read.record
     if record.get("closed") is not None:
         return True
     closed = _now()
@@ -1022,26 +1080,6 @@ def stamped_fields(record: dict | None) -> set[str]:
     return set()
 
 
-def _readable_record(phase: str) -> dict | None:
-    """The record the provenance row merges into, or None when the writer could not ANSWER.
-
-    `sink.show` returns None for three different states and only one of them is a failure: a record
-    that does not exist yet, one the writer refused to read, and one whose output was not JSON. The
-    merge has to tell them apart, because it writes by upsert: treating a failed read as "the row
-    holds nothing" rewrites the row as the current stamp's names alone, and treating an ABSENT
-    record as a failed read drops the row on the one write that would have created it.
-
-    So absence is resolved rather than guessed at: `sink.ensure` opens the record, which is exactly
-    what a first stamp of `closed` alone never reaches otherwise — `_stamp` runs `sink.set_fields`
-    only when it has an ordinary field to set, and `set_fields` is what normally opens the record.
-    A None still standing after that is the genuine failure.
-    """
-    record = sink.show(phase)
-    if record is None and sink.ensure(phase):
-        record = sink.show(phase)
-    return record
-
-
 def _record_provenance(phase: str, names: set[str]) -> bool:
     """Merge `names` into the phase's provenance row. Fail-open, converging by id.
 
@@ -1054,18 +1092,22 @@ def _record_provenance(phase: str, names: set[str]) -> bool:
 
     So an unreadable record writes NOTHING and says so. The row keeps what it had: incomplete for as
     long as the read fails, never narrowed to a wrong set. A record that simply does not exist yet
-    is the ordinary first stamp, is opened by `_readable_record`, and is written as always.
+    is the ordinary first stamp, is opened by `read_record`, and is written as always; emission
+    switched off writes nothing and says nothing, since there is no row anywhere to narrow.
     """
     try:
-        record = _readable_record(phase)
-        if record is None:
-            sink.note(
-                f"provenance not recorded for phase {phase}: the record could not be read, and the "
-                f"row is merged into what it already names — writing it now would narrow it to "
-                f"{','.join(sorted(n for n in names if n in MEASUREMENT_SCALARS))}"
-            )
+        read = read_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"provenance not recorded for phase {phase}: the record could not be read, and "
+                    f"the row is merged into what it already names — writing it now would narrow "
+                    f"it to {','.join(sorted(n for n in names if n in MEASUREMENT_SCALARS))}"
+                )
             return False
-        known = stamped_fields(record) | {n for n in names if n in MEASUREMENT_SCALARS}
+        known = stamped_fields(read.record) | {
+            n for n in names if n in MEASUREMENT_SCALARS
+        }
         if not known:
             return True
         return sink.add(
@@ -1532,7 +1574,10 @@ def record_skill_load(
     stage = observing_stage(stage)
     identity = f"{stage}:{skill}"
     if not loaded:
-        for entry in (sink.show(phase) or {}).get("skill_loads") or []:
+        read = read_record(phase)
+        if not read.usable:
+            return False
+        for entry in read.record.get("skill_loads") or []:
             if entry.get("id") == identity and entry.get("loaded"):
                 return True
     fields: dict[str, object] = {

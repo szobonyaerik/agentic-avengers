@@ -223,6 +223,107 @@ def test_an_unreadable_record_is_not_reported_as_a_phase_nobody_opened(
     assert "could not be READ" in err
 
 
+def test_emission_switched_off_is_not_reported_as_an_unreadable_record(
+    stub_sink, monkeypatch, capsys
+):
+    """The fourth state `sink.show` folds into one `None`, and the only one that is not a failure.
+
+    `AVENGER_METRICS_OFF=1`, no `fm-pipeline-metrics.sh` anywhere, and a writer this process already
+    abandoned all answer `None` to every call - the first two are the documented normal state of a
+    standalone install with no firstmate home. Nothing was read there because nothing was asked, so
+    a read-failure diagnostic sends its reader to repair a writer they deliberately do not have, and
+    prescribes a next close stamp that will report exactly the same thing.
+
+    Red when the state collapses back into "could not be READ": every landing commit says the record
+    could not be read, on a machine that is recording nothing on purpose.
+    """
+    project, _, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    (phase_dir / metrics.CLOSING_DOCUMENT).write_text("# card\n", encoding="utf-8")
+    git_land(project, "land")
+    capsys.readouterr()
+
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+    assert metrics.record_phase_close(str(phase_dir)) is False
+
+    err = capsys.readouterr().err
+    assert "could not be READ" not in err
+    assert "elapsed_minutes NOT recorded" not in err
+    assert metrics.sink.PREFIX not in err
+
+
+def test_the_four_record_states_are_told_apart_at_one_place(stub_sink, monkeypatch):
+    """Every state named once, by the accessor every caller in the module reads through.
+
+    `sink.show` answers a bare `None` to all four, and each was patched into a caller's own `None`
+    check one review round at a time. This drives the four against a real writer: present, absent
+    (resolved by opening it, which is the write the caller was making anyway), unreadable, and not
+    configured.
+
+    Red when a state stops being distinguished: two of the four collapse onto one answer and the
+    callers below go back to guessing which.
+    """
+    project, _, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+
+    absent = metrics.read_record("05")
+    assert absent.state == metrics.RECORD_ABSENT
+    assert absent.usable and absent.record.get("phase") == "05"
+
+    metrics.record_phase_open(str(phase_dir))
+    present = metrics.read_record("05")
+    assert present.state == metrics.RECORD_PRESENT
+    assert present.usable and present.record.get("opened") is not None
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    unreadable = metrics.read_record("05")
+    assert unreadable.state == metrics.RECORD_UNREADABLE
+    assert not unreadable.usable and unreadable.record == {}
+
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    monkeypatch.setenv("AVENGER_METRICS_OFF", "1")
+    off = metrics.read_record("05")
+    assert off.state == metrics.RECORD_NOT_CONFIGURED
+    assert not off.usable and off.record == {}
+
+
+def test_an_unreadable_record_never_seeds_over_an_observed_skill_load(
+    stub_sink, monkeypatch
+):
+    """A seed is written only when the record says the load was not already observed.
+
+    `record_skill_load(loaded=False)` reads the record to check that, and read as `{}` an unreadable
+    answer says "no load observed" - so the seed overwrites the observation, and a skill the stage
+    really loaded is audited as a gap. Same `None`, same class, one collection over.
+
+    Red when the read stops being told apart: the observed load is overwritten by the seed.
+    """
+    project, store, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    assert (
+        metrics.record_skill_load(
+            "05", stage="avenger-verifier", skill="tdd", evidence="Read", loaded=True
+        )
+        is True
+    )
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    assert (
+        metrics.record_skill_load(
+            "05", stage="avenger-verifier", skill="tdd", evidence="", loaded=False
+        )
+        is False
+    )
+
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    loads = stored(store, "05")["skill_loads"]
+    assert [entry["loaded"] for entry in loads] == [True]
+
+
 def test_the_landing_hook_stamps_only_the_commit_that_carries_the_card(tmp_path: Path):
     """The real hook, driven by real commits: a spec commit records nothing, the card's commit
     stamps. Both commits leave the phase directory clean, which is exactly what the hook used to
