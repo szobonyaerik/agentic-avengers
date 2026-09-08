@@ -203,6 +203,9 @@ def test_the_cap_names_the_three_honest_ways_out(project: Path) -> None:
     assert "KNOWN-OPEN" in err
     assert "waive" in err
     assert "escalate" in err
+    # The sentence `test_under_the_cap_the_phase_still_routes_back_normally` asserts the ABSENCE of.
+    # Pinned on both sides, so the negative assertion cannot quietly stop meaning anything.
+    assert "a further attempt is refused" in err
 
 
 def test_under_the_cap_the_phase_still_routes_back_normally(project: Path) -> None:
@@ -213,7 +216,11 @@ def test_under_the_cap_the_phase_still_routes_back_normally(project: Path) -> No
 
     assert result.returncode == 2
     assert "route back per its findings" in result.stderr
-    assert "refused" not in result.stderr
+    # The cap's OWN sentence, not the bare word "refused". Every guard on this hook's path prints a
+    # scope statement saying what its clean result does not establish (CLAUDE.md §11), and one of
+    # them uses the word about something else entirely - so a bare substring here reported the cap
+    # as having fired over a line of documentation. The anchor is what the cap actually says.
+    assert "a further attempt is refused" not in result.stderr
 
 
 def test_a_phase_that_passes_cleanly_on_its_last_allowed_attempt_still_passes(
