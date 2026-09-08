@@ -204,9 +204,9 @@ tests = ["tests/test_emission_gate.py"]
 [[guard.mutation]]
 file = "scripts/emission_gate.py"
 find = '''
-    if len(recorded) >= len(described):'''
+    if len(recorded) < len(described):'''
 replace = '''
-    if True:'''
+    if False:'''
 
 [[guard]]
 id = "metrics-emission.close-stamp"
@@ -219,6 +219,396 @@ find = '''
         if record.get("closed") is None:'''
 replace = '''
         if False:'''
+
+[[guard]]
+id = "metrics-emission.landing-is-the-card"
+implements = "scripts/pipeline_metrics.py"
+defect = "The landing test was 'nothing under the phase directory is uncommitted', which a SPEC commit satisfies: phase 5 of one measured feature was stamped `closed` at its spec commit, `elapsed_minutes: 10`, two hours before it landed, and because a close SEALS the record every defect the phase then produced was refused by the writer (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    committed = _committed(Path(phase_dir) / CLOSING_DOCUMENT)
+    if committed is None:'''
+replace = '''
+    committed = True
+    if committed is None:'''
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    if applicability.touched(phase_dir, scope):
+        return False, "still has uncommitted changes"'''
+replace = '''
+    if applicability.touched(phase_dir, scope):
+        return True, None'''
+
+[[guard]]
+id = "metrics-emission.landing-decided-once"
+implements = "scripts/pipeline_metrics.py"
+defect = "`phase_landed` and `not_landed_reason` were two independent implementations of one landing predicate with different callers - the close stamp reads the words, `emission_gate.landed_phases` reads the verdict. A third evidence added to one leaves the gate calling a phase LANDED that the stamp refuses, and prescribing a `phase-close` that by construction records nothing (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    read as "landed". `not_landed_reason` carries the words; `_landing` decides both.
+    """
+    return _landing(phase_dir)[0]'''
+replace = '''
+    read as "landed". `not_landed_reason` carries the words; `_landing` decides both.
+    """
+    scope = applicability.changed_paths(phase_dir)
+    if scope is None:
+        return None
+    return not applicability.touched(phase_dir, scope)'''
+
+[[guard]]
+id = "metrics-emission.breaker-identity-is-whole"
+implements = "scripts/pipeline_metrics.py"
+defect = "Counterexample identity was defined TWICE - the emitter hashed the whitespace-normalized text under a truncated readable prefix, while `emission_gate` counted the raw strings - so counterexamples the two normalizations disagree about were one entry to the emitter and two to the floor: a permanent handover GAP whose own printed remedy, re-running the emitter, could never raise the count (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/emission_gate.py"
+find = '''
+    identities = {
+        metrics.counterexample_identity(item)
+        for item in payload.get("counterexamples") or []
+    }
+    return {identity for identity in identities if identity is not None}'''
+replace = '''
+    return {
+        str(item).strip()
+        for item in payload.get("counterexamples") or []
+        if str(item or "").strip()
+    }'''
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    return f"{BREAKER_DEFECT_PREFIX}{text[:80]}-{digest}"'''
+replace = '''
+    return f"{BREAKER_DEFECT_PREFIX}{text[:80]}"'''
+
+[[guard]]
+id = "suite-population.roots-are-one-argument-each"
+implements = "scripts/hook_verifier.sh"
+defect = "The full-suite fallback built its pytest arguments as one STRING and relied on word-splitting, so a declared test root containing whitespace split into two nonexistent paths: pytest exited on a usage error and this hook read that as a RED suite, blocking the phase with a message about failing tests over a quoting fault."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/test_root_args.sh"
+find = '''
+    TEST_ROOT_ARGS+=(--ignore="$root/e2e" "$root")'''
+replace = '''
+    TEST_ROOT_ARGS+=($(printf '%s' "--ignore=$root/e2e $root"))'''
+
+[[guard]]
+id = "metrics-emission.attempts-on-record"
+implements = "scripts/pipeline_metrics.py"
+defect = "`verification_attempts` was counted per invocation of a review script (8 recorded against a real attempt of 1), then that script was deleted and nothing emitted the field at all: every pipeline-written record carried null while the phase's own verdict read `attempt: 4` (issue #120)."
+tests = ["tests/test_pipeline_metrics.py", "tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        count = verifier_attempts.current(Path(phase_dir))
+        if count == 0:
+            return 0'''
+replace = '''
+        count = verifier_attempts.current(Path(phase_dir)) + 1
+        if count == 0:
+            return 0'''
+
+[[guard]]
+id = "metrics-emission.attempts-emitted-on-verdict"
+implements = "scripts/hook_verifier.sh"
+defect = "The emitter existed and had no caller. A verdict write concluded an attempt and nothing stamped the count, so the field stayed null on every record the pipeline wrote (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$(dirname "$FILE")" >/dev/null || true
+    exit 0 ;;'''
+replace = '''
+    true
+    exit 0 ;;'''
+
+[[guard]]
+id = "metrics-emission.breaker-emitted-on-write"
+implements = "scripts/hook_verifier.sh"
+defect = "A `breaker.json` write reached no hook, so a Breaker counterexample - the stage that found phase 8's credential leaks - was recorded only if the Verifier remembered to run `defect` by hand, which is an instruction with no mechanism (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_verifier.sh"
+find = '''
+    python3 "$SD/pipeline_metrics.py" breaker-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    exit 0 ;;'''
+replace = '''
+    true
+    exit 0 ;;'''
+
+[[guard]]
+id = "metrics-emission.breaker-floor"
+implements = "scripts/emission_gate.py"
+defect = "The defect floor read the Verifier's findings and nothing else, so a phase whose Breaker landed counterexamples nobody recorded closed clean (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/emission_gate.py"
+find = '''
+    if len(landed) < len(counterexamples):'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "metrics-emission.spec-gate-blockers"
+implements = "scripts/spec_gate_triage.py"
+defect = "The spec gate recorded how MANY observations it blocked on and never which: `found_by: spec-gate` is in firstmate's vocabulary and nothing emitted it (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/spec_gate_triage.py"
+find = '''
+    record_spec_gate_findings(
+        os.environ.get("AVENGER_METRICS_SPEC_PATH"), list(decision.blocking)
+    )'''
+replace = '''
+    pass'''
+
+[[guard]]
+id = "metrics-emission.provenance-before-seal"
+implements = "scripts/pipeline_metrics.py"
+defect = "`closed` seals every collection, `gate_calls` included; a provenance row written after it is refused, and a record whose provenance row was refused is the one record that cannot say what the pipeline wrote (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    _record_provenance(phase, set(fields))
+    if "closed" in fields:
+        return sink.set_fields(phase, closed=fields["closed"])
+    return True'''
+replace = '''
+    if "closed" in fields and not sink.set_fields(phase, closed=fields["closed"]):
+        return False
+    _record_provenance(phase, set(fields))
+    return True'''
+
+[[guard]]
+id = "metrics-emission.close-tells-unreadable-from-absent"
+implements = "scripts/pipeline_metrics.py"
+defect = "`record_phase_close` read with `sink.show(phase) or {}`, and `sink.show` answers None for an UNREADABLE record as well as an absent one. A transient refusal then defeated the converge guard and asked a SEALED record to change, and printed the never-opened note - a confident wrong diagnosis prescribing a remedy for a cause that does not apply, on `elapsed_minutes`, the field issue #120 exists to repair."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    read = open_record(phase)
+    if not read.usable:
+        if read.state == RECORD_UNREADABLE:'''
+replace = '''
+    read = RecordRead(RECORD_PRESENT, sink.show(phase) or {})
+    if not read.usable:
+        if read.state == RECORD_UNREADABLE:'''
+
+[[guard]]
+id = "metrics-emission.a-failed-read-never-narrows-a-number"
+implements = "scripts/pipeline_metrics.py"
+defect = "`bytes_by_round` is rewritten from what the record already holds, and `sink.show` answers None on a non-zero exit AND on output that is not JSON. Read as an empty series, the upsert replaced every earlier round of a spec with the current one and `spec_rounds` was then stamped at `_spec_rounds`' `default=1` and named on the provenance row as pipeline-written - a spec on its fifth round recorded as having taken one, with no error anywhere, on the field the ratchet hypothesis is judged by (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        read = open_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"spec round not recorded for {spec}: the record could not be READ, and "'''
+replace = '''
+        read = RecordRead(RECORD_PRESENT, sink.show(phase) or {})
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"spec round not recorded for {spec}: the record could not be READ, and "'''
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        after = open_record(phase)
+        if after.usable:
+            _stamp(phase, spec_rounds=_spec_rounds(after.record))'''
+replace = '''
+        _stamp(phase, spec_rounds=_spec_rounds(sink.show(phase)))'''
+
+[[guard]]
+id = "metrics-emission.a-report-creates-no-record"
+implements = "scripts/pipeline_metrics.py"
+defect = "The `provenance` report resolved an absent record by OPENING it: `metrics_sink.ensure` runs `init <phase> --project <name> --from <previous>`, so reporting on a phase that never ran created a record for it, seeded from another phase's open findings and pending hypotheses, with a null `elapsed_minutes` - the exact population issue #120 counts, manufactured by the instrument built to detect it, while the command printed that there was no record."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        read = read_record(phase)
+        if read.state == RECORD_NOT_CONFIGURED:'''
+replace = '''
+        read = open_record(phase)
+        if read.state == RECORD_NOT_CONFIGURED:'''
+
+[[guard]]
+id = "metrics-emission.off-is-not-an-unreadable-record"
+implements = "scripts/pipeline_metrics.py"
+defect = "`sink.show` answers None for a writer that is switched OFF or simply not installed as well as for a record it could not read, so closing a landed phase with `AVENGER_METRICS_OFF=1` - the documented normal state of a standalone install with no firstmate home - told the operator its record could not be READ and prescribed waiting for the next close stamp. Nothing was read and nothing ever would be: a confident wrong cause with an unavailable remedy, on every landing commit (issue #120)."
+tests = ["tests/test_phase_record_instrument.py", "tests/test_pipeline_metrics.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    if not sink.enabled():
+        return RecordRead(RECORD_NOT_CONFIGURED, {})'''
+replace = '''
+    sink.enabled()'''
+
+[[guard]]
+id = "metrics-emission.close-emitted-on-commit"
+implements = "scripts/hook_phase_close.sh"
+defect = "Issue #46 moved the close stamp to landing and nothing emitted it there: `commands/avenger-run.md` §5 asked the orchestrator to remember, and for two phases running it was not remembered, so every closing measurement was entered by hand hours later."
+tests = ["tests/test_hook_phase_close.py", "tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/hook_phase_close.sh"
+find = '''
+      python3 "$SD/pipeline_metrics.py" phase-close "$dir" >/dev/null || true'''
+replace = '''
+      true'''
+
+[[guard]]
+id = "suite-population.declared-roots"
+implements = "scripts/hook_verifier.sh"
+defect = "`tests_before`/`tests_after` counted the project's DECLARED test root minus its own `e2e/`, while this hook's full-suite fallback passed pytest no root at all and a hardcoded `--ignore=tests/e2e`. For any project whose tests are not at `tests/` those are different populations - measured at 3 against 4 on a scratch project with tests at `suite/` - so the record's suite size and the suite the gate ran were never the same number, and §4b's exclusion of feature e2e from the phase verifier hook applied only to the default layout (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/test_root_args.sh"
+find = '''
+  errfile="$(mktemp "${TMPDIR:-/tmp}/test-root-query.XXXXXX" 2>/dev/null)" || errfile=""
+  if [ -n "$errfile" ]; then
+    roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>"$errfile"); status=$?
+    why=$(tail -n 1 "$errfile" 2>/dev/null | tr -d '\r')
+    rm -f "$errfile"
+  else
+    roots=$(python3 "$sd/subprocess_check.py" --print-roots 2>/dev/null); status=$?
+  fi'''
+replace = '''
+  roots=""; status=0'''
+
+[[guard]]
+id = "suite-population.a-fallback-names-its-own-cause"
+implements = "scripts/test_root_args.sh"
+defect = "The query's stderr went to /dev/null and its exit status was dropped, so the two states that reach the whole-tree fallback shared one message: `no declared test root exists`. A query that never answered - no `python3`, an unreadable or crashing `subprocess_check.py` in a vendored install - never read the declaration at all, and was reported as a project whose declared root is missing from disk, sending the reader to inspect a layout that may be perfectly fine while the real cause was discarded (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/test_root_args.sh"
+find = '''
+  if [ "$status" -ne 0 ]; then
+    TEST_ROOT_SCOPE="full suite minus e2e (the test-root declaration could not be READ: ${why:-the query exited $status and said nothing}) - which root a project declares is UNKNOWN here, not absent"
+  else
+    TEST_ROOT_SCOPE="full suite minus e2e (the declaration was read and no root it names exists on disk)"
+  fi'''
+replace = '''
+  TEST_ROOT_SCOPE="full suite minus e2e (no declared test root exists)"'''
+
+[[guard]]
+id = "suite-population.the-floor-asks-too"
+implements = "scripts/gate_ci.sh"
+defect = "The gate floor was a FOURTH reader of the test-root declaration and kept the hardcode the hook had just lost: `pytest -q --ignore=tests/e2e` with no root. On a project whose tests are not at `tests/` the ignore matched nothing on disk, so the pre-commit gate collected the feature-level e2e suite its own comment says it deliberately excludes - and the branch's `one reader` claim, written in three places, was false (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
+replace = '''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?'''
+
+[[guard]]
+id = "suite-population.one-declaration"
+implements = "scripts/pipeline_metrics.py"
+defect = "The test-root declaration had three readers and each re-derived it. A fact stated more than once drifts, and this one had: `pipeline_metrics.test_root` re-read $SUBPROC_CHECK_PATHS while `hook_verifier.sh` never read it at all (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    return [root / declared for declared in subprocess_check.test_roots()]'''
+replace = '''
+    return [root / "tests"]'''
+
+[[guard]]
+id = "suite-population.every-declared-root"
+implements = "scripts/pipeline_metrics.py"
+defect = "The counted population collapsed a multi-root declaration to its FIRST root while `hook_verifier.sh` runs `--ignore=<root>/e2e <root>` for every declared root, so `tests_before`/`tests_after` stamped a suite the gate never ran wherever a project declares more than one (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    roots = [root for root in test_roots() if root.is_dir()]'''
+replace = '''
+    roots = [root for root in test_roots() if root.is_dir()][:1]'''
+
+[[guard]]
+id = "metrics-emission.provenance-never-narrows"
+implements = "scripts/pipeline_metrics.py"
+defect = "The provenance row is merged from a read-back and written by upsert, and `sink.show` returns None for an UNREADABLE record as well as an absent one. Merging that against an empty set rewrote the row as the current stamp's names alone, so `provenance_report` reported every earlier pipeline-written scalar as hand-entered - the instrument built to tell the two apart mislabelling its own (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+        read = open_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"provenance not recorded for phase {phase}: the record could not be read, and "'''
+replace = '''
+        read = RecordRead(RECORD_PRESENT, sink.show(phase) or {})
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"provenance not recorded for phase {phase}: the record could not be read, and "'''
+
+[[guard]]
+id = "metrics-emission.provenance-first-stamp"
+implements = "scripts/pipeline_metrics.py"
+defect = "Refusing to write on a None from `sink.show` also refused the ABSENT record, and a close that stamps `closed` alone never reaches the `set_fields` that opens one - so a phase never opened (heredoc-authored specs, `count_tests` unable to answer) landed a pipeline-written `closed` with no provenance row at all, and `provenance_report` read its own stamp as hand-entered (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    if sink.ensure(phase):
+        opened = sink.show(phase)
+        if opened is not None:
+            return RecordRead(RECORD_ABSENT, opened)'''
+replace = '''
+    sink.ensure(phase)'''
+
+[[guard]]
+id = "metrics-emission.breaker-survived-verification"
+implements = "scripts/pipeline_metrics.py"
+defect = "A Breaker counterexample was recorded `stage_reached: implementation`, but the Breaker runs only after a passing verdict, so the defect got past verification too. The record then reads as one verification would have caught, crediting the Verifier in the column beside `found_by` that cannot be recovered after the run (issue #120)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+            summary=f"Breaker counterexample: {text}",
+            found_by="breaker",
+            real=True,
+            stage_reached="verification",'''
+replace = '''
+            summary=f"Breaker counterexample: {text}",
+            found_by="breaker",
+            real=True,
+            stage_reached="implementation",'''
+
+[[guard]]
+id = "metrics-emission.spec-gate-blockers-fail-open"
+implements = "scripts/pipeline_metrics.py"
+defect = "`record_spec_gate_findings` is called from `spec_gate_triage.py`, whose exit code IS the gate's verdict, and `guard_scope.run` re-raises anything that is not a SystemExit - so an emission failure left the process exiting 1, the code that script spells BLOCKED. A measurement may never decide a verdict (§6d)."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    except Exception as exc:  # noqa: BLE001 — measurement never decides a verdict
+        sink.note(f"spec gate findings not recorded: {type(exc).__name__}: {exc}")
+        return 0'''
+replace = '''
+    except ValueError as exc:
+        sink.note(f"spec gate findings not recorded: {type(exc).__name__}: {exc}")
+        return 0'''
 
 # --- gate plausibility ----------------------------------------------------------------------------
 
@@ -1092,9 +1482,9 @@ tests = ["tests/test_gate_ci_suite_step.py"]
 [[guard.mutation]]
 file = "scripts/gate_ci.sh"
 find = '''
-    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?'''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
 replace = '''
-    pytest -q --ignore=tests/e2e; pc=$?'''
+    pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?'''
 
 # --- the suite's outcome crosses the step boundary on a published name (issue #98 review round) ----
 
@@ -1880,6 +2270,10 @@ replace = """
 [[exempt]]
 file = "scripts/load_env.sh"
 reason = "Sources the project .env into the calling shell and returns. It reaches no verdict, refuses nothing and has no exit path of its own - what it loads is judged by the gate that loaded it."
+
+[[exempt]]
+file = "scripts/test_root_args.sh"
+reason = "Sourced by the two gates that run the suite, it assembles the project's declared test roots into a pytest argument list and reports whether the declaration resolved. It reaches no verdict and has no exit path of its own - what a red suite MEANS is decided by the caller that ran it, and the rules it carries are proven through those callers' guards, which mutate this file."
 
 [[exempt]]
 file = "scripts/bypass_reason.sh"

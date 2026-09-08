@@ -17,6 +17,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/load_env.sh"   # pipeline config from the project .env (real env always wins)
 . "$SCRIPT_DIR/bypass_reason.sh"   # one owner of the break-glass reason's on-disk shape
+. "$SCRIPT_DIR/test_root_args.sh"  # one owner of "the declared test roots, as pytest arguments"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"       # repo root (in-repo and vendored flat layout)
 COSMIC_CFG="$ROOT/cosmic-ray.toml"
 cd "$ROOT"
@@ -522,15 +523,28 @@ fi
 #    with no runner summary is INCOMPLETE, exit 86, never a pass), and it runs as `python3 -m pytest`
 #    under the SAME interpreter every other check in this file uses, which the step announces by
 #    path. The two are one function so a test can slice it out and drive it the way this file does.
+#
+#    AND WHICH ROOTS it runs are the project's DECLARED ones, minus each root's own `e2e/`, from the
+#    one file that assembles them (`test_root_args.sh`, which `hook_verifier.sh` also sources). The
+#    pre-commit branch used to hardcode `--ignore=tests/e2e` with no root: on a project whose tests
+#    are not at `tests/` that ignore matched nothing on disk and this gate collected the
+#    feature-level e2e suite the comment above says it deliberately excludes (issue #120).
 suite_step() {
   local full="$1" pc interpreter
+  # Sourced HERE as well as at the top of this file, and that is deliberate: this function is
+  # SLICED OUT and driven standalone by tests/test_gate_ci_suite_step.py, which supplies only
+  # SCRIPT_DIR and record_fail. A step whose test harness cannot run it is a step nothing checks.
+  . "$SCRIPT_DIR/test_root_args.sh"
   interpreter="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || echo 'python3 (could not be asked for its path)')"
   if [ "$full" -eq 1 ]; then
     echo "• tests: python3 -m pytest -q (incl. e2e), through suite_outcome.py; interpreter: $interpreter"
     python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q; pc=$?
   else
-    echo "• tests: python3 -m pytest -q --ignore=tests/e2e, through suite_outcome.py; interpreter: $interpreter"
-    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?
+    if ! test_root_pytest_args "$SCRIPT_DIR"; then
+      echo "  $TEST_ROOT_SCOPE — keeping the whole-tree scope" >&2
+    fi
+    echo "• tests: python3 -m pytest -q ${TEST_ROOT_ARGS[*]} ($TEST_ROOT_SCOPE), through suite_outcome.py; interpreter: $interpreter"
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q "${TEST_ROOT_ARGS[@]}"; pc=$?
   fi
   # Publish the outcome this step OBSERVED, on the one name a later step reads. `pc` is local, so
   # the mutation gate below cannot see it; it used to read `$pc` directly and, once this became a

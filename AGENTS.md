@@ -433,12 +433,19 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    phase report 1 defect against at least 5, four of them the Verifier's own, found by executing
    code. `scripts/emission_gate.py defects` then refuses a phase closing with fewer recorded defects
    than its verdicts describe, since the emission is fail-open and a refused write otherwise looks
-   like a phase that found nothing. It compares the Verifier's `findings[]` and nothing else: a
-   defect described only in a PR body or a status log is invisible to it, and no other stage is
-   covered. (b) **The close stamp is emitted at LANDING by something that executes**:
-   `scripts/hook_phase_close.sh` is a `PostToolUse` hook on `Bash` that stamps every phase the
-   commit it just ran touched, and `emission_gate.py close` fails a landed phase carrying a null
-   `closed`. **opencode does not carry that hook** - its adapter routes only `write`/`edit` tool
+   like a phase that found nothing. It compares the Verifier's `findings[]` and the Breaker's
+   `counterexamples[]` and nothing else: a defect described only in a PR body or a status log is
+   invisible to it, and no other stage is covered by the floor. The Breaker's counterexamples, the
+   spec gate's blockers and the verification attempt count are each emitted from the record that
+   stage writes (`breaker-findings` on a `breaker.json` write, `record_spec_gate_findings` at the
+   decide step, `verifier-attempts` on a verdict write - issue #120). (b) **The close stamp is
+   emitted at LANDING by something that executes**: `scripts/hook_phase_close.sh` is a
+   `PostToolUse` hook on `Bash` that stamps every phase the commit it just ran touched, and
+   `emission_gate.py close` fails a landed phase carrying a null `closed`. Landing is the COMMITTED
+   contract card (`handover.md`), not a clean directory: a spec commit leaves the directory clean
+   too, stamped phase 5 of one feature closed two hours early, and the seal then refused every
+   later emission. Every scalar the pipeline stamps is named on a `metrics-provenance` gate_calls
+   row written before the seal; `pipeline_metrics.py provenance` reports the fraction. **opencode does not carry that hook** - its adapter routes only `write`/`edit` tool
    events - so on opencode the orchestrator's own `phase-close` (`commands/avenger-run.md` §5) is
    the only emitter, and running it is not optional here. `record_phase_close` converges on a phase
    already closed, so both firing costs nothing. (c) **An override records which CLASS it is** -

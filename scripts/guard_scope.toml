@@ -104,12 +104,23 @@ limits = [
   "anything about coverage or correctness, which it deliberately never judges",
 ]
 
-[guard."emission_gate.py"]
-proves = "that a closing phase records at least as many defects as its own verdicts describe, and that a landed phase carries a close stamp."
+[guard."pipeline_metrics.py"]
+proves = "that a phase's measurements were offered to the record at the moment the stage concluded them, and that a close was refused until the phase actually landed - its contract card committed and nothing under it uncommitted."
 limits = [
-  "any defect described only in a PR body, a status log, a chat transcript or a commit message - it reads the Verifier's `findings[]` and nothing else",
-  "any other stage's conclusions, none of which are compared to the record",
+  "that anything was WRITTEN: every command here except `defect` is fail-open by design, so a clean exit means the emission was attempted, never that the record changed - `provenance <phase>` is what reads back what the pipeline actually stamped",
+  "that a fact no stage emits was measured at all - it records what it is handed, and the implementer's own catches reach it through no route",
+  "that a stamped number is RIGHT: it derives `verification_attempts` from the verdict record and the suite size from a collection, and a wrong artifact yields a wrong stamp",
+  "anything about a phase whose trigger never fired - a spec authored through a heredoc opens no phase, and its `elapsed_minutes` stays null and is said rather than invented",
+  "that a scalar `provenance` credits to the pipeline still HOLDS the value the pipeline stamped: the row records field NAMES only, so the pipeline stamps `tests_after=100` and names it, the close seals the record, an operator later corrects it to 128 through firstmate's own CLI, and `provenance_report` goes on counting it under `scalars_by_pipeline` at `fraction_by_pipeline: 1.0`. The row is names-only on purpose - values beside the record would be a second copy of a record firstmate owns, against its closed schema - so this is a declared limit, not a defect awaiting a fix",
+]
+
+[guard."emission_gate.py"]
+proves = "that a closing phase records at least as many defects as its own verdicts and its Breaker record describe, and that a landed phase carries a close stamp."
+limits = [
+  "any defect described only in a PR body, a status log, a chat transcript or a commit message - it reads the Verifier's `findings[]` and the Breaker's `counterexamples[]` and nothing else",
+  "the spec gate's, mutation's and the implementer's conclusions, none of which are compared to the record here (the first two have their own emission, the implementer has none)",
   "equality: one finding may describe two defects and still pass. This is a floor",
+  "whether the close stamp was taken at the right moment - only that a landed phase carries one",
 ]
 
 # --- the spec wall ---------------------------------------------------------------------------------
@@ -401,12 +412,13 @@ limits = [
   "anything about tests written to pass rather than to discriminate, for which there is no dedicated reader",
 ]
 
-[guard."pipeline_metrics.py"]
-proves = "that each fact it recorded was emitted by the stage that observed it, at the moment it observed it - a spec round only for a gate that reached a verdict, a phase close only once everything under the phase directory is committed."
+[guard."hook_phase_close.sh"]
+proves = "that every phase directory the commit just made touched was offered to `phase-close`, so the close stamp is taken at landing by something that executes rather than by an orchestrator remembering to."
 limits = [
-  "that anything was recorded AT ALL: every write but `defect` is fail-open by design (CLAUDE.md 6d), so a phase whose writer refused every entry looks exactly like one with nothing to report - `emission_gate.py` is the check for that, never a clean run of this",
-  "that a recorded number is RIGHT: it stores what a stage reports, and a stage that observed the wrong thing records the wrong thing",
-  "anything about a fact no stage emits: firstmate's schema is closed, so a measurement with no writer is simply absent rather than reported missing",
+  "that any stamp was actually WRITTEN: `record_phase_close` decides landing and refuses a phase whose contract card is not committed, and the metrics writer is fail-open throughout - this hook offers the phase and never claims the record changed",
+  "a commit made outside a Bash tool call, which reaches no PostToolUse hook at all",
+  "anything when `jq`, the payload or the repository could not be read: each exits 0 having stamped nothing, and the close is then owed to the orchestrator's own `phase-close`",
+  "that the measurements the stamp carries are right - only when they were taken",
 ]
 
 [guard."hook_activity.sh"]
@@ -438,6 +450,14 @@ limits = [
   "intent: the regex matches the whole command STRING, so free text that merely NAMES a denied command is denied too, and prose belongs in a file the command reads",
   "a command spelled a way the pattern does not cover",
   "anything on an ALLOW, which is this guard's clean result and deliberately carries no statement: it is emitted per tool call and would bury every other line, so this rides the deny (a declared exception in `guard_proof.EMISSION_EXCEPTIONS`)",
+]
+
+[guard."test_root_args.sh"]
+proves = "that the pytest arguments a gate runs were assembled from the project's own declared test roots, each minus its own `e2e/`, with every root and `--ignore=` passed as one argument, and that a run which fell back to the whole tree said which of the two causes put it there."
+limits = [
+  "that the declared roots are the RIGHT ones - it translates a declaration, it never judges one",
+  "that anything was TESTED: it builds an argument list, and what a red suite means is the caller's verdict",
+  "that a root it skipped is absent for a good reason - a root that does not exist on disk is left out so pytest is not handed a usage error, whether the project has no tests yet or the declaration is wrong",
 ]
 
 [guard."bypass_log.sh"]

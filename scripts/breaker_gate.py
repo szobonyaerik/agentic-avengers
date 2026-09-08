@@ -74,6 +74,8 @@ RULE = "breaker"
 READERS = [
     "breaker_gate.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
     "pipeline_state.py @ per phase, resolving the next stage",
+    "pipeline_metrics.py @ each breaker.json write and phase close (hook_verifier.sh) - "
+    "counterexample ids only",
 ]
 
 

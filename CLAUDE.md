@@ -1338,22 +1338,51 @@ phase recorded **8** against a real attempt of 1 and a cap of 3 that had never f
 the cap having failed; the retries stay visible in `gate_calls[]` with their `failure_cause`, and only
 the attribution was wrong) · tests before/after — **collected pytest test items**
 (`pytest --collect-only`, minus the test root's `e2e/`), the same population `hook_verifier.sh`'s own
-`pytest -q` reports, never `def test_` lines — counted the same way at both ends
+`pytest -q` reports, never `def test_` lines — and "the same population" is now TRUE rather than
+claimed. The test-root declaration had **three** readers each re-deriving it, and they disagreed:
+`count_tests` collected the declared root and ignored ITS `e2e/`, while the verifier hook's
+full-suite fallback passed pytest **no root at all** and a hardcoded `--ignore=tests/e2e`. On the
+default layout the two agree by coincidence (2013 == 2013 measured here), so the divergence is
+invisible in this repository and permanent in any project whose tests are not at `tests/` — measured
+at **3 against 4** on a scratch project with tests at `suite/`, which also means §4b's exclusion of
+feature e2e from the phase verifier hook only ever applied to the default layout.
+`subprocess_check.test_roots()` is the one reader now (the module that owns `SUBPROC_CHECK_PATHS`);
+`pipeline_metrics.test_roots()` imports it and counts EVERY declared root, each minus its own
+`e2e/`, rather than the first - which is the same divergence one notch narrower. Both gates ask for
+it with `--print-roots`, a query
+routed deliberately AROUND `guard_scope.run` because it performs no scan and must not borrow a
+gate's clean-result line, and both turn the answer into pytest arguments through
+`scripts/test_root_args.sh`, which owns that translation alone: the in-session phase gate
+(`hook_verifier.sh`) and the pre-commit floor (`gate_ci.sh`) ran different populations for as long
+as it had two copies, since converting only the hook left the floor on the same hardcode. A root
+neither gate can resolve keeps the previous whole-tree scope and
+**says so** rather than silently switching population — counted the same way at both ends
 (`hook_spec_gate.sh` on the first spec write, and the orchestrator's `phase-close` after the phase's
-commit) · the phase's **close** and `elapsed_minutes`, stamped by the orchestrator right after that
-commit and by no hook, because **close means landed, not implemented**: `handover.md` being written
-is the Verifier's precondition, and `record_phase_close` refuses the write while anything under the
-phase directory is still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
-verdict write** and again at phase close, over the phase's **whole verdict history**;
+commit) · the phase's **close** and `elapsed_minutes`, stamped by `hook_phase_close.sh` on the commit
+that lands the phase and by the orchestrator's own `phase-close`, because **close means landed, not
+implemented**: `handover.md` being written is the Verifier's precondition, and `record_phase_close`
+refuses the write until the contract card is COMMITTED and nothing under the phase directory is
+still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
+verdict write** and again at phase close, over the phase's **whole verdict history**, and on every
+`breaker.json` write, one defect per counterexample, `found_by: breaker`; `spec_gate_triage.py` at
+its decide step, each blocker, `found_by: spec-gate`;
 `hook_mutation.sh`; and `pipeline_metrics.py defect` for stages no script sees) · which skills each
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
 defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
 inline prose. **`recorded_by` is a different question — WHO wrote the defect down, never derived from
 what caught it — and every route in `pipeline_metrics.py` answers `stage`**, because every one of them
-IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]`, held
-single by test so a fourth route cannot land unstamped, and nothing here can emit `operator` (a person
-transcribing afterwards is a different producer, using firstmate's own CLI). Its **third answer is
+IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]` - **true
+today and held by nothing**. `test_every_route_into_the_record_carries_the_recorder_stamp` drives
+every route that exists and asserts the stamp on the entries that LANDED, which is what the routes
+are worth; a route added later that calls `sink.add(phase, "defects", ...)` directly is driven by no
+test and turns nothing red. The two mechanisms that would catch it are refused rather than
+overlooked: a check over the record cannot tell an unstamped route from the version skew below, which
+drops `recorded_by` on purpose and would make the check fire on a lost measurement; and a
+`defects`-shaped rule inside `metrics_sink` would give the sink schema knowledge it deliberately has
+none of. So keeping the write single is a rule for whoever adds the next route, stated here because
+nothing will stop them. Nothing here can emit `operator` (a person transcribing afterwards is a
+different producer, using firstmate's own CLI). Its **third answer is
 absence**, meaning the record predates the field, which is why an unstamped emission would read as one
 of the two phases whose defects were entered by hand. Nothing back-fills. A firstmate too old to know
 the field refuses the whole entry over it — its key surface is closed — so the sink retries once
@@ -1394,10 +1423,24 @@ reader on the read path for this: **finding ids and kinds only, once per phase c
 `scripts/emission_gate.py defects` refuses a phase that closes carrying **fewer defects than its own
 verdicts describe**, from `hook_verifier.sh` at the handover and diff-scoped from `gate_ci.sh`.
 **What it does not cover is stated rather than implied**: the comparison reads the Verifier's own
-`findings[]` and nothing else, so a defect described only in a PR body, a status log or a commit
-message is invisible to it — it would have caught **four** of phase 12's five, not all — and no
-other stage's conclusions are compared to the record at all. It is a floor, never an equality: one
-finding may describe two defects and still pass.
+`findings[]` and the Breaker's `counterexamples[]` and nothing else, so a defect described only in
+a PR body, a status log or a commit message is invisible to it — it would have caught **four** of
+phase 12's five, not all — and no other stage's conclusions are compared to the record at all. It
+is a floor, never an equality: one finding may describe two defects and still pass.
+
+**Every stage that leaves a record of what it concluded now emits from that record** (issue #120).
+The Breaker's `breaker.json` reached no hook at all, so its counterexamples — the stage that found
+phase 8's credential leaks — were recorded only if the Verifier remembered to run `defect` by hand;
+`hook_verifier.sh` now has a `breaker.json` branch (`pipeline_metrics.py breaker-findings`, one
+defect per counterexample, `found_by: breaker`) and the handover re-emits it, and the floor above
+holds it. The spec gate recorded how MANY observations it blocked on and never which:
+`spec_gate_triage.py` now records each blocker at the decide step (`found_by: spec-gate`,
+`real: false`, since a spec is an artifact). `verification_attempts` was never emitted at all — the
+only caller went with the deleted review script, so every pipeline-written record carried null
+while the phase's own verdict read `attempt: 4`; `hook_verifier.sh` stamps it on every verdict
+write from `verifier_attempts.current()`, the number the cap reads. **Not covered, said rather than
+implied**: findings of the feature-close ship gate (`review-gate`) run in the daemon's own worktree
+where no hook of this pipeline fires, and the implementer's own catches have no record to read.
 
 **Something emits the close stamp at landing.** Issue #46 correctly moved `closed` from
 implementation-finish to landing; nothing emitted it *there*, so a premature stamp was replaced by
@@ -1409,7 +1452,21 @@ that *"no hook can see this commit land"*. One can: **`scripts/hook_phase_close.
 hook on `Bash`** that stamps every phase directory the commit it just ran actually touched.
 `record_phase_close` still refuses the write while anything under the phase is uncommitted, and now
 **converges** rather than re-stamping a phase already closed. `emission_gate.py close` fails a
-**landed phase carrying a null `closed`**. Note the trap it exists for: the hypothesis watching this
+**landed phase carrying a null `closed`**. **And landing is the committed contract card, not a clean
+directory** (issue #120): "nothing under the directory is uncommitted" is true of a SPEC commit too,
+and phase 5 of one measured feature was stamped `closed` at the exact second of its spec commit,
+`elapsed_minutes: 10`, two hours before it landed — and because a close SEALS the record, every
+defect and gate call the phase produced after that was refused by the writer, which is how "one
+phase recorded 1 of at least 5" happens with every emitter in place. `record_phase_close` now
+refuses until `handover.md` is committed (`CLOSING_DOCUMENT`), the one artifact §5 puts in the
+landing commit and no earlier commit can. A phase never opened (specs authored through a heredoc
+fire no `phase-open`) still closes, and its `elapsed_minutes` stays null and is SAID on stderr rather
+than invented from a later moment. **The record also says what the pipeline wrote itself**: every
+scalar this pipeline stamps goes through one `_stamp` and is named on a `gate_calls` row
+(`metrics-provenance`, the precedent `plugin-version` set for a fact firstmate's closed schema has
+no field for), written BEFORE `closed` seals the collections; `pipeline_metrics.py provenance
+<phase>` reports the fraction, intersecting the row with the scalars that actually hold a value.
+The proper home is a per-scalar `recorded_by` in firstmate's schema, which is their decision. Note the trap it exists for: the hypothesis watching this
 counted *overrides correcting a close stamp* and reported **zero**, which read as success and
 described a producer that had stopped — **a check that only looks for a wrong value can never see an
 absent one.**
