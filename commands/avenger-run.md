@@ -601,8 +601,10 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 — a gate disclosing a subset of what it could
   already see, one full re-verification at a time. `scripts/verifier_attempts.py check <phase-dir>`
   reports where a phase stands and prints the series. At the cap the remaining findings are
-  **carried as known-open in `handover.md`, waived explicitly, or escalated** — a fourth attempt is
-  not one of the three, and some findings being carried rather than fixed is the accepted trade.
+  **carried as known-open in `handover.md`, deferred to the later phase that owns them (gated on this
+  phase's structured *Done when*: `scripts/carried_items.py defer`, refusing any finding that blocks
+  it), waived explicitly, or escalated** — a fourth attempt is not one of the four, and some findings
+  being carried rather than fixed is the accepted trade.
 - **A post-verification change is an AMENDMENT, not a new round.** When a verified phase must
   change, record what it touches and re-verify only that:
   ```bash

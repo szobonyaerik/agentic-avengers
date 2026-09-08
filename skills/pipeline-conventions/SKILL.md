@@ -469,11 +469,14 @@ Three consequences worth stating outright:
     a gate disclosing a subset of what it could already see, one expensive round at a time.
     `scripts/verifier_attempts.py` stops the loop at the cap and prints the series, so a trickle is
     visible in the number rather than inferred. At the cap the remaining findings are **carried as
-    known-open in `handover.md`, waived explicitly, or escalated** — all three honest; a fourth
-    attempt is not one of them. The trade is named: some findings are carried rather than fixed.
+    known-open in `handover.md`, deferred to the later phase that owns them (gated on this phase's
+    *Done when*, see *Deferred findings* under *Carried items* below), waived explicitly, or
+    escalated** — all four honest; a fourth attempt is not one of them. The trade is named: some
+    findings are carried rather than fixed.
     Enforced in `hook_verifier.sh` AND `gate_ci.sh --full`, with `GATE_BYPASS` honoured. The cap is on
-    the **loop**, so a `pass` whose findings are all `fixed` or waived clears it — waiving the
-    remainder is one of the three remedies above, and a check its own prescribed remedy cannot satisfy
+    the **loop**, so a `pass` whose findings are all `fixed`, waived, or deferred with a record behind
+    them clears it — waiving or deferring the
+    remainder are two of the four remedies above, and a check its own prescribed remedy cannot satisfy
     is a wedge, not a gate. "Still open" is not restated: it is `open_findings`, imported from
     `verdict_findings`. A verdict of **`fail`** at or past the cap is what stops.
   - **A verdict must evidence its own execution.** The stage used to record
@@ -812,6 +815,42 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
 - The **spec writer** is the stage that discharges, because it is the first that can turn a claim
   into a requirement. Discharging as `built` means a requirement states the behaviour, with its own
   id and `binding:` - not a sentence in Scope mentioning it.
+- **Deferred findings - the fourth disposition, and the same slot again** (issue #115). A phase could
+  not end its own discovery loop: a finding was `open`, `fixed` or `acknowledged` (waived), and none
+  of those means *"real, not this phase's Done when, owned by phase N"*. `faithful-rep` phase 3 ran
+  about 48 hours because every amendment round found a real defect and a human had to be the
+  terminator, judging each item against the phase's *Done when* by hand. So the *Done when* is now
+  **structured beside its prose**: a `| done-when | outcome |` table under the phase in `plan.md`
+  gives each condition an id, and the spec writer tags the requirements that make a condition true
+  with `done_when: DW-<n>` on their declaration line, the same idiom as `binding:`.
+  `scripts/done_when.py` decides from those two sources whether a finding against a requirement
+  blocks the phase; **nothing reads the prose**. `scripts/carried_items.py defer` records a deferral
+  - a `deferred-finding` row on the card backed by a record in `carried.json`'s `deferrals` list
+  carrying the finding's **measurement verbatim** and the owning phase - and refuses a finding that
+  blocks the *Done when* (exit 1: decided, no), a *Done when* that is prose only or has a condition
+  no requirement carries (exit 2: undecidable, never clear), an owner that is not a later planned
+  phase, and a record with no measurement. The Verifier then stamps the finding `status: deferred`
+  with `deferred_to`, and **the stamp is not believed on sight**: `verdict_findings.open_findings`
+  resolves it only for an id the ledger records, `carried_items.py deferred` names every stamp
+  nothing backs and every disagreement between card, ledger and verdict, and `hook_verifier.sh`
+  fails the handover on it. Between the deferring phase and the owner, each phase answers the row
+  with `recarry`, **unconditionally** - the record copied byte-for-byte, the discharge recorded as
+  `declined` with the structural reason; declining it by hand is refused. The *Done when* gate is
+  **not** asked again there: it matches a finding's requirement ids against the conditions THIS
+  phase's specs tag, and a deferral carries the ids of the phase that raised it, so from an
+  intermediate phase it could only ever answer CLEAR - a gate that cannot refuse establishes
+  nothing (§11) - and refusing on an undecidable *Done when* wedged a phase that did nothing wrong
+  (§3a). It binds where its ids are the phase's own: at `defer` time, in the phase raising the
+  finding, where a fresh deferral still needs a decidable *Done when* and a BLOCKS is still
+  refused. The
+  owner answers it like any row. Deferrals are counted in the phase record as a
+  `gate_calls[]` row (`pipeline_metrics.record_deferrals`, on `record_plugin_version`'s precedent),
+  so a phase that defers everything is as visible as one that fixes everything. **What it must never
+  be**: a way to weaken a check, delete a test or move a threshold - phase 3's A3 caught a clip
+  containing no exercise, against the cyclic cut its *Done when* names, and this gate refuses exactly
+  that finding. `amendments.py due` is untouched by a deferral: an amendment is a change already
+  made, and a deferral is a change deliberately not made. A phase with a prose-only *Done when*
+  cannot defer, and nothing else about how it closes changes (§ applicability).
 - Ids are **scoped by the card that declared them**, so `OBS-1` on two cards is two items and the ids
   already in use keep working. Which card is in force is `spec_gate_context.prior_phase`'s decision,
   imported rather than re-derived: this ledger and the spec gate's CONTEXT block must not disagree

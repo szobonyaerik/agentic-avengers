@@ -115,11 +115,17 @@ because you want to check it further: check it now, or raise it now with your un
 At the cap, choose one and say which in the phase `handover.md`:
 
 - **carry** the remaining findings as known-open, or
+- **defer** a finding that is real but does NOT block this phase's *Done when* to the later phase
+  that owns it, with its measurement (`scripts/carried_items.py defer <phase-dir> <finding-id> --to
+  <n>-<slug> --record-file <f> --finding <finding-id>`, then `status: deferred` on the finding - the
+  record resolves the stamp, never the other way; `skills/verifier-triage` § *Deferring a finding*),
+  or
 - **waive** them explicitly (`scripts/bypass_log.sh verifier <finding-id> <waived_by>`), or
 - **escalate** to a human.
 
-A fourth attempt is not one of the three. Some findings being carried rather than fixed is the
-accepted, named trade.
+A fourth attempt is not one of the four. Some findings being carried rather than fixed is the
+accepted, named trade. A finding that blocks the *Done when* is refused deferral by the gate and
+stays yours to route back - deferral is never a way to weaken a check.
 
 ## Amendments — re-verify what changed, not the phase
 
