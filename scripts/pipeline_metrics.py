@@ -981,6 +981,58 @@ def record_mutation_unavailable(phase_dir: str, reason: str) -> bool:
         return False
 
 
+#: Deferrals in `gate_calls[]` (issue #115), on the precedent `record_plugin_version` and
+#: `record_mutation_unavailable` set for a fact firstmate's closed schema has no field for: an
+#: ordinary row on EXISTING keys, the counts in `note`. A phase that defers everything must be as
+#: visible as one that fixes everything, and the record is where that is read.
+DEFERRAL_STAGE = "deferral"
+DEFERRAL_MODEL = "none (scripts/carried_items.py)"
+
+
+def record_deferrals(phase_dir: str) -> bool:
+    """Record how many findings this phase deferred and how many it re-carried. Never fails the phase.
+
+    Idempotent by id: `carried_items.py defer`/`recarry` emit it the moment the fact is decided, and
+    `hook_verifier.sh` emits it again at the handover, so the row converges on the final counts
+    rather than appending one per call. Deferred and re-carried are counted separately because they
+    are different facts - a phase that originated five deferrals and one that passed five along both
+    read `deferred=5` if they were folded together.
+    """
+    try:
+        import carried_items  # lazy: carried_items emits through this module
+
+        phase = resolve_phase(phase_dir)
+        if phase is None:
+            return False
+        records = carried_items.deferrals(Path(phase_dir))
+        here = Path(phase_dir).name
+        originated = [r for r in records if str(r.get("origin") or here) == here]
+        recarried = [r for r in records if str(r.get("origin") or here) != here]
+        owners = sorted({str(r.get("owner")) for r in records if r.get("owner")})
+        note = (
+            f"deferred={len(originated)} recarried={len(recarried)} "
+            f"owners={','.join(owners) or '-'} "
+            f"ids={','.join(str(r.get('id')) for r in records) or '-'}"
+        )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{DEFERRAL_STAGE}",
+            stage=DEFERRAL_STAGE,
+            spec=None,
+            attempt=1,
+            model=DEFERRAL_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"deferrals not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 def record_phase_close(phase_dir: str) -> bool:
     """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
 
@@ -1715,6 +1767,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     required.add_argument("--stage", required=True)
 
+    deferrals = sub.add_parser(
+        "deferrals", help="record how many findings a phase deferred and re-carried"
+    )
+    deferrals.add_argument("phase_dir")
+
     defect = sub.add_parser("defect", help="record a defect and what caught it")
     defect.add_argument(
         "--phase-ref",
@@ -1789,6 +1846,8 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_mutation_survivors(args.phase_dir, args.score)
     elif args.command == "mutation-unavailable":
         record_mutation_unavailable(args.phase_dir, args.reason)
+    elif args.command == "deferrals":
+        record_deferrals(args.phase_dir)
     elif args.command == "skill-load":
         phase = _phase_of_ref(args.phase_ref) or current_phase()
         if phase:

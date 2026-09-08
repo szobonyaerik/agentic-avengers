@@ -301,6 +301,11 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
    Read survivors as candidate missing cases. It is still not a dedicated reader for gamed tests;
    there is none, and this is partial cover rather than a replacement (`skills/verifier-triage`).
+   The policy governs the **score** only: every `cosmic-ray exec` is bracketed by a snapshot and an
+   explicit restore (`scripts/mutation_exec_guard.py`), and a tree that differed **stops the phase
+   under every policy**, `--auto` included, because a mutant left on disk would be committed as
+   authored code. That stop is not a score to interpret and `GATE_BYPASS` does not waive the two
+   outcomes that leave the tree unestablished - `skills/mutation-interpret` is how to read it.
 3. **Carried items** - the handover hook runs **three** carried-items checks and refuses the card if
    any of them fails, so three separate things can stop this phase closing: the *previous* phase's
    card has an item with no answer here (`verifier:carried`); this phase's own new card states
@@ -599,8 +604,10 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 — a gate disclosing a subset of what it could
   already see, one full re-verification at a time. `scripts/verifier_attempts.py check <phase-dir>`
   reports where a phase stands and prints the series. At the cap the remaining findings are
-  **carried as known-open in `handover.md`, waived explicitly, or escalated** — a fourth attempt is
-  not one of the three, and some findings being carried rather than fixed is the accepted trade.
+  **carried as known-open in `handover.md`, deferred to the later phase that owns them (gated on this
+  phase's structured *Done when*: `scripts/carried_items.py defer`, refusing any finding that blocks
+  it), waived explicitly, or escalated** — a fourth attempt is not one of the four, and some findings
+  being carried rather than fixed is the accepted trade.
 - **A post-verification change is an AMENDMENT, not a new round.** When a verified phase must
   change, record what it touches and re-verify only that:
   ```bash

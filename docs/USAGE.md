@@ -258,6 +258,9 @@ Drive the chain (Claude Code: the agents auto-delegate / invoke by name; opencod
       • Writes docs/features/<feat>/phases/1-endpoint/verdict.json. On pass the phase's tests LOCK.
       • Mutation runs by default in ADVISORY mode: it reports the score and its survivors and
         never blocks. MUTATION_POLICY=enforce blocks; MUTATION_POLICY=off runs nothing.
+        The policy governs the SCORE only - every cosmic-ray exec is bracketed by a snapshot and
+        an explicit restore (scripts/mutation_exec_guard.py), and a tree that differed fails the
+        run under every policy. skills/mutation-interpret says how to read the three outcomes.
       • Its BOOKKEEPING is a script, not a finding: scripts/verifier_precheck.py decides untraced
         ids, stale gate stamps and missing headings on every commit, over the phases that commit
         touches — the whole phase at handover, and everything under `gate_ci.sh --full`. 26% of this

@@ -80,8 +80,14 @@ What this spec delivers — and explicitly what it does NOT (deferred to a later
 **At most 12.** Above that the spec SPLITS into siblings under the same phase — see the cap below.
 Each requirement has a stable id R<n>.<k>.<m> so tests can trace to it.
 Each is ONE behavior observable at a seam — a caller-visible outcome, not an internal step.
-Each declares a `binding:` that decides whether, and where, it is verified.
-- R<n>.<k>.1 — `binding: e2e` — <single behavior an end user can observe>
+Each declares a `binding:` that decides whether, and where, it is verified, and - when it makes one
+of the phase's *Done when* conditions true - a `done_when: DW-<n>` tag naming that row of the plan's
+`| done-when |` table. The tag decides whether a Verifier finding against the requirement may be
+DEFERRED to a later phase (`scripts/done_when.py`): tagged blocks, untagged may leave with its
+measurement. Every condition the plan declares for the phase must be carried by at least one
+requirement, or nothing can be deferred from it - check with `python3 scripts/done_when.py show
+<phase-dir>` before you finish the phase's specs.
+- R<n>.<k>.1 — `binding: e2e` — `done_when: DW-<n>` — <single behavior an end user can observe>
 - R<n>.<k>.2 — `binding: integration` — <behavior visible only under concurrency / fault injection /
   schema migration>. Why an e2e cannot see it: <one sentence>.
 - R<n>.<k>.3 — `binding: none` — <structural or build-time property>. Enforced by: <CI job / type
@@ -184,6 +190,14 @@ that resolves to nothing is refused, and it is re-resolved every time the obliga
 here and re-carried on *this* phase's card, which is how a claim about phases 9-12 survives without
 being owed to all four at once. What is not an answer is silence. The reason goes in a **file** the
 command reads, never inline (`pipeline-conventions` § *Gates*).
+
+**A `deferred-finding` row is a real finding the prior phase did not fix, with its measurement.** If
+this phase owns it (`list` prints the owner), answer it like any row - a requirement in your spec is
+the usual answer. If a phase further out owns it, it is not declined: run
+`python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/carried_items.py" recarry <phase-dir> <id>`, which copies
+the record with its measurement unchanged, records the discharge, and prints the row for this
+phase's own card. It is unconditional - the *Done when* gate binds at `defer` time, in the phase
+that raised the finding, where the requirement ids are that phase's own.
 
 Discharging as `built` means a requirement in one of your specs states the behaviour - with its own
 id and its own `binding:`, like any other. It does not mean a sentence in Scope mentioning it.

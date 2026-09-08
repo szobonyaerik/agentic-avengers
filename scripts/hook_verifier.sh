@@ -466,6 +466,26 @@ case "$V" in
       fail "verifier:inconsistent" \
         "verifier: verdict.json says 'pass' but still carries $OPEN open finding(s). Fail closed."
     fi
+    # A `status: deferred` finding is the fourth disposition (issue #115): real, not this phase's
+    # Done when, owned by a later phase. It is NOT believed on sight - the Verifier writes the stamp,
+    # and a stamp that resolved a finding by being written would be a waiver by omission. It is
+    # resolved only by a deferral `scripts/carried_items.py defer` recorded, which is gated on the
+    # phase's structured Done when and carries the measurement. `deferred` names every stamp with
+    # nothing behind it and every place the card, the ledger and the verdict disagree. Exit 1 is the
+    # obligation; anything else could not DECIDE it - the same split as every check here.
+    python3 "$SD/carried_items.py" deferred "$PHASE_DIR"; deferred_rc=$?
+    if [ "$deferred_rc" -eq 1 ]; then
+      fail "verifier:deferred-unbacked" \
+        "verifier: verdict.json says 'pass' over a deferred finding nothing backs (named above)." \
+        "A deferral is recorded with scripts/carried_items.py defer - gated on this phase's Done" \
+        "when, with the measurement - and its row sits on handover.md. A stamp alone is an open" \
+        "finding. Fail closed."
+    elif [ "$deferred_rc" -ne 0 ]; then
+      fail "verifier:deferred-undecidable" \
+        "verifier: whether this phase's deferred findings are backed could not be DECIDED (cause" \
+        "above) - this is not an unbacked deferral, and recording one will not repair it. Fix what" \
+        "it named."
+    fi
     # A pass must PROVE it executed. This used to read `test_quality.reviewed` — a boolean the
     # verifying agent wrote about itself, which a stage that skipped its work could set just as
     # easily as one that did it. `verifier_evidence.py` reads a transcript a RECORDER produced:
@@ -537,6 +557,11 @@ case "$V" in
       python3 "$SD/pipeline_metrics.py" breaker-findings "$PHASE_DIR" "$PHASE_DIR/breaker.json" >/dev/null || true
     fi
     python3 "$SD/pipeline_metrics.py" verifier-attempts "$PHASE_DIR" >/dev/null || true
+    # ...and how many of them this phase DEFERRED rather than fixed (issue #115), on the same terms:
+    # measurement, `|| true`, converging on one row. `defer`/`recarry` emit it the moment the fact is
+    # decided; this is the close-time convergence. A phase that defers everything is as visible in
+    # the record as one that fixes everything.
+    python3 "$SD/pipeline_metrics.py" deferrals "$PHASE_DIR" >/dev/null || true
     # ...and the check that makes its absence visible. The emission above is fail-open by design, so
     # on its own a producer that stopped producing is indistinguishable from a phase that found
     # nothing — which is exactly what two measured phases looked like while their Verifiers were
@@ -575,8 +600,10 @@ case "$V" in
     if [ "$cap_rc" -eq 1 ]; then
       fail "verifier:attempt-cap" \
         "verifier: the verification loop is at its cap (the series is above) — a further attempt is" \
-        "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, waive them explicitly" \
-        "(scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to a human."
+        "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, defer one that does not" \
+        "block this phase's Done when to the phase that owns it (scripts/carried_items.py defer)," \
+        "waive them explicitly (scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to" \
+        "a human."
     elif [ "$cap_rc" -ne 0 ]; then
       # Exit 2 is an ERROR, not the cap, and it carries its own tag so the override log can tell the
       # two apart. Deliberately no cap guidance here: carrying, waiving or escalating cannot repair

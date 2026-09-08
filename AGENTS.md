@@ -338,7 +338,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    blocks) · `enforce` (fails closed). An extra signal, and the pipeline's **only** systematic
    signal about non-discriminating tests now that the cross-family reading pass is gone — still
    advisory, still not a wall, and named as partial cover rather than a replacement. When off, no
-   mutation tool runs anywhere.
+   mutation tool runs anywhere. **The policy governs the SCORE only.** `cosmic-ray exec` mutates
+   source in place, so every exec is bracketed by `scripts/mutation_exec_guard.py` - a snapshot
+   before, an explicit restore-and-compare after and on the kill path - and a tree that differed
+   fails the run under every policy, because a mutant left on disk is authored code nobody
+   authored. Its three outcomes and what `GATE_BYPASS` may waive are in
+   `skills/pipeline-conventions`; how to read them is in `skills/mutation-interpret`.
 9. **Two learning logs, kept apart.** `docs/lessons/` (`skills/self-improvement`) is **per project**
    and about the **work** — a pytest trap, a migration gotcha; any agent appends when something is
    learning-worthy, and reads the *index only* at start, filtered to its role, opening just the prose
@@ -560,16 +565,17 @@ with nine new entries has been weakened, not maintained.
 ## Environment
 | var | default | effect |
 |---|---|---|
-| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip) |
+| `MUTATION_POLICY` | `advisory` | `advisory` (report only, never blocks) \| `enforce` (fail closed) \| `off` (skip). It governs the **score** only: a tree `cosmic-ray exec` left changed fails the run under every policy |
 | `SPEC_REQUIREMENT_MAX` | `12` | requirements per spec before it must SPLIT (`scripts/requirement_cap.py`) |
 | `GATE_TRIAGE_MODEL` | `GATE_MODEL` | the spec gate's cheaper triage pass; must not be the author's family. Unset, it now defaults to `GATE_MODEL` — the model the operator already configured and proved reachable — never to a hardcoded model on its own provider (issue #48) |
 | `SKILLS_OFF` | unset | `1` disables required-skill injection (`scripts/hook_skills.sh`) |
 | `SKILL_INJECT_MAX_BYTES` | `8192` | at or under this a required skill is injected whole; over it, a pointer (`scripts/hook_skills.sh`) |
 | `MUTATION_MIN_SCORE` | `0.85` | mutation score required to pass the per-phase gate |
 | `MUTATION_BASE` | merge-base with default branch | diff base for scoping mutants |
+| `MUTATION_HOOK_BUDGET_S` | the hook's `hooks.json` timeout (600) | seconds `hook_mutation.sh` may spend in total; `cosmic-ray exec` is refused up front when the baseline's measured wall clock times the pending mutants would not fit what is left (`scripts/mutation_exec_guard.py`, issue #95) |
 | `PHASE` | most recent phase dir | which phase's tests the verifier hook runs |
 | `GATE_MODEL` | `google/gemini-3.1-pro-preview` (the spec gate's own fallback) | the spec gate's **observe** pass, and its **triage** pass whenever `GATE_TRIAGE_MODEL` is unset. It is also `gate_runner.py`'s `--model` default, and a call with neither is refused (`cause=config`) rather than resolved to a model nobody chose |
-| `GATE_BYPASS` | unset | break-glass: logged, visible, never silent |
+| `GATE_BYPASS` | unset | break-glass: logged, visible, never silent. It waives every gate the run reaches except the mutation tree guard's two not-clean outcomes - a mutant provably still on disk, and a tree nothing established either way - which are refused with the blocking exit and no log line, because that is authored code nobody authored rather than a weak gate signal. Only the tree guard's restored outcome is waivable; `skills/pipeline-conventions` states the rule once |
 | `GATE_CALL_TIMEOUT` | `300` | seconds the provider call gets. The gate hooks refuse to run if their `hooks.json` budget cannot outlive it plus headroom — raise this and raise `hooks/hooks.json` with it |
 | `GATE_MIN_LATENCY_MS` | `250` | milliseconds below which a **reached** gate verdict is presumed not to have run and is refused (`cause=implausible-latency`). One measured phase recorded a 4 ms GO from a model gate and consumed it as a pass. `0` disables the check, loudly |
 | `VERIFIER_EVIDENCE_TIMEOUT` | `1800` | seconds one command recorded through `scripts/verifier_evidence.py` may run before its process group is killed |

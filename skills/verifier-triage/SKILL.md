@@ -54,7 +54,8 @@ it re-verifies requirement ids here, and never touches the spec-gate hash the pr
 **Three attempts, and route-backs are bundled.** 16 of 20 re-attempts were this stage routing back
 to itself. Raise everything you can see in one pass, with your uncertainty stated, rather than
 holding a finding for the next attempt. At the cap: carry the remainder as known-open in
-`handover.md`, waive them explicitly, or escalate — a fourth attempt is not one of the three.
+`handover.md`, **defer** a finding that does not block this phase's *Done when* to the phase that
+owns it (below), waive them explicitly, or escalate — a fourth attempt is not one of the four.
 
 **An open amendment scopes the re-verification.** `amendments.py scope <phase-dir>` prints the
 requirement ids a post-verification change touched; verify **those**, not the phase. Record the
@@ -275,9 +276,57 @@ but do not block on it.
 The one blocking case: a `break_glass: true` finding with **no `waiver_reason`** (missing or empty) is
 **not** honored — the finding stays `open` and blocks, flagged in the verdict as an incomplete waiver.
 
+
+### Deferring a finding: real, not this phase's *Done when*, owned by a later phase
+A finding has a fourth disposition (issue #115). `faithful-rep` phase 3 ran about 48 hours because
+every amendment round found a real defect and nothing could say *"this finding is real AND this phase
+is done"* - waiving it would have said it did not matter, fixing it widened the phase, leaving it open
+blocked the close. A human became the terminator.
+
+A finding is **deferred** when all three hold, and the gate decides the second one, not you:
+
+1. it is real - a deferral is never a lighter waiver, and the finding stays in `findings[]`;
+2. the requirement it is against carries **none** of this phase's *Done when* conditions -
+   `scripts/done_when.py` reads the `| done-when |` table under the phase in `plan.md` and the
+   `done_when:` tags on the phase's requirement lines, and refuses a finding that blocks one. Phase
+   3's A3 caught a clip containing no exercise, against the cyclic cut the *Done when* names: it would
+   have been refused, and telling stages to care less would have shipped it. A prose-only *Done when*
+   cannot defer anything, and says so;
+3. a **later** phase the plan declares owns it.
+
+Record it first, then stamp it - the record is what resolves the stamp, never the other way round:
+
+```bash
+python3 scripts/carried_items.py defer <phase-dir> <finding-id> --to <n>-<slug> \
+    --record-file <f> --finding <finding-id>          # f: line 1 = title, rest = the MEASUREMENT
+```
+
+The file's first line is the one-line title for the card row; everything after it is the finding's
+**measurement**, carried forward verbatim - the number, the clip, the reading - so the owner inherits
+the evidence and not a sentence about it. Then set the finding's `status: deferred` and
+`deferred_to: <n>-<slug>`, and put the row on `handover.md`'s `## Open items` as the command prints
+it. `bypassed` stays `false`: a deferral is not a waiver, and a phase that passes over deferred
+findings is a clean pass with named debts, not a bypass.
+
+**A stamp with nothing behind it is an OPEN finding.** `verdict_findings.open_findings` resolves
+`deferred` only for an id `carried.json` records, `scripts/carried_items.py deferred <phase-dir>` names
+every stamp nothing backs, and `hook_verifier.sh` fails the handover on it. It reads the whole
+attempt history - a passing verdict carries no findings, so the attempt that raised one is usually
+already archived - but judges each finding by the **last** record that states anything about it, so
+stamping `deferred` on attempt 1 and then FIXING the finding on attempt 2 closes cleanly; an
+archived stamp nothing ever answered is still named. A defect that was never a
+verdict finding (one found by watching a render) is deferred the same way without `--finding`; it
+then has a row and a record and no stamp to resolve.
+
+**What deferral must never be**: a way to weaken a check, delete a test or move a threshold. The
+record carries the measurement unchanged, there is no command that edits one, and a finding that DOES
+block the *Done when* is refused with exit 1 - the answer is no, and the remedy is to fix it here.
+
 ### Verdict + bypassed
-- `verdict: fail` — at least one finding is `open` (unwaived and unresolved).
-- `verdict: pass`, `bypassed: false` — no findings, or all findings resolved (`fixed`).
+- `verdict: fail` — at least one finding is `open` (unwaived and unresolved), or `deferred` with no
+  deferral recorded behind it.
+- `verdict: pass`, `bypassed: false` — no findings, or all findings resolved (`fixed`, or `deferred`
+  and backed by `carried.json`).
 - `verdict: pass`, `bypassed: true` — every remaining finding is `acknowledged` (waived). This is a
   *visible bypass*, never a silent clean green; it surfaces on the PR like any break-glass override.
 
@@ -307,7 +356,8 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
       "severity": "blocker|major|minor",
       "instruction": "<concrete fix directions for the routed agent>",
       "route_to": "avenger-backend-architect|avenger-frontend-developer",
-      "status": "open|fixed|acknowledged",
+      "status": "open|fixed|acknowledged|deferred",
+      "deferred_to": null,
       "break_glass": false,
       "waiver_reason": null,
       "waived_by": null,

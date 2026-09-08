@@ -43,11 +43,20 @@ limits = [
 ]
 
 [guard."carried_items.py"]
-proves = "that a card states what it carries or an explicit `none`, that every row on the prior card is answered, and that each `built`/`tested` discharge names a requirement id or path that still resolves."
+proves = "that a card states what it carries or an explicit `none`, that every row on the prior card is answered, that each `built`/`tested` discharge names a requirement id or path that still resolves, and that every deferred finding has a record with an owner and a measurement behind its row and its `status: deferred` stamp."
 limits = [
   "whether a claim NOBODY wrote down was worth carrying - silence is the state the original defect was written in",
   "a card that OVER-claims, asserting a protection its own phase deleted",
   "that a named test actually pins the claim it was named for; only that it exists",
+  "that a deferred finding's measurement is TRUE or that the owner will fix it - only that it travels unchanged and the owner is asked",
+]
+
+[guard."done_when.py"]
+proves = "that a finding against a requirement tagged with one of this phase's Done when conditions is refused deferral, and that a Done when with no table, an uncarried condition or a tag naming no condition decides nothing rather than clearing."
+limits = [
+  "that the requirements TAGGED are the right ones - the tagging is the spec writer's claim, gated with the spec, never derived from the prose",
+  "anything about a finding with no requirement id - the id is the only mechanical link to a condition, and `--no-requirement` is the caller's explicit statement, not a check",
+  "whether the prose Done when and the table agree - both are authored, and nothing reads the prose",
 ]
 
 [guard."verdict_currency.py"]
@@ -246,6 +255,15 @@ limits = [
   "anything about code the change did not touch, which is out of scope by design",
   "a defect no mutation operator generates a mutant for",
   "whether the suite KILLS what remains in scope, which is the scorer's question and not this one's",
+]
+
+[guard."mutation_exec_guard.py"]
+proves = "that every file the cosmic-ray session could write hashes exactly as it did before exec - and was put back from the pre-exec snapshot where it did not - and that exec was not started when the baseline's measured wall clock times the pending mutants would not fit the hook's remaining budget."
+limits = [
+  "WHO changed a differing file - a test command that rewrites source under module-path reads as corruption, since only the bytes are compared",
+  "that exec will finish: the budget estimate is a LOWER bound, a hung mutant runs to cosmic-ray's own timeout, which is why the restore also runs on the kill path",
+  "anything at all when the hook ITSELF is SIGKILLed before the restore - no code is left to run there",
+  "the index: `git status --porcelain` is recorded and shown, never compared, because an implementer may legitimately stage a file under a running hook",
 ]
 
 [guard."plugin_release.py"]

@@ -20,6 +20,17 @@
 # signal about non-discriminating tests — partial cover, not a dedicated reader. Only `enforce`
 # fails closed.
 # The Verifier invokes this when the policy is on; it is not a standalone quality bar.
+#
+# TREE INTEGRITY (issue #95). `cosmic-ray exec` mutates source IN PLACE and reverts in a `finally`;
+# the kill path below SIGTERMs then SIGKILLs its process group, and neither runs a `finally`, so the
+# mutant applied at that moment stayed on disk and was committed as authored code - four times in one
+# measured phase, three under `verdict: pass`, in live trading code. So every `exec` here is bracketed
+# by scripts/mutation_exec_guard.py: a snapshot of every file the session can write before, an
+# explicit restore-and-compare after - on the KILL PATH too, which is where the damage happens - and a
+# tree that differed FAILS THE HOOK whatever the policy, because a corrupted tree is never advisory.
+# And exec is not started at all when the baseline's measured wall clock times the pending mutants
+# would not fit the budget the hook has left (MUTATION_HOOK_BUDGET_S, default the hooks.json
+# timeout): a run that would be killed mid-mutant is refused up front, where that can be known.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (gate_runner, prompts, bypass_log)
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
@@ -30,6 +41,7 @@ case "$FILE" in
   *) exit 0 ;;
 esac
 cd "$CLAUDE_PROJECT_DIR" || exit 0
+HOOK_T0=$SECONDS
 
 AUTHOR_FAMILY="${AUTHOR_FAMILY:-anthropic}"
 MUTATION_MIN_SCORE="${MUTATION_MIN_SCORE:-0.85}"
@@ -37,6 +49,19 @@ MUTATION_MIN_SCORE="${MUTATION_MIN_SCORE:-0.85}"
 # reports the score and its survivors and never blocks; it is an extra deterministic signal, not the
 # independence mechanism. `off` stays available and runs no mutation tool anywhere.
 MUTATION_POLICY="${MUTATION_POLICY:-advisory}"
+
+# The budget exec must fit inside: the hook's own hooks.json timeout unless the operator says
+# otherwise. Read from the shipped hooks.json rather than restated here, so the two cannot drift.
+# EXEC_HEADROOM_S is what runs AFTER exec - the restore, the score, the metrics - plus the kill
+# grace; the estimate is checked against what is left once both are set aside.
+hook_budget_default() {
+  local cfg="$SD/../hooks/hooks.json"
+  [ -f "$cfg" ] || return 0
+  jq -r '[.. | objects | select(has("command")) | select(.command | test("hook_mutation.sh")) | .timeout] | first // empty' "$cfg" 2>/dev/null
+}
+MUTATION_HOOK_BUDGET_S="${MUTATION_HOOK_BUDGET_S:-$(hook_budget_default)}"
+: "${MUTATION_HOOK_BUDGET_S:=600}"
+EXEC_HEADROOM_S=30
 
 case "$MUTATION_POLICY" in
   enforce|advisory) ;;
@@ -57,6 +82,23 @@ esac
 record_unavailable() {
   python3 "$SD/pipeline_metrics.py" mutation-unavailable "$FILE" "$1" >/dev/null 2>&1 || true
 }
+
+# The budget is validated the moment it can be, and never reaches bash arithmetic unvalidated: a
+# non-numeric value makes `$(( ))` fail, leaves REMAINING_S unset, and the next expansion under
+# `set -u` exits 1 - the whole gate and its tree guard skipped, no record written, and exit 1 is not
+# the blocking code either, so `enforce` does not stop. A configuration error stops, named, exactly
+# as an unrecognised MUTATION_POLICY does. It is asked AFTER the policy case so `off` still runs no
+# mutation tool anywhere. Leading zeros are normalised out: `$((0600))` is octal.
+budget_config_error() {
+  echo "mutation: MUTATION_HOOK_BUDGET_S='$MUTATION_HOOK_BUDGET_S' is not a positive integer number of seconds (fail closed)" >&2
+  record_unavailable "MUTATION_HOOK_BUDGET_S='$MUTATION_HOOK_BUDGET_S' is not a positive integer number of seconds - the gate did not run"
+  exit 2
+}
+case "$MUTATION_HOOK_BUDGET_S" in
+  ''|*[!0-9]*) budget_config_error ;;
+  *) [ "$((10#$MUTATION_HOOK_BUDGET_S))" -gt 0 ] || budget_config_error ;;
+esac
+MUTATION_HOOK_BUDGET_S=$((10#$MUTATION_HOOK_BUDGET_S))
 
 CFG="$CLAUDE_PROJECT_DIR/cosmic-ray.toml"
 if [ ! -f "$CFG" ]; then
@@ -92,6 +134,150 @@ trap cleanup EXIT
 # first, or every bypassed run leaks its work dir.
 bypass_and_exit() { cleanup; trap - EXIT; exec "$SD/bypass_log.sh" "$1"; }
 
+# The pre-exec snapshot, and the one restore that answers it. SNAP is armed only once the snapshot
+# has COMPLETED - never before it, because `snapshot` mkdirs its files directory as its first action,
+# so an armed-early SNAP names a directory holding no manifest for the whole time it is being
+# written, and a signal arriving in that window ran a restore against nothing and reported a tree
+# that could not be put back while exec had provably never started. It is cleared BEFORE the restore
+# runs so a second signal arriving mid-restore cannot start a second one. The restore runs in the
+# FOREGROUND on purpose: bash defers a trap until the running command returns, so a kill during it
+# completes the restore first. A tree that differed is recorded in TREE_CORRUPTED and every exit path
+# asks it before asking the policy. Only rc 1 means the tree differed AND every file is back; rc 2
+# means at least one is NOT, and any other non-zero rc - a restore killed by a signal, a crash -
+# means the restore did not complete and the tree state is UNKNOWN. The last two never claim the tree
+# was put back, and neither does a snapshot with no manifest to compare against.
+#
+# TREE_STATE is that three-way classification named, so every later reader asks restore_tree's own
+# answer instead of re-deriving one: `restored` is the only state in which the mutant is provably no
+# longer on disk, and it is the only one an override may waive. It defaults to the state that waives
+# nothing, so a path that reached a failure without classifying it fails closed.
+SNAP=""
+TREE_CORRUPTED=0
+TREE_STATE="unknown"
+REAP_INCOMPLETE=0
+RESTORE_DONE=0
+RESTORE_SIGNALLED=0
+TREE_NOTE="the working tree was altered by cosmic-ray exec; this run's result is void"
+
+# The restore is a CRITICAL SECTION, and this is the wrapper that makes it one.
+#
+# bash delivers a deferred trap the INSTANT the foreground child returns - measured, not assumed -
+# which is one command before the classification below reads its exit code. With `on_kill` installed
+# across that window the handler ran first, re-entered here, found `SNAP` already cleared and
+# returned 0, so `TREE_CORRUPTED` was still 0 and the hook exited 0 under advisory with no TREE
+# INTEGRITY line at all: the restore's verdict was computed and thrown away, over a tree that may
+# hold an applied mutant. So for the length of the restore the handler is replaced by one that only
+# RECORDS that a signal arrived; the verdict is taken, and only then is the signal acted on. bash
+# preserves `$?` across a trap handler, so the latch cannot swallow the restore's exit code either.
+#
+# `RESTORE_DONE` is what distinguishes "the restore already ran, here is its answer" from "there was
+# nothing to restore" - the conflation that lost the verdict. `SNAP` keeps its own meaning and is
+# still cleared before the child starts, so no second signal can start a second restore.
+restore_tree() {
+  [ "$RESTORE_DONE" -eq 0 ] || return 0
+  [ -n "$SNAP" ] && [ -d "$SNAP" ] || return 0
+  RESTORE_DONE=1
+  local prior_term prior_int
+  prior_term=$(trap -p TERM); prior_int=$(trap -p INT)
+  trap 'RESTORE_SIGNALLED=1' TERM INT
+  classify_tree
+  if [ -n "$prior_term" ]; then eval "$prior_term"; else trap - TERM; fi
+  if [ -n "$prior_int" ]; then eval "$prior_int"; else trap - INT; fi
+}
+
+classify_tree() {
+  local snap="$SNAP"; SNAP=""
+  if [ ! -f "$snap/manifest.json" ]; then
+    TREE_CORRUPTED=1
+    TREE_STATE="unknown"
+    TREE_NOTE="the pre-exec snapshot carries no manifest, so what cosmic-ray exec left behind is UNKNOWN; this run's result is void"
+    { echo "mutation: TREE INTEGRITY UNKNOWN - the snapshot at $snap holds no manifest, so there is nothing to compare the tree against."
+      echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
+    } >&2
+    return 0
+  fi
+  python3 "$SD/mutation_exec_guard.py" restore --root "$CLAUDE_PROJECT_DIR" "$snap" >"$WORK/restore.txt" 2>&1
+  local rc=$?
+  # A reap that could not confirm the group stopped outranks whatever the comparison found: the
+  # restore hashed and copied while something in that group could still have been writing, so
+  # neither "intact" nor "put back" is a claim anything established. Same category, same remedy as
+  # a restore that did not complete.
+  if [ "$REAP_INCOMPLETE" -ne 0 ]; then
+    TREE_CORRUPTED=1
+    TREE_STATE="unknown"
+    TREE_NOTE="cosmic-ray workers were still alive when the tree was checked, so whether a mutant is still applied is UNKNOWN; this run's result is void"
+    { echo "mutation: TREE INTEGRITY UNKNOWN - the cosmic-ray process group had not stopped when the tree was checked, so what is on disk was never established."
+      cat "$WORK/restore.txt"
+      echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
+    } >&2
+    return 0
+  fi
+  # A CLEAN restore says on stderr what a clean result does not establish (guard_scope, CLAUDE.md
+  # §11). Held in a file and cat'd only in the failure branch, that statement reached the reader on
+  # exactly the runs it exists for - the clean ones, which are the ones that get over-read.
+  if [ "$rc" -eq 0 ]; then cat "$WORK/restore.txt" >&2; return 0; fi
+  TREE_CORRUPTED=1
+  if [ "$rc" -eq 1 ]; then
+    TREE_STATE="restored"
+    TREE_NOTE="the working tree was altered by cosmic-ray exec and restored from the pre-exec snapshot; this run's result is void"
+  elif [ "$rc" -eq 2 ]; then
+    TREE_STATE="unrestored"
+    TREE_NOTE="the working tree was altered by cosmic-ray exec and NOT every file could be put back; this run's result is void and the tree needs inspecting by hand"
+  else
+    TREE_STATE="unknown"
+    TREE_NOTE="the tree check after cosmic-ray exec did not complete (exit $rc), so whether a mutant is still applied is UNKNOWN; this run's result is void"
+  fi
+  { if [ "$rc" -eq 1 ] || [ "$rc" -eq 2 ]; then
+      echo "mutation: TREE INTEGRITY FAILED - cosmic-ray exec left the working tree different from the state it found it in."
+    else
+      echo "mutation: TREE INTEGRITY UNKNOWN - the restore did not complete (exit $rc), so what cosmic-ray exec left behind could not be established."
+    fi
+    cat "$WORK/restore.txt"
+    if [ "$rc" -eq 1 ]; then
+      echo "mutation: every in-scope file has been put back from the pre-exec snapshot. Nothing from this run is a verdict."
+    elif [ "$rc" -eq 2 ]; then
+      echo "mutation: and NOT every file could be put back. Inspect the working tree by hand before committing anything."
+    else
+      echo "mutation: no claim can be made that the tree was put back. Inspect the working tree by hand before committing anything."
+    fi
+  } >&2
+}
+# Never advisory. A mutant left in the tree is not a weak test signal, it is authored code that
+# nobody authored; the policy switch selects how much authority the SCORE has and says nothing about
+# this.
+#
+# GATE_BYPASS waives exactly ONE of the three tree states, and which one is decided by asking
+# restore_tree's TREE_STATE rather than by classifying a second time here - a second, weaker copy of
+# a rule is the drift defect. `restored` is a run whose result is void over a tree the restore put
+# back: the mutant is provably gone, so an override there waives a verdict and nothing else, through
+# the same audited path as every other blocking check. `unrestored` and `unknown` are not verdicts an
+# override can convert: one has a cosmic-ray mutant provably still applied and the other establishes
+# nothing about what exec left behind, and issue #95's whole damage model is a mutant on disk under a
+# green result. A refused override follows GATE_BYPASS_GATES' precedent exactly - the blocking exit
+# and NO log line, since a line in gate-overrides.log asserts that a gate WAS overridden. The record
+# is still written in every case: the phase record must say the gate reached no verdict.
+fail_tree() {
+  record_unavailable "$TREE_NOTE"
+  echo "mutation: a corrupted tree is never advisory - failing the hook (MUTATION_POLICY=$MUTATION_POLICY)." >&2
+  if [ -n "${GATE_BYPASS:-}" ]; then
+    if [ "$TREE_STATE" = "restored" ]; then
+      bypass_and_exit "mutation:tree-corrupted"
+    fi
+    echo "✗ NOT BYPASSED: GATE_BYPASS cannot waive a working tree that is not established clean." >&2
+    if [ "$TREE_STATE" = "unrestored" ]; then
+      echo "  A cosmic-ray mutant is provably STILL APPLIED: the restore could not put every" >&2
+      echo "  in-scope file back, so this is source nobody authored, not a weak test signal." >&2
+    else
+      echo "  Whether a cosmic-ray mutant is still applied is UNKNOWN: the tree check did not" >&2
+      echo "  complete, so nothing established what exec left behind." >&2
+    fi
+    echo "  Inspect the working tree by hand before committing anything. Nothing was logged: an" >&2
+    echo "  override records that a gate was waived, and there is no verdict here to waive." >&2
+  fi
+  cleanup; trap - EXIT
+  exit 2
+}
+
 # A hook the harness kills leaves no verdict, no report and no cause — and the run reads that absence
 # as the gate having objected. Say so instead, exactly as scripts/hook_spec_gate.sh does. This
 # matters more now that the policy defaults to `advisory`: every internal failure path already exits
@@ -110,6 +296,9 @@ announce_kill() {
   echo "mutation: HOOK KILLED by the harness (signal) — this is NOT a gate verdict. The gate did not answer." >&2
 }
 exit_killed() {
+  # The kill path is where the mutant is left behind, so the tree is asked BEFORE the policy is.
+  restore_tree
+  [ "$TREE_CORRUPTED" -eq 1 ] && fail_tree
   cleanup; trap - EXIT
   [ "$MUTATION_POLICY" = "advisory" ] && exit 0
   exit 2
@@ -139,16 +328,64 @@ signal_child_group() {
   kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null
 }
 
+# The one question the reap has to answer: can any member of the group still WRITE to the tree?
+#
+# It is asked of the GROUP, never of the leader, because this shell reaps the backgrounded leader
+# asynchronously and the workers it spawned keep running the test command afterwards - one of them
+# writing a mutant while the restore hashes and copies is the state the restore exists to rule out.
+# And it is asked of process STATE, never of the existence of a process-table entry: a ZOMBIE
+# answers `kill -0` and runs no code, so counting it reports a worker holding a tree that nothing is
+# holding. That is not a harmless conservative default - it produces the UNKNOWN state, which this
+# pipeline defines as "inspect the working tree by hand" and refuses to let GATE_BYPASS waive, over
+# a tree the restore proved intact. It is reachable: after the SIGKILL, `wait` collects the leader
+# this shell owns, and the test-command process it spawned is reparented to PID 1 - which clears in
+# milliseconds under launchd or systemd and NEVER clears in a PID namespace whose PID 1 is an
+# ordinary non-reaping process, which is what a plain `docker run` CI container is.
+#
+# `ps -eo pgid=,stat=` rather than `ps -g`: BSD's `-g` selects a process group and procps' `-g`
+# selects a session, so only the everything-plus-columns form asks the same question on macOS and
+# Linux. Exit 0 a member can still run, 1 none can, 2 nothing could be asked - and 2 is an unknowable
+# answer rather than a live worker, taken deliberately and said out loud by the caller.
+group_has_live_member() {
+  local pgid="$1" table
+  table=$(ps -eo pgid=,stat= 2>/dev/null) || return 2
+  [ -n "$table" ] || return 2
+  printf '%s\n' "$table" | awk -v g="$pgid" '$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }'
+}
+
+# Bounded poll, then SIGKILL, then a real `wait` for the job this shell started, then the same
+# bounded poll again. A group that still holds a live member after that is NOT reported as reaped:
+# REAP_INCOMPLETE says so and restore_tree turns it into the UNKNOWN tree state, because a tree
+# something may still be writing to is not one anything established as clean.
 reap_child_group() {
   local pgid="$1"
   [ -n "$pgid" ] || return 0
   local waited=0
-  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && kill -0 "$pgid" 2>/dev/null; do
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && group_has_live_member "$pgid"; do
     sleep 0.1; waited=$((waited + 1))
   done
   # Unconditional, as in proc_group.py: a group whose leader exited still has members, so "the child
   # is gone" is never evidence that the work stopped.
   kill -KILL "-$pgid" 2>/dev/null || true
+  wait "$pgid" 2>/dev/null || true
+  waited=0
+  while [ "$waited" -lt $((TERM_GRACE_S * 10)) ] && group_has_live_member "$pgid"; do
+    sleep 0.1; waited=$((waited + 1))
+  done
+  group_has_live_member "$pgid"; local live=$?
+  if [ "$live" -eq 0 ]; then
+    REAP_INCOMPLETE=1
+    echo "mutation: the cosmic-ray process group did not stop after SIGKILL - a worker may still be" >&2
+    echo "  writing to the working tree, so nothing below establishes what is on disk." >&2
+    return 1
+  fi
+  if [ "$live" -ne 1 ]; then
+    REAP_INCOMPLETE=1
+    echo "mutation: could not ask whether the cosmic-ray process group had stopped (ps returned" >&2
+    echo "  nothing usable), so whether a worker is still writing is unknowable, not answered." >&2
+    return 1
+  fi
+  return 0
 }
 
 run_child() {
@@ -159,6 +396,8 @@ run_child() {
   # Signal, SAY IT, then wait out the grace and escalate. The grace poll is up to TERM_GRACE_S of
   # `sleep`, so announcing after it puts a five-second window between the signal and the one line
   # whose absence reads as a gate objection — and a harness KILL inside that window loses it.
+  # The tree is restored AFTER the reap (inside exit_killed): a worker still alive could re-apply
+  # the next mutant over a restore that ran before it was gone.
   trap 'signal_child_group "'"$pid"'"; announce_kill; reap_child_group "'"$pid"'"; exit_killed' TERM INT
   wait "$pid"; local rc=$?
   trap on_kill TERM INT
@@ -193,12 +432,14 @@ fi
 # already broken (a collection error, say), every mutant is killed and the score is a perfect 1.0.
 # A broken suite would otherwise score better than a real one. Verified: with an import error in the
 # suite, all 7 fixture mutants reported 'killed'. No kill means anything until the baseline is green.
+BASELINE_T0=$SECONDS
 if ! run_child cosmic-ray baseline "$SCOPED"; then
   echo "mutation: baseline FAILED — the suite does not pass on unmutated code, so every mutant" >&2
   echo "would score as killed. Refusing to score (fail closed). Fix the suite first:" >&2
   tail -5 "$TMP" >&2
   stop_or_report "mutation:baseline-failed" "baseline failed, so no mutant result is meaningful"
 fi
+BASELINE_S=$((SECONDS - BASELINE_T0)); [ "$BASELINE_S" -ge 1 ] || BASELINE_S=1
 
 if ! run_child cosmic-ray init "$SCOPED" "$SESSION"; then
   echo "cosmic-ray init errored (fail closed):" >&2; tail -5 "$TMP" >&2
@@ -224,7 +465,49 @@ elif [ "$fc" -ne 0 ]; then
   echo "the working-tree scope filter errored (fail closed) - refusing to mutate unscoped:" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:filter-errored" "the working-tree scope filter errored, scope unknown"
 fi
-if ! run_child cosmic-ray exec "$SCOPED" "$SESSION"; then
+
+# Refuse to START exec when it cannot finish (issue #95). The estimate is the one available up front
+# on every run: the baseline's measured wall clock - one run of the test command - times the mutants
+# still pending after scoping, against what the budget has left once the headroom and the kill grace
+# are set aside. A lower bound, deliberately: a hung mutant runs to cosmic-ray's own timeout, which is
+# why the restore below runs on the kill path as well rather than trusting this.
+REMAINING_S=$((MUTATION_HOOK_BUDGET_S - (SECONDS - HOOK_T0) - TERM_GRACE_S - EXEC_HEADROOM_S))
+python3 "$SD/mutation_exec_guard.py" budget --session "$SESSION" --baseline-s "$BASELINE_S" --budget-s "$REMAINING_S" >>"$TMP" 2>&1
+bc=$?
+if [ "$bc" -eq 1 ]; then
+  tail -3 "$TMP" >&2
+  stop_or_report "mutation:over-budget" "exec would not finish inside the hook's budget (${BASELINE_S}s baseline, ${REMAINING_S}s left of ${MUTATION_HOOK_BUDGET_S}s) - refused to start rather than be killed with a mutant applied"
+elif [ "$bc" -ne 0 ]; then
+  echo "the exec budget could not be estimated (fail closed):" >&2; tail -5 "$TMP" >&2
+  stop_or_report "mutation:budget-errored" "the exec budget could not be estimated, so a kill mid-mutant could not be ruled out"
+fi
+
+# Snapshot every file the session can write, from the session itself. No snapshot, no exec: a run
+# that cannot be checked afterwards is a run that can leave a mutant behind unnoticed, which is the
+# defect. Foreground, like the restore: short, and a kill during it completes it first.
+#
+# SNAP is armed AFTER the command returns 0, and that ordering is the whole of it: while the snapshot
+# is being written its directory exists and holds no manifest, so a SNAP armed ahead of it points at
+# a snapshot that cannot answer anything. A kill in that window is a kill BEFORE exec - nothing was
+# altered, and the restore has nothing to say - which is what an unarmed SNAP reports.
+if ! python3 "$SD/mutation_exec_guard.py" snapshot --root "$CLAUDE_PROJECT_DIR" --session "$SESSION" "$WORK/tree" >>"$TMP" 2>&1; then
+  echo "the in-scope files could not be snapshotted before exec (fail closed) - refusing to start it:" >&2; tail -5 "$TMP" >&2
+  stop_or_report "mutation:integrity-unavailable" "the in-scope files could not be snapshotted, so exec could not be guarded - refused to start"
+fi
+SNAP="$WORK/tree"
+
+run_child cosmic-ray exec "$SCOPED" "$SESSION"
+ec=$?
+# The tree is asked FIRST, on success and failure alike, and its answer outranks both. A signal that
+# arrived while the restore held it is honoured here instead - after the verdict it would otherwise
+# have destroyed has been recorded and acted on, and never swallowed.
+restore_tree
+[ "$TREE_CORRUPTED" -eq 1 ] && fail_tree
+if [ "$RESTORE_SIGNALLED" -ne 0 ]; then
+  announce_kill
+  exit_killed
+fi
+if [ "$ec" -ne 0 ]; then
   echo "cosmic-ray exec errored (fail closed):" >&2; tail -5 "$TMP" >&2
   stop_or_report "mutation:errored" "cosmic-ray exec errored"
 fi
