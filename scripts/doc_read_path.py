@@ -147,6 +147,7 @@ READ_PATH: dict[str, dict] = {
         "readers": [
             "avenger-spec-writer @ per spec",
             "phase-handover @ per phase (next phase only)",
+            "carried_items.py @ per deferral (this phase's Done when table only)",
         ],
         "extent": "whole",
     },
@@ -157,6 +158,7 @@ READ_PATH: dict[str, dict] = {
             "spec gate @ on write (observe pass, then triage pass for context)",
             "implementer @ once, its own spec",
             "avenger-verifier @ per phase",
+            "carried_items.py @ per deferral (requirement `done_when:` tags only)",
         ],
         "extent": "whole",
         # Leaves the read path when its phase verifies: later phases read the contract card.
@@ -210,6 +212,7 @@ READ_PATH: dict[str, dict] = {
         "readers": [
             "avenger-spec-writer @ per phase, to see what it still owes an answer to",
             "phase-handover @ per phase",
+            "avenger-verifier @ per phase, for the deferrals that back a `status: deferred` finding",
         ],
         "extent": "whole",
         # How the PREVIOUS phase's carried items were answered: built, tested, or declined with a

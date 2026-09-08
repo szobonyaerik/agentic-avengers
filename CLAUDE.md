@@ -790,6 +790,58 @@ writer that accepted an effort and dropped it would look fixed, which is worse t
 the provider would drop, since a value that looks carried and is not is this same defect one runtime
 over.
 
+### 4h. Deferred findings - a phase can end its own discovery loop (issue #115)
+A finding had three dispositions - `open`, `fixed`, `acknowledged` (waived) - and none meant *"real,
+not this phase's Done when, owned by phase N"*. `faithful-rep` phase 3 ran about 48 hours because
+every amendment round found a real defect and a human had to be the terminator, judging each item
+against the phase's *Done when* by hand (`close-disclosures.md` § 8), because the *Done when* was a
+paragraph of prose in `plan.md` that no gate could read.
+
+**The *Done when* is structured beside its prose.** A `| done-when | outcome |` table under the
+phase in `plan.md` gives each condition a stable id (`DW-<n>`); the spec writer tags the requirements
+that make a condition true with `done_when: DW-<n>` on their declaration line, the same idiom as
+`binding:`. `scripts/done_when.py` decides from those two sources whether a finding against a
+requirement blocks the phase. **Nothing reads the prose.** Three shapes are UNDECIDABLE and never
+clear: no table (prose only), a declared condition no requirement carries, a tag naming no condition
+- each names its remedy, and a phase in that state simply cannot defer, which changes nothing else
+about how it closes (§3a).
+
+**The fourth disposition is `deferred`, and it is the same slot again**, not a parallel ledger:
+`scripts/carried_items.py defer` records a `deferred-finding` row on the card backed by a record in
+`carried.json`'s `deferrals` list carrying the owning phase and the finding's **measurement
+verbatim**. It refuses a finding that blocks the *Done when* (exit 1: decided, no), an owner that is
+not a later planned phase, and a record with no measurement; there is no command that edits one.
+The Verifier stamps the finding `status: deferred` with `deferred_to`, and **the stamp is not
+believed on sight**: `verdict_findings.open_findings` resolves it only for an id the ledger records,
+`carried_items.py deferred` names every stamp nothing backs and every disagreement between card,
+ledger and verdict, and `hook_verifier.sh` fails the handover on it. It reads the whole attempt
+history, because a passing verdict carries no findings and the attempt that raised one is usually
+archived - but it judges each finding by the **last** record that states anything about it,
+`verifier_attempts._check`'s own rule: a stamp on a superseded attempt whose finding was then fixed
+prescribed a remedy that no longer exists (`defer` refuses a finding carrying a *Done when*
+condition, and an archived attempt is not edited), so it wedged a phase with nothing open. `bypassed` stays false - a
+deferral is not a waiver. Between the deferring phase and the owner, each phase answers the row with
+`recarry`, and **re-carrying is unconditional**: the record copied byte-for-byte, the discharge
+recorded as `declined` with the structural reason; declining it by hand is refused. The *Done when*
+gate is **not** asked again there. It binds where its ids are the phase's own, which is the
+DEFERRING phase at `defer` time: `done_when.decide` matches the finding's requirement ids against
+the conditions THIS phase's specs tag, and a deferral carries the ids of the phase that raised it
+(`R<origin>.<k>.<m>`, §2), so from an intermediate phase the intersection is empty and BLOCKS was
+unreachable - a gate that can only answer one way reports a clean result stronger than anything it
+established (§11), and it is removed rather than left as a sentence nothing enforces. It also
+wedged an intermediate phase whose own *Done when* is prose only, which has no other route to
+answer an inherited row (§3a). A fresh `defer` still needs a decidable *Done when* and still
+refuses a finding that BLOCKS. The
+owner answers it like any row, and on the last card it must name an issue like a forward claim.
+Deferrals are counted in the phase record as a `gate_calls[]` row (`record_deferrals`, on
+`record_plugin_version`'s precedent, since firstmate's schema is closed), so a phase that defers
+everything is as visible as one that fixes everything. `amendments.py due` is untouched: an
+amendment is a change already made, a deferral a change deliberately not made.
+
+**What it must never be**: a way to weaken a check, delete a test or move a threshold. Phase 3's A3
+caught a clip containing no exercise, against the cyclic cut its *Done when* names; this gate refuses
+exactly that finding, and telling stages to care less would have shipped it.
+
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.
 

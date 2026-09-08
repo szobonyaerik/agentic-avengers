@@ -43,6 +43,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 - Amendments: none | <A-id> <R ids touched> [security]   <!-- ids from amendments.json; this is where a later phase sees the phase moved after it was first verified -->
 - Exceptions: none | <X-id> <rule> / <subject> — <one clause>   <!-- ids, rule and subject from exceptions.json (`applicability.py list <phase-dir>`); the reason prose stays there and in gate-overrides.log. Recording an exception is MANUAL, so a forgotten one is invisible until a later phase wedges on it; this line is what puts it in front of the next phase. -->
 - Carried known-open: none | <finding-id> <one line>   <!-- verification is capped at 3 attempts, so some findings are CARRIED rather than fixed. This card is the only place they stay visible; a carried finding recorded nowhere is the cap turning into silent attrition. -->
+- Deferred: none | <id> -> <owner phase>   <!-- from carried.json#deferrals: real findings that do not block this phase's Done when, owned by a later phase, measurement attached. Each also has a `deferred-finding` row below; this line is what a reader sees first. -->
 
 ## Artifacts
 <!-- Link every artifact that exists. A link is ~80 bytes; the links are what the card is FOR, and
@@ -57,9 +58,13 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
      of 8 items carried as prose across 53.6 KB, exactly one was ever picked up by a later phase -
      the id carried them, not the story. Phase 8 wrote a correct, specific prediction into prose and
      phase 9 shipped exactly that defect, because prose is owed to nobody.
-     `kind` is `open-finding` (carried at the attempt cap) or `forward-claim` (something a later
-     phase must handle). The NEXT phase must answer every row - built, tested, or declined with a
-     reason (scripts/carried_items.py) - and does not close until it has.
+     `kind` is `open-finding` (carried at the attempt cap), `forward-claim` (something a later
+     phase must handle) or `deferred-finding` (a REAL finding that does not block this phase's Done
+     when, owned by a later phase, recorded with its measurement by `scripts/carried_items.py defer`
+     - the row and the record are checked against each other). The NEXT phase must answer every
+     row - built, tested, or declined with a reason (scripts/carried_items.py) - and does not close
+     until it has; a `deferred-finding` owned by a phase further out is answered with `recarry`,
+     which copies the record unchanged and puts the row on that phase's own card.
      A row, or an explicit `none` row. SILENCE IS NOT NONE, and this section is checked.
      REPLACE OR DELETE THE PLACEHOLDER ROWS BELOW - they are not items, so a section holding only
      them says nothing, which is undecidable rather than empty: it fails this phase's close and the
@@ -78,6 +83,7 @@ readers: avenger-spec-writer @ per spec (prior cards); spec gate @ the immediate
 |----|------|----------------|------------------------|
 | OBS-<n> | open-finding | <title> | verdict.json#observations[<n>] |
 | FWD-<n> | forward-claim | <what a later phase must handle, and from which phase it bites> | this card; measured_over: <set> when the claim quantifies universally |
+| <finding-id> | deferred-finding | <title> | carried.json#deferrals (owner <n>-<slug>) |
 
 ## Next phase
 > <next-phase-slug> — needs from this phase: <the one or two things it depends on>.

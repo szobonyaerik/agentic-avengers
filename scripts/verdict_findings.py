@@ -12,22 +12,42 @@ array. A check its prescribed remedy cannot satisfy is a wedge, not a gate.
 
 So the rule moves house rather than being copied. One owner, imported by everything that asks.
 
+**A fourth disposition, `deferred`, resolves a finding only when a ledger backs it** (issue #115). A
+finding that is real, does not block this phase's *Done when* and belongs to a later phase is
+`status: deferred`, and it is resolved here only when its id is in the `deferred` set the caller
+passes - the deferrals `scripts/carried_items.py` recorded for the phase, each one gated on the
+*Done when* and carrying its measurement. A `deferred` stamp with nothing behind it is OPEN: the stamp
+is written by the Verifier, and a status that resolved a finding by being written would be the
+waiver-by-omission this predicate already refuses one line down. The default is the empty set, so a
+caller that does not know about deferrals fails closed rather than open.
+
 Stdlib only, no imports of its own - it is a predicate over data the caller already loaded.
 """
 
 from __future__ import annotations
 
+from collections.abc import Collection
 
-def open_findings(findings: list[dict]) -> list[dict]:
-    """Findings that are still unresolved: `status: open` and not waived by break-glass.
+#: The disposition a finding takes when it is real, does not block this phase's *Done when*, and a
+#: later phase owns it. `carried_items.py` records the deferral; the Verifier stamps the finding.
+DEFERRED = "deferred"
+
+
+def open_findings(findings: list[dict], deferred: Collection[str] = ()) -> list[dict]:
+    """Findings that are still unresolved: `status: open` and not waived by break-glass, plus any
+    `status: deferred` finding whose id is not in `deferred` - a deferral nothing recorded.
 
     A missing `status` reads as `open`, deliberately: a finding that never says it was fixed has not
     been, and defaulting the other way would resolve a finding by omitting a field.
     """
-    return [
-        f
-        for f in findings
-        if isinstance(f, dict)
-        and str(f.get("status") or "open").lower() == "open"
-        and not f.get("break_glass")
-    ]
+    backed = set(deferred)
+    out: list[dict] = []
+    for f in findings:
+        if not isinstance(f, dict) or f.get("break_glass"):
+            continue
+        status = str(f.get("status") or "open").lower()
+        if status == "open":
+            out.append(f)
+        elif status == DEFERRED and str(f.get("id") or "") not in backed:
+            out.append(f)
+    return out

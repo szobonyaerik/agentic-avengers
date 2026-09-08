@@ -355,3 +355,81 @@ def test_a_pre_rule_ledger_without_the_field_still_loads_and_lists(phase: Path) 
     )
     assert [a["id"] for a in pending(phase)] == ["A1"]
     assert main(["pending", str(phase)]) == 1
+# --- a deferral is not an amendment, and never silences one (issue #115) --------------------------
+
+
+def test_a_deferred_finding_owes_no_amendment(phase: Path) -> None:
+    """A deferral is a change deliberately NOT made, so nothing here is owed by it."""
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [
+                    {
+                        "id": "f1",
+                        "spec_id": "R8.1.2",
+                        "status": "deferred",
+                        "deferred_to": "12-staging",
+                    }
+                ],
+            }
+        )
+    )
+    (phase / "carried.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "discharges": [],
+                "deferrals": [
+                    {
+                        "id": "f1",
+                        "finding": "f1",
+                        "owner": "12-staging",
+                        "measurement": "x",
+                    }
+                ],
+            }
+        )
+    )
+    assert due(phase) == []
+    assert pending(phase) == []
+
+
+def test_a_deferral_never_silences_a_pending_amendment(
+    phase: Path, tmp_path: Path
+) -> None:
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [
+                    {
+                        "id": "f1",
+                        "spec_id": "R8.1.2",
+                        "status": "deferred",
+                        "deferred_to": "12-staging",
+                    }
+                ],
+            }
+        )
+    )
+    (phase / "carried.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "discharges": [],
+                "deferrals": [
+                    {
+                        "id": "f1",
+                        "finding": "f1",
+                        "owner": "12-staging",
+                        "measurement": "x",
+                    }
+                ],
+            }
+        )
+    )
+    open_amendment(phase, ["R8.1.2"], "the same requirement also changed")
+    assert [a["id"] for a in due(phase)] == ["A1"]
