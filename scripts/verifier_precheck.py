@@ -96,6 +96,7 @@ from measurement_claims import finding_problems  # noqa: E402
 from requirement_cap import declared_bindings  # noqa: E402
 import spec_done_guard  # noqa: E402 — the one place "what does this `done` certify" is decided
 import spec_gate_state  # noqa: E402 — the one place "is this spec gated" is decided
+import suite_command  # noqa: E402 — the one owner of "declared command vs. the command that ran"
 
 ACCEPTANCE_HEADING = re.compile(
     r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE
@@ -566,6 +567,18 @@ def done_when_problems(phase_dir: Path, *, plan_in_scope: bool = True) -> list[s
     return declaration + done_when.disclosure_problems(phase_dir)
 
 
+def command_problems(phase_dir: Path) -> list[str]:
+    """A pass may not rest on an improvised test run when the project declares one (issue #119).
+
+    `suite_command` owns the whole reading - what the project declares, what the transcript says
+    ran, and whether they are the same command. This is the point of DECISION: the precheck is
+    already the mechanical half of the verdict, it already opens `verdict.json`, and it already
+    runs on every commit. A project that declares no test command is untouched, which is what keeps
+    the pre-issue behaviour available to every repository that never had a declaration.
+    """
+    return suite_command.problems(phase_dir)
+
+
 def check_phase(
     phase_dir: Path, *, verdict_in_scope: bool = True, plan_in_scope: bool = True
 ) -> list[str]:
@@ -576,6 +589,12 @@ def check_phase(
     change did not write, and its findings are counted rather than held. A phase named outright (the
     handover hook) and a verdict the diff writes are held whole. `plan_in_scope` is the same
     boundary one document over, for the *Done when*'s own declaration (`done_when_problems`).
+
+    `command_problems` rides the same boundary, and that is what makes issue #119's rule bind only
+    phases this change is responsible for: a phase verified before the rule existed carries a
+    transcript nobody could have matched against a declaration, and holding it would be a wedge
+    rather than a gate (§3a). A phase still closing has the remedy - re-run the declared command
+    through the recorder - so the handover holds it whole.
 
     The mappings here and the phase's test files inside `trace_claims` are opened once each: there
     is deliberately no preliminary sweep re-reading them to discover unreadable ones — the reader
@@ -588,14 +607,22 @@ def check_phase(
     out: list[str] = []
     out.extend(done_when_problems(phase_dir, plan_in_scope=plan_in_scope))
     verdict = verdict_problems(phase_dir)
+    command = command_problems(phase_dir)
     if verdict_in_scope:
         out.extend(verdict)
+        out.extend(command)
     else:
         report_unenforced(
             "verifier_precheck",
             len(verdict),
             f"{phase_dir}/verdict.json is not written by this diff; its findings' `method` is "
             f"counted, not held",
+        )
+        report_unenforced(
+            "verifier_precheck",
+            len(command),
+            f"{phase_dir}/verdict.json is not written by this diff; whether its pass rests on the "
+            f"project's declared test command is counted, not held",
         )
     specs = sorted(phase_dir.glob("specs/*/spec.md"))
     if not specs:

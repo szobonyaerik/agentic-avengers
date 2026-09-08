@@ -55,6 +55,7 @@ CLI, for the shell emission points (all fail open, all exit 0, except `defect` �
     pipeline_metrics.py skill-required --stage <s>
     pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...
         (exits 1 when the write failed or no writer is configured, 2 when --phase-ref names no phase)
+    pipeline_metrics.py test-command <phase-dir>   (what ran, beside what the project declares)
     pipeline_metrics.py phase-open <phase-dir>
     pipeline_metrics.py phase-close <phase-dir>
     pipeline_metrics.py provenance <phase-ref>   (report: what the pipeline stamped vs. hand-entered)
@@ -1134,6 +1135,82 @@ def record_deferrals(phase_dir: str) -> bool:
         return False
 
 
+#: What the declared-vs-run comparison is stamped with. No model decides it: `suite_command` reads
+#: the project's own `.no-mistakes.yaml` and the transcript `verifier_evidence.py` wrote.
+TEST_COMMAND_STAGE = "test-command"
+TEST_COMMAND_MODEL = "none (scripts/suite_command.py)"
+
+#: A project that DECLARES no test command. Not the same as one whose run could not be read
+#: (`suite_command.UNKNOWN`), and the row says which, because the first is a settled property of
+#: the project and the second is a measurement that failed.
+TEST_COMMAND_UNDECLARED = "undeclared"
+
+#: A `.no-mistakes.yaml` that exists and could not be read for its `test:` key - unreadable bytes,
+#: or the key stated twice with different values. A THIRD state, kept apart from `undeclared` for
+#: the reason every absence here is named rather than resolved to the nearest answer: "this project
+#: has no test command" and "nobody could tell what its test command is" have different remedies.
+TEST_COMMAND_UNREADABLE = "unreadable"
+
+
+def record_test_command(phase_dir: str) -> bool:
+    """Record the command the phase's suite actually ran, beside the one the project declares (#119).
+
+    The defect this measures is a step that logged `no test command configured` and improvised an
+    invocation while the project plainly declared one; the improvised run PASSED, so nothing in the
+    record distinguished it from the declared run passing. Recording the pair is what makes a
+    mismatch visible afterwards - `verifier_precheck` is what refuses the pass at the time.
+
+    Not a new top-level field: firstmate's schema is closed and its producer contract is "add no
+    key" (pipeline-conventions §6d). This follows `record_plugin_version`, `record_helper_dispatch`
+    and `record_deferrals` - an ordinary `gate_calls` row on existing keys with the detail in
+    `note`. `id` is fixed per phase, so the handover emitting it more than once converges on one
+    row instead of appending duplicates.
+
+    The verdict is the comparison itself, and its three values are three different facts: `GO` when
+    the run is the declared command, `NO-GO` when it is a different command or could not be read at
+    all under a declaration, and `NO_VERDICT` when the project declares nothing, because there is
+    then nothing to judge and a `GO` there would read as a comparison that was made.
+    """
+    try:
+        import suite_command  # lazy: only the handover asks this
+
+        phase = resolve_phase(phase_dir)
+        if phase is None:
+            return False
+        base = suite_command.repo_root(Path(phase_dir))
+        declaration = suite_command.declared(base)
+        run = suite_command.observed(Path(phase_dir))
+        if declaration.problem is not None:
+            declared_text, verdict = TEST_COMMAND_UNREADABLE, NO_VERDICT
+        elif declaration.command is None:
+            declared_text, verdict = TEST_COMMAND_UNDECLARED, NO_VERDICT
+        else:
+            declared_text = declaration.command
+            verdict = (
+                "GO"
+                if run.argv is not None
+                and suite_command.runs_declared(run.argv, declaration.command)
+                else "NO-GO"
+            )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{TEST_COMMAND_STAGE}",
+            stage=TEST_COMMAND_STAGE,
+            spec=None,
+            attempt=1,
+            model=TEST_COMMAND_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=verdict,
+            failure_cause=None,
+            note=_clean(f"declared={declared_text} ran={run.command}"),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"test command not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 def record_phase_close(phase_dir: str) -> bool:
     """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
 
@@ -1873,6 +1950,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     deferrals.add_argument("phase_dir")
 
+    test_command = sub.add_parser(
+        "test-command",
+        help="record the suite command that ran beside the one the project declares",
+    )
+    test_command.add_argument("phase_dir")
+
     defect = sub.add_parser("defect", help="record a defect and what caught it")
     defect.add_argument(
         "--phase-ref",
@@ -1962,6 +2045,8 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_mutation_unavailable(args.phase_dir, args.reason)
     elif args.command == "deferrals":
         record_deferrals(args.phase_dir)
+    elif args.command == "test-command":
+        record_test_command(args.phase_dir)
     elif args.command == "skill-load":
         phase = _phase_of_ref(args.phase_ref) or current_phase()
         if phase:

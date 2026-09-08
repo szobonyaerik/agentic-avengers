@@ -698,6 +698,12 @@ case "$V" in
     # decided; this is the close-time convergence. A phase that defers everything is as visible in
     # the record as one that fixes everything.
     python3 "$SD/pipeline_metrics.py" deferrals "$PHASE_DIR" >/dev/null || true
+    # ...and WHICH COMMAND the suite behind this pass actually ran, beside the one the project
+    # declares (issue #119). A step that improvises an invocation while `.no-mistakes.yaml` names
+    # one leaves a record indistinguishable from the declared run passing, and which interpreter
+    # and which flags run decides the answer. `verifier_precheck` above is what REFUSES the pass;
+    # this is the measurement, on the same fail-open terms as every other emission here.
+    python3 "$SD/pipeline_metrics.py" test-command "$PHASE_DIR" >/dev/null || true
     # ...and the check that makes its absence visible. The emission above is fail-open by design, so
     # on its own a producer that stopped producing is indistinguishable from a phase that found
     # nothing — which is exactly what two measured phases looked like while their Verifiers were

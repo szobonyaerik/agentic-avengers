@@ -157,6 +157,7 @@ SUBJECT_GLOBS = ("specs/*/spec.md", "specs/*/test-mapping.md")
 READERS = [
     "verifier_evidence.py @ per phase close (hook_verifier.sh, gate_ci.sh)",
     "avenger-verifier @ per phase, writing verdict.json's execution block",
+    "suite_command.py @ per phase close - the `suite` run's ARGV only (issue #119)",
 ]
 
 

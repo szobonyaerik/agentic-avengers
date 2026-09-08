@@ -1242,6 +1242,44 @@ replace = """
 
 # --- the Verifier's bookkeeping ------------------------------------------------------------------------------------
 
+# --- the declared test command vs. the one that ran (issue #119) ----------------------------------
+
+[[guard]]
+id = "suite-command.declared-vs-run"
+implements = "scripts/suite_command.py"
+defect = "A project declared `test: \"pytest --cov\"`; the step logged `no test command configured` and paid an agent to improvise an invocation. The improvised run PASSED, so it was indistinguishable in the record from the declared run passing - and clickup-agents records three tests whose result depends on which interpreter invokes them."
+tests = ["tests/test_suite_command.py"]
+[[guard.mutation]]
+file = "scripts/suite_command.py"
+find = """
+    if not runs_declared(run.argv, declaration.command):"""
+replace = """
+    if False:"""
+
+[[guard]]
+id = "suite-command.unknown-is-not-a-guess"
+implements = "scripts/suite_command.py"
+defect = "A run whose command cannot be read has to stay `unknown`. Defaulting it to the declared command, or to an empty string that reads as a match, restores the exact silent pass the issue is about."
+tests = ["tests/test_suite_command.py"]
+[[guard.mutation]]
+file = "scripts/suite_command.py"
+find = """
+    if run.argv is None:"""
+replace = """
+    if False:"""
+
+[[guard]]
+id = "verifier-precheck.declared-test-command"
+implements = "scripts/verifier_precheck.py"
+defect = "Issue #119: the precheck is the mechanical half of the verdict and it examined everything about a phase EXCEPT which command produced the green suite the pass rests on."
+tests = ["tests/test_suite_command.py"]
+[[guard.mutation]]
+file = "scripts/verifier_precheck.py"
+find = """
+        out.extend(command)"""
+replace = """
+        pass"""
+
 [[guard]]
 id = "verifier-precheck.trace-claim"
 implements = "scripts/verifier_precheck.py"
