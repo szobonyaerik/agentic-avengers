@@ -493,15 +493,43 @@ fi
 # 2) Test suite. Exit 5 = "no tests collected" -> not a failure.
 #    Pre-commit runs the phase suites only; --full (CI) also runs the feature-level e2e tests, which
 #    are slow, need the assembled system, and have nothing useful to say about an uncommitted edit.
-if [ "$FULL" -eq 1 ]; then
-  echo "• tests: pytest -q (incl. e2e)"
-  pytest -q; pc=$?
-else
-  echo "• tests: pytest -q --ignore=tests/e2e"
-  pytest -q --ignore=tests/e2e; pc=$?
-fi
-if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
-[ "$pc" -eq 5 ] && echo "  (no tests collected — skipping)"
+#
+#    TWO THINGS THIS STEP USED TO LEAVE TO CHANCE (issue #98, folded from agents#31). It ran a bare
+#    `pytest -q` and read its exit code: an intermittent hang that exited 0 with no summary line read
+#    as a pass, and WHICH `pytest` ran was whatever PATH said - three phase-1 tests failed under a bare
+#    `python3` and passed under the venv, and nothing pinned which invocation was load-bearing. So the
+#    suite now runs THROUGH `suite_outcome.py`, the one module that decides RAN versus STOPPED (a run
+#    with no runner summary is INCOMPLETE, exit 86, never a pass), and it runs as `python3 -m pytest`
+#    under the SAME interpreter every other check in this file uses, which the step announces by
+#    path. The two are one function so a test can slice it out and drive it the way this file does.
+suite_step() {
+  local full="$1" pc interpreter
+  interpreter="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || echo 'python3 (could not be asked for its path)')"
+  if [ "$full" -eq 1 ]; then
+    echo "• tests: python3 -m pytest -q (incl. e2e), through suite_outcome.py; interpreter: $interpreter"
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q; pc=$?
+  else
+    echo "• tests: python3 -m pytest -q --ignore=tests/e2e, through suite_outcome.py; interpreter: $interpreter"
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?
+  fi
+  # Publish the outcome this step OBSERVED, on the one name a later step reads. `pc` is local, so
+  # the mutation gate below cannot see it; it used to read `$pc` directly and, once this became a
+  # function, aborted the whole script under `set -u` with `pc: unbound variable` on any repo whose
+  # cosmic-ray `module-path` actually resolves. Publishing is explicit and the read defaults, so a
+  # later refactor that stops calling this step degrades to "unknown" rather than to a dead script.
+  SUITE_PC="$pc"
+  if [ "$pc" -eq 86 ]; then
+    # Not a red suite: there is no result to read. A watchdog kill, or a run that stopped before it
+    # said how many tests it ran, and an exit code of 0 changes nothing about that.
+    echo "✗ tests: the suite did NOT COMPLETE - killed by its watchdog, or over before it stated what it ran. A suite that did not finish is not a suite that passed." >&2
+    record_fail "tests:incomplete"
+    return 0
+  fi
+  if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then record_fail "tests"; fi
+  [ "$pc" -eq 5 ] && echo "  (no tests collected — skipping)"
+  return 0
+}
+suite_step "$FULL"
 
 # 3) Mutation gate via cosmic-ray (CI / --full only). Fail closed: an errored run stops.
 #    Same contract as scripts/hook_mutation.sh: baseline first, diff-scoped, deterministic verdict
@@ -757,7 +785,7 @@ if [ "$FULL" -eq 1 ] && { [ "$MUTATION_POLICY" = "enforce" ] || [ "$MUTATION_POL
     # A repo with code but no tests yet is not a broken suite — step 2 already treated pytest's
     # exit 5 as "skip", so failing the baseline here with "suite is not green" would contradict it
     # and misdiagnose a fresh scaffold. Skip the gate instead; there is nothing to measure.
-    if [ "$pc" -eq 5 ]; then
+    if [ "${SUITE_PC:-}" = "5" ]; then
       echo "  (no tests collected — nothing for mutation to measure, skipping)"
     # Baseline first: a mutant counts as killed whenever the test command fails, so a broken suite
     # would score a perfect 1.0. No kill means anything until the unmutated suite is green.

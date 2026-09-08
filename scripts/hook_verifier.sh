@@ -258,13 +258,16 @@ fi
 # the one question an exit code cannot — did this suite RUN, or did it merely stop. The decision
 # lives there because the recorded transcript (`verifier_evidence.py`) asks it of the same suite,
 # and a rule written twice is a rule that drifts. `SUITE_BUDGET_S` is where a project puts the
-# watchdog inside this hook's own harness budget.
+# watchdog inside this hook's own harness budget. `python3 -m pytest`, never a bare `pytest`: which
+# interpreter runs the suite was load-bearing once (three tests failing under a bare `python3` and
+# passing under the venv, issue #98) and a PATH lookup pins nothing; the same `python3` that runs
+# every check in this hook runs the suite.
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
-  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
   SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
 fi
 
 # 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.

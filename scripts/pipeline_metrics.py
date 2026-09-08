@@ -122,6 +122,11 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
     "provider-payment-required": ("error", "http-402"),
     "provider-unreachable": ("error", "provider-unreachable"),
     "no-verdict": ("error", "unparseable"),
+    # `unparseable`, not `timeout`: the call RETURNED and there was nothing in it to read, which is
+    # the state that token names; recording it as a timeout would reinstate the wrong remedy (raise
+    # the budget) the cause was split off to end. Not a token of its own - firstmate owns that
+    # vocabulary (§6d). The distinction lives on the gate's `cause=` line and its verbatim output.
+    "provider-empty-response": ("error", "unparseable"),
     # Not `unparseable`: the reply parsed fine. What failed is the CLAIM that a provider
     # produced it, so it is an error whose cause is the gate not having run.
     "implausible-latency": ("error", "other"),
@@ -1239,6 +1244,19 @@ def _build_parser() -> argparse.ArgumentParser:
         boundary = sub.add_parser(name, help=f"stamp the phase {name.split('-')[1]}")
         boundary.add_argument("phase_dir")
 
+    spool = sub.add_parser(
+        "spool",
+        help="list the writes firstmate's seal turned away; --drain replays them (issue #98)",
+    )
+    spool.add_argument(
+        "--phase", default=None, help="a two-digit phase; default every phase"
+    )
+    spool.add_argument(
+        "--drain",
+        action="store_true",
+        help="replay the queued writes now; exit 1 while any is still refused",
+    )
+
     return parser
 
 
@@ -1318,7 +1336,39 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
         record_phase_close(args.phase_dir)
+    elif args.command == "spool":
+        return _spool_command(args.phase, args.drain)
     return None
+
+
+def _spool_command(phase: str | None, drain: bool) -> bool:
+    """Report the queue, and replay it when asked. Reports the OUTCOME: what landed, what did not."""
+    waiting = sink.queued(phase)
+    if not waiting:
+        print(
+            f"{sink.PREFIX} spool: nothing queued at {sink.spool_path()}",
+            file=sys.stderr,
+        )
+        return True
+    for entry in waiting:
+        print(
+            f"{sink.PREFIX} spool: phase {entry.get('phase')} refused at {entry.get('refused_at')}: "
+            f"{' '.join(str(a) for a in entry.get('argv') or [])}",
+            file=sys.stderr,
+        )
+    if not drain:
+        print(
+            f"{sink.PREFIX} spool: {len(waiting)} write(s) waiting. Reopen the phase "
+            f"(`fm-pipeline-metrics.sh set <phase> --reopen closed:=null`), then `spool --drain`.",
+            file=sys.stderr,
+        )
+        return True
+    landed, remaining = sink.drain(phase)
+    print(
+        f"{sink.PREFIX} spool: drained - {landed} landed, {remaining} still refused.",
+        file=sys.stderr,
+    )
+    return remaining == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1369,6 +1419,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(_defect_failure_message(args), file=sys.stderr)
         return 1
+    if args.command == "spool" and ok is False:
+        return 1  # an operator asked for a drain and something is still refused: say so in the exit
     return 0
 
 

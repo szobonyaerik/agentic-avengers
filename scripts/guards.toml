@@ -922,6 +922,133 @@ replace = '''
     except OSError:
         return []'''
 
+# --- the endings a SubagentStop never records (issue #98) -----------------------------------------------------------
+
+[[guard]]
+id = "implementer-lock.taskstop-releases"
+implements = "scripts/implementer_liveness.py"
+defect = "A stage killed through the TaskStop tool fires no SubagentStop, so its start stayed unmatched and a killed implementer held its lock for the whole four-hour ceiling: 1410 activity rows, 33 starts, 1334 stops, exactly one unmatched. A routine course correction cost half a working day."
+tests = ["tests/test_implementer_liveness.py", "tests/test_hook_implementer_lock.py"]
+[[guard.mutation]]
+file = "scripts/implementer_liveness.py"
+find = '''
+        if agent_id and agent_id in killed:
+            continue'''
+replace = '''
+        if False:
+            continue'''
+
+[[guard]]
+id = "implementer-lock.dead-harness-releases"
+implements = "scripts/implementer_liveness.py"
+defect = "The liveness check inferred a running implementer from hook history alone. A start row now names the harness process the agent ran inside, and a pid the kernel no longer knows is an implementer that cannot be running, whatever the log's stop rows say."
+tests = ["tests/test_implementer_liveness.py"]
+[[guard.mutation]]
+file = "scripts/implementer_liveness.py"
+find = '''
+        if not _harness_alive(entry):
+            continue'''
+replace = '''
+        if False:
+            continue'''
+
+[[guard]]
+id = "implementer-lock.refusal-names-the-scoped-bypass"
+implements = "scripts/hook_implementer_lock.sh"
+defect = "The refusal named GATE_BYPASS, which waives EVERY gate the run reaches, so an operator following the printed remedy for one dead lock waived far more than it. GATE_BYPASS_GATES=\"implementer-lock\" existed and worked; only the text was wrong."
+tests = ["tests/test_hook_implementer_lock.py"]
+[[guard.mutation]]
+file = "scripts/hook_implementer_lock.sh"
+find = '''
+  "  GATE_BYPASS_GATES=\"implementer-lock\" GATE_BYPASS=\"<reason>\" <the spawn>" \'''
+replace = '''
+  "  GATE_BYPASS=\"<reason>\" <the spawn>" \'''
+
+[[guard]]
+id = "activity.taskstop-outcome-not-attempt"
+implements = "scripts/hook_activity.sh"
+defect = "A TaskStop row releases the implementer lock, so it must record the OUTCOME the tool reported, never that the tool was called: a TaskStop naming a task the harness could not find stopped nothing, and a row for it would release a lock on an implementer still writing."
+tests = ["tests/test_hook_activity.py"]
+[[guard.mutation]]
+file = "scripts/hook_activity.sh"
+find = '''
+    if not message.lstrip().startswith("Successfully stopped"):
+        sys.exit(0)'''
+replace = '''
+    if False:
+        sys.exit(0)'''
+
+# --- an empty reply is not a timeout (issue #98) -------------------------------------------------------------------
+
+[[guard]]
+id = "gate-runner.empty-response-not-timeout"
+implements = "scripts/gate_runner.py"
+defect = "`opencode run` on an exhausted free tier exits 0 with its banner and no content while a leftover worker holds the pipe, so the gate waited out its whole budget and reported cause=timeout - whose remedy, raising the budget, cannot work. Two full budgets were spent before probing by hand told a slow model from an empty tier."
+tests = ["tests/test_gate_runner_failures.py"]
+[[guard.mutation]]
+file = "scripts/gate_runner.py"
+find = '''
+        if result.returncode == 0 and not reply:'''
+replace = '''
+        if False:'''
+
+# --- a refused metrics write is queued, not destroyed (issue #98) --------------------------------------------------
+
+[[guard]]
+id = "metrics-sink.seal-spools-not-drops"
+implements = "scripts/metrics_sink.py"
+defect = "firstmate's seal refused a write to a closed record, and this side answered with a log line and nothing else - five spec-gate rounds are permanently missing from one ledger. The refusal was right; dropping the entry was the defect."
+tests = ["tests/test_metrics_sink.py"]
+[[guard.mutation]]
+file = "scripts/metrics_sink.py"
+find = '''
+        if _sealed(phase, result):
+            _spool(phase, argv, result[2])
+            return False'''
+replace = '''
+        if False:
+            pass'''
+
+# --- a spec round is a COMPLETED gate evaluation ---------------------------------------------------
+
+[[guard]]
+id = "spec-round.no-verdict-is-not-a-round"
+implements = "scripts/pipeline_metrics.py"
+defect = "A caller wired one line earlier - before the gate answered - recorded a round for a call that reached no verdict, so a provider refusal counted the same as a block and the one growth series the pipeline compares between phases silently gained entries nothing had evaluated."
+tests = ["tests/test_spec_round_definition.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    if token not in SPEC_ROUND_VERDICTS:'''
+replace = '''
+    if False:'''
+
+# --- the CI suite step reports the outcome and pins its interpreter (issue #98, agents#31) --------------------------
+
+[[guard]]
+id = "gate-ci.suite-through-outcome-under-pinned-interpreter"
+implements = "scripts/gate_ci.sh"
+defect = "A bare `pytest -q; pc=$?` read an intermittent hang that exited 0 with no summary as a pass, and which `pytest` ran was whatever PATH said - three tests failed under a bare python3 and passed under the venv, with nothing pinning which invocation was load-bearing."
+tests = ["tests/test_gate_ci_suite_step.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''
+    python3 "$SCRIPT_DIR/suite_outcome.py" run -- python3 -m pytest -q --ignore=tests/e2e; pc=$?'''
+replace = '''
+    pytest -q --ignore=tests/e2e; pc=$?'''
+
+# --- the suite's outcome crosses the step boundary on a published name (issue #98 review round) ----
+
+[[guard]]
+id = "gate-ci.suite-outcome-published-not-borrowed"
+implements = "scripts/gate_ci.sh"
+defect = "Making the suite a function made its exit code `local`, and the mutation gate below still read that name directly. Under `set -uo pipefail` the whole script aborts with `pc: unbound variable` the moment the branch is evaluated - invisible in this repository, where cosmic-ray's `module-path` does not resolve so the branch is never taken, and fatal in every consumer whose does. A step reads what the previous step PUBLISHED, never a name it happens to share."
+tests = ["tests/test_gate_ci_suite_step.py"]
+[[guard.mutation]]
+file = "scripts/gate_ci.sh"
+find = '''    if [ "${SUITE_PC:-}" = "5" ]; then'''
+replace = '''    if [ "$pc" -eq 5 ]; then'''
+
 # --- fixture realism ---------------------------------------------------------------------------------------------------------------------------------
 
 [[guard]]
@@ -1710,10 +1837,6 @@ reason = "Extracts one markdown section by heading. Five checks read documents t
 [[exempt]]
 file = "scripts/gate_errors.py"
 reason = "The vocabulary of gate failure causes, plus the exception that carries one. It names a stop; the stops themselves are decided by `gate_runner.py` and `gate_timeouts.py`, which are declared."
-
-[[exempt]]
-file = "scripts/hook_activity.sh"
-reason = "Appends one line per subagent start/stop to .agent-activity.jsonl. A recorder, not a decider - the guard built on it is `implementer-lock.unreadable-log`, which is declared, and which is what refuses to read a missing log as all-clear."
 
 [[exempt]]
 file = "scripts/hook_auto_cleanup.sh"

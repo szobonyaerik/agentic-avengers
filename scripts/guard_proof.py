@@ -613,6 +613,20 @@ EMISSION_EXCEPTIONS = {
         "scope statement there would bury every other line the pipeline prints; it renders the "
         "statement onto the DENY reason instead, which is where somebody is being told a verdict"
     ),
+    "scripts/pipeline_metrics.py": (
+        "its clean result is a fail-open measurement write, made from hooks that discard stderr, and "
+        "one of those clean results is contractually SILENT - AVENGER_METRICS_OFF=1 records none "
+        "deliberately and silently (CLAUDE.md 6d) - so a statement on the clean branch would break a "
+        "documented contract rather than inform anyone; the one thing it REFUSES, a spec round for a "
+        "gate that reached no verdict, carries its own reason where somebody is being told a verdict"
+    ),
+    "scripts/hook_activity.sh": (
+        "its clean result is one appended row per subagent start, stop and TaskStop - over a "
+        "thousand in one feature - and by contract it prints nothing at all, because a SubagentStart "
+        "hook's output reaches the agent being spawned; the one thing it decides (a TaskStop is "
+        "recorded only on the tool's own success) is read by implementer_liveness.py, whose "
+        "statement names it"
+    ),
 }
 
 

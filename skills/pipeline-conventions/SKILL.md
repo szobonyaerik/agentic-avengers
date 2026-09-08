@@ -1162,7 +1162,8 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   - **Not covered:** a command merely *printed* for the user to run — nothing executes it. The test
     throughout is whether an agent chose the words **and** a shell will see them.
 - **Gates fail closed** — and a gate that fails **says which failure it was**. Every stop carries a
-  `cause=` from `scripts/gate_errors.py` (`timeout` · `provider-payment-required` ·
+  `cause=` from `scripts/gate_errors.py` (`timeout` · `provider-empty-response` ·
+  `provider-payment-required` ·
   `provider-unreachable` · `provider-not-found` · `provider-error` · `no-verdict` · `cross-family` ·
   `unknown-vendor` · `runner-untrusted` · `config` · `io` · `internal` — the last being the backstop
   for a failure nothing above recognised, which is a defect in the gate itself and not something for
@@ -1171,6 +1172,15 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   one indistinguishable line, and the 402 was found only by probing the provider by hand — a day
   spent reading an infrastructure failure as a model failure. The classifier is a heuristic over
   vendor error strings; `provider-error` is its honest answer, and the verbatim text is the appeal.
+  **`provider-empty-response` is split off `timeout` on purpose** (issue #98): `opencode run` on an
+  exhausted free tier exits 0, prints its banner and returns no content, and a leftover worker holds
+  the stdout pipe, so the gate waited out its whole budget and reported `cause=timeout` - whose
+  remedy, raising `GATE_CALL_TIMEOUT`, cannot work. The runner decides it from two observed facts:
+  the direct child's own exit (a process still running when the group is killed reports the kill
+  signal, never 0) and the stream carrying no text event (under `--format json` a reply IS a text
+  event; banner and progress lines are not). A call still running at the budget stays `timeout`.
+  firstmate's `failure_cause` vocabulary is closed, so the record carries it as `unparseable` with
+  the cause on the `note`; the distinction the operator acts on is the gate's own `cause=` line.
 - **Four properties keep a stop honest, and each one failed toward "looks fine" before it existed.**
   - **The hook must outlive the call it wraps.** `hooks.json` gave the gate hooks 120s while the
     provider call inside them got 300s, so the harness killed the hook 180s before the gate could
@@ -1231,6 +1241,15 @@ in any mode and which nothing branches on. `PONYTAIL_OFF=1` produces no note at 
   returned the raw model id for the rest, so `glm-5.1` and `glm-5.2` — one vendor — read as two
   different families. False independence is indistinguishable from real independence. Declare an
   unlisted vendor with `GATE_MODEL_FAMILY`, or add it to the table.
+- **A FREE cross-family tier exists, and it is named here so an exhausted paid router is never read
+  as "no second family reachable"** (issue #98). opencode's own router serves free models under the
+  `opencode/` prefix - `opencode/hy3-free` (tencent) and `opencode/mimo-v2.5-free` (xiaomi) carried
+  83 recorded gate calls each in one measured feature - and `scripts/model_vendors.py` strips the
+  router prefix and resolves the family behind it, so both satisfy the cross-family assertion
+  against an Anthropic author with no key and no balance. Both config templates and this skill used
+  to steer at paid routers only, so an empty OpenRouter balance nearly bought a same-family waiver
+  that was never needed. The free tier is also where `provider-empty-response` (above) is most
+  likely: an exhausted free quota answers with a banner and nothing else.
 - **Break-glass bypass** is allowed but recorded — whole-gate via `GATE_BYPASS`, per-finding via
   `verdict.json` `break_glass` + a mandatory `waiver_reason` — in `handover.md` and
   `gate-overrides.log`, and visible on the PR. The reason is author-written prose, so under `--auto`
@@ -1744,11 +1763,18 @@ still in the working copy, whatever any frontmatter says.
 the last moment the remedy exists, and refuses to spawn a second implementer into a working copy
 that already holds one. Which stages are bound is one pattern in one place (`IMPLEMENTER_AGENTS`,
 asked of the spawning stage and of every live entry by the same module): the Verifier, the Breaker
-and the bug-hunter run beside an implementer by design and are never bound. A crashed agent ages out
-after `IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock forever; everything
-that is not a verdict lets the spawn through and says so; `GATE_BYPASS` proceeds, audited, and
-`IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry it — its adapter hooks
-`tool.execute.after`, which is after the fact.
+and the bug-hunter run beside an implementer by design and are never bound. **A start with no stop
+is checked against two observed endings before the ceiling** (issue #98): the harness's own
+`PostToolUse` for the `TaskStop` tool, which `hook_activity.sh` records only when the tool's
+response says the stop succeeded - `TaskStop` fires no `SubagentStop`, and a killed implementer held
+its lock for the full four hours because of it - and the `harness_pid` every start row now carries,
+which `proc_group.process_exists` asks the kernel about; a row written before pids were recorded is
+judged by the ceiling alone. A crashed agent inside a live harness still ages out after
+`IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock forever; everything that is
+not a verdict lets the spawn through and says so; the refusal names the scoped override
+`GATE_BYPASS_GATES="implementer-lock" GATE_BYPASS="<reason>"` rather than bare `GATE_BYPASS`, which
+waives every gate the run reaches; either proceeds, audited, and `IMPLEMENTER_LOCK_OFF=1` disables
+it. opencode does not carry it — its adapter hooks `tool.execute.after`, which is after the fact.
 
 **And once the stamp stands, it NAMES THE BYTES it certified** (issue #97, folded #121). The checks
 above close the moment `done` is written; nothing closed the moment after, when the implementer kept

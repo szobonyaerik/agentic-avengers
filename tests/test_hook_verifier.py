@@ -1170,6 +1170,50 @@ def test_a_suite_that_hangs_to_its_watchdog_fails_the_hook(project: Path) -> Non
     )
 
 
+def test_the_phase_suite_runs_under_the_hooks_own_interpreter_never_a_path_pytest(
+    project: Path, tmp_path: Path
+) -> None:
+    """Issue #98 (folded from agents#31): three tests failed under a bare `python3` and passed under
+    the venv, so WHICH `pytest` ran was load-bearing and a PATH lookup pinned nothing. A decoy
+    `pytest` on PATH reports green and records that it was reached for; a genuinely red phase test
+    must still fail the hook, because the hook ran `python3 -m pytest` and never the decoy."""
+    write_spec(project)
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    (tests / "test_red.py").write_text(
+        "def test_red():\n    assert False\n", encoding="utf-8"
+    )
+    attempts(project, [(1, 0, "pass")])
+    decoy_dir = tmp_path / "decoy-bin"
+    decoy_dir.mkdir()
+    decoy = decoy_dir / "pytest"
+    decoy.write_text(
+        f"#!/bin/sh\ntouch {str(tmp_path / 'decoy-ran')!r}\necho '1 passed in 0.01s'\nexit 0\n",
+        encoding="utf-8",
+    )
+    decoy.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}'
+        % (phase_dir(project) / "handover.md"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={
+            "PATH": f"{decoy_dir}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            "SUITE_BUDGET_S": "60",
+        },
+    )
+    assert not (tmp_path / "decoy-ran").exists(), (
+        "the hook reached for the PATH `pytest`"
+    )
+    assert proc.returncode != 0, "a red phase suite passed the hook"
+    assert "test_red" in proc.stdout + proc.stderr
+
+
 def test_a_green_phase_suite_still_passes_the_same_gate(project: Path) -> None:
     """The counterweight: the check must fail a hang WITHOUT failing an ordinary green run."""
     write_spec(project)
