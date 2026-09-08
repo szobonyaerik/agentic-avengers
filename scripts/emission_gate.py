@@ -148,10 +148,16 @@ def recorded_defects_of(record: dict, found_by: str) -> set[str]:
 
 
 def described_counterexamples(phase_dir: Path) -> set[str]:
-    """Every counterexample the Breaker LANDED in this phase, from its own record.
+    """The IDENTITY of every counterexample the Breaker LANDED in this phase, from its own record.
 
     No `breaker.json`, or a `clean` verdict, describes nothing. An unparseable one is UNDECIDABLE
     for the same reason an unparseable verdict archive is: read as empty it lowers the bar.
+
+    Identity is `metrics.counterexample_identity` - the one function the EMITTER records the defect
+    under - never a second normalization here. Counted as raw strings, this floor disagreed with the
+    emitter about internal whitespace: two counterexamples that differ only there are one entry to
+    the emitter and were two here, so the gate reported a GAP its own printed remedy could never
+    clear. Asking the owner is what stops a later change to one side moving without the other.
     """
     path = Path(phase_dir) / "breaker.json"
     if not path.is_file():
@@ -164,11 +170,11 @@ def described_counterexamples(phase_dir: Path) -> set[str]:
         raise Undecidable(f"{path}: the breaker record is not a JSON object")
     if payload.get("verdict") != metrics.BREAKER_FOUND:
         return set()
-    return {
-        str(item).strip()
+    identities = {
+        metrics.counterexample_identity(item)
         for item in payload.get("counterexamples") or []
-        if str(item or "").strip()
     }
+    return {identity for identity in identities if identity is not None}
 
 
 def check_defects(phase_dir: str) -> tuple[int, list[str]]:
@@ -211,6 +217,8 @@ def check_defects(phase_dir: str) -> tuple[int, list[str]]:
             f"breaker.json and the record carries {len(landed)} defect(s) found_by={BREAKER}.",
             f"  landed:   {', '.join(sorted(counterexamples))}",
             f"  recorded: {', '.join(sorted(landed)) or '(none)'}",
+            "  (both sides are the defect id `pipeline_metrics.counterexample_identity` gives a "
+            "counterexample, so re-running the emitter below raises the count.)",
             f"  Emit them: pipeline_metrics.py breaker-findings {phase_dir} "
             f"{Path(phase_dir) / 'breaker.json'}",
         ]

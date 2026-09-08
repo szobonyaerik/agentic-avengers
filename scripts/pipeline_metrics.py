@@ -903,6 +903,15 @@ def record_phase_close(phase_dir: str) -> bool:
     heredoc has no `opened`, and its elapsed time is then genuinely unmeasured: it is left null and
     SAID, never invented from a later moment, because a stamp is worth what its trigger point is
     worth and "the first commit that touched the directory" is not dispatch.
+
+    Both of those read the record, so both ask `_readable_record` rather than `sink.show(...) or {}`.
+    `sink.show` answers None for a record that does not exist YET and for one the writer refused or
+    returned non-JSON for, and this function decides two different things on that answer. Read as
+    "empty", a transient refusal defeats the converge guard and re-stamps a sealed record, and it
+    prints the never-opened note above - a confident diagnosis prescribing a remedy for a cause that
+    does not apply, on the one field this whole issue exists to repair. So an unreadable record
+    writes NOTHING and says which of the two it was; an ABSENT one is resolved by opening it, which
+    is what `_readable_record` already does for the provenance row.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
@@ -911,7 +920,16 @@ def record_phase_close(phase_dir: str) -> bool:
     if why is not None:
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
-    record = sink.show(phase) or {}
+    record = _readable_record(phase)
+    if record is None:
+        sink.note(
+            f"phase {phase} close not recorded: the record could not be READ. A failed read is not "
+            f"an empty record - taken for one it defeats the converge guard below and re-stamps a "
+            f"SEALED record, and it makes a phase that WAS opened look like one nothing ever "
+            f"opened, which is the single state `elapsed_minutes` is left null and explained for. "
+            f"Nothing is written; the next close stamp on this phase records it."
+        )
+        return False
     if record.get("closed") is not None:
         return True
     closed = _now()
@@ -1277,6 +1295,40 @@ def record_mutation_survivors(phase_dir: str, score_path: str) -> bool:
 #: `breaker.json`'s verdict that carries defects; `clean` names what was attacked and carries none.
 BREAKER_FOUND = "found"
 
+#: The id prefix a Breaker counterexample's defect carries, and the `found_by` `emission_gate` reads
+#: it back under.
+BREAKER_DEFECT_PREFIX = "breaker-"
+
+
+def counterexample_identity(counterexample: object) -> str | None:
+    """The defect id ONE Breaker counterexample gets. Asked by the emitter AND by the floor.
+
+    Identity was defined twice, independently, in two modules that have to agree: this emitter
+    hashed the whitespace-normalized text, while `emission_gate.described_counterexamples` counted
+    the set of raw `.strip()`ed strings and `check_defects` required the recorded count to reach the
+    described one. Two counterexamples differing only in internal whitespace were then ONE entry to
+    the emitter and TWO to the floor - a handover gate reporting a GAP whose own printed remedy,
+    re-running this emitter, could by construction never raise the count. That is the same wedge a
+    truncated id already produced once, surviving one normalization further along, which is what
+    makes the split the defect rather than either normalization. So there is one owner and both
+    sides ask it: a later change to what counts as "the same counterexample" moves both or neither.
+
+    Empty (or whitespace-only) is not a counterexample and has no identity - None, never a shared
+    id every blank would converge onto.
+
+    Two properties the earlier rounds established and this keeps. **Stable** across repeated
+    emission, so the per-write hook and the close-time pass converge on one entry each. **Bounded**,
+    so an arbitrarily long counterexample cannot become the record's identity field - the digest is
+    over the WHOLE text, so the readable prefix truncates without identity truncating with it.
+    """
+    text = str(counterexample or "").strip()
+    if not text:
+        return None
+    digest = hashlib.sha1(  # noqa: S324 — identity, not security
+        " ".join(text.split()).encode("utf-8")
+    ).hexdigest()[:10]
+    return f"{BREAKER_DEFECT_PREFIX}{text[:80]}-{digest}"
+
 
 def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
     """Turn every counterexample the Breaker LANDED into a defect attributed to it.
@@ -1322,14 +1374,12 @@ def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
     written = 0
     for counterexample in payload.get("counterexamples") or []:
         text = str(counterexample or "").strip()
-        if not text:
+        identity = counterexample_identity(counterexample)
+        if identity is None:
             continue
-        digest = hashlib.sha1(  # noqa: S324 — identity, not security
-            " ".join(text.split()).encode("utf-8")
-        ).hexdigest()[:10]
         if record_defect(
             phase,
-            identifier=f"breaker-{text[:80]}-{digest}",
+            identifier=identity,
             summary=f"Breaker counterexample: {text}",
             found_by="breaker",
             real=True,

@@ -137,14 +137,28 @@ replace = '''
 [[guard]]
 id = "metrics-emission.breaker-identity-is-whole"
 implements = "scripts/pipeline_metrics.py"
-defect = "A breaker defect's id was a TRUNCATION of its counterexample while `emission_gate` counts the full strings, so two counterexamples sharing a long prefix upserted onto one entry while the floor counted two - a permanent handover GAP whose own printed remedy, re-running the emitter, could never raise the count (issue #120)."
+defect = "Counterexample identity was defined TWICE - the emitter hashed the whitespace-normalized text under a truncated readable prefix, while `emission_gate` counted the raw strings - so counterexamples the two normalizations disagree about were one entry to the emitter and two to the floor: a permanent handover GAP whose own printed remedy, re-running the emitter, could never raise the count (issue #120)."
 tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/emission_gate.py"
+find = '''
+    identities = {
+        metrics.counterexample_identity(item)
+        for item in payload.get("counterexamples") or []
+    }
+    return {identity for identity in identities if identity is not None}'''
+replace = '''
+    return {
+        str(item).strip()
+        for item in payload.get("counterexamples") or []
+        if str(item or "").strip()
+    }'''
 [[guard.mutation]]
 file = "scripts/pipeline_metrics.py"
 find = '''
-            identifier=f"breaker-{text[:80]}-{digest}",'''
+    return f"{BREAKER_DEFECT_PREFIX}{text[:80]}-{digest}"'''
 replace = '''
-            identifier=f"breaker-{text[:80]}",'''
+    return f"{BREAKER_DEFECT_PREFIX}{text[:80]}"'''
 
 [[guard]]
 id = "suite-population.roots-are-one-argument-each"
@@ -245,6 +259,24 @@ replace = '''
         return False
     _record_provenance(phase, set(fields))
     return True'''
+
+[[guard]]
+id = "metrics-emission.close-tells-unreadable-from-absent"
+implements = "scripts/pipeline_metrics.py"
+defect = "`record_phase_close` read with `sink.show(phase) or {}`, and `sink.show` answers None for an UNREADABLE record as well as an absent one. A transient refusal then defeated the converge guard and asked a SEALED record to change, and printed the never-opened note - a confident wrong diagnosis prescribing a remedy for a cause that does not apply, on `elapsed_minutes`, the field issue #120 exists to repair."
+tests = ["tests/test_phase_record_instrument.py"]
+[[guard.mutation]]
+file = "scripts/pipeline_metrics.py"
+find = '''
+    record = _readable_record(phase)
+    if record is None:
+        sink.note(
+            f"phase {phase} close not recorded: the record could not be READ.'''
+replace = '''
+    record = sink.show(phase) or {}
+    if record is None:
+        sink.note(
+            f"phase {phase} close not recorded: the record could not be READ.'''
 
 [[guard]]
 id = "metrics-emission.close-emitted-on-commit"

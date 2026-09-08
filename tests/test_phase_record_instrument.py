@@ -164,6 +164,65 @@ def test_a_never_opened_phase_still_closes_and_says_its_elapsed_time_is_unmeasur
     assert "elapsed_minutes NOT recorded" in capsys.readouterr().err
 
 
+def test_an_unreadable_record_does_not_re_stamp_a_closed_phase(
+    stub_sink, monkeypatch, capsys
+):
+    """A failed READ is not an empty record, and the close decides two things on that answer.
+
+    `sink.show` returns None for a record that does not exist yet AND for one the writer refused or
+    answered non-JSON for. Read as `{}`, a transient refusal defeats the converge guard and asks a
+    SEALED record to change - the one write firstmate's producer contract forbids.
+
+    Red when the distinction goes: the second close issues writes against a record it already
+    closed.
+    """
+    project, store, log = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    (phase_dir / metrics.CLOSING_DOCUMENT).write_text("# card\n", encoding="utf-8")
+    git_land(project, "land")
+    assert metrics.record_phase_close(str(phase_dir)) is True
+    closed = stored(store, "05")["closed"]
+    before = len(read_calls(log))
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    assert metrics.record_phase_close(str(phase_dir)) is False
+
+    monkeypatch.delenv("DOUBLE_REFUSE")
+    assert stored(store, "05")["closed"] == closed
+    assert [
+        call for call in read_calls(log)[before:] if call[:1] in (["set"], ["add"])
+    ] == [], "an unreadable record must not be written to at all"
+
+
+def test_an_unreadable_record_is_not_reported_as_a_phase_nobody_opened(
+    stub_sink, monkeypatch, capsys
+):
+    """The never-opened note names a cause and prescribes its remedy, so it must be true.
+
+    `elapsed_minutes` is left null and SAID when nothing stamped the phase open - a spec authored
+    through a heredoc. A failed read produces the same missing `opened`, and reported under that
+    note it is a confident wrong diagnosis on the one field this issue exists to repair.
+
+    Red when the distinction goes: a phase that WAS opened is told its specs bypassed the hook.
+    """
+    project, _, _ = stub_sink
+    git_init(project)
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    (phase_dir / metrics.CLOSING_DOCUMENT).write_text("# card\n", encoding="utf-8")
+    git_land(project, "land")
+    capsys.readouterr()
+
+    monkeypatch.setenv("DOUBLE_REFUSE", "show")
+    assert metrics.record_phase_close(str(phase_dir)) is False
+
+    err = capsys.readouterr().err
+    assert "elapsed_minutes NOT recorded" not in err
+    assert "could not be READ" in err
+
+
 def test_the_landing_hook_stamps_only_the_commit_that_carries_the_card(tmp_path: Path):
     """The real hook, driven by real commits: a spec commit records nothing, the card's commit
     stamps. Both commits leave the phase directory clean, which is exactly what the hook used to
@@ -352,6 +411,36 @@ def test_two_counterexamples_sharing_a_long_prefix_are_two_defects(stub_sink):
     defects = stored(store, "05")["defects"]
     assert len(defects) == 2
     assert len({d["id"] for d in defects}) == 2
+    assert emission_gate.check_defects(str(phase_dir))[0] == emission_gate.CLEAN
+
+
+def test_two_counterexamples_differing_only_in_whitespace_agree_with_the_floor(
+    stub_sink,
+):
+    """Counterexample identity has ONE owner, so the emitter and the floor cannot disagree.
+
+    The emitter hashed the whitespace-NORMALIZED text; `emission_gate` counted the raw strings. Two
+    counterexamples differing only by internal whitespace were therefore one entry to the emitter
+    and two to the floor, so `check_defects` reported a GAP and prescribed re-running the emitter -
+    which by construction could never write a second entry. A blocking handover gate with no
+    available remedy, the same wedge a truncated id produced once, one normalization further along.
+
+    Red when the definition splits again: the recorded count and the floor's count diverge and the
+    gate reports GAP on a phase that emitted everything its Breaker landed.
+    """
+    project, store, _ = stub_sink
+    phase_dir = phase(project)
+    metrics.record_phase_open(str(phase_dir))
+    shared = "tests/demo/5-config/test_breaker.py::test_replay " + "x" * 120
+    path = breaker_record(phase_dir, "found", [shared + " tail", shared + "  tail"])
+
+    metrics.record_breaker_findings(str(phase_dir), str(path))
+    recorded = stored(store, "05")["defects"]
+    landed = emission_gate.described_counterexamples(phase_dir)
+
+    assert len(recorded) == len(landed), (
+        "the entries the emitter landed and the counterexamples the floor counts are one set"
+    )
     assert emission_gate.check_defects(str(phase_dir))[0] == emission_gate.CLEAN
 
 

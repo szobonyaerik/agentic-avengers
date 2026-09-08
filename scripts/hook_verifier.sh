@@ -260,9 +260,10 @@ fi
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
 #
 # The REVERT is spec-scoped, so the evidence it acts on must be scoped to the same thing. With no
-# phase test directory resolvable the run above is the whole repository minus e2e — the permanent
-# state of any project whose tests do not live under `tests/` (what SUBPROC_CHECK_PATHS exists for)
-# — and one unrelated red test there says nothing about whether THIS spec is done, while
+# phase test directory resolvable the run above is the project's DECLARED test roots, each minus its
+# own `e2e/` - `SUBPROC_CHECK_PATHS` is what STOPS that run being repository-wide - falling back to
+# the whole tree minus `tests/e2e` only when no declared root resolves on disk. Both are wider than
+# one spec, so one unrelated red test in either says nothing about whether THIS spec is done, while
 # `agents/avenger-backend-architect.md` tells the implementer outright that pre-existing failures
 # are expected and are to be surfaced rather than fixed. So an unscoped suite is UNDECIDABLE for the
 # revert: the hook still fails closed, and the stamp is left exactly as written. Same direction as

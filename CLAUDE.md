@@ -1161,11 +1161,14 @@ routed deliberately AROUND `guard_scope.run` because it performs no scan and mus
 gate's clean-result line. A root the hook cannot resolve keeps the previous whole-tree scope and
 **says so** rather than silently switching population — counted the same way at both ends
 (`hook_spec_gate.sh` on the first spec write, and the orchestrator's `phase-close` after the phase's
-commit) · the phase's **close** and `elapsed_minutes`, stamped by the orchestrator right after that
-commit and by no hook, because **close means landed, not implemented**: `handover.md` being written
-is the Verifier's precondition, and `record_phase_close` refuses the write while anything under the
-phase directory is still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
-verdict write** and again at phase close, over the phase's **whole verdict history**;
+commit) · the phase's **close** and `elapsed_minutes`, stamped by `hook_phase_close.sh` on the commit
+that lands the phase and by the orchestrator's own `phase-close`, because **close means landed, not
+implemented**: `handover.md` being written is the Verifier's precondition, and `record_phase_close`
+refuses the write until the contract card is COMMITTED and nothing under the phase directory is
+still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
+verdict write** and again at phase close, over the phase's **whole verdict history**, and on every
+`breaker.json` write, one defect per counterexample, `found_by: breaker`; `spec_gate_triage.py` at
+its decide step, each blocker, `found_by: spec-gate`;
 `hook_mutation.sh`; and `pipeline_metrics.py defect` for stages no script sees) · which skills each
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
