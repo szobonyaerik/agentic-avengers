@@ -16,6 +16,7 @@
       {
         "hooks": [
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_activity.sh\"", "timeout": 10 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_helper_spend.sh\"", "timeout": 15 },
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_skill_audit.sh\"", "timeout": 30 }
         ]
       }
@@ -30,7 +31,8 @@
         "matcher": "Task|Agent",
         "hooks": [
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_plugin_release.sh\"", "timeout": 30 },
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_implementer_lock.sh\"", "timeout": 30 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_implementer_lock.sh\"", "timeout": 30 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook_helper_budget.sh\"", "timeout": 30 }
         ]
       }
     ],

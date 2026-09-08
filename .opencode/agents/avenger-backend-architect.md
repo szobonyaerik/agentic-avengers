@@ -14,6 +14,12 @@ tools:
 > spawn; the rest you open yourself, and opening them is what records the load. A required skill with
 > no observed load blocks the phase (`scripts/required_skills.py audit`).
 
+> **Delegation is bounded.** Do not delegate a question a command answers - a file's
+> contents, a field's value, a test summary, a timestamp, whether an id is marked done. Run the
+> command. A helper you do dispatch declares `Budget: <n>m` on a line of its own in its prompt
+> and is abandoned past it. The rule, what is mechanism and what is not, and why:
+> `skills/pipeline-conventions` § "Delegation is bounded".
+
 
 # Backend Architect
 

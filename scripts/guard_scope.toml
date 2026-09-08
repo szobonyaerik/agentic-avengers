@@ -337,9 +337,10 @@ limits = [
 ]
 
 [guard."required_skills.py"]
-proves = "that every skill a stage's own `Required skills` line names has an observed load recorded for it."
+proves = "that every skill a stage's own `Required skills` line names has an observed load recorded for it, and that every canonical agent's line names the shared-rules skill at all."
 limits = [
   "a skill an agent names only in PROSE, which is not a requirement",
+  "that the shared-rules skill's CONTENT still carries the rule a caller expects of it - the requirement is checked, never what is in the file",
   "that the stage READ what it loaded, or acted on it",
   "the ponytail ladder, which is evidenced but deliberately never required, so its absence is a NOTE and never a gap",
 ]
@@ -514,3 +515,24 @@ file = "scripts/doc_read_path.py"
 marker = "named_only_by"
 guard = "doc_read_path.py"
 what = "stage instructions permitted to name a document that left the read path"
+
+# --- a helper agent is bounded (issue #118) -------------------------------------------------------
+
+[guard."helper_budget.py"]
+proves = "that this helper dispatch declared a budget within the ceiling, and that no helper already running under a declared budget of its own has passed it."
+limits = [
+  "whether the question being delegated has a ONE-COMMAND ANSWER, which is the rule's first half and a judgement no static check makes - it is carried by skills/pipeline-conventions, which every stage is required to load",
+  "that an overrunning helper was actually ABANDONED: the harness exposes no timeout on a delegation and fires no event inside a blocked parent, so what is mechanised is that the NEXT dispatch cannot proceed over the top of it",
+  "that the declared budget is the RIGHT one - the number is the author's claim, bounded only by HELPER_BUDGET_MAX_S",
+  "any live helper at all when there is no activity log to read, which outside a pipeline run is ordinary: that half is reported as not run and never as clear",
+  "a helper with no paired dispatch row - spawned before this rule or under HELPER_BUDGET_OFF=1 - which has no declared budget and is deliberately left unjudged rather than judged against an invented one",
+  "a helper older than the liveness age ceiling (IMPLEMENTER_MAX_AGE_S, four hours), which is presumed dead so that a crashed agent cannot hold a refusal forever",
+]
+
+[guard."hook_helper_budget.sh"]
+proves = "that no helper agent was spawned without a declared budget, or on top of one already past its own."
+limits = [
+  "anything that is not a verdict - no python3, an unreadable payload or an unusable HELPER_AGENTS pattern lets the spawn through and says so",
+  "an `avenger-*` pipeline stage, which is the chain rather than an ad-hoc helper and is deliberately not bound",
+  "a dispatch waived under GATE_BYPASS_GATES=helper-budget, which is an audited override and not a check that passed",
+]

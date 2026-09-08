@@ -2337,6 +2337,148 @@ replace = """
 # fails when one names a file no enforcement surface invokes any more, so it cannot outlive its
 # reason the way a stale guard outlives its test.
 
+# --- a helper agent is bounded, and the rule reaches every stage (issue #118) ----------------------
+
+[[guard]]
+id = "helper-budget.declaration-required"
+implements = "scripts/helper_budget.py"
+defect = "Five helper agents were measured frozen for 90 minutes with identical timers while the parent read as healthy; the largest spent 1h 8m and 341.4k tokens deciding whether two amendment ids were marked done. Nothing bounded any of them, because nothing made a dispatch declare a bound."
+tests = ["tests/test_helper_budget.py", "tests/test_hook_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/helper_budget.py"
+find = '''
+    budget = declared_budget(prompt)
+    if budget is None:'''
+replace = '''
+    budget = declared_budget(prompt)
+    if False:'''
+
+[[guard]]
+id = "helper-budget.ceiling-on-the-declaration"
+implements = "scripts/helper_budget.py"
+defect = "`Budget: 10h` satisfies a presence check and bounds nothing. A declaration nothing bounds is the rule reinstated as a formality, and the measured helpers ran 27 to 68 minutes."
+tests = ["tests/test_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/helper_budget.py"
+find = '''
+    if budget > ceiling:'''
+replace = '''
+    if False:'''
+
+[[guard]]
+id = "helper-budget.overrun-refuses-the-next-dispatch"
+implements = "scripts/helper_budget.py"
+defect = "The measured state was five helpers accumulating while the earliest was already an hour past any reasonable bound. The harness fires no event inside a blocked parent, so the one moment a refusal is still possible is the NEXT dispatch."
+tests = ["tests/test_helper_budget.py", "tests/test_hook_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/helper_budget.py"
+find = '''
+    if past:
+        described = ['''
+replace = '''
+    if False:
+        described = ['''
+
+[[guard]]
+id = "helper-budget.absent-log-is-not-clear"
+implements = "scripts/helper_budget.py"
+defect = "Outside a pipeline run there is no activity log, so the live half cannot run. Passing that over in silence makes `could not look` and `all clear` arrive looking alike, which is the shape CLAUDE.md 3a refuses everywhere."
+tests = ["tests/test_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/helper_budget.py"
+find = '''
+        print(
+            f"  (helper budget: live helpers were NOT checked - {exc})",
+            file=sys.stderr,
+        )
+        past = []'''
+replace = '''
+        past = []'''
+
+[[guard]]
+id = "helper-budget.unpaired-run-is-unjudged"
+implements = "scripts/helper_budget.py"
+defect = "A helper spawned before this rule, or under HELPER_BUDGET_OFF=1, declared no budget. Judging it against an invented one would refuse a dispatch on a fact nobody stated - a rule whose remedy does not exist is a wedge, not a gate."
+tests = ["tests/test_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/helper_budget.py"
+find = '''
+        budget = budget_for(run, rows)
+        if budget is None:
+            continue'''
+replace = '''
+        budget = budget_for(run, rows)
+        if budget is None:
+            budget = 0'''
+
+[[guard]]
+id = "helper-budget.hook-refuses"
+implements = "scripts/hook_helper_budget.sh"
+defect = "Detection without a refusal is a log. The parent that lost the hour looked correct to every liveness check, so a line on stderr is exactly what nobody read; PreToolUse is the one event that can stop the spawn."
+tests = ["tests/test_hook_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/hook_helper_budget.sh"
+find = '''
+fi
+
+exit 2'''
+replace = '''
+fi
+
+exit 0'''
+
+[[guard]]
+id = "helper-budget.hook-fails-open"
+implements = "scripts/hook_helper_budget.sh"
+defect = "A traceback exits 1 exactly as a finding does. Reading one as a refusal would block every helper dispatch in the run over a crash in the checker, and `declare a budget` is the wrong remedy for that."
+tests = ["tests/test_hook_helper_budget.py"]
+[[guard.mutation]]
+file = "scripts/hook_helper_budget.sh"
+find = '''
+if [ "$RC" -ne 1 ] || ! printf '%s\n' "$REPORT" | grep -q '\[helper-budget\] REFUSE:'; then'''
+replace = '''
+if false; then'''
+
+[[guard]]
+id = "delegation-rule.stated-in-the-shared-skill"
+implements = "skills/pipeline-conventions/SKILL.md"
+defect = "The rule that a question a command answers is not delegated is a judgement no static check makes, so its only delivery is the shared skill every stage is required to load. Eleven copies of it would drift; none at all leaves the first half of issue #118 unaddressed entirely."
+tests = ["tests/test_helper_budget.py"]
+[[guard.mutation]]
+file = "skills/pipeline-conventions/SKILL.md"
+find = '''
+## Delegation is bounded - do not delegate a question a command answers (issue #118)'''
+replace = '''
+## Bounded delegation (issue #118)'''
+
+[[guard]]
+id = "delegation-rule.every-stage-points-at-it"
+implements = "agents/avenger-verifier.md"
+defect = "A rule in a skill reaches only the stages that load it, and a stage that never hears of the rule delegates exactly as before. The pointer is what makes the shared statement reachable from the stage's own definition."
+tests = ["tests/test_helper_budget.py"]
+[[guard.mutation]]
+file = "agents/avenger-verifier.md"
+find = '''
+> **Delegation is bounded.** Do not delegate a question a command answers - a file's'''
+replace = '''
+> **Delegation.** Prefer not to delegate a question a helper could answer - a file's'''
+
+[[guard]]
+id = "required-skills.shared-rules-declared"
+implements = "scripts/required_skills.py"
+defect = "The audit can only prove the load of a skill the stage's own `Required skills` line declares. An agent that drops `skills/pipeline-conventions` silently stops being bound by every shared rule while the audit reports clean."
+tests = ["tests/test_required_skills.py"]
+[[guard.mutation]]
+file = "scripts/required_skills.py"
+find = '''
+        and SHARED_RULES_SKILL not in required_for(stage, root)'''
+replace = '''
+        and False'''
+
+[[exempt]]
+file = "scripts/hook_helper_spend.sh"
+reason = "Records what a returning helper agent cost, at SubagentStop. Pure measurement: it blocks nothing, writes nothing to stdout, exits 0 on every path including a crash of its own, and CLAUDE.md 6d forbids it from ever failing a phase. What its record is read FOR is decided elsewhere; this only writes it."
+
 [[exempt]]
 file = "scripts/load_env.sh"
 reason = "Sources the project .env into the calling shell and returns. It reaches no verdict, refuses nothing and has no exit path of its own - what it loads is judged by the gate that loaded it."
