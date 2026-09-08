@@ -61,6 +61,7 @@ INNER
 
   if [ ${#TEST_ROOT_ARGS[@]} -gt 0 ]; then
     TEST_ROOT_SCOPE="declared test roots minus e2e"
+    python3 "$sd/guard_scope.py" emit test_root_args.sh >/dev/null || true
     return 0
   fi
 

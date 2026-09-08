@@ -364,6 +364,14 @@ limits = [
   "anything on an ALLOW, which is this guard's clean result and deliberately carries no statement: it is emitted per tool call and would bury every other line, so this rides the deny (a declared exception in `guard_proof.EMISSION_EXCEPTIONS`)",
 ]
 
+[guard."test_root_args.sh"]
+proves = "that the pytest arguments a gate runs were assembled from the project's own declared test roots, each minus its own `e2e/`, with every root and `--ignore=` passed as one argument, and that a run which fell back to the whole tree said which of the two causes put it there."
+limits = [
+  "that the declared roots are the RIGHT ones - it translates a declaration, it never judges one",
+  "that anything was TESTED: it builds an argument list, and what a red suite means is the caller's verdict",
+  "that a root it skipped is absent for a good reason - a root that does not exist on disk is left out so pytest is not handed a usage error, whether the project has no tests yet or the declaration is wrong",
+]
+
 [guard."bypass_log.sh"]
 proves = "that an override reached `gate-overrides.log` as one normalised, tab-separated record, or was not recorded at all."
 limits = [
