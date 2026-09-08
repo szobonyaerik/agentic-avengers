@@ -958,3 +958,94 @@ def test_all_counts_pre_rule_verdicts_rather_than_failing_a_full_audit(
     write_verdict(phase, [{"id": "abc123", "status": "fixed"}])
     assert main(["--all", "--root", str(tmp_path)]) == 0
     assert "NOT enforced" in capsys.readouterr().err
+
+
+# ── a carried spec brings its mapping with it (issue #123) ───────────────────
+
+
+def carried_into(phase: Path, *, from_phase: str = "1-core") -> Path:
+    """A spec implemented in `from_phase` and CARRIED into a second phase of the same feature.
+
+    The carry copies `spec.md` (and, in the pipeline, the tests the phase suite has to run) and
+    leaves `test-mapping.md` where the spec was implemented. Returns the phase it was carried into.
+    """
+    later = phase.parent / "2-later"
+    (later / "specs" / "1.1-a").mkdir(parents=True)
+    (later / "specs" / "1.1-a" / "spec.md").write_text(
+        (phase / "specs" / "1.1-a" / "spec.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return later
+
+
+def test_a_carried_spec_is_traced_by_the_mapping_it_left_behind(phase: Path) -> None:
+    """The false blocker issue #123 names. The spec is carried into a later phase with its tests;
+    its mapping stays in the phase that implemented it. Read from the later phase alone, EVERY
+    requirement it declares was reported as appearing in no mapping row - on work that is fine, and
+    whose only remedy was to duplicate a trace that already exists."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | tests/demo/test_a.py::test_a | integration |\n")
+
+    later = carried_into(phase)
+
+    assert not any(
+        "appear in no test-mapping.md row" in f for f in check_phase(later)
+    ), (
+        "the mapping travels with the spec; asking for a second copy prescribes duplicating a trace"
+    )
+
+
+def test_a_carried_spec_with_no_mapping_anywhere_is_still_a_finding(
+    phase: Path,
+) -> None:
+    """The refusal must not widen into never reporting a gap. A spec whose mapping does not exist in
+    ANY phase of the feature is genuinely untraced, and carrying nothing changes nothing."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "")
+
+    later = carried_into(phase)
+
+    assert any(
+        "R1.1.1" in f and "appear in no test-mapping.md row" in f
+        for f in check_phase(later)
+    )
+
+
+def test_a_mapping_beside_the_carried_spec_wins(phase: Path) -> None:
+    """Nothing here overrides a mapping the phase holds: a spec with one beside it is read from it,
+    and a gap in that mapping is still a gap."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | tests/demo/test_a.py::test_a | integration |\n")
+
+    later = carried_into(phase)
+    (later / "specs" / "1.1-a" / "test-mapping.md").write_text(
+        "| requirement | test | level |\n|---|---|---|\n", encoding="utf-8"
+    )
+
+    assert any(
+        "R1.1.1" in f and "appear in no test-mapping.md row" in f
+        for f in check_phase(later)
+    )
+
+
+def test_a_carried_mapping_is_not_read_across_features(phase: Path) -> None:
+    """Resolution is by spec directory name WITHIN one feature. A spec directory of the same name in
+    another feature is another feature's spec, and reading it would trace a requirement against a row
+    nobody wrote about it."""
+    import phase_artifacts
+
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | tests/demo/test_a.py::test_a | integration |\n")
+
+    other = phase.parents[2] / "other" / "phases" / "2-later" / "specs" / "1.1-a"
+    other.mkdir(parents=True)
+    (other / "spec.md").write_text(
+        (phase / "specs" / "1.1-a" / "spec.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    assert phase_artifacts.carried_mapping(other / "spec.md") is None

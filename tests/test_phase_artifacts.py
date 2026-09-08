@@ -532,3 +532,54 @@ def test_a_check_that_could_not_answer_lets_the_stop_through_and_names_itself(
     still_blocks = run_hook(tmp_path)
     assert still_blocks.returncode == 2, still_blocks.stderr
     assert "test-mapping.md" in still_blocks.stderr
+
+
+# --- a carried spec brings its mapping with it (issue #123) -------------------------------------
+
+
+def carry(root: Path) -> Path:
+    """The same spec, carried into a later phase of the same feature, mapping left behind.
+
+    That is what a carry is in this pipeline: `spec.md` and the tests the phase suite has to run
+    travel, and `test-mapping.md` stays in the phase that implemented it.
+    """
+    later = (
+        root
+        / "docs"
+        / "features"
+        / "demo"
+        / "phases"
+        / "2-later"
+        / "specs"
+        / "1.1-thing"
+    )
+    later.mkdir(parents=True)
+    (later / "spec.md").write_text(SPEC.format(status="done"))
+    return later.parents[1]
+
+
+def test_a_carried_spec_does_not_owe_a_second_copy_of_its_mapping(
+    tmp_path: Path,
+) -> None:
+    """The sweep looks beside the spec, so a carried spec was reported as owing a mapping - and its
+    remedy, "write the row that traces its requirements to their tests", is to duplicate a row that
+    already exists one phase back. A second copy of a trace is not extra safety (issue #123)."""
+    phase_dir = phase(tmp_path)
+    complete(phase_dir)
+    carry(tmp_path)
+
+    assert owed(tmp_path) == []
+
+
+def test_a_spec_with_no_mapping_anywhere_in_the_feature_still_owes_one(
+    tmp_path: Path,
+) -> None:
+    """The other direction: nothing is carried, so nothing changes. A `status: done` spec whose
+    mapping exists in no phase of this feature owes one exactly as it did."""
+    phase(tmp_path)
+    carry(tmp_path)
+
+    found = owed(tmp_path)
+    assert found and all(
+        "test-mapping.md" in line and "missing" in line for line in found
+    )

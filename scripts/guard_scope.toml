@@ -106,6 +106,7 @@ limits = [
   "anything about a test tree it cannot read: definition and skip detection are Python-specific, and an unreadable tree is not held at all",
   "anything about coverage or correctness, which it deliberately never judges",
   "whether a Done when condition declared `gate-verifiable` really is one - it refuses the row that declares neither, never a wrong declaration",
+  "that a CARRIED spec's mapping is the right one: a spec directory of that name under this feature is taken to be the same spec, and its rows count toward the traced set only - never toward the row-to-test check, which is held against this phase's own tests",
 ]
 
 [guard."pipeline_metrics.py"]
@@ -185,6 +186,16 @@ limits = [
 ]
 
 # --- the read path and the documents --------------------------------------------------------------
+
+[guard."phase_artifacts.py"]
+proves = "that every phase whose specs are all stamped `status: done` has a `test-mapping.md` for each spec that owes one - beside the spec, or, for a spec carried in from another phase of the same feature, in the phase that implemented it."
+limits = [
+  "anything about the CONTENT of a mapping: presence is read, never rows, and `spec_done_guard.py` holds that at the stamp",
+  "anything about a phase's handover, verdict, evidence or Breaker record - every one of those belongs to hook_verifier.sh, and a second weaker copy of a rule is the drift defect",
+  "that a carried spec's mapping is the RIGHT one: a spec directory of that name under this feature is taken to be the same spec",
+  "that a phase abandoned mid-verification is distinguishable from one still being verified",
+  "anything about a phase this change did not touch, which is counted and named through the applicability boundary",
+]
 
 [guard."doc_read_path.py"]
 proves = "that artifacts in scope declare their readers, that a contract card stays under its byte cap, and that no stage instruction re-acquired a read the table removed."

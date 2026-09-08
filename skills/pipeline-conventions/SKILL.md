@@ -934,6 +934,15 @@ python3 scripts/carried_items.py discharge <phase-dir> OBS-1 --as declined --rea
   section as the documented table, a row per item or an explicit `none` row. The parser is
   deliberately not widened to accept a second row shape: a closed set with a loud, specific refusal,
   never silent inference of a new shape.
+- **A FOURTH state, and the silent one** (issue #123): a section that holds a line the row parser
+  cannot read. Skipping such a line is right for the prose a card may carry above its table and
+  wrong for a line plainly meant to be an item - a bullet row, a table row whose id cell holds
+  prose. Skipped, it was dropped in silence, so a card carrying one readable row beside one
+  malformed row closed exactly like a card that carried only the readable one, and the parser's
+  refusal could not go red on it. `unreadable_rows` names those lines and every reader of a section
+  refuses on them, **distinguishably from the empty section beside it**: empty is still "a row or an
+  explicit `none`" and exits 1, unparseable exits 2 and prints the lines it could not read. A
+  template placeholder keeps its own message - it parses perfectly and is simply not an item.
 - The CI sweep catches that undecidable prior card **per phase**, so one card does not abort the scan
   of the rest; a corrupt `carried.json` is a different failure and still propagates as exit 2.
 - The CI sweep (`carried_items.py check`) is **diff-scoped even under `--full`**, deliberately

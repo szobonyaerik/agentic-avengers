@@ -103,6 +103,32 @@ replace = '''
         if False:'''
 
 [[guard]]
+id = "carried-items.unparseable-section-is-undecidable"
+implements = "scripts/carried_items.py"
+defect = "The row parser skips a line it cannot read, so a card carrying one readable row beside a bullet row or a row whose id cell holds prose closed exactly like a card that carried only the readable row - the carried item was dropped in silence. An unparseable section and an empty one were indistinguishable in the output and in the exit code, which is the same failure shape as a check that cannot go red (issue #123)."
+tests = ["tests/test_carried_items.py"]
+[[guard.mutation]]
+file = "scripts/carried_items.py"
+find = """
+    unparseable = unreadable(previous)
+    if unparseable:"""
+replace = """
+    unparseable = []
+    if unparseable:"""
+
+[[guard]]
+id = "phase-artifacts.carried-spec-mapping"
+implements = "scripts/phase_artifacts.py"
+defect = "A spec carried into a later phase brings its spec.md and its tests; its test-mapping.md stays in the phase that implemented it. Every reader that looked only beside the spec then produced a false blocker on shipped work - the precheck called every one of its requirement ids unmapped, and the Stop-hook sweep said the phase owed a mapping - and both remedies were to duplicate a trace that already exists under the feature (issue #123)."
+tests = ["tests/test_phase_artifacts.py", "tests/test_verifier_precheck.py"]
+[[guard.mutation]]
+file = "scripts/phase_artifacts.py"
+find = """
+    for candidate in sorted(feature_dir.glob(f"phases/*/specs/{directory.name}/test-mapping.md")):"""
+replace = """
+    for candidate in []:"""
+
+[[guard]]
 id = "verifier-precheck.finding-method"
 implements = "scripts/verifier_precheck.py"
 defect = "A verifier finding with no `method` reads 'sweep complete' whether the sweep drove the code or read it. The precheck decides the absence for zero tokens; a precheck that dropped the verdict's problems would leave the field optional in practice while the schema calls it required."
@@ -127,6 +153,18 @@ find = """
 python3 "$SD/measurement_claims.py" spec "$FILE"; drives_rc=$?"""
 replace = """
 drives_rc=0"""
+
+[[guard]]
+id = "spec-gate.scope-resolution-precedes-re-authoring-checks"
+implements = "scripts/hook_spec_gate.sh"
+defect = "Every mechanical check in this gate is answered by RE-AUTHORING the spec, and a spec approved and then carried into a later phase cannot be re-authored: its requirement ids are already pointed at by test-mapping rows, verdict findings and prior handovers. Asked before scope resolution, the requirement cap fired on such a spec on every single write, before any model ran, and prescribed a SPLIT that does not exist - a wedge rather than a gate (issue #123)."
+tests = ["tests/test_hook_spec_gate.py"]
+[[guard.mutation]]
+file = "scripts/hook_spec_gate.sh"
+find = """
+CACHED=$(python3 "$SD/spec_gate_cache.py" check "$FILE" gate); cached=$?"""
+replace = """
+CACHED=""; cached=0"""
 
 [[guard]]
 id = "spec-gate.closed-set-is-rendered"

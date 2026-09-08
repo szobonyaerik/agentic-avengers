@@ -430,7 +430,12 @@ def test_check_reports_the_unparseable_prior_card_and_keeps_scanning_other_phase
 ) -> None:
     """`check` sweeps every phase in one pass; one phase's undecidable prior card must not abort the
     scan of the rest. It is reported as a problem for the phase that owes it, alongside phase 9's own
-    (separate) `declared` obligation failing on its own unparseable section."""
+    (separate) `declared` obligation failing on its own unparseable section.
+
+    Phase 9's own line names the lines that could not be parsed, and NOT "silence is not none"
+    (issue #123): the card is not silent, its rows are unreadable, and the two states have different
+    remedies. Reporting the bullet card as silent told its author to write a section they had
+    already written."""
     root = feature(tmp_path)
     nine = root / "9-b"
     nine.mkdir()
@@ -441,7 +446,8 @@ def test_check_reports_the_unparseable_prior_card_and_keeps_scanning_other_phase
 
     problems = carried_items.check(tmp_path, enforce_all=True)
     assert any("CANNOT BE DETERMINED" in p and "9-b" in p for p in problems)
-    assert any("9-b" in p and "Silence is not none" in p for p in problems)
+    assert any("9-b" in p and "COULD NOT BE PARSED" in p for p in problems)
+    assert not any("Silence is not none" in p for p in problems)
 
 
 def test_check_reports_an_unreadable_verdict_and_keeps_scanning_other_phases(
@@ -943,6 +949,8 @@ def test_the_prior_cards_universal_claims_are_owed_not_refused(tmp_path: Path) -
     phase(root, "3-real-frames", UNIVERSAL_ROW.format(where="this card"))
     four = phase(root, "4-support", "| none |")
     assert [item.id for item in carried_items.owed(four)] == ["FWD-1"]
+
+
 # --- deferred findings: the fourth disposition, in the same slot (issue #115) ---------------------
 
 PLAN = """---
@@ -1585,3 +1593,121 @@ def test_the_cli_prints_the_row_to_paste(tmp_path: Path, capsys) -> None:
     assert rc == 0
     assert "FWD-1 deferred to 12-staging" in captured.out
     assert "| FWD-1 | deferred-finding |" in captured.err
+
+
+# --- unparseable is UNDECIDABLE, never nothing-carried (issue #123) --------------------------------
+#
+# `parse_items` skips a line it cannot read. For prose that is right - a card may carry a sentence
+# above its table. For a line plainly MEANT to be an item it drops the item in SILENCE, so a card
+# carrying one readable row beside one malformed row closed exactly like a card that carried only
+# the readable one. That is the same failure shape as a check that cannot go red: an unparseable
+# section and an empty one were indistinguishable in the output and in the exit code.
+
+MIXED_TABLE = """| id | kind | one-line title | where the detail lives |
+|----|------|----------------|------------------------|
+| OBS-1 | open-finding | rate limiter has no negative case | verdict.json#observations[1] |
+| a forward claim about phase 10 | forward-claim | ids reach the path unencoded | this card |"""
+
+
+def test_one_unparseable_row_beside_a_readable_one_is_refused_not_dropped(
+    tmp_path: Path, capsys
+) -> None:
+    """The silent half of issue #123. The card carries two rows; the second one's id cell holds
+    prose, so the row parser skips it and the phase closes having declared only the first. Nothing
+    said a row went missing - which is exactly how a phase drops what it owed while looking clean."""
+    root = feature(tmp_path)
+    eight = phase(root, "8-a", MIXED_TABLE)
+
+    items, says_none, present = carried_items.declared(eight)
+    assert present and says_none is False
+    assert [item.id for item in items] == ["OBS-1"], (
+        "the readable row still parses - the malformed one is the finding, not this"
+    )
+
+    rows = carried_items.unreadable(eight)
+    assert len(rows) == 1 and "a forward claim about phase 10" in rows[0]
+
+    assert run("declared", str(eight)) == 2, (
+        "undecidable, never owed: exit 1 says 'write the section', and the section is written"
+    )
+    err = capsys.readouterr().err
+    assert "COULD NOT BE PARSED" in err
+    assert "a forward claim about phase 10" in err
+    assert "Silence is not none" not in err, (
+        "an unparseable section is not a silent one, and the two remedies differ"
+    )
+
+
+def test_the_phase_close_refuses_an_unparseable_card_it_inherits(
+    tmp_path: Path, capsys
+) -> None:
+    """The next phase's close reads the prior card. An unparseable section there is undecidable -
+    exit 2, the code this script reserves for a card it cannot read - never exit 0."""
+    root = feature(tmp_path)
+    phase(root, "8-a", MIXED_TABLE)
+    nxt = phase(root, "9-b", "none")
+
+    with pytest.raises(carried_items.CarriedError, match="COULD NOT BE PARSED"):
+        carried_items.owed(nxt)
+    assert run("due", str(nxt)) == 2
+    assert "8-a" in capsys.readouterr().err
+
+
+def test_an_empty_section_and_an_unparseable_one_are_distinguishable(
+    tmp_path: Path, capsys
+) -> None:
+    """Both refuse, and they must not refuse identically: the empty section is answered by writing a
+    row or an explicit `none` (exit 1), and the unparseable one by rewriting the lines it names
+    (exit 2). Collapsed, the whole distinction this closes is unobservable from the output."""
+    root = feature(tmp_path)
+    empty = phase(root, "8-a", "")
+    assert run("declared", str(empty)) == 1
+    empty_err = capsys.readouterr().err
+    assert "neither an item nor an explicit `none`" in empty_err
+
+    broken = phase(root, "9-b", MIXED_TABLE)
+    assert run("declared", str(broken)) == 2
+    broken_err = capsys.readouterr().err
+    assert "COULD NOT BE PARSED" in broken_err
+    assert broken_err != empty_err
+
+
+def test_prose_above_the_table_is_still_not_an_item(tmp_path: Path) -> None:
+    """The refusal must not widen into failing every card that explains itself. A sentence with no
+    list marker and no pipes is not item-shaped, and a parser that failed on one would make the
+    section harder to write than the prose it replaces."""
+    root = feature(tmp_path)
+    eight = phase(
+        root,
+        "8-a",
+        "These are the items phase 9 owes an answer to.\n\n" + TABLE,
+    )
+    assert carried_items.unreadable(eight) == []
+    assert run("declared", str(eight)) == 0
+
+
+def test_a_card_left_on_the_template_placeholders_keeps_its_own_message(
+    tmp_path: Path,
+) -> None:
+    """A placeholder row parses perfectly and is simply not an item - a different state with a
+    different remedy, so it must not be reported as a row that could not be parsed."""
+    root = feature(tmp_path)
+    nine = phase(
+        root,
+        "9-b",
+        "| id | kind | one-line title | where the detail lives |\n"
+        "|----|------|----------------|------------------------|\n"
+        "| OBS-<n> | open-finding | <title> | verdict.json#observations[n] |",
+    )
+    assert carried_items.unreadable(nine) == []
+    assert run("declared", str(nine)) == 1
+
+
+def test_an_explicit_none_row_is_not_an_unreadable_row(tmp_path: Path) -> None:
+    """The phase with genuinely nothing to carry still closes on `none`, in either shape the cards
+    on disk use - a bare line or a single-cell table row."""
+    root = feature(tmp_path)
+    for slug, items in (("8-a", "none"), ("9-b", "| none |")):
+        directory = phase(root, slug, items)
+        assert carried_items.unreadable(directory) == []
+        assert run("declared", str(directory)) == 0

@@ -273,6 +273,18 @@ are already pointed at by test-mapping rows and verdict findings, and the remedy
 shipped specs declaring 30 and 29 requirements made every verdict unreachable, forever. There it is
 counted and named. Growth happens while a spec is being written, which is exactly where it still binds.
 
+**And the cap is asked AFTER scope resolution, never before it** (issue #123). `status: done` is one
+evidence that a split is unavailable; it is not the only state in which it is. A spec approved under
+the cap in force when it was written, then carried into a later phase, is over a lower cap on every
+single write of that file - before any model runs, with the same ids already pointed at by mapping
+rows and prior handovers, so the SPLIT it prescribes cannot be taken. `hook_spec_gate.sh` therefore
+asks `spec_gate_cache.py check` FIRST: a body this gate has already judged replays that verdict and
+the gate ends, exactly as it did for the frontmatter-only edit that step was written for. **Nothing
+is enforced less** - the cap and the criterion check both ran over those exact bytes when they were
+approved, and a body that moved on at all falls through to every check below, whole. The ordering
+generalises past the cap: every mechanical check below that line is answered by RE-AUTHORING the
+spec, and a wedge is what a re-authoring remedy becomes on text nobody may change.
+
 **The writer is primed from that same rubric before it writes, from ONE source.** Phase 9 ran
 **fourteen** gate rounds on its first spec and one, three and one on the next three, while total spec
 writes barely moved against phase 8 (16 -> 19): collapsing the gates relocated the work rather than
@@ -478,7 +490,17 @@ gate stamp is fresh for every spec, and every spec still has its `## Acceptance 
 That defect recurred **twice, six attempts apart, in one phase**, because nothing checked it
 continuously — so it runs on **every commit**, and, like every other check here, **diff-scoped**: the
 phases that commit touches from `gate_ci.sh`, the whole phase at handover from `hook_verifier.sh`,
-and everything under `gate_ci.sh --full`. **It also holds the ROW, not only the id** (issue #52): the precheck used to confirm a
+and everything under `gate_ci.sh --full`. **A CARRIED spec is traced by the mapping it left behind** (issue #123): a spec carried into a later
+phase brings its `spec.md` and the tests the phase suite has to run, and its `test-mapping.md` stays
+in the phase that implemented it - so the phase's traced set held none of its ids and every
+requirement it declares was reported as appearing in no mapping row, a false blocker on shipped work
+whose only remedy was to duplicate a trace. `phase_artifacts.carried_mapping` resolves it by the
+spec's own DIRECTORY NAME within the same feature (a carried spec keeps its original ids, which is
+why renumbering it is unavailable), and both readers ask it: the precheck folds those rows into the
+TRACED ID SET only, and the Stop-hook artifact sweep stops asking for a second copy beside the
+carried spec. Deliberately not into `trace_claims`, which holds a row against **this** phase's test
+tree: widening the trace set can only remove findings, and widening the row check would add one for
+every carried spec whose tests stayed behind. **It also holds the ROW, not only the id** (issue #52): the precheck used to confirm a
 requirement id appeared in SOME row and never that the row's claim matched the test it names, so a
 row was free to assert anything and one measured row asserted the exact opposite of its own test
 with every check green. `trace_claims` now holds the minimum - the named test **exists** in the
@@ -696,7 +718,16 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
 `hook_verifier.sh` and from `gate_ci.sh` - both paths, for the same reason as the attempt cap.
 
 - **A phase states what it carries**: a row per item, or an explicit `none` row. **Silence is not
-  `none`** - silence is the state phase 8's prediction was written in.
+  `none`** - silence is the state phase 8's prediction was written in. **Nor is an UNPARSEABLE
+  section** (issue #123): the row parser skips what it cannot read, which is right for the prose a
+  card may carry above its table and wrong for a line plainly meant to be an item - a bullet row, a
+  table row whose id cell holds prose. Skipped, that line is dropped in SILENCE, so a card carrying
+  one readable row beside one malformed row closed exactly like a card that carried only the
+  readable one: an unparseable section and an empty one were indistinguishable, which is a check
+  that cannot go red. `unreadable_rows` names those lines and every reader refuses on them, exit 2,
+  **distinguishably** from the empty section beside it, which is still exit 1 and "state a row or an
+  explicit `none`". A template placeholder is neither - it parses perfectly and is simply not an
+  item - and keeps its own message and its own remedy.
 - **The next phase answers every row and does not close until it has**: `built` into a spec
   requirement, `tested`, or `declined` with a stated reason. **The name a `built`/`tested` discharge
   gives is RESOLVED**, not merely recorded - a requirement id no spec or test-mapping row under the

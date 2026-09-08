@@ -47,7 +47,9 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    worse than an honestly absent one. Elsewhere it says on stderr that neither direction ran and
    where the remedy lives, and `gate_ci.sh` announces the step as NOT CHECKED rather than passed. The Stop-hook artifact sweep
    (`scripts/phase_artifacts.py`) asks for **one** artifact, `test-mapping.md` beside each spec at
-   that spec's own `status: done` stamp; it never asks for `handover.md`, because `hook_verifier.sh`
+   that spec's own `status: done` stamp - or, for a spec CARRIED in from another phase of the same
+   feature, in the phase that implemented it (`carried_mapping`, #123; `verifier_precheck` folds
+   those rows into the traced id set only, never into the row-to-test check); it never asks for `handover.md`, because `hook_verifier.sh`
    gates that write on a passing verdict plus six further checks and a weaker second copy of a rule
    only produces phases told to create a document nothing will let them write.
 2. **Multi-spec phases + IDs.** A phase is a verifiable slice holding one or more numbered specs
@@ -95,7 +97,11 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    **It binds a spec that can still be split** (3e): a spec stamped `status: done` has shipped and the
    split would renumber ids that test-mapping rows and verdict findings already point at, so it is
    counted and named instead. Two shipped specs declaring 30 and 29 requirements made every verdict
-   unreachable for them, forever.
+   unreachable for them, forever. **It is asked after scope resolution, never before it** (#123):
+   `hook_spec_gate.sh` runs `spec_gate_cache.py check` first, so a body this gate already judged -
+   an approved spec carried into a later phase - replays its verdict instead of being told on every
+   write to SPLIT ids that mapping rows already point at. A body that moved on at all falls through
+   to every mechanical check below, whole.
 3g. **The writer is primed from that same rubric, from ONE source.** Phase 9 ran **fourteen** gate
    rounds on its first spec and one, three and one on the next three, while total spec writes barely
    moved against phase 8 (16 -> 19) - the writer learned what the gate blocks by being rejected
@@ -207,7 +213,12 @@ Run `pytest tests/<feature>/<n>-<slug>/` yourself as often as you like; it costs
    `spec_gate_context.prior_phase`'s decision, imported rather than re-derived. A pre-rule card with
    no section owes nothing, so a repository upgrades instead of being held hostage - but a section
    that is present and declares neither an item nor an explicit `none` is undecidable, not empty, and
-   fails closed (exit 2) until the prior card is rewritten as the documented table.
+   fails closed (exit 2) until the prior card is rewritten as the documented table. **So is a section
+   holding a line the row parser cannot read** (#123) - a bullet row, a table row whose id cell holds
+   prose. Skipping it dropped the item in silence, so a card with one readable row beside one
+   malformed row closed exactly like a card that carried only the readable one; `unreadable_rows`
+   names those lines and refuses, exit 2, distinguishably from the empty section beside it, which
+   stays exit 1. A template placeholder is neither, and keeps its own message.
 3d. **Skills are delivered, not requested — pointer plus evidenced load.**
    What a stage requires is **derived from its own `agents/<stage>.md`** (`skill_contract.py`), not
    restated in a table — a second statement of a fact is what every promise-versus-enforcement gap

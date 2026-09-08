@@ -5,17 +5,25 @@
 # over the same document at the same moment and asked overlapping questions of it. In one measured
 # phase a spec passed one and failed the other on BYTE-IDENTICAL TEXT.
 #
-# Four stages, in this order, and the order is the design:
+# Five stages, in this order, and the order is the design:
 #
 #   1. MECHANICAL, no model — undeclared subprocess spawners in tests/ (scripts/subprocess_check.py).
 #      The pipeline's only cost gate: every reading stage judges correctness, and an expensive test
 #      is not incorrect. DIFF-SCOPED (scripts/applicability.py): repository-wide it refused every
 #      spec write of one measured phase over 17 spawners in locked phases nobody had opened.
-#   2. MECHANICAL, no model — the requirement cap (scripts/requirement_cap.py). Over the cap the
+#   2. SCOPE RESOLUTION, no model — has this gate already judged these exact bytes
+#      (scripts/spec_gate_cache.py)? An unchanged body replays the verdict it earned and the gate
+#      ends here. It sits AHEAD of the two checks below because both are answered by re-authoring
+#      the spec, and a spec approved and then carried into a later phase cannot be re-authored
+#      (issue #123): asked after them, an over-cap carried spec was told to SPLIT on every write,
+#      forever, before any model ran.
+#   2a. MECHANICAL, no model — the requirement cap (scripts/requirement_cap.py). Over the cap the
 #      spec SPLITS. This runs BEFORE any model sees the document, because a rejection for size is
 #      one more thing for a spec to grow around: the two gates it replaced had no size ceiling, no
 #      requirement cap and no cost dimension anywhere, so the only answer a rejected spec had was
 #      more text — 25k -> 51k characters across four rejected rounds, measured.
+#   2b. MECHANICAL, no model — every acceptance criterion names what it DRIVES
+#      (scripts/measurement_claims.py).
 #   3. OBSERVE (model) — prompts/spec-gate-observe.md reports everything it notices, with NO verdict
 #      to give. It literally cannot block: it answers with `observations`, not `verdict`. It is given
 #      a `## CONTEXT (reference only)` block (scripts/spec_gate_context.py) carrying the binding
@@ -91,7 +99,43 @@ if [ "$subproc_rc" -ne 0 ]; then
   fi
 fi
 
-# --- 2. Mechanical: the requirement cap, a SPLIT trigger (no model, always) ----------------------
+# --- 2. Scope resolution: has this gate already judged this body? -------------------------------
+# BEFORE the mechanical checks below, and that ordering is the fix for issue #123. Every check from
+# here down is answered by RE-AUTHORING the spec - split it, add a `drives:` field - and a spec that
+# was approved and then carried into a later phase cannot be re-authored: its requirement ids are
+# already pointed at by test-mapping rows, verdict findings and prior handovers, which is the same
+# applicability boundary (CLAUDE.md 3a) `requirement_cap.unenforceable` and `measurement_claims`
+# already apply per spec. Asked after those checks, an over-cap carried spec was told to SPLIT on
+# every single write, forever, before any model ran - a wedge rather than a gate, and the remedy it
+# named did not exist. Asked here, a body this gate has already judged replays that judgement and
+# the gate ends, exactly as it did for the frontmatter-only edit this step was written for.
+#
+# Nothing is enforced less. The cap and the criterion check both already ran over these exact bytes
+# when the gate approved them; what they no longer do is re-run on text nobody may change. A body
+# that moved on at all fails `check` and falls through to every check below, whole.
+#
+# Skip when the spec's BODY is unchanged since this gate judged it. A frontmatter-only edit (the
+# implementer stamping `status: done`, a stamp being written) must not re-run a paid gate — and must
+# not re-roll a fresh nondeterministic verdict over an already-approved spec. Exit 1 = unchanged,
+# with the stored verdict on stdout: an unchanged body that was BLOCKED replays its block rather
+# than sliding through.
+CACHED=$(python3 "$SD/spec_gate_cache.py" check "$FILE" gate); cached=$?
+if [ "$cached" -eq 1 ]; then
+  case "$CACHED" in
+    GO|REVIEW|APPROVED) exit 0 ;;
+    *)
+      # A replayed block stops the turn exactly like a fresh one, so it honours break-glass exactly
+      # like a fresh one. Without this an override was a ONE-SHOT. `exec` is safe here: no tempfile
+      # exists yet, and below this point the EXIT trap owns them.
+      [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-gate"
+      echo "spec-gate: $CACHED (unchanged since it was judged) — route back to avenger-spec-writer" >&2
+      python3 "$SD/spec_gate_cache.py" report "$FILE" gate >&2 ||
+        echo "  (the report for that verdict is no longer in the gate cache — edit the spec to re-gate)" >&2
+      exit 2 ;;
+  esac
+fi
+
+# --- 2a. Mechanical: the requirement cap, a SPLIT trigger (no model, always) ----------------------
 # Deliberately before the model call, and deliberately not a gate verdict. The gate rubrics are told
 # never to reject a spec for being large; size is decided here, and the remedy is a split.
 python3 "$SD/requirement_cap.py" "$FILE"; cap_rc=$?
@@ -148,27 +192,6 @@ if [ -f "$SD/../hooks/hooks.json" ]; then
   python3 "$SD/gate_timeouts.py" verify "$SD/../hooks/hooks.json" || exit 2
 fi
 require_gate_runner "$SD/gate_runner.py" || exit 2
-
-# Skip when the spec's BODY is unchanged since this gate judged it. A frontmatter-only edit (the
-# implementer stamping `status: done`, a stamp being written) must not re-run a paid gate — and must
-# not re-roll a fresh nondeterministic verdict over an already-approved spec. Exit 1 = unchanged,
-# with the stored verdict on stdout: an unchanged body that was BLOCKED replays its block rather
-# than sliding through.
-CACHED=$(python3 "$SD/spec_gate_cache.py" check "$FILE" gate); cached=$?
-if [ "$cached" -eq 1 ]; then
-  case "$CACHED" in
-    GO|REVIEW|APPROVED) exit 0 ;;
-    *)
-      # A replayed block stops the turn exactly like a fresh one, so it honours break-glass exactly
-      # like a fresh one. Without this an override was a ONE-SHOT. `exec` is safe here: no tempfile
-      # exists yet, and below this point the EXIT trap owns them.
-      [ -n "${GATE_BYPASS:-}" ] && exec "$SD/bypass_log.sh" "spec-gate"
-      echo "spec-gate: $CACHED (unchanged since it was judged) — route back to avenger-spec-writer" >&2
-      python3 "$SD/spec_gate_cache.py" report "$FILE" gate >&2 ||
-        echo "  (the report for that verdict is no longer in the gate cache — edit the spec to re-gate)" >&2
-      exit 2 ;;
-  esac
-fi
 
 # The round is NOT measured here. It used to be — the body reached this line, so it was counted
 # before either paid call — and that made a gate that never answered indistinguishable from one that
