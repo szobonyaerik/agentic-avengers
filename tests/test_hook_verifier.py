@@ -1251,6 +1251,9 @@ def deferred_pass(project: Path, spec_id: str = "R1.1.2") -> None:
                         "spec_id": spec_id,
                         "status": "deferred",
                         "deferred_to": "2-later",
+                        # A deferral is a change deliberately not made, so the
+                        # finding still owes how it was established (issue #96).
+                        "method": "drove the renderer over the 10 catalogue bars",
                     }
                 ],
                 "execution": {
