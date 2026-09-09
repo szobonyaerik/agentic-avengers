@@ -54,7 +54,9 @@ def phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     tests = project / "tests" / "demo" / "1-alpha"
     tests.mkdir(parents=True)
-    (tests / "test_x.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    (tests / "test_x.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
     monkeypatch.chdir(project)
     return phase_dir
 
@@ -69,11 +71,16 @@ def verdict_for(phase_dir: Path, chain: str | None = None) -> Path:
     if chain is None:
         chain = ve.chain_head(ve.load(phase_dir)["runs"])
     path = phase_dir / "verdict.json"
-    path.write_text(json.dumps({
-        "verdict": "pass",
-        "findings": [],
-        "execution": {"evidence": ve.FILENAME, "chain": chain},
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "findings": [],
+                "execution": {"evidence": ve.FILENAME, "chain": chain},
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -84,7 +91,9 @@ def run_cli(*args: str) -> subprocess.CompletedProcess:
 # ── outcome 1: a verdict is backed by evidence it executed ───────────────────
 
 
-def test_a_verdict_with_no_transcript_is_refused_and_recording_one_clears_it(phase: Path) -> None:
+def test_a_verdict_with_no_transcript_is_refused_and_recording_one_clears_it(
+    phase: Path,
+) -> None:
     """RED: this is the exact state every pre-existing pass was in - a verdict, and nothing else."""
     verdict_for(phase, chain="")
     found = ve.problems(phase, verdict_path=phase / "verdict.json")
@@ -134,9 +143,16 @@ def test_the_verdict_must_name_the_transcript_it_stands_on(phase: Path) -> None:
     found = ve.problems(phase, verdict_path=path)
     assert found and "no `execution` block" in found[0]
 
-    path.write_text(json.dumps({
-        "verdict": "pass", "findings": [], "execution": {"evidence": ve.FILENAME, "chain": ""},
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "findings": [],
+                "execution": {"evidence": ve.FILENAME, "chain": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
     found = ve.problems(phase, verdict_path=path)
     assert found and "names no `chain`" in found[0]
 
@@ -144,11 +160,13 @@ def test_the_verdict_must_name_the_transcript_it_stands_on(phase: Path) -> None:
     assert ve.problems(phase, verdict_path=path) == []
 
 
-def test_a_verdict_written_against_a_different_set_of_runs_is_refused(phase: Path) -> None:
+def test_a_verdict_written_against_a_different_set_of_runs_is_refused(
+    phase: Path,
+) -> None:
     """The chain is what stops an earlier attempt's verdict being paired with a later transcript."""
     record(phase)
     path = verdict_for(phase)
-    record(phase, kind="adversarial")          # the transcript moves on; the verdict does not
+    record(phase, kind="adversarial")  # the transcript moves on; the verdict does not
     found = ve.problems(phase, verdict_path=path)
     assert found and "a different set of runs" in found[0]
 
@@ -190,9 +208,11 @@ def test_a_run_recording_no_elapsed_time_did_not_start_a_process(phase: Path) ->
     record(phase)
     data = json.loads((phase / ve.FILENAME).read_text(encoding="utf-8"))
     data["runs"][0]["elapsed_ms"] = 0
-    ve.save(phase, data)      # re-chained, so the ONLY remaining objection is the floor
+    ve.save(phase, data)  # re-chained, so the ONLY remaining objection is the floor
     found = ve.problems(phase)
-    assert found and "below the" in found[0] and "floor for starting a process" in found[0]
+    assert (
+        found and "below the" in found[0] and "floor for starting a process" in found[0]
+    )
 
 
 def test_a_sub_millisecond_run_still_records_above_the_floor(phase: Path) -> None:
@@ -203,8 +223,8 @@ def test_a_sub_millisecond_run_still_records_above_the_floor(phase: Path) -> Non
     conversion is asserted clock-free, so the guard is proven rather than the machine.
     """
     assert ve.elapsed_ms(0.0000007) >= ve.PROCESS_FLOOR_MS
-    assert ve.elapsed_ms(0.0) == 0                    # a zero measurement is still zero
-    assert ve.elapsed_ms(1.5) == 1500                 # and a real duration is unchanged
+    assert ve.elapsed_ms(0.0) == 0  # a zero measurement is still zero
+    assert ve.elapsed_ms(1.5) == 1500  # and a real duration is unchanged
 
 
 def test_evidence_recorded_against_different_content_is_refused(phase: Path) -> None:
@@ -215,7 +235,8 @@ def test_evidence_recorded_against_different_content_is_refused(phase: Path) -> 
     assert ve.problems(phase, verdict_path=phase / "verdict.json") == []
 
     (Path("tests") / "demo" / "1-alpha" / "test_y.py").write_text(
-        "def test_new():\n    assert True\n", encoding="utf-8")
+        "def test_new():\n    assert True\n", encoding="utf-8"
+    )
     found = ve.problems(phase, verdict_path=phase / "verdict.json")
     assert found and "made against different content" in found[0]
 
@@ -229,14 +250,19 @@ def test_a_changed_spec_also_invalidates_the_transcript(phase: Path) -> None:
     different thing verified."""
     record(phase)
     spec = phase / "specs" / "1.1-sub" / "spec.md"
-    spec.write_text(spec.read_text(encoding="utf-8") + "\n- R1.1.9 something new\n", encoding="utf-8")
+    spec.write_text(
+        spec.read_text(encoding="utf-8") + "\n- R1.1.9 something new\n",
+        encoding="utf-8",
+    )
     assert any("made against different content" in line for line in ve.problems(phase))
 
 
 # ── outcome 4: a stage that cannot produce its evidence fails LOUDLY ─────────
 
 
-def test_a_command_that_cannot_run_is_a_loud_error_not_a_recorded_pass(phase: Path) -> None:
+def test_a_command_that_cannot_run_is_a_loud_error_not_a_recorded_pass(
+    phase: Path,
+) -> None:
     """Evidence is what a command PRODUCES. A recorder that filed 'could not run' as a run would be
     the boolean it replaced, with more steps."""
     with pytest.raises(ve.EvidenceError) as excinfo:
@@ -276,29 +302,40 @@ def test_every_refusal_names_what_would_satisfy_it(phase: Path) -> None:
     assert "To satisfy this" in result.stderr
     assert "record <phase-dir> --kind suite" in result.stderr
     assert "verifier_evidence.py chain" in result.stderr
-    assert f"--rule {ve.RULE}" in result.stderr, "the disclosed-exception route is part of the remedy"
+    assert f"--rule {ve.RULE}" in result.stderr, (
+        "the disclosed-exception route is part of the remedy"
+    )
 
 
 # ── the applicability boundary: it binds what is OPEN ────────────────────────
 
 
-def test_a_disclosed_exception_clears_the_obligation_and_says_so(phase: Path, capsys) -> None:
+def test_a_disclosed_exception_clears_the_obligation_and_says_so(
+    phase: Path, capsys
+) -> None:
     """A phase that genuinely cannot produce a transcript has a route that is narrow and audited -
     the same one every other rule here uses. Without it this rule is a wedge for such a phase."""
     verdict_for(phase, chain="")
     assert ve.due(phase, verdict_path=phase / "verdict.json") != []
 
     reason = phase / "why.txt"
-    reason.write_text("no runnable collaborator in this environment\n", encoding="utf-8")
+    reason.write_text(
+        "no runnable collaborator in this environment\n", encoding="utf-8"
+    )
     applicability.record_exception(
-        phase, rule=ve.RULE, subject=phase.name, reason=reason.read_text(encoding="utf-8"),
+        phase,
+        rule=ve.RULE,
+        subject=phase.name,
+        reason=reason.read_text(encoding="utf-8"),
         recorded_by="test",
     )
     assert ve.due(phase, verdict_path=phase / "verdict.json") == []
     assert ve.RULE in capsys.readouterr().err, "an applied exception is never silent"
 
 
-def test_the_sweep_counts_untouched_phases_rather_than_blocking_them(phase: Path, capsys) -> None:
+def test_the_sweep_counts_untouched_phases_rather_than_blocking_them(
+    phase: Path, capsys
+) -> None:
     """Every phase that closed before this rule existed has no transcript and can never acquire one.
     A full audit would fail a consumer repo's CI over a remedy that does not exist for it."""
     verdict_for(phase, chain="")
@@ -323,8 +360,9 @@ def test_one_unreadable_record_fails_only_the_phase_that_owns_it(phase: Path) ->
 
     result = ve.sweep(Path.cwd(), enforce_all=True)
     assert len(result.undecidable) == 1 and "9-corrupt" in result.undecidable[0]
-    assert not any("1-alpha" in line for line in result.undecidable), \
+    assert not any("1-alpha" in line for line in result.undecidable), (
         "the good phase was still examined and still decided"
+    )
     assert result.failures == [], "and it passes on its own evidence"
 
 
@@ -337,7 +375,9 @@ def test_an_unreadable_record_exits_undecidable_rather_than_as_a_missing_obligat
     ve.record_path(phase).write_text("{ not json", encoding="utf-8")
     result = run_cli("sweep", "--root", str(Path.cwd()), "--all")
     assert result.returncode == ve.ERROR
-    assert "could not be decided" in result.stderr or "could not be read" in result.stderr
+    assert (
+        "could not be decided" in result.stderr or "could not be read" in result.stderr
+    )
 
 
 def test_the_sweep_does_not_examine_a_phase_it_is_not_going_to_enforce(
@@ -354,8 +394,12 @@ def test_the_sweep_does_not_examine_a_phase_it_is_not_going_to_enforce(
     examined: list[Path] = []
     real = ve.subject_digest
     monkeypatch.setattr(
-        ve, "subject_digest",
-        lambda phase_dir, root=None: (examined.append(Path(phase_dir)), real(phase_dir, root))[1],
+        ve,
+        "subject_digest",
+        lambda phase_dir, root=None: (
+            examined.append(Path(phase_dir)),
+            real(phase_dir, root),
+        )[1],
     )
     assert ve.sweep(Path.cwd()) == ve.SweepResult([], [])
     assert examined == [], "an out-of-scope phase is counted, never hashed"
@@ -378,7 +422,9 @@ def test_the_record_declares_its_readers_and_the_read_path_agrees() -> None:
     assert doc_read_path.READ_PATH[ve.FILENAME]["readers"] == list(ve.READERS)
 
 
-def test_the_chain_identifies_the_sequence_of_runs_not_just_their_number(phase: Path) -> None:
+def test_the_chain_identifies_the_sequence_of_runs_not_just_their_number(
+    phase: Path,
+) -> None:
     """Two runs in a different order are a different transcript, so the head must differ."""
     record(phase, kind="suite")
     record(phase, kind="adversarial")
@@ -398,7 +444,9 @@ def test_a_note_is_prose_and_does_not_change_the_chain(phase: Path) -> None:
     assert ve.chain_head(data["runs"]) == before
 
 
-def test_the_recorded_digest_is_of_the_log_that_is_actually_on_disk(phase: Path) -> None:
+def test_the_recorded_digest_is_of_the_log_that_is_actually_on_disk(
+    phase: Path,
+) -> None:
     entry = record(phase)
     on_disk = hashlib.sha256((phase / entry["log"]).read_bytes()).hexdigest()
     assert entry["output_sha256"] == on_disk
@@ -411,15 +459,18 @@ def test_a_superseded_run_is_counted_not_held_against_the_phase(phase: Path) -> 
     old one in place. Stale runs are SUPERSEDED - counted and named - and only current ones carry
     the verdict."""
     record(phase)
-    (Path("tests") / "demo" / "1-alpha" / "test_y.py").write_text("def test_n():\n    assert True\n",
-                                                                  encoding="utf-8")
-    record(phase)                                   # the remedy: run it again against what is here
+    (Path("tests") / "demo" / "1-alpha" / "test_y.py").write_text(
+        "def test_n():\n    assert True\n", encoding="utf-8"
+    )
+    record(phase)  # the remedy: run it again against what is here
     verdict_for(phase)
     assert ve.problems(phase, verdict_path=phase / "verdict.json") == []
 
     runs = ve.load(phase)["runs"]
     current, stale = ve.partition_by_currency(runs, phase, Path.cwd())
-    assert len(stale) == 1 and len(current) == 1, "the old run is kept, and it is not current"
+    assert len(stale) == 1 and len(current) == 1, (
+        "the old run is kept, and it is not current"
+    )
 
     result = run_cli("check", str(phase), "--verdict", str(phase / "verdict.json"))
     assert result.returncode == ve.OK
@@ -451,15 +502,23 @@ def echo_run(phase_dir: Path, text: str, kind: str = "suite") -> dict:
     return entry
 
 
-def test_a_credential_the_adversarial_run_surfaced_never_reaches_the_log(phase: Path) -> None:
+def test_a_credential_the_adversarial_run_surfaced_never_reaches_the_log(
+    phase: Path,
+) -> None:
     """RED without redaction: `adversarial` exists to plant a value and look at what came back, so
     a reproduced leak wrote the credential into a committed file that no later commit scrubs."""
     secret = "AKIAIOSFODNN7EXAMPLE"
     entry = echo_run(phase, f"connected as {secret}", kind="adversarial")
     stored = (phase / entry["log"]).read_text(encoding="utf-8")
-    assert secret not in stored, "the log is committed; a live credential in it is permanent"
-    assert "[REDACTED:aws-access-key-id:" in stored, "a removed span is marked, never deleted"
-    assert "connected as" in stored, "only the secret goes - the evidence stays evidence"
+    assert secret not in stored, (
+        "the log is committed; a live credential in it is permanent"
+    )
+    assert "[REDACTED:aws-access-key-id:" in stored, (
+        "a removed span is marked, never deleted"
+    )
+    assert "connected as" in stored, (
+        "only the secret goes - the evidence stays evidence"
+    )
 
 
 @pytest.mark.parametrize(
@@ -470,27 +529,44 @@ def test_a_credential_the_adversarial_run_surfaced_never_reaches_the_log(phase: 
         ("bearer-token", "Bearer abcdefghijklmnopqrstuvwxyz012345"),
         ("github-token", "ghp_0123456789abcdefghijklmnopqrstuvwx"),
         ("jwt", "eyJhbGciOi.eyJzdWIiOjEyMw.dBjftJeZ4CVPmB92K27u"),
-        ("private-key-block",
-         "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----"),
+        (
+            "private-key-block",
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----",
+        ),
     ],
 )
-def test_every_documented_secret_shape_is_removed_and_named(name: str, line: str) -> None:
+def test_every_documented_secret_shape_is_removed_and_named(
+    name: str, line: str
+) -> None:
     out = evidence_redaction.redact(line)
     assert f"[REDACTED:{name}:" in out, out
-    for token in ("hunter2", "s3cr3t-value", "abcdefghijklmnopqrstuvwxyz012345",
-                  "ghp_0123456789abcdefghijklmnopqrstuvwx", "MIIBOgIBAAJBAK"):
+    for token in (
+        "hunter2",
+        "s3cr3t-value",
+        "abcdefghijklmnopqrstuvwxyz012345",
+        "ghp_0123456789abcdefghijklmnopqrstuvwx",
+        "MIIBOgIBAAJBAK",
+    ):
         if token in line:
             assert token not in out, out
 
 
-def test_the_note_is_redacted_too_because_it_names_what_was_planted(phase: Path) -> None:
+def test_the_note_is_redacted_too_because_it_names_what_was_planted(
+    phase: Path,
+) -> None:
     """`--note "<what you planted>"` is the field the Verifier is instructed to describe the planted
     value in, and it is stored on the record beside the log."""
-    entry, _rc = ve.record(phase, "adversarial", ["/bin/echo", "ok"],
-                           note="planted API_KEY=ZZ-live-credential-9999")
+    entry, _rc = ve.record(
+        phase,
+        "adversarial",
+        ["/bin/echo", "ok"],
+        note="planted API_KEY=ZZ-live-credential-9999",
+    )
     assert "ZZ-live-credential-9999" not in entry["note"]
     assert "[REDACTED:secret-assignment:" in entry["note"]
-    assert "ZZ-live-credential-9999" not in ve.record_path(phase).read_text(encoding="utf-8")
+    assert "ZZ-live-credential-9999" not in ve.record_path(phase).read_text(
+        encoding="utf-8"
+    )
 
 
 def test_a_stored_log_is_bounded_and_says_how_much_it_dropped(
@@ -501,9 +577,13 @@ def test_a_stored_log_is_bounded_and_says_how_much_it_dropped(
     monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV, "2048")
     entry = echo_run(phase, "x" * 20000)
     stored = (phase / entry["log"]).read_text(encoding="utf-8")
-    assert len(stored.encode("utf-8")) <= 2048, "the cap binds the bytes that are stored"
+    assert len(stored.encode("utf-8")) <= 2048, (
+        "the cap binds the bytes that are stored"
+    )
     assert "[TRUNCATED:" in stored and "bytes dropped" in stored
-    assert evidence_redaction.MAX_BYTES_ENV in stored, "the marker names the knob that cut it"
+    assert evidence_redaction.MAX_BYTES_ENV in stored, (
+        "the marker names the knob that cut it"
+    )
     # Head AND tail survive: a suite log's failure summary is at the end.
     assert stored.startswith("x") and stored.rstrip("\n").endswith("x")
 
@@ -538,8 +618,11 @@ def test_redaction_failing_writes_no_log_and_records_no_run(
     """FAIL CLOSED, proven by breaking it: turn the redactor into a raw-log fallback and this goes
     green while a live credential lands in git. There is deliberately no such fallback."""
     monkeypatch.setattr(
-        evidence_redaction, "prepare",
-        lambda _text: (_ for _ in ()).throw(evidence_redaction.RedactionError("pattern exploded")),
+        evidence_redaction,
+        "prepare",
+        lambda _text: (_ for _ in ()).throw(
+            evidence_redaction.RedactionError("pattern exploded")
+        ),
     )
     with pytest.raises(ve.EvidenceError) as exc:
         ve.record(phase, "adversarial", ["/bin/echo", "AKIAIOSFODNN7EXAMPLE"])
@@ -548,7 +631,9 @@ def test_redaction_failing_writes_no_log_and_records_no_run(
     assert "evidence_redaction.py" in str(exc.value), "and where the remedy is"
     assert "does NOT count as recorded" in str(exc.value)
     assert not ve.log_dir(phase).exists() or not any(ve.log_dir(phase).iterdir())
-    assert ve.load(phase)["runs"] == [], "a run whose log could not be written is not a run"
+    assert ve.load(phase)["runs"] == [], (
+        "a run whose log could not be written is not a run"
+    )
 
 
 def test_a_malformed_cap_is_a_named_config_failure_never_a_silent_default(
@@ -571,8 +656,9 @@ def test_an_uncompilable_extra_pattern_stops_the_run_rather_than_being_skipped(
     assert ve.load(phase)["runs"] == []
 
 
-def test_an_extra_pattern_extends_the_set_at_a_call_site(phase: Path,
-                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_extra_pattern_extends_the_set_at_a_call_site(
+    phase: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv(evidence_redaction.EXTRA_ENV, r"INTERNAL-[0-9]{6}")
     entry = echo_run(phase, "leaked INTERNAL-424242 here")
     stored = (phase / entry["log"]).read_text(encoding="utf-8")
@@ -589,13 +675,22 @@ def test_redaction_runs_before_the_cap_so_no_half_secret_survives_the_cut() -> N
     assert "ghp_0123456789" not in out
 
 
-def test_a_credential_on_the_command_line_never_reaches_the_committed_record(phase: Path) -> None:
+def test_a_credential_on_the_command_line_never_reaches_the_committed_record(
+    phase: Path,
+) -> None:
     """RED without argv redaction. The record is committed exactly like the log, and this is the
     LIKELIEST carrier: `agents/avenger-verifier.md` documents `--kind adversarial -- <cmd>` and tells
     the Verifier to keep the planted value recognisably credential-shaped, so the documented happy
     path puts the secret on the command line before the child prints anything."""
-    ve.record(phase, "adversarial",
-              ["/bin/echo", "postgres://app:hunter2@db/prod", "AWS_SECRET_ACCESS_KEY=zzz-live-9999"])
+    ve.record(
+        phase,
+        "adversarial",
+        [
+            "/bin/echo",
+            "postgres://app:hunter2@db/prod",
+            "AWS_SECRET_ACCESS_KEY=zzz-live-9999",
+        ],
+    )
 
     written = ve.record_path(phase).read_text(encoding="utf-8")
     assert "hunter2" not in written
@@ -606,7 +701,9 @@ def test_a_credential_on_the_command_line_never_reaches_the_committed_record(pha
     assert "/bin/echo" in written
 
 
-def test_the_stored_argv_is_what_the_chain_hashes_so_redacting_it_costs_nothing(phase: Path) -> None:
+def test_the_stored_argv_is_what_the_chain_hashes_so_redacting_it_costs_nothing(
+    phase: Path,
+) -> None:
     """`entry_digest` hashes the STORED argv and `check` recomputes from what is on disk, so the
     redaction cannot desynchronise a verdict from its transcript."""
     ve.record(phase, "suite", ["/bin/echo", "TOKEN=abcd-secret-1234 -- 1 passed"])
@@ -637,12 +734,15 @@ def test_argv_redaction_failing_writes_no_log_and_records_no_run(
     # Echoing the secret instead would make the output raise first and the assertions below would
     # hold whether or not argv is redacted at all - a test green for the wrong reason.
     with pytest.raises(ve.EvidenceError) as exc:
-        ve.record(phase, "adversarial",
-                  ["/bin/sh", "-c", "exit 0", "AKIAIOSFODNN7EXAMPLE"])
+        ve.record(
+            phase, "adversarial", ["/bin/sh", "-c", "exit 0", "AKIAIOSFODNN7EXAMPLE"]
+        )
 
     assert "pattern exploded" in str(exc.value)
     assert "does NOT count as recorded" in str(exc.value)
-    assert "AKIAIOSFODNN7EXAMPLE" not in str(exc.value), "the stop must not leak what it refused"
+    assert "AKIAIOSFODNN7EXAMPLE" not in str(exc.value), (
+        "the stop must not leak what it refused"
+    )
     assert not ve.log_dir(phase).exists() or not any(ve.log_dir(phase).iterdir())
     assert ve.load(phase)["runs"] == []
 
@@ -657,11 +757,14 @@ def test_a_ceiling_too_small_to_hold_its_own_truncation_marker_is_refused_by_nam
         ve.record(phase, "suite", ["/bin/echo", "ok"])
     assert ve.load(phase)["runs"] == []
 
-    monkeypatch.setenv(evidence_redaction.MAX_BYTES_ENV,
-                       str(evidence_redaction.MIN_MAX_BYTES))
+    monkeypatch.setenv(
+        evidence_redaction.MAX_BYTES_ENV, str(evidence_redaction.MIN_MAX_BYTES)
+    )
     entry = ve.record(phase, "suite", ["/bin/echo", "x" * 5000])[0]
     stored = (phase / entry["log"]).read_bytes()
-    assert len(stored) <= evidence_redaction.MIN_MAX_BYTES, "the ceiling now means what it says"
+    assert len(stored) <= evidence_redaction.MIN_MAX_BYTES, (
+        "the ceiling now means what it says"
+    )
     assert "[TRUNCATED:" in stored.decode("utf-8")
 
 
@@ -690,8 +793,11 @@ def test_a_suite_run_killed_by_its_watchdog_does_not_back_a_pass(
     """The canonical instance: the group is killed, the drained output still carries a summary from
     whatever ran before the hang, and the corpse's exit code is not a verdict."""
     monkeypatch.setenv(ve.BUDGET_ENV, "1")
-    record(phase, kind="suite",
-           argv=["/bin/sh", "-c", "echo '1298 passed in 42.10s'; sleep 30"])
+    record(
+        phase,
+        kind="suite",
+        argv=["/bin/sh", "-c", "echo '1298 passed in 42.10s'; sleep 30"],
+    )
     entry = ve.load(phase)["runs"][-1]
     assert entry["timed_out"] is True, "the fixture must really have been killed"
 
@@ -715,3 +821,76 @@ def test_a_watchdog_kill_is_read_from_the_record_not_only_from_the_exit_code(
     ve.save(phase, data)
     found = ve.problems(phase)
     assert found and "watchdog" in " ".join(found).lower()
+
+
+# ── outcome 4: a run is bound to the HEAD it stood on (issue #97, folded #122) ────────────────
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(  # noqa: S603
+        ["git", "-C", str(root), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _init_repo(root: Path) -> str:
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+    return _git(root, "rev-parse", "HEAD")
+
+
+def test_a_run_records_the_head_the_working_copy_stood_on(phase: Path) -> None:
+    """RED before the fix: no entry named a commit, so nothing could ask whether HEAD moved."""
+    head = _init_repo(Path.cwd())
+    entry = record(phase)
+    assert entry["head"] == head
+    assert ve.latest_head(phase) == head
+
+
+def test_the_head_is_in_the_chain_once_recorded(phase: Path) -> None:
+    _init_repo(Path.cwd())
+    entry = record(phase)
+    assert ve.entry_digest(entry, "") != ve.entry_digest(
+        {**entry, "head": "0" * 40}, ""
+    )
+
+
+def test_a_record_written_before_heads_existed_still_hashes_to_its_chain() -> None:
+    """Upgrading must not refuse every committed transcript as `edited after it was written`."""
+    legacy = {
+        "seq": 1,
+        "kind": "suite",
+        "argv": ["/bin/echo", "1 passed"],
+        "exit_code": 0,
+        "elapsed_ms": 3,
+        "output_sha256": "ab" * 32,
+        "subject_digest": "cd" * 32,
+        "recorded_at": "2026-01-01T00:00:00Z",
+    }
+    payload = json.dumps(legacy, sort_keys=True, separators=(",", ":"))
+    expected = hashlib.sha256(("" + "\n" + payload).encode("utf-8")).hexdigest()
+    assert ve.entry_digest(legacy, "") == expected
+
+
+def test_where_git_cannot_answer_the_run_carries_no_head_and_says_so(
+    phase: Path, capsys
+) -> None:
+    """A stated absence, never a placeholder a reader could mistake for a commit."""
+    entry = record(phase)
+    assert "head" not in entry
+    assert ve.latest_head(phase) is None
+    assert "bound to no commit" in capsys.readouterr().err
+
+
+def test_latest_head_is_the_newest_run_that_carries_one(phase: Path) -> None:
+    first = _init_repo(Path.cwd())
+    record(phase)
+    (Path.cwd() / "src.py").write_text("x = 1\n")
+    _git(Path.cwd(), "add", "-A")
+    _git(
+        Path.cwd(), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "fix"
+    )
+    second = _git(Path.cwd(), "rev-parse", "HEAD")
+    record(phase)
+    assert first != second
+    assert ve.latest_head(phase) == second

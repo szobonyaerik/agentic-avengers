@@ -68,12 +68,16 @@ def test_the_implementers_require_the_tdd_procedure() -> None:
 def test_the_verifier_requires_triage_and_the_anti_patterns_it_reads_for() -> None:
     required = required_for("avenger-verifier")
     assert "verifier-triage" in required
-    assert "tdd" in required, "the gamed-test patterns it reads a green suite for are defined there"
+    assert "tdd" in required, (
+        "the gamed-test patterns it reads a green suite for are defined there"
+    )
 
 
 def test_plugin_scoped_names_match() -> None:
     """`plan-build-verify:avenger-verifier` is how the runtime names it."""
-    assert required_for("plan-build-verify:avenger-verifier") == required_for("avenger-verifier")
+    assert required_for("plan-build-verify:avenger-verifier") == required_for(
+        "avenger-verifier"
+    )
 
 
 def test_an_agent_this_pipeline_does_not_own_requires_nothing() -> None:
@@ -89,14 +93,20 @@ def test_adding_a_skill_to_an_agents_declared_line_is_enough_to_make_it_required
     (tmp_path / "skills" / "tdd").mkdir(parents=True)
     (tmp_path / "skills" / "tdd" / "SKILL.md").write_text("x")
     agent = tmp_path / "agents" / "avenger-new.md"
-    agent.write_text("> **Required skills.** `skills/tdd` — load each before you start.\n")
+    agent.write_text(
+        "> **Required skills.** `skills/tdd` — load each before you start.\n"
+    )
 
     import skill_contract
 
-    assert skill_contract.required_skills("avenger-new", root=tmp_path) == frozenset({"tdd"})
+    assert skill_contract.required_skills("avenger-new", root=tmp_path) == frozenset(
+        {"tdd"}
+    )
 
 
-def test_the_bug_hunter_declares_the_tdd_procedure_its_own_prose_makes_mandatory() -> None:
+def test_the_bug_hunter_declares_the_tdd_procedure_its_own_prose_makes_mandatory() -> (
+    None
+):
     """It is told to write the regression test FIRST and watch it fail. Reading that requirement out
     of the prose was the shape being removed; the fix is to declare it, not to scan for it."""
     assert "tdd" in required_for("avenger-bug-hunter")
@@ -107,12 +117,45 @@ def test_an_agent_with_no_declared_line_is_a_verify_failure(tmp_path: Path) -> N
     named rather than passed."""
     (tmp_path / "agents").mkdir()
     (tmp_path / "skills").mkdir()
-    (tmp_path / "agents" / "avenger-x.md").write_text("Load `skills/tdd` at some point.\n")
+    (tmp_path / "agents" / "avenger-x.md").write_text(
+        "Load `skills/tdd` at some point.\n"
+    )
 
     from required_skills import undeclared
 
     assert undeclared(tmp_path) == ["avenger-x"]
     assert main(["verify", "--root", str(tmp_path)]) == 1
+
+
+def test_an_agent_that_drops_the_shared_rules_skill_is_a_verify_failure(
+    tmp_path: Path,
+) -> None:
+    """Issue #118 put its rule in `skills/pipeline-conventions` and had every stage point at it. The
+    audit can only prove the load of a skill the stage's own line DECLARES, so an agent that drops
+    it silently stops being bound by every shared rule while the audit reports clean - the
+    promise-versus-enforcement gap this module exists to close, one level up."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "skills" / "pipeline-conventions").mkdir(parents=True)
+    (tmp_path / "skills" / "tdd").mkdir()
+    (tmp_path / "skills" / "pipeline-conventions" / "SKILL.md").write_text("rules\n")
+    (tmp_path / "skills" / "tdd" / "SKILL.md").write_text("red green\n")
+    (tmp_path / "agents" / "avenger-x.md").write_text(
+        "> **Required skills.** `skills/tdd` - load each before you start.\n"
+    )
+
+    from required_skills import without_shared_rules
+
+    assert without_shared_rules(tmp_path) == ["avenger-x"]
+    assert main(["verify", "--root", str(tmp_path)]) == 1
+
+
+def test_every_canonical_agent_requires_the_shared_rules_skill() -> None:
+    """The delivery half of issue #118: the rule lives in one skill, so every stage must require it."""
+    from required_skills import SHARED_RULES_SKILL, without_shared_rules
+
+    root = Path(__file__).resolve().parents[1]
+    assert without_shared_rules(root) == []
+    assert SHARED_RULES_SKILL in required_for("avenger-verifier")
 
 
 def test_a_skill_whose_body_vanished_is_still_required() -> None:
@@ -165,7 +208,10 @@ def test_ponytail_off_leaves_an_implementers_phase_clean(measured, monkeypatch) 
     monkeypatch.setattr(metrics_sink, "_writer_unusable", False)
     for skill in required_for("avenger-backend-architect"):
         pipeline_metrics.record_skill_load(
-            "01", stage="avenger-backend-architect", skill=skill, evidence="Read SKILL.md"
+            "01",
+            stage="avenger-backend-architect",
+            skill=skill,
+            evidence="Read SKILL.md",
         )
 
     assert "ponytail" not in required_for("avenger-backend-architect")
@@ -218,7 +264,9 @@ def measured(tmp_path: Path):
     """A project with a phase in flight and a double metrics writer. Yields (project, env, read)."""
     project = tmp_path / "project"
     (project / "docs" / "features" / "demo" / "phases" / "1-demo").mkdir(parents=True)
-    (project / "docs" / "features" / "demo" / "phases" / "1-demo" / "handover.md").write_text("x")
+    (
+        project / "docs" / "features" / "demo" / "phases" / "1-demo" / "handover.md"
+    ).write_text("x")
     store = tmp_path / "store"
     store.mkdir()
     double = tmp_path / "fm-pipeline-metrics.sh"
@@ -234,28 +282,39 @@ def measured(tmp_path: Path):
     return project, env, (lambda: stored(store, "01"))
 
 
-def run_hook(plugin: Path, agent_type: str, *, project: Path | None = None, **env: str) -> dict:
+def run_hook(
+    plugin: Path, agent_type: str, *, project: Path | None = None, **env: str
+) -> dict:
     result = subprocess.run(
         ["bash", str(HOOK)],
         input=json.dumps({"agent_type": agent_type}),
-        capture_output=True, text=True, check=False,
-        env={"PATH": os.environ["PATH"], "HOME": str(plugin),
-             "CLAUDE_PLUGIN_ROOT": str(plugin),
-             "CLAUDE_PROJECT_DIR": str(project or plugin), **env},
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(plugin),
+            "CLAUDE_PLUGIN_ROOT": str(plugin),
+            "CLAUDE_PROJECT_DIR": str(project or plugin),
+            **env,
+        },
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
 def test_the_skill_body_is_injected_not_asked_for(plugin: Path) -> None:
-    injected = run_hook(plugin, "avenger-backend-architect")[
-        "hookSpecificOutput"]["additionalContext"]
+    injected = run_hook(plugin, "avenger-backend-architect")["hookSpecificOutput"][
+        "additionalContext"
+    ]
     assert "the rule from tdd" in injected
     assert "the rule from pipeline-conventions" in injected
     assert "delivered, not requested" in injected
 
 
-def test_an_injection_records_itself_as_an_observed_load(plugin: Path, measured) -> None:
+def test_an_injection_records_itself_as_an_observed_load(
+    plugin: Path, measured
+) -> None:
     """An injected skill is never READ, so without this it seeds required-and-unobserved and never
     flips — and the audit reports a false gap on the skills whose load is guaranteed."""
     project, env, record_of = measured
@@ -265,7 +324,9 @@ def test_an_injection_records_itself_as_an_observed_load(plugin: Path, measured)
     loads = {entry["skill"]: entry for entry in record_of()["skill_loads"]}
     assert set(loads) == {"pipeline-conventions", "tdd", "self-improvement"}
     assert all(entry["required"] and entry["loaded"] for entry in loads.values())
-    assert "injected" in loads["tdd"]["evidence"], "the evidence names what observed the load"
+    assert "injected" in loads["tdd"]["evidence"], (
+        "the evidence names what observed the load"
+    )
     assert all(e["stage"] == "avenger-backend-architect" for e in loads.values())
 
 
@@ -277,7 +338,8 @@ def test_a_missing_required_skill_is_a_loud_blocker_not_a_silent_fallback(
     (plugin / "skills" / "tdd" / "SKILL.md").unlink()
 
     injected = run_hook(plugin, "avenger-backend-architect", project=project, **env)[
-        "hookSpecificOutput"]["additionalContext"]
+        "hookSpecificOutput"
+    ]["additionalContext"]
 
     assert "BLOCKER" in injected
     assert "tdd" in injected
@@ -294,10 +356,17 @@ def test_an_agent_outside_the_contract_gets_nothing(plugin: Path) -> None:
 def test_an_unreadable_payload_injects_nothing(plugin: Path) -> None:
     """Fail closed, the same rule as every other SubagentStart hook."""
     result = subprocess.run(
-        ["bash", str(HOOK)], input="not json",
-        capture_output=True, text=True, check=False,
-        env={"PATH": os.environ["PATH"], "HOME": str(plugin),
-             "CLAUDE_PLUGIN_ROOT": str(plugin), "CLAUDE_PROJECT_DIR": str(plugin)},
+        ["bash", str(HOOK)],
+        input="not json",
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(plugin),
+            "CLAUDE_PLUGIN_ROOT": str(plugin),
+            "CLAUDE_PROJECT_DIR": str(plugin),
+        },
     )
     assert result.returncode == 0
     assert result.stdout.strip() == ""
@@ -305,22 +374,33 @@ def test_an_unreadable_payload_injects_nothing(plugin: Path) -> None:
 
 def test_the_off_switch_works(plugin: Path) -> None:
     result = subprocess.run(
-        ["bash", str(HOOK)], input=json.dumps({"agent_type": "avenger-backend-architect"}),
-        capture_output=True, text=True, check=False,
-        env={"PATH": os.environ["PATH"], "HOME": str(plugin), "SKILLS_OFF": "1",
-             "CLAUDE_PLUGIN_ROOT": str(plugin), "CLAUDE_PROJECT_DIR": str(plugin)},
+        ["bash", str(HOOK)],
+        input=json.dumps({"agent_type": "avenger-backend-architect"}),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": str(plugin),
+            "SKILLS_OFF": "1",
+            "CLAUDE_PLUGIN_ROOT": str(plugin),
+            "CLAUDE_PROJECT_DIR": str(plugin),
+        },
     )
     assert result.returncode == 0
     assert result.stdout.strip() == ""
 
 
-def test_delivery_never_stops_a_spawn_when_nothing_can_be_recorded(plugin: Path, measured) -> None:
+def test_delivery_never_stops_a_spawn_when_nothing_can_be_recorded(
+    plugin: Path, measured
+) -> None:
     """Measurement is never a gate: a writer that refuses everything must not cost a subagent its
     rules."""
     project, env, _ = measured
 
-    injected = run_hook(plugin, "avenger-backend-architect", project=project,
-                        DOUBLE_EXIT="3", **env)["hookSpecificOutput"]["additionalContext"]
+    injected = run_hook(
+        plugin, "avenger-backend-architect", project=project, DOUBLE_EXIT="3", **env
+    )["hookSpecificOutput"]["additionalContext"]
 
     assert "the rule from tdd" in injected
 
@@ -347,23 +427,32 @@ def test_the_ceiling_is_read_but_never_guessed(monkeypatch: pytest.MonkeyPatch) 
         inject_max_bytes()
 
 
-def test_a_skill_over_the_ceiling_is_a_pointer_the_stage_must_open(plugin: Path, measured) -> None:
+def test_a_skill_over_the_ceiling_is_a_pointer_the_stage_must_open(
+    plugin: Path, measured
+) -> None:
     project, env, record_of = measured
     (plugin / "skills" / "tdd" / "SKILL.md").write_text(
         "---\nname: tdd\ndescription: the red-green loop\n---\n\n" + "x" * 9000
     )
 
     injected = run_hook(plugin, "avenger-backend-architect", project=project, **env)[
-        "hookSpecificOutput"]["additionalContext"]
+        "hookSpecificOutput"
+    ]["additionalContext"]
 
     assert "x" * 9000 not in injected, "the whole point is that the body is NOT inlined"
-    assert "the red-green loop" in injected, "the pointer carries the skill's own description"
+    assert "the red-green loop" in injected, (
+        "the pointer carries the skill's own description"
+    )
     assert str(plugin / "skills" / "tdd" / "SKILL.md") in injected
     assert "BLOCKS THE PHASE" in injected
-    assert "the rule from pipeline-conventions" in injected, "a small skill is still injected whole"
+    assert "the rule from pipeline-conventions" in injected, (
+        "a small skill is still injected whole"
+    )
     loads = {entry["skill"]: entry for entry in record_of()["skill_loads"]}
     assert loads["pipeline-conventions"]["loaded"] is True, "the injection is the load"
-    assert "tdd" not in loads, "a pointer is not a load; the contract seed is the other hook's job"
+    assert "tdd" not in loads, (
+        "a pointer is not a load; the contract seed is the other hook's job"
+    )
 
 
 def test_the_pointer_never_asks_the_agent_to_report_its_own_load(plugin: Path) -> None:
@@ -373,8 +462,9 @@ def test_the_pointer_never_asks_the_agent_to_report_its_own_load(plugin: Path) -
         "---\nname: tdd\ndescription: d\n---\n\n" + "x" * 9000
     )
 
-    injected = run_hook(plugin, "avenger-backend-architect")[
-        "hookSpecificOutput"]["additionalContext"]
+    injected = run_hook(plugin, "avenger-backend-architect")["hookSpecificOutput"][
+        "additionalContext"
+    ]
 
     assert "required_skills.py record" not in injected
     assert "Opening it is what records the load" in injected
@@ -382,17 +472,29 @@ def test_the_pointer_never_asks_the_agent_to_report_its_own_load(plugin: Path) -
 
 def test_an_unparseable_ceiling_delivers_nothing(plugin: Path) -> None:
     """Fail closed: a ceiling nobody can read decides nothing, so it must not decide silently."""
-    assert run_hook(plugin, "avenger-backend-architect", SKILL_INJECT_MAX_BYTES="lots") == {}
+    assert (
+        run_hook(plugin, "avenger-backend-architect", SKILL_INJECT_MAX_BYTES="lots")
+        == {}
+    )
 
 
 # ── the audit blocks, and it is phase-scoped by construction ─────────────────
 
 
 def test_a_required_skill_with_no_observed_load_is_a_gap() -> None:
-    gaps = audit_gaps({"skill_loads": [
-        {"id": "avenger-backend-architect:tdd", "stage": "avenger-backend-architect",
-         "skill": "tdd", "required": True, "loaded": False},
-    ]})
+    gaps = audit_gaps(
+        {
+            "skill_loads": [
+                {
+                    "id": "avenger-backend-architect:tdd",
+                    "stage": "avenger-backend-architect",
+                    "skill": "tdd",
+                    "required": True,
+                    "loaded": False,
+                },
+            ]
+        }
+    )
     assert len(gaps) == 1
     assert "avenger-backend-architect" in gaps[0] and "skills/tdd" in gaps[0]
 
@@ -400,22 +502,47 @@ def test_a_required_skill_with_no_observed_load_is_a_gap() -> None:
 def test_one_stages_load_does_not_clear_another_stages_requirement() -> None:
     """Keyed `<stage>:<skill>`, so the Verifier reading the rulebook says nothing about whether the
     implementer did. Keyed on the skill alone this reported coverage it did not have."""
-    gaps = audit_gaps({"skill_loads": [
-        {"id": "avenger-verifier:pipeline-conventions", "stage": "avenger-verifier",
-         "skill": "pipeline-conventions", "required": True, "loaded": True},
-        {"id": "avenger-backend-architect:pipeline-conventions",
-         "stage": "avenger-backend-architect", "skill": "pipeline-conventions",
-         "required": True, "loaded": False},
-    ]})
+    gaps = audit_gaps(
+        {
+            "skill_loads": [
+                {
+                    "id": "avenger-verifier:pipeline-conventions",
+                    "stage": "avenger-verifier",
+                    "skill": "pipeline-conventions",
+                    "required": True,
+                    "loaded": True,
+                },
+                {
+                    "id": "avenger-backend-architect:pipeline-conventions",
+                    "stage": "avenger-backend-architect",
+                    "skill": "pipeline-conventions",
+                    "required": True,
+                    "loaded": False,
+                },
+            ]
+        }
+    )
     assert len(gaps) == 1
     assert "avenger-backend-architect" in gaps[0]
     assert "avenger-verifier" not in gaps[0]
 
 
 def test_a_load_that_was_never_required_is_not_a_gap() -> None:
-    assert audit_gaps({"skill_loads": [
-        {"stage": "avenger-verifier", "skill": "codemap", "required": False, "loaded": False},
-    ]}) == []
+    assert (
+        audit_gaps(
+            {
+                "skill_loads": [
+                    {
+                        "stage": "avenger-verifier",
+                        "skill": "codemap",
+                        "required": False,
+                        "loaded": False,
+                    },
+                ]
+            }
+        )
+        == []
+    )
 
 
 def test_a_phase_with_no_record_is_not_a_gap() -> None:
@@ -445,7 +572,9 @@ def test_the_audit_blocks_on_an_unobserved_required_load(measured, monkeypatch) 
     assert main(["audit"]) == 0
 
 
-def test_the_audit_is_phase_scoped_without_any_session_id(measured, monkeypatch) -> None:
+def test_the_audit_is_phase_scoped_without_any_session_id(
+    measured, monkeypatch
+) -> None:
     """A pointer delivered in phase 1 cannot block phase 8: the evidence lives in the per-phase
     record and hook_skill_load.sh writes nothing when no phase is in flight, so the scoping needs no
     run id at all — the machinery that used to provide one is gone."""
@@ -465,7 +594,9 @@ def test_the_audit_is_phase_scoped_without_any_session_id(measured, monkeypatch)
     later.mkdir(parents=True)
     (later / "handover.md").write_text("x")
 
-    assert main(["audit"]) == 0, "phase 8 is in flight; phase 1's gap is not its problem"
+    assert main(["audit"]) == 0, (
+        "phase 8 is in flight; phase 1's gap is not its problem"
+    )
     assert main(["audit", "--all"]) == 1, "--full still sweeps every phase"
 
 
@@ -481,12 +612,24 @@ def test_the_audit_is_phase_scoped_without_any_session_id(measured, monkeypatch)
 
 
 def test_a_stage_scoped_audit_reports_only_that_stages_gap() -> None:
-    record = {"skill_loads": [
-        {"id": "avenger-spec-writer:spec-review-checklist", "stage": "avenger-spec-writer",
-         "skill": "spec-review-checklist", "required": True, "loaded": False},
-        {"id": "avenger-backend-architect:tdd", "stage": "avenger-backend-architect",
-         "skill": "tdd", "required": True, "loaded": False},
-    ]}
+    record = {
+        "skill_loads": [
+            {
+                "id": "avenger-spec-writer:spec-review-checklist",
+                "stage": "avenger-spec-writer",
+                "skill": "spec-review-checklist",
+                "required": True,
+                "loaded": False,
+            },
+            {
+                "id": "avenger-backend-architect:tdd",
+                "stage": "avenger-backend-architect",
+                "skill": "tdd",
+                "required": True,
+                "loaded": False,
+            },
+        ]
+    }
     scoped = audit_gaps(record, stage="avenger-spec-writer")
     assert len(scoped) == 1 and "spec-review-checklist" in scoped[0]
     assert len(audit_gaps(record)) == 2, "the unscoped audit is unchanged"
@@ -495,14 +638,23 @@ def test_a_stage_scoped_audit_reports_only_that_stages_gap() -> None:
 def test_a_stage_scoped_audit_reads_the_plugin_spelling_of_a_stage() -> None:
     """`SubagentStop` reports `plan-build-verify:avenger-spec-writer` where the record holds the bare
     name. Two spellings of one stage would make the scoped audit silently answer about nobody."""
-    record = {"skill_loads": [
-        {"id": "avenger-spec-writer:spec-review-checklist", "stage": "avenger-spec-writer",
-         "skill": "spec-review-checklist", "required": True, "loaded": False},
-    ]}
+    record = {
+        "skill_loads": [
+            {
+                "id": "avenger-spec-writer:spec-review-checklist",
+                "stage": "avenger-spec-writer",
+                "skill": "spec-review-checklist",
+                "required": True,
+                "loaded": False,
+            },
+        ]
+    }
     assert audit_gaps(record, stage="plan-build-verify:avenger-spec-writer")
 
 
-def test_a_stage_scoped_audit_is_clean_for_a_stage_that_owes_nothing(measured, monkeypatch) -> None:
+def test_a_stage_scoped_audit_is_clean_for_a_stage_that_owes_nothing(
+    measured, monkeypatch
+) -> None:
     """The point of the scope: another stage's gap is not this stage's event, and must not stop it."""
     project, env, _ = measured
     for key, value in env.items():
@@ -514,7 +666,11 @@ def test_a_stage_scoped_audit_is_clean_for_a_stage_that_owes_nothing(measured, m
 
     monkeypatch.setattr(metrics_sink, "_writer_unusable", False)
     pipeline_metrics.record_skill_load(
-        "01", stage="avenger-spec-writer", skill="spec-review-checklist", evidence="", loaded=False
+        "01",
+        stage="avenger-spec-writer",
+        skill="spec-review-checklist",
+        evidence="",
+        loaded=False,
     )
 
     assert main(["audit", "--stage", "avenger-spec-writer"]) == 1
@@ -522,10 +678,14 @@ def test_a_stage_scoped_audit_is_clean_for_a_stage_that_owes_nothing(measured, m
     assert main(["audit"]) == 1, "the close-time backstop still sees it"
 
     pipeline_metrics.record_skill_load(
-        "01", stage="avenger-spec-writer", skill="spec-review-checklist",
+        "01",
+        stage="avenger-spec-writer",
+        skill="spec-review-checklist",
         evidence="Read skills/spec-review-checklist/SKILL.md",
     )
-    assert main(["audit", "--stage", "avenger-spec-writer"]) == 0, "opening the file clears it"
+    assert main(["audit", "--stage", "avenger-spec-writer"]) == 0, (
+        "opening the file clears it"
+    )
 
 
 def test_the_audit_honours_the_off_switch(measured, monkeypatch) -> None:
@@ -557,9 +717,18 @@ def test_the_audit_honours_the_off_switch(measured, monkeypatch) -> None:
 
 
 def test_an_implementer_with_no_ponytail_record_gets_a_note() -> None:
-    notes = ponytail_notes({"skill_loads": [
-        {"stage": "avenger-backend-architect", "skill": "tdd", "required": True, "loaded": True},
-    ]})
+    notes = ponytail_notes(
+        {
+            "skill_loads": [
+                {
+                    "stage": "avenger-backend-architect",
+                    "skill": "tdd",
+                    "required": True,
+                    "loaded": True,
+                },
+            ]
+        }
+    )
     assert len(notes) == 1
     assert "avenger-backend-architect" in notes[0]
     assert "skills/ponytail" in notes[0] and "no injection was recorded" in notes[0]
@@ -567,26 +736,66 @@ def test_an_implementer_with_no_ponytail_record_gets_a_note() -> None:
 
 
 def test_a_recorded_injection_produces_no_note() -> None:
-    assert ponytail_notes({"skill_loads": [
-        {"stage": "avenger-backend-architect", "skill": "tdd", "required": True, "loaded": True},
-        {"stage": "avenger-backend-architect", "skill": "ponytail", "loaded": True},
-    ]}) == []
+    assert (
+        ponytail_notes(
+            {
+                "skill_loads": [
+                    {
+                        "stage": "avenger-backend-architect",
+                        "skill": "tdd",
+                        "required": True,
+                        "loaded": True,
+                    },
+                    {
+                        "stage": "avenger-backend-architect",
+                        "skill": "ponytail",
+                        "loaded": True,
+                    },
+                ]
+            }
+        )
+        == []
+    )
 
 
 def test_a_stage_ponytail_never_reaches_gets_no_note() -> None:
     """The Verifier is deliberately outside its scope — "write less code" fights its job."""
-    assert ponytail_notes({"skill_loads": [
-        {"stage": "avenger-verifier", "skill": "tdd", "required": True, "loaded": True},
-    ]}) == []
+    assert (
+        ponytail_notes(
+            {
+                "skill_loads": [
+                    {
+                        "stage": "avenger-verifier",
+                        "skill": "tdd",
+                        "required": True,
+                        "loaded": True,
+                    },
+                ]
+            }
+        )
+        == []
+    )
 
 
 def test_the_off_switch_produces_no_note(monkeypatch: pytest.MonkeyPatch) -> None:
     """A deliberate, supported choice is not a surprise, and a note that fires every time the switch
     is used is noise that trains people to ignore notes."""
     monkeypatch.setenv("PONYTAIL_OFF", "1")
-    assert ponytail_notes({"skill_loads": [
-        {"stage": "avenger-backend-architect", "skill": "tdd", "required": True, "loaded": True},
-    ]}) == []
+    assert (
+        ponytail_notes(
+            {
+                "skill_loads": [
+                    {
+                        "stage": "avenger-backend-architect",
+                        "skill": "tdd",
+                        "required": True,
+                        "loaded": True,
+                    },
+                ]
+            }
+        )
+        == []
+    )
 
 
 def test_the_note_is_visible_and_never_changes_the_exit_code(
@@ -604,7 +813,10 @@ def test_the_note_is_visible_and_never_changes_the_exit_code(
     monkeypatch.setattr(metrics_sink, "_writer_unusable", False)
     for skill in required_for("avenger-backend-architect"):
         pipeline_metrics.record_skill_load(
-            "01", stage="avenger-backend-architect", skill=skill, evidence="Read SKILL.md"
+            "01",
+            stage="avenger-backend-architect",
+            skill=skill,
+            evidence="Read SKILL.md",
         )
 
     assert main(["audit"]) == 0, "a note must never reach the exit code"

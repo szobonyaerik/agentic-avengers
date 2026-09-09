@@ -188,3 +188,60 @@ def test_a_stop_with_no_id_clears_the_newest_start_of_its_type(tmp_path: Path) -
         },
     )
     assert liveness.live(tmp_path, now=NOW) == []
+
+
+# --- the endings a SubagentStop never records (issue #98) ------------------------------------------
+#
+# A stage killed through the TaskStop tool fires no SubagentStop; its start stayed unmatched and the
+# lock was held for the whole four-hour ceiling. Two observed outcomes now release it before the
+# ceiling is consulted: the harness's own TaskStop report, and the harness process being gone.
+
+
+def killed(agent_id: str = "a1", ago: int = 1) -> dict:
+    return {"ts": stamp(ago), "event": "TaskStop", "agent_id": agent_id}
+
+
+def test_a_taskstop_the_harness_reported_clears_the_start(tmp_path: Path) -> None:
+    log(tmp_path, start(), killed())
+    assert liveness.live(tmp_path, now=NOW) == []
+
+
+def test_a_taskstop_for_another_id_does_not_clear_it(tmp_path: Path) -> None:
+    log(tmp_path, start(agent_id="a1"), killed(agent_id="a2"))
+    assert [e["agent_id"] for e in liveness.live(tmp_path, now=NOW)] == ["a1"]
+
+
+def test_a_start_whose_harness_process_is_gone_is_not_live(tmp_path: Path) -> None:
+    """Asked of the kernel, not the log. A pid no process holds is an implementer that cannot be
+    running, whatever its stop rows say."""
+    import os
+    import subprocess
+
+    proc = subprocess.Popen(["sleep", "30"])
+    proc.kill()
+    proc.wait()
+    dead = proc.pid
+    entry = start()
+    entry["harness_pid"] = dead
+    log(tmp_path, entry)
+    assert not liveness.process_exists(dead)
+    assert liveness.live(tmp_path, now=NOW) == []
+    del os
+
+
+def test_a_start_whose_harness_process_is_alive_stays_live(tmp_path: Path) -> None:
+    import os
+
+    entry = start()
+    entry["harness_pid"] = os.getpid()
+    log(tmp_path, entry)
+    assert [e["agent_id"] for e in liveness.live(tmp_path, now=NOW)] == ["a1"]
+
+
+def test_a_start_with_no_recorded_pid_is_judged_as_before(tmp_path: Path) -> None:
+    """Applicability: a row written before pids were recorded is unobservable on this axis, and
+    unobservable is read as alive - the ceiling alone bounds it, exactly as it did."""
+    log(tmp_path, start())
+    assert [e["agent_id"] for e in liveness.live(tmp_path, now=NOW)] == ["a1"]
+    log(tmp_path, start(ago=5 * 60))
+    assert liveness.live(tmp_path, now=NOW) == []

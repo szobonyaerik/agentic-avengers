@@ -24,6 +24,19 @@ defensible "yes".
 - [ ] Acceptance criteria are stated for what the binding actually verifies — a pass condition and
       at least one failure/edge condition for each `integration` requirement, and for each journey
       that carries a group of `e2e` ones. `none` requirements need neither.
+- [ ] **Every acceptance criterion names what it DRIVES** (`drives:`) — the seam, command or planted
+      input the test pushes through — and the thing named is one that reading cannot satisfy. The
+      machine gate refuses a missing field; you are the reader who can tell `drives: the adapter` from
+      `drives: every public method of both adapters with a collaborator that raises`. A criterion
+      that proves a checker catches *one* break proves nothing about the class: ask which members it
+      drives. A criterion declared `drives: undriven (<why>)` is allowed; ask whether the why holds.
+- [ ] **Every universal claim about EXISTING code carries its evidence.** "Only calls X, Y and
+      float()", "never raises", "mypy rejects this": each is a measurement result, and the spec shows
+      the measurement — the command and its output, the callers enumerated and how, the checker's own
+      message. The machine gate blocks an unevidenced one as `unevidenced-universal`; you are the
+      reader who can tell whether the evidence shown actually establishes the universal, or one
+      sample of it. One such claim passed this checklist, the gate and the grill, and let a live
+      exception escape a handler it had justified narrowing.
 
 > **Why this replaced "paired criteria on every requirement".** That rule made suite size a
 > mechanical function of requirement count: one measured feature turned 288 requirement ids into 458

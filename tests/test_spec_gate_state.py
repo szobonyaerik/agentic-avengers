@@ -158,18 +158,24 @@ def test_set_refuses_a_spec_with_no_frontmatter(tmp_path: Path) -> None:
 
 def _stamped(tmp_path: Path, gate: str) -> Path:
     spec = tmp_path / "spec.md"
-    spec.write_text("---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n- a requirement\n")
+    spec.write_text(
+        "---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n- a requirement\n"
+    )
     spec.write_text(spec_gate_cache.stamp(spec.read_text(), gate, "APPROVED"))
     return spec
 
 
-def test_freshness_reads_a_collapsed_gate_stamp_as_fresh(tmp_path: Path, capsys) -> None:
+def test_freshness_reads_a_collapsed_gate_stamp_as_fresh(
+    tmp_path: Path, capsys
+) -> None:
     spec = _stamped(tmp_path, "gate")
     assert main(["freshness", str(spec)]) == 0
     assert capsys.readouterr().out.strip() == FRESH
 
 
-def test_freshness_reads_a_legacy_fidelity_stamp_as_fresh(tmp_path: Path, capsys) -> None:
+def test_freshness_reads_a_legacy_fidelity_stamp_as_fresh(
+    tmp_path: Path, capsys
+) -> None:
     """A repository mid-upgrade still carries the two gates the one gate replaced."""
     spec = _stamped(tmp_path, "fidelity")
     assert main(["freshness", str(spec)]) == 0
@@ -183,7 +189,9 @@ def test_freshness_reads_an_edited_body_as_stale(tmp_path: Path, capsys) -> None
     assert capsys.readouterr().out.strip() == STALE
 
 
-def test_freshness_separates_a_never_hashed_spec_from_a_drifted_one(tmp_path: Path, capsys) -> None:
+def test_freshness_separates_a_never_hashed_spec_from_a_drifted_one(
+    tmp_path: Path, capsys
+) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text("---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n")
     assert main(["freshness", str(spec)]) == 1
@@ -192,3 +200,97 @@ def test_freshness_separates_a_never_hashed_spec_from_a_drifted_one(tmp_path: Pa
 
 def test_freshness_fails_closed_on_a_spec_it_cannot_read(tmp_path: Path) -> None:
     assert main(["freshness", str(tmp_path / "nope.md")]) == 2
+
+
+# --- the stamp names the bytes it approved (issue #97, folded #121) ------------------------------
+#
+# `spec_gate: approved` and `gate_gated_hash` are written together over one body. A reader that took
+# the value alone read an approval of OTHER bytes as an approval of these: gate_ci.sh asked `status`
+# and never asked about freshness, so a spec edited after its approval passed CI's stamp check. The
+# one reader now answers `stale` for that shape, and `stale` is derived, never written.
+
+
+def test_status_of_reads_an_edited_body_as_stale_not_approved(tmp_path: Path) -> None:
+    """RED against the old reader: `status_of` returned `approved` off the value alone."""
+    spec = _stamped(tmp_path, "gate")
+    assert status_of(spec) == APPROVED
+    spec.write_text(spec.read_text() + "\n- a requirement nobody gated\n")
+    assert status_of(spec) == STALE
+    assert status_of(spec) != APPROVED
+
+
+def test_a_body_the_gate_never_hashed_stays_approved_on_the_boundary(
+    tmp_path: Path,
+) -> None:
+    """UNRECORDED is unknowable drift, not proven drift; every pre-cache spec is in that state."""
+    spec = tmp_path / "spec.md"
+    spec.write_text("---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n")
+    assert status_of(spec) == APPROVED
+
+
+def test_a_blocked_stamp_is_blocked_whatever_the_body_does(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("---\nfeature: demo\nspec_gate: blocked\n---\n\n# Spec\n")
+    spec.write_text(spec_gate_cache.stamp(spec.read_text(), "gate", "BLOCKED"))
+    spec.write_text(spec.read_text() + "\n- edited\n")
+    assert status_of(spec) == BLOCKED
+
+
+def test_stale_is_derived_and_set_refuses_to_write_it(tmp_path: Path) -> None:
+    spec = _stamped(tmp_path, "gate")
+    assert main(["set", str(spec), STALE]) == 2
+    assert "spec_gate: approved" in spec.read_text()
+
+
+def test_the_cli_prints_stale_exits_not_approved_and_names_the_remedy(
+    tmp_path: Path, capsys
+) -> None:
+    spec = _stamped(tmp_path, "gate")
+    spec.write_text(spec.read_text() + "\n- a requirement nobody gated\n")
+    assert main(["status", str(spec)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out.strip() == STALE
+    assert "re-gate" in captured.err
+    assert "--rule spec-gate" in captured.err
+
+
+def test_the_cli_says_when_an_approved_token_rests_on_no_recorded_hash(
+    tmp_path: Path, capsys
+) -> None:
+    """A clean `approved` over a hash nobody recorded is the over-read clean result issue #97 names."""
+    spec = tmp_path / "spec.md"
+    spec.write_text("---\nfeature: demo\nspec_gate: approved\n---\n\n# Spec\n")
+    assert main(["status", str(spec)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == APPROVED
+    assert "UNKNOWABLE" in captured.err
+
+
+def test_a_fresh_approved_spec_is_reported_clean_with_no_note(
+    tmp_path: Path, capsys
+) -> None:
+    spec = _stamped(tmp_path, "gate")
+    assert main(["status", str(spec)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == APPROVED
+    assert captured.err == ""
+
+
+def test_a_stamp_the_cache_cannot_bind_to_any_body_fails_closed(
+    tmp_path: Path, capsys
+) -> None:
+    """RED against the checkpoint reader, which answered `approved` here.
+
+    This module's frontmatter regex and `spec_gate_cache`'s are two different parsers: a spec that
+    ends at its closing `---`, with no body and no trailing newline, is a block to one and not to
+    the other. So it carries an approved stamp this reader can see and the cache cannot bind to any
+    bytes at all - "we could not tell", which `pipeline_state` failed closed on before this reader
+    owned the question. It must not read as an approval.
+    """
+    spec = tmp_path / "spec.md"
+    spec.write_text("---\nfeature: demo\nspec_gate: approved\n---", encoding="utf-8")
+    assert status(frontmatter(spec.read_text(encoding="utf-8"))) == APPROVED
+
+    assert status_of(spec) == PENDING
+    assert main(["status", str(spec)]) == 1
+    assert "bound to no bytes at all" in capsys.readouterr().err

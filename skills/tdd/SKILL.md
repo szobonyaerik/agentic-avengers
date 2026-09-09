@@ -142,6 +142,30 @@ re-author it.
 4. If an existing test asserts behavior that is genuinely wrong, **flag it** — don't silently "fix" it
    into the migration.
 5. Record every ported/characterization test → requirement in `test-mapping.md`, and note gaps.
+6. **A parity or differential test states, in its own runtime output, what it cannot see.** Its
+   unit of detection is *divergence* between the two sides, so a defect present in BOTH - the same
+   narrowed handler in both adapters, the same wrong constant in old and new - is invisible to it
+   by construction. One fix round declined a live requirement violation with exactly that
+   reasoning: "both sides fail identically, so it is not a divergence." So a clean run must not be
+   readable as compliance: the test's failure message AND the first line of its docstring name the
+   limit (`parity holds; a defect shared by both adapters is outside what this test can see`), the
+   `test-mapping.md` row carries `blind_to: shared defect` in its notes, and every requirement the
+   parity test carries has at least one test that drives ONE side against the spec's stated
+   behaviour rather than against the other side. The Verifier checks for the statement and never
+   reads a green parity suite as the requirement holding (`skills/verifier-triage`). This is the one
+   shape of issue #96 that lives in a test rather than in a document.
+
+**Both modes are a contract the pipeline ENFORCES, not a description.** `migration` and `refactor`
+put the phase under the zero-behaviour-change contract: at your `spec-done` stamp and again at
+handover, `scripts/behaviour_drift.py` compares the phase's diff against its base and requires every
+literal, operator, membership/identity test and control-flow edge that changed to cite the
+requirement that authorised it — `# behaviour: R<n>.<k>.<m>` on the statement (or compound-statement
+header) that carries it; for something removed, on its OWN line where the statement was, since a
+comment trailing a surviving statement speaks only for that statement; for a new file, once in its
+header. Renames, moves, reformats and extracted helpers change no atom and
+need no citation. An uncited change is BLOCKING, because the alternative is what happened:
+grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change and shipped `-` as `+`
+in a capacity guard and a `0` balance sentinel as `1`, through verification and 283 green tests.
 
 ### Refactor (`work_kind: refactor`) — baseline first, behavior unchanged
 Use the migration parity-first procedure, but there is no framework/stack port: capture the relevant
@@ -187,6 +211,14 @@ See [tests.md](tests.md) for good/bad examples and [mocking.md](mocking.md) for 
   disagreeing. `scripts/interface_drift.py` fails the spec-done hook on the half it can decide, a
   call signature the block names that no source file has. The half it cannot decide is the one that
   bit hardest: two operations in the wrong ORDER both exist, so that one is still on you.
+- **A sweep by reading.** "Swept both adapters for this class" by reading which clauses were
+  narrowed is indistinguishable from driving them until someone runs the code, and it missed two
+  instances that reading could not see. A sweep is a test that DRIVES every member of the set on every
+  axis the defect can arrive on (what a collaborator returns AND what it raises), and its row in
+  `test-mapping.md` names the set and the axes. An enumerated set - "the four files" - names how it
+  was derived (`git diff --name-only`, a tree search): four named files is not "the files the work
+  touched", and the fifth carried a live crash. A single break proving a checker catches *that* break
+  proves nothing about the class; drive more than one member and say which.
 - **Horizontal slicing** — writing all tests first, then all implementation. Bulk tests verify
   *imagined* behavior; they go insensitive to real changes and lock you into test structure before you
   understand the implementation. Work in **vertical slices** — one test → one implementation → repeat.

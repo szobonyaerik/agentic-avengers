@@ -34,10 +34,14 @@ def phase(tmp_path: Path) -> Path:
 
 
 def passing_verdict(phase: Path) -> None:
-    (phase / "verdict.json").write_text(json.dumps({"verdict": "pass", "attempt": 2, "findings": []}))
+    (phase / "verdict.json").write_text(
+        json.dumps({"verdict": "pass", "attempt": 2, "findings": []})
+    )
 
 
-def reason_file(tmp_path: Path, text: str = "the scrub was defeated by JSON escaping") -> Path:
+def reason_file(
+    tmp_path: Path, text: str = "the scrub was defeated by JSON escaping"
+) -> Path:
     path = tmp_path / "reason.md"
     path.write_text(text)
     return path
@@ -157,7 +161,9 @@ def test_a_phase_with_no_ledger_has_no_amendments(phase: Path) -> None:
 def test_an_unreadable_verdict_does_not_count_as_passing(phase: Path) -> None:
     (phase / "verdict.json").write_text("not json")
     open_amendment(phase, ["R8.2.1"], "x")
-    assert due(phase) == [], "an unreadable verdict is not a pass, so nothing is owed by that route"
+    assert due(phase) == [], (
+        "an unreadable verdict is not a pass, so nothing is owed by that route"
+    )
 
 
 # ── the CLI, and the prose-in-a-file rule it obeys ───────────────────────────
@@ -166,14 +172,36 @@ def test_an_unreadable_verdict_does_not_count_as_passing(phase: Path) -> None:
 def test_the_reason_comes_from_a_file(phase: Path, tmp_path: Path) -> None:
     """Author-written prose on a command line is denied by content under --auto. The reason is
     prose, so it is read from a file — the same rule as --intent and GATE_BYPASS."""
-    assert main(["open", str(phase), "--requirements", "R8.2.1",
-                 "--reason-file", str(reason_file(tmp_path))]) == 0
+    assert (
+        main(
+            [
+                "open",
+                str(phase),
+                "--requirements",
+                "R8.2.1",
+                "--reason-file",
+                str(reason_file(tmp_path)),
+            ]
+        )
+        == 0
+    )
     assert load(phase)["amendments"][0]["reason"].startswith("the scrub")
 
 
-def test_cli_due_exits_one_when_re_verification_is_owed(phase: Path, tmp_path: Path) -> None:
-    main(["open", str(phase), "--requirements", "R8.2.30",
-          "--reason-file", str(reason_file(tmp_path)), "--security"])
+def test_cli_due_exits_one_when_re_verification_is_owed(
+    phase: Path, tmp_path: Path
+) -> None:
+    main(
+        [
+            "open",
+            str(phase),
+            "--requirements",
+            "R8.2.30",
+            "--reason-file",
+            str(reason_file(tmp_path)),
+            "--security",
+        ]
+    )
     assert main(["due", str(phase)]) == 1
     assert main(["scope", str(phase)]) == 0
 
@@ -192,15 +220,216 @@ def test_the_ledger_declares_its_own_readers(phase: Path, tmp_path: Path) -> Non
     sys.path.insert(0, str(ROOT / "scripts"))
     import doc_read_path
 
-    main(["open", str(phase), "--requirements", "R8.2.1", "--reason-file", str(reason_file(tmp_path))])
+    main(
+        [
+            "open",
+            str(phase),
+            "--requirements",
+            "R8.2.1",
+            "--reason-file",
+            str(reason_file(tmp_path)),
+        ]
+    )
     ledger = json.loads((phase / "amendments.json").read_text())
-    assert ledger["readers"], "amendments.json is on the read path and must say who reads it"
+    assert ledger["readers"], (
+        "amendments.json is on the read path and must say who reads it"
+    )
     assert doc_read_path.READ_PATH["amendments.json"]["readers"] == ledger["readers"], (
         "the table and the writer disagree about who reads this file"
     )
 
 
-def test_a_legacy_ledger_gains_readers_on_the_next_write(phase: Path, tmp_path: Path) -> None:
-    (phase / "amendments.json").write_text(json.dumps({"phase": "8-clickup", "amendments": []}))
-    main(["open", str(phase), "--requirements", "R8.2.1", "--reason-file", str(reason_file(tmp_path))])
+def test_a_legacy_ledger_gains_readers_on_the_next_write(
+    phase: Path, tmp_path: Path
+) -> None:
+    (phase / "amendments.json").write_text(
+        json.dumps({"phase": "8-clickup", "amendments": []})
+    )
+    main(
+        [
+            "open",
+            str(phase),
+            "--requirements",
+            "R8.2.1",
+            "--reason-file",
+            str(reason_file(tmp_path)),
+        ]
+    )
     assert json.loads((phase / "amendments.json").read_text())["readers"]
+
+
+# ── a scope claim carries the set it was measured over (issue #117, folded into #96) ────────────
+
+
+def test_a_reason_that_quantifies_universally_needs_a_measured_set(phase: Path) -> None:
+    """A7 claimed "nothing in the catalogue can turn waypoints red" - six of ten captures do. The
+    sentence was written at document scope over a four-field measurement, and it cost two rounds to
+    falsify. The set is a FIELD on the record, so a claim without one is refused when written."""
+    with pytest.raises(AmendmentError, match="measured_over"):
+        open_amendment(
+            phase, ["R3.3.3"], "nothing in the catalogue can turn waypoints red"
+        )
+
+
+def test_a_universal_reason_with_its_set_is_recorded_with_the_set(phase: Path) -> None:
+    record = open_amendment(
+        phase,
+        ["R3.3.3"],
+        "nothing in the catalogue can turn waypoints red",
+        measured_over=["capture-01", "capture-02", "capture-03"],
+    )
+    assert record["measured_over"] == ["capture-01", "capture-02", "capture-03"]
+    assert load(phase)["amendments"][0]["measured_over"] == record["measured_over"]
+
+
+def test_a_reason_with_no_universal_needs_no_set_and_records_none(phase: Path) -> None:
+    record = open_amendment(
+        phase, ["R8.2.30"], "the scrub was defeated by JSON escaping"
+    )
+    assert record["measured_over"] is None
+
+
+def test_the_cli_takes_the_set_as_a_comma_separated_field(
+    phase: Path, tmp_path: Path, capsys
+) -> None:
+    reason = reason_file(
+        tmp_path, "left every other clip's report bit-for-bit identical"
+    )
+    assert (
+        main(
+            [
+                "open",
+                str(phase),
+                "--requirements",
+                "R3.3.3",
+                "--reason-file",
+                str(reason),
+            ]
+        )
+        == 2
+    )
+    assert "measured_over" in capsys.readouterr().err
+    assert (
+        main(
+            [
+                "open",
+                str(phase),
+                "--requirements",
+                "R3.3.3",
+                "--reason-file",
+                str(reason),
+                "--measured-over",
+                "clip-a, clip-b, clip-c",
+            ]
+        )
+        == 0
+    )
+    assert load(phase)["amendments"][0]["measured_over"] == [
+        "clip-a",
+        "clip-b",
+        "clip-c",
+    ]
+
+
+def test_a_pre_rule_ledger_without_the_field_still_loads_and_lists(phase: Path) -> None:
+    """Records written before the field existed carry no `measured_over`; nothing back-fills and
+    nothing refuses them - the rule binds at write time only."""
+    (phase / "amendments.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "amendments": [
+                    {
+                        "id": "A1",
+                        "requirements": ["R1.1.1"],
+                        "security": False,
+                        "reason": "all callers were updated",
+                        "status": "pending",
+                        "opened_at": "2026-01-01T00:00:00Z",
+                        "verified_at": None,
+                        "evidence": None,
+                    }
+                ],
+            }
+        )
+    )
+    assert [a["id"] for a in pending(phase)] == ["A1"]
+    assert main(["pending", str(phase)]) == 1
+# --- a deferral is not an amendment, and never silences one (issue #115) --------------------------
+
+
+def test_a_deferred_finding_owes_no_amendment(phase: Path) -> None:
+    """A deferral is a change deliberately NOT made, so nothing here is owed by it."""
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [
+                    {
+                        "id": "f1",
+                        "spec_id": "R8.1.2",
+                        "status": "deferred",
+                        "deferred_to": "12-staging",
+                    }
+                ],
+            }
+        )
+    )
+    (phase / "carried.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "discharges": [],
+                "deferrals": [
+                    {
+                        "id": "f1",
+                        "finding": "f1",
+                        "owner": "12-staging",
+                        "measurement": "x",
+                    }
+                ],
+            }
+        )
+    )
+    assert due(phase) == []
+    assert pending(phase) == []
+
+
+def test_a_deferral_never_silences_a_pending_amendment(
+    phase: Path, tmp_path: Path
+) -> None:
+    (phase / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "attempt": 1,
+                "findings": [
+                    {
+                        "id": "f1",
+                        "spec_id": "R8.1.2",
+                        "status": "deferred",
+                        "deferred_to": "12-staging",
+                    }
+                ],
+            }
+        )
+    )
+    (phase / "carried.json").write_text(
+        json.dumps(
+            {
+                "phase": phase.name,
+                "discharges": [],
+                "deferrals": [
+                    {
+                        "id": "f1",
+                        "finding": "f1",
+                        "owner": "12-staging",
+                        "measurement": "x",
+                    }
+                ],
+            }
+        )
+    )
+    open_amendment(phase, ["R8.1.2"], "the same requirement also changed")
+    assert [a["id"] for a in due(phase)] == ["A1"]

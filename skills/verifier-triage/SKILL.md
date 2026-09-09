@@ -54,7 +54,8 @@ it re-verifies requirement ids here, and never touches the spec-gate hash the pr
 **Three attempts, and route-backs are bundled.** 16 of 20 re-attempts were this stage routing back
 to itself. Raise everything you can see in one pass, with your uncertainty stated, rather than
 holding a finding for the next attempt. At the cap: carry the remainder as known-open in
-`handover.md`, waive them explicitly, or escalate — a fourth attempt is not one of the three.
+`handover.md`, **defer** a finding that does not block this phase's *Done when* to the phase that
+owns it (below), waive them explicitly, or escalate — a fourth attempt is not one of the four.
 
 **An open amendment scopes the re-verification.** `amendments.py scope <phase-dir>` prints the
 requirement ids a post-verification change touched; verify **those**, not the phase. Record the
@@ -86,6 +87,46 @@ wrong tier, that is still a finding against the spec — never a test you ask th
 top of the binding the gate approved.
 
 Never edit code or tests. Triage and route only.
+
+## Method, not recollection - what a finding and a claim must carry (issue #96)
+
+Every stage in one measured feature reported a partial measurement as a complete result, and the
+artifact looked finished every time: a sweep done by READING two adapters missed two instances, one
+of which could leave a live position with no stop order; a probe that set what a collaborator
+*returns* and never what it *raises* scoped a fix round that closed half a defect; a grep count of a
+spec's criteria nearly routed back criteria that were strong when read; an acceptance bar named four
+files where the work had touched five, and the fifth carried a live crash. Five of seven were caught
+by a human reading artifacts against source, none by a test.
+
+- **Every finding carries `method`**: how you established it and how the routed agent confirms the
+  fix - what is driven, over which axes (returns AND raises; both adapters AND every public method).
+  `scripts/verifier_precheck.py` refuses a finding without one. An `instruction` that says "sweep X
+  for this class" names in `method` what the sweep must DRIVE; a sweep by reading is not a method.
+- **A grep count is not reading.** A count under-reads dense criteria and over-reads padded ones, so
+  it fails in both directions. Read the criteria before routing on their number. (Not catchable
+  mechanically; this line is the whole enforcement.)
+- **An enumerated set is a claim about how it was derived.** Four named files is not "the files the
+  work touched" unless the derivation is named (`git diff --name-only <base>`, a tree search). Search
+  the tree, not the list. (Not catchable mechanically.)
+- **A single-sample proof of a negative is one sample.** Proving a checker catches *that* break does
+  not prove it catches the class; say which members of the class were driven. (Not catchable
+  mechanically.)
+- **A scope claim is tested over exactly the set it declares.** An amendment reason or a contract
+  card's forward claim that quantifies universally ("nothing in", "every other", "all") carries the
+  set it was measured over as a field - `measured_over` on the amendment record, `measured_over:` in
+  the card's row - and is refused at write time without it (`scripts/amendments.py`,
+  `scripts/carried_items.py`). Your part is the comparison nothing mechanical can make: when you
+  re-verify an amendment or read the prior card, hold the claim's QUANTIFIER against that set. "Nothing
+  in the catalogue" cited against four fields is a finding against the record, not a fact about the
+  catalogue; test the wider scope yourself before you let the sentence stand. Three consecutive
+  amendments in one phase claimed a scope wider than their author had measured, and each cost a
+  round to correct a document.
+- **A parity or differential test's clean result is not compliance.** Its unit of detection is
+  divergence, so a defect present on BOTH sides is invisible to it by construction - and one fix
+  round declined a live requirement violation with exactly that reasoning: "both sides fail
+  identically, so it is not a divergence." Where the phase's tests include one, check that the test
+  states this limit where a reader of a green run sees it (`skills/tdd` says how), and never read
+  "parity holds" as "the requirement holds".
 
 ## Adversarial execution (what actually buys this stage)
 
@@ -144,9 +185,12 @@ the suite for them as a stage, and never record a review that did not happen.
 ## Record which stage found each defect
 
 `scripts/hook_verifier.sh` records every finding in your `verdict.json` as a defect attributed to
-`verifier` when the phase closes, and `hook_mutation.sh` records what mutation found. **What no
-script can see is the rest of what you catch** — a Breaker counterexample, a bug found by driving the real path
-by hand, one found by reading the code outside any gate. That attribution is the single most valuable
+`verifier` on every verdict write and again when the phase closes, records each counterexample in
+`breaker.json` as a defect attributed to `breaker` when the Breaker writes it, and stamps
+`verification_attempts` from the same verdict record; `hook_mutation.sh` records what mutation
+found and `spec_gate_triage.py` records each spec-gate blocker. **What no script can see is the
+rest of what you catch** — a bug found by driving the real path by hand, one found by reading the
+code outside any gate, a Breaker counterexample the Breaker never wrote to `breaker.json`. That attribution is the single most valuable
 number the pipeline produces about itself (one phase set showed the running suite catching 3 of 15
 genuine defects) and it is **unrecoverable once the run is over**, so record it while you have it:
 
@@ -272,9 +316,57 @@ but do not block on it.
 The one blocking case: a `break_glass: true` finding with **no `waiver_reason`** (missing or empty) is
 **not** honored — the finding stays `open` and blocks, flagged in the verdict as an incomplete waiver.
 
+
+### Deferring a finding: real, not this phase's *Done when*, owned by a later phase
+A finding has a fourth disposition (issue #115). `faithful-rep` phase 3 ran about 48 hours because
+every amendment round found a real defect and nothing could say *"this finding is real AND this phase
+is done"* - waiving it would have said it did not matter, fixing it widened the phase, leaving it open
+blocked the close. A human became the terminator.
+
+A finding is **deferred** when all three hold, and the gate decides the second one, not you:
+
+1. it is real - a deferral is never a lighter waiver, and the finding stays in `findings[]`;
+2. the requirement it is against carries **none** of this phase's *Done when* conditions -
+   `scripts/done_when.py` reads the `| done-when |` table under the phase in `plan.md` and the
+   `done_when:` tags on the phase's requirement lines, and refuses a finding that blocks one. Phase
+   3's A3 caught a clip containing no exercise, against the cyclic cut the *Done when* names: it would
+   have been refused, and telling stages to care less would have shipped it. A prose-only *Done when*
+   cannot defer anything, and says so;
+3. a **later** phase the plan declares owns it.
+
+Record it first, then stamp it - the record is what resolves the stamp, never the other way round:
+
+```bash
+python3 scripts/carried_items.py defer <phase-dir> <finding-id> --to <n>-<slug> \
+    --record-file <f> --finding <finding-id>          # f: line 1 = title, rest = the MEASUREMENT
+```
+
+The file's first line is the one-line title for the card row; everything after it is the finding's
+**measurement**, carried forward verbatim - the number, the clip, the reading - so the owner inherits
+the evidence and not a sentence about it. Then set the finding's `status: deferred` and
+`deferred_to: <n>-<slug>`, and put the row on `handover.md`'s `## Open items` as the command prints
+it. `bypassed` stays `false`: a deferral is not a waiver, and a phase that passes over deferred
+findings is a clean pass with named debts, not a bypass.
+
+**A stamp with nothing behind it is an OPEN finding.** `verdict_findings.open_findings` resolves
+`deferred` only for an id `carried.json` records, `scripts/carried_items.py deferred <phase-dir>` names
+every stamp nothing backs, and `hook_verifier.sh` fails the handover on it. It reads the whole
+attempt history - a passing verdict carries no findings, so the attempt that raised one is usually
+already archived - but judges each finding by the **last** record that states anything about it, so
+stamping `deferred` on attempt 1 and then FIXING the finding on attempt 2 closes cleanly; an
+archived stamp nothing ever answered is still named. A defect that was never a
+verdict finding (one found by watching a render) is deferred the same way without `--finding`; it
+then has a row and a record and no stamp to resolve.
+
+**What deferral must never be**: a way to weaken a check, delete a test or move a threshold. The
+record carries the measurement unchanged, there is no command that edits one, and a finding that DOES
+block the *Done when* is refused with exit 1 - the answer is no, and the remedy is to fix it here.
+
 ### Verdict + bypassed
-- `verdict: fail` — at least one finding is `open` (unwaived and unresolved).
-- `verdict: pass`, `bypassed: false` — no findings, or all findings resolved (`fixed`).
+- `verdict: fail` — at least one finding is `open` (unwaived and unresolved), or `deferred` with no
+  deferral recorded behind it.
+- `verdict: pass`, `bypassed: false` — no findings, or all findings resolved (`fixed`, or `deferred`
+  and backed by `carried.json`).
 - `verdict: pass`, `bypassed: true` — every remaining finding is `acknowledged` (waived). This is a
   *visible bypass*, never a silent clean green; it surfaces on the PR like any break-glass override.
 
@@ -303,14 +395,18 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
       "target": "<repo-relative test/file/requirement>",
       "severity": "blocker|major|minor",
       "instruction": "<concrete fix directions for the routed agent>",
+      "method": "<how this was established and how its fix is confirmed: what was DRIVEN, over which axes>",
       "route_to": "avenger-backend-architect|avenger-frontend-developer",
-      "status": "open|fixed|acknowledged",
+      "status": "open|fixed|acknowledged|deferred",
+      "deferred_to": null,
       "break_glass": false,
       "waiver_reason": null,
       "waived_by": null,
       "waived_at": null
     }
   ],
+  "unverified_by_gate": [ { "id": "DW-<n>", "outcome": "<the plan's Done when row, verbatim>",
+                            "verified_by_this_verdict": false } ],
   "mutation": { "enabled": false, "language": "python|java|cpp", "score": 0.0, "threshold": 0.0,
                 "policy": "enforce|advisory", "survivors": [] },
   "routed": [ { "to": "avenger-backend-architect|avenger-frontend-developer", "finding_id": "<hash>",
@@ -323,6 +419,14 @@ The one blocking case: a `break_glass: true` finding with **no `waiver_reason`**
 `binding: e2e` (traced by the journey listing the id) plus `binding: integration`. A `binding: none` id
 is outside the count and never appears in `untraced`, so a phase with unbound requirements still
 reports `traced == requirements`.
+
+`unverified_by_gate` is what makes a `pass` read as *"pass on everything I can check, and here is what
+I cannot"* (issue #116): every `human-observed` row of the phase's *Done when* table
+(`python3 scripts/done_when.py show <phase-dir>`), copied **verbatim** with
+`verified_by_this_verdict: false`, and the same ids on the contract card —
+`scripts/verifier_precheck.py` refuses a `pass` that omits one, and a paraphrase is where a
+limitation becomes a caveat. A `gate-verifiable` condition never appears here: it belongs to the rest
+of the verdict.
 
 `gamed-test` covers the tautological / implementation-coupled / missing-edge patterns above; name the
 exact pattern in the finding's `instruction`. If the mutation gate is off (the default), set

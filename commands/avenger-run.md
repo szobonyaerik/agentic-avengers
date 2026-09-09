@@ -301,6 +301,11 @@ human to poll and a foreground `poll` would hang the run indefinitely.
 2. **Mutation** — `advisory` by default: it runs, reports its score and survivors, and never blocks.
    Read survivors as candidate missing cases. It is still not a dedicated reader for gamed tests;
    there is none, and this is partial cover rather than a replacement (`skills/verifier-triage`).
+   The policy governs the **score** only: every `cosmic-ray exec` is bracketed by a snapshot and an
+   explicit restore (`scripts/mutation_exec_guard.py`), and a tree that differed **stops the phase
+   under every policy**, `--auto` included, because a mutant left on disk would be committed as
+   authored code. That stop is not a score to interpret and `GATE_BYPASS` does not waive the two
+   outcomes that leave the tree unestablished - `skills/mutation-interpret` is how to read it.
 3. **Carried items** - the handover hook runs **three** carried-items checks and refuses the card if
    any of them fails, so three separate things can stop this phase closing: the *previous* phase's
    card has an item with no answer here (`verifier:carried`); this phase's own new card states
@@ -522,8 +527,11 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   ```
   Run directly by you as the orchestrating stage, the same way `defect` is (§6d). It is **belt and
   braces, not the only mechanism**: `scripts/hook_phase_close.sh` is a `PostToolUse` hook on `Bash`
-  that fires after the commit ran and stamps every phase that commit touched, so a run that forgets
-  this step still records the close. (This paragraph used to say no hook could see the commit land.
+  that fires after the commit ran and stamps every phase that commit touched **whose `handover.md` is
+  committed and which has nothing left uncommitted under it** - a spec, plan or amendment commit
+  leaves the directory clean too and is not the landing (issue #120) - so a run that forgets this
+  step still records the close. The card need not be in THIS commit: one commit can carry the card
+  while the directory is still dirty, and the commit that cleans it is the one that stamps. (This paragraph used to say no hook could see the commit land.
   That was the defect — one can, and while it said otherwise nothing stamped the close at all for
   two measured phases running.) `record_phase_close` converges on a phase already closed, so running
   both costs nothing; opencode has no such hook and this command is its only emitter.
@@ -596,8 +604,10 @@ preflight sweep picks it up. Do **not** auto-file issues instead — `hook_autoa
   phase's new-finding series was 6, 2, 8, 4, 2, 1, 0, 6 — a gate disclosing a subset of what it could
   already see, one full re-verification at a time. `scripts/verifier_attempts.py check <phase-dir>`
   reports where a phase stands and prints the series. At the cap the remaining findings are
-  **carried as known-open in `handover.md`, waived explicitly, or escalated** — a fourth attempt is
-  not one of the three, and some findings being carried rather than fixed is the accepted trade.
+  **carried as known-open in `handover.md`, deferred to the later phase that owns them (gated on this
+  phase's structured *Done when*: `scripts/carried_items.py defer`, refusing any finding that blocks
+  it), waived explicitly, or escalated** — a fourth attempt is not one of the four, and some findings
+  being carried rather than fixed is the accepted trade.
 - **A post-verification change is an AMENDMENT, not a new round.** When a verified phase must
   change, record what it touches and re-verify only that:
   ```bash
@@ -656,6 +666,10 @@ procedure and the triage step in `skills/pipeline-retrospective`.
 - Respect `work_kind` (greenfield | migration | refactor) for the implementer's test mode. It is in
   **the spec's own frontmatter** — no stage opens a second document for it.
   `e2e-author` is not selected by `work_kind` — it runs once, at feature close.
+  **`migration` and `refactor` are also the zero-behaviour-change contract**: `behaviour_drift.py`
+  compares the phase's diff against its base at `spec-done` and at handover, and an uncited literal,
+  operator or control-flow change BLOCKS. If the phase turns out to need a behaviour change, that is
+  greenfield work — route the spec back for a requirement the implementer can cite, never a bypass.
 - Integration-level tests by default; a `narrow` test needs written justification in `test-mapping.md`.
 - **Documentation cost is read frequency, not size.** Each stage reads what
   `skills/pipeline-conventions` § *The document read path* gives it and no more — the contract card

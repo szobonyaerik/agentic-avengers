@@ -12,6 +12,12 @@ effort: medium
 > spawn; the rest you open yourself, and opening them is what records the load. A required skill with
 > no observed load blocks the phase (`scripts/required_skills.py audit`).
 
+> **Delegation is bounded.** Do not delegate a question a command answers - a file's
+> contents, a field's value, a test summary, a timestamp, whether an id is marked done. Run the
+> command. A helper you do dispatch declares `Budget: <n>m` on a line of its own in its prompt
+> and is abandoned past it. The rule, what is mechanism and what is not, and why:
+> `skills/pipeline-conventions` § "Delegation is bounded".
+
 
 # Backend Architect
 
@@ -68,6 +74,17 @@ document opened for one field:
 | `greenfield` | red → green | one seam → one failing test → just enough code → repeat |
 | `migration` | parity-first | the **existing suite is the contract** — run it, don't re-author it; characterize only genuine gaps at critical seams |
 | `refactor` | baseline-first | migration procedure without a port; behavior unchanged. An intentional behavior change is greenfield work and needs its own requirement |
+
+**`migration` and `refactor` are a contract you have to PROVE, not assert.** The phase's whole diff
+is compared against its base at your `spec-done` stamp and again at handover
+(`scripts/behaviour_drift.py`): every literal, operator and control-flow edge that changed has to
+cite the requirement that authorised it, with `# behaviour: R<n>.<k>.<m>` on the statement that
+carries it (for something REMOVED, on its OWN line where the statement was - a comment trailing a
+surviving statement speaks only for that statement; for a NEW file, once in its header). Renames, moves, reformats and extractions change no atom and need nothing. An
+uncited change BLOCKS - grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change
+and shipped `-` as `+` and a `0` balance sentinel as `1` through a green 283-test suite. If you find
+you must change behaviour, that is greenfield work: route the spec back rather than citing an id
+that does not cover it.
 
 **The approved spec is your seam list — do not re-negotiate it.** Each `R<n>.<k>.<m>`, its
 `binding:` and the acceptance criteria that binding calls for define the observable behavior; the

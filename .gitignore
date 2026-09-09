@@ -46,3 +46,8 @@ __pycache__/
 # record (`skill_loads[]`), written by scripts/hook_skill_load.sh. A separate log would be a second
 # store of the same fact, and the audit that consumes it would then have two answers to reconcile.
 .avenger-metrics.log
+
+# pipeline metrics: writes firstmate's seal turned away, queued verbatim until the phase is reopened
+# (scripts/metrics_sink.py spool, `pipeline_metrics.py spool --drain`). Never a second store of a
+# measurement - each line is one refused command, gone the moment it lands.
+.avenger-metrics-spool.jsonl

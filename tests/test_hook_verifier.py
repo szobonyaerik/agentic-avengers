@@ -118,7 +118,13 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
                 {
                     "attempt": number,
                     "verdict": result,
-                    "findings": [{"id": f"a{number}-{i}"} for i in range(findings)],
+                    "findings": [
+                        {
+                            "id": f"a{number}-{i}",
+                            "method": "drove the seam and compared outcomes",
+                        }
+                        for i in range(findings)
+                    ],
                 }
             )
         )
@@ -126,7 +132,17 @@ def attempts(project: Path, series: list[tuple[int, int, str]]) -> None:
     verdict = {
         "attempt": number,
         "verdict": result,
-        "findings": [{"id": f"f{i}", "status": "open"} for i in range(findings)],
+        "findings": [
+            {
+                "id": f"f{i}",
+                "status": "open",
+                # Issue #96: a finding names its method. These fixtures pin the attempt cap, so the
+                # field is here only to get past `verifier_precheck`; `tests/test_verifier_precheck.py`
+                # owns the rule itself.
+                "method": "drove the seam and compared outcomes",
+            }
+            for i in range(findings)
+        ],
         "routed": [{"to": "implementer", "reason": "code issue", "finding_id": "f0"}],
     }
     if result == "pass":
@@ -187,6 +203,9 @@ def test_the_cap_names_the_three_honest_ways_out(project: Path) -> None:
     assert "KNOWN-OPEN" in err
     assert "waive" in err
     assert "escalate" in err
+    # The sentence `test_under_the_cap_the_phase_still_routes_back_normally` asserts the ABSENCE of.
+    # Pinned on both sides, so the negative assertion cannot quietly stop meaning anything.
+    assert "a further attempt is refused" in err
 
 
 def test_under_the_cap_the_phase_still_routes_back_normally(project: Path) -> None:
@@ -197,7 +216,11 @@ def test_under_the_cap_the_phase_still_routes_back_normally(project: Path) -> No
 
     assert result.returncode == 2
     assert "route back per its findings" in result.stderr
-    assert "refused" not in result.stderr
+    # The cap's OWN sentence, not the bare word "refused". Every guard on this hook's path prints a
+    # scope statement saying what its clean result does not establish (CLAUDE.md §11), and one of
+    # them uses the word about something else entirely - so a bare substring here reported the cap
+    # as having fired over a line of documentation. The anchor is what the cap actually says.
+    assert "a further attempt is refused" not in result.stderr
 
 
 def test_a_phase_that_passes_cleanly_on_its_last_allowed_attempt_still_passes(
@@ -223,7 +246,9 @@ def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(
             {
                 "attempt": "N/A",
                 "verdict": "fail",
-                "findings": [{"id": "f0", "status": "open"}],
+                "findings": [
+                    {"id": "f0", "status": "open", "method": "drove the seam"}
+                ],
                 "routed": [
                     {"to": "implementer", "reason": "code issue", "finding_id": "f0"}
                 ],
@@ -236,7 +261,7 @@ def test_a_record_the_cap_cannot_read_stops_without_claiming_to_be_the_cap(
     assert result.returncode == 2
     assert "could not be DECIDED" in result.stderr
     assert "not the cap itself" in result.stderr
-    assert "A fourth attempt is not one of the three" not in result.stderr
+    assert "A fourth attempt is not one of the four" not in result.stderr
     assert "KNOWN-OPEN" not in result.stderr
 
 
@@ -482,10 +507,15 @@ def test_an_undecidable_breaker_check_is_not_reported_as_a_breaker_that_never_ra
     """
     write_spec(project, criticality="critical")
     attempts(project, [(1, 0, "pass")])
+    # Guarded on `__main__` because the real script's exit comes from its CLI, never from being
+    # imported: `doc_read_path` reads this module's READERS, so a stub that detonated at import
+    # time would fail whichever check imported it rather than the branch under test.
     (project / "scripts" / "breaker_gate.py").write_text(
         "import sys\n"
-        "print('[breaker_gate] the check could not be decided: boom', file=sys.stderr)\n"
-        "raise SystemExit(2)\n"
+        "READERS = []\n"
+        "if __name__ == '__main__':\n"
+        "    print('[breaker_gate] the check could not be decided: boom', file=sys.stderr)\n"
+        "    raise SystemExit(2)\n"
     )
 
     result = run_hook(project)
@@ -1152,6 +1182,50 @@ def test_a_suite_that_hangs_to_its_watchdog_fails_the_hook(project: Path) -> Non
     )
 
 
+def test_the_phase_suite_runs_under_the_hooks_own_interpreter_never_a_path_pytest(
+    project: Path, tmp_path: Path
+) -> None:
+    """Issue #98 (folded from agents#31): three tests failed under a bare `python3` and passed under
+    the venv, so WHICH `pytest` ran was load-bearing and a PATH lookup pinned nothing. A decoy
+    `pytest` on PATH reports green and records that it was reached for; a genuinely red phase test
+    must still fail the hook, because the hook ran `python3 -m pytest` and never the decoy."""
+    write_spec(project)
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    (tests / "test_red.py").write_text(
+        "def test_red():\n    assert False\n", encoding="utf-8"
+    )
+    attempts(project, [(1, 0, "pass")])
+    decoy_dir = tmp_path / "decoy-bin"
+    decoy_dir.mkdir()
+    decoy = decoy_dir / "pytest"
+    decoy.write_text(
+        f"#!/bin/sh\ntouch {str(tmp_path / 'decoy-ran')!r}\necho '1 passed in 0.01s'\nexit 0\n",
+        encoding="utf-8",
+    )
+    decoy.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", str(project / "scripts" / "hook_verifier.sh")],
+        input='{"tool_input": {"file_path": "%s"}}'
+        % (phase_dir(project) / "handover.md"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={
+            "PATH": f"{decoy_dir}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+            "HOME": str(project),
+            "CLAUDE_PROJECT_DIR": str(project),
+            "SUITE_BUDGET_S": "60",
+        },
+    )
+    assert not (tmp_path / "decoy-ran").exists(), (
+        "the hook reached for the PATH `pytest`"
+    )
+    assert proc.returncode != 0, "a red phase suite passed the hook"
+    assert "test_red" in proc.stdout + proc.stderr
+
+
 def test_a_green_phase_suite_still_passes_the_same_gate(project: Path) -> None:
     """The counterweight: the check must fail a hang WITHOUT failing an ordinary green run."""
     write_spec(project)
@@ -1165,3 +1239,405 @@ def test_a_green_phase_suite_still_passes_the_same_gate(project: Path) -> None:
     assert "did not complete" not in (proc.stdout + proc.stderr).lower(), (
         proc.stdout + proc.stderr
     )
+
+
+# ── the `done` stamp is BOUND to the bytes the hook checked (issue #97, folded #121) ──
+
+
+def test_a_stamp_the_hook_lets_stand_is_bound_to_its_mapping_and_tests(
+    project: Path,
+) -> None:
+    """RED before the fix: the hook passed and the stamp named nothing - an edit one second later
+    left `done` standing over work the checks had never seen."""
+    import spec_done_guard
+
+    spec_path = write_done_spec(project, mapping="row")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "done_digest:" in spec_path.read_text()
+    assert "bound `status: done`" in result.stderr
+    assert spec_done_guard.bound(spec_path) is True
+
+    mapping = spec_path.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text() + "| R1.1.2 | test_more | integration | later |\n"
+    )
+    assert spec_done_guard.bound(spec_path) is False
+
+
+def test_a_reverted_stamp_is_never_bound(project: Path) -> None:
+    spec_path = write_done_spec(project, mapping="header-only")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 2
+    assert "done_digest:" not in spec_path.read_text()
+
+
+def test_a_stamp_already_done_at_head_is_not_bound_either(project: Path) -> None:
+    """Shipped is shipped: a spec `done` at HEAD is counted, never rewritten - not even with a key."""
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "done_digest:" not in spec_path.read_text()
+
+
+def _ship_with_a_stale_digest(project: Path) -> Path:
+    """A shipped, BOUND spec whose mapping then changed - the state a route-back produces.
+
+    Locked-after-verify allows adding a case to a verified phase, so this is ordinary work, not an
+    abuse: the spec is committed `done`, the hook bound it, and a later edit to `test-mapping.md`
+    leaves the recorded digest naming bytes that are no longer there.
+    """
+    import spec_done_guard
+
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=True)
+    spec_done_guard.bind(spec_path)
+    mapping = spec_path.parent / "test-mapping.md"
+    mapping.write_text(
+        mapping.read_text()
+        + "| R1.1.2 | test_x.py::test_more | integration | route-back |\n"
+    )
+    assert spec_done_guard.bound(spec_path) is False
+    return spec_path
+
+
+def test_the_prescribed_remedy_re_binds_a_shipped_stamp(project: Path) -> None:
+    """RED before the fix: binding rode `stamp_is_new`, false for every committed `done`, so the
+    remedy both `verifier_precheck` and `spec_done_guard` prescribe - write the spec again - reached
+    this hook, printed `already stamped done at HEAD`, bound nothing, and left the precheck finding
+    standing on every later run. A documented remedy that silently no-ops is the class #97 closes."""
+    import spec_done_guard
+
+    spec_path = _ship_with_a_stale_digest(project)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert spec_done_guard.bound(spec_path) is True
+    assert "re-binding" in result.stderr
+
+
+def test_re_binding_a_shipped_stamp_never_rewrites_the_stamp_itself(
+    project: Path,
+) -> None:
+    """The whole reason the bind path needed its own evidence: `status: done` on a shipped spec is
+    the single evidence `applicability.spec_shipped` reads, and rewriting it is the wedge (§3a)."""
+    spec_path = _ship_with_a_stale_digest(project)
+
+    run_spec_done_hook(project, spec_path)
+
+    assert "status: done" in spec_path.read_text()
+
+
+def test_a_shipped_stamp_whose_mapping_does_not_hold_is_left_exactly_as_it_arrived(
+    project: Path,
+) -> None:
+    """The re-bind is withheld, not failed. Refusing a write that passed before this path existed
+    would be a new block on closed work, and the precheck already reports the stale digest."""
+    import spec_done_guard
+
+    spec_path = _ship_with_a_stale_digest(project)
+    (spec_path.parent / "test-mapping.md").write_text(
+        "| requirement | test | level | why |\n|---|---|---|---|\n"
+    )
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "WITHHELD" in result.stderr
+    assert "status: done" in spec_path.read_text()
+    assert spec_done_guard.bound(spec_path) is False
+
+
+def test_a_shipped_stamp_carrying_no_digest_is_still_never_bound(project: Path) -> None:
+    """The rebind path acts on a RECORDED digest that no longer matches, and on nothing else. A
+    stamp with no digest was never checked by this hook, so binding one now would invent a
+    certification - it stays counted, never held, exactly as the precheck reports it."""
+    spec_path = write_done_spec(project, mapping="row", head_status="done")
+    write_phase_tests(project, passing=True)
+
+    result = run_spec_done_hook(project, spec_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "done_digest:" not in spec_path.read_text()
+    assert "re-binding" not in result.stderr
+
+
+# ── a verdict is bound to a HEAD, and the close refuses to carry a stale one (#97, #122) ──
+
+
+def _git(project: Path, *args: str) -> str:
+    return subprocess.run(  # noqa: S603
+        ["git", "-C", str(project), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _commit_all(project: Path, message: str) -> None:
+    _git(project, "add", "-A")
+    _git(project, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
+
+
+def _commit_paths(project: Path, message: str, *paths: str) -> None:
+    """A fix round commits the source it touched, never the phase's open verdict or evidence."""
+    _git(project, "add", "--", *paths)
+    _git(project, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
+
+
+def open_verified_phase(project: Path) -> None:
+    """Source committed, then a passing verdict recorded at that head and left uncommitted."""
+    _git(project, "init", "-q")
+    (project / "src.py").write_text("def f():\n    return 1\n")
+    write_spec(project)
+    _commit_all(project, "phase 1 implementation")
+    attempts(project, [(1, 0, "pass")])
+
+
+def test_a_fix_round_that_moves_the_head_past_an_open_verdict_does_not_close(
+    project: Path,
+) -> None:
+    """RED before the fix: the handover never compared the verified head against the branch."""
+    open_verified_phase(project)
+    (project / "src.py").write_text("def f():\n    return 2  # fix round\n")
+    _commit_paths(project, "review gate: fix", "src.py")
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "STALE" in result.stderr
+    assert "amendment" in result.stderr
+    assert "do NOT rewrite verdict.json" in result.stderr
+
+
+def test_an_open_verdict_over_an_unmoved_head_still_closes(project: Path) -> None:
+    open_verified_phase(project)
+    result = run_hook(project)
+    assert result.returncode == 0, result.stderr
+
+
+def test_recording_the_amendment_lets_the_phase_close(project: Path) -> None:
+    open_verified_phase(project)
+    (project / "src.py").write_text("def f():\n    return 2\n")
+    _commit_paths(project, "review gate: fix", "src.py")
+    (phase_dir(project) / "amendments.json").write_text(
+        json.dumps({"phase": "1-demo", "amendments": []})
+    )
+    result = run_hook(project)
+    assert result.returncode == 0, result.stderr
+
+
+# ── the suite is the expensive step, so it runs after the free ones ──────────────────────────────
+
+
+def test_a_bookkeeping_finding_stops_the_handover_without_paying_for_the_suite(
+    project: Path,
+) -> None:
+    """RED before the fix: the handover ran the phase suite first and the precheck after it.
+
+    The suite is the one step here that costs wall clock — roughly a minute on a measured phase —
+    and nothing below it reads a bookkeeping finding, so a phase whose mapping is broken paid for a
+    full run to be told something static and free. The sentinel is the measurement: a suite that ran
+    leaves it behind.
+    """
+    write_spec(project)
+    spec = phase_dir(project) / "specs" / "1.1-a" / "spec.md"
+    spec.write_text(spec.read_text().replace("## Acceptance criteria", "## Criteria"))
+    tests = project / "tests" / "demo" / "1-demo"
+    tests.mkdir(parents=True)
+    sentinel = project / "suite-ran"
+    (tests / "test_marker.py").write_text(
+        f"def test_marker():\n    open({str(sentinel)!r}, 'w').close()\n"
+    )
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project)
+
+    assert result.returncode == 2
+    assert "pre-check" in result.stderr
+    assert not sentinel.exists(), (
+        "the phase suite ran before a finding that cannot depend on it"
+    )
+
+
+# ── a deferred finding is resolved by its record, never by its stamp (issue #115) ────────────────
+
+DONE_WHEN_PLAN = """---
+feature: demo
+readers: x
+---
+### Phase 1 — demo
+- **Done when**: the demo demos.
+
+  | done-when | outcome |
+  |-----------|---------|
+  | DW-1 | the demo demos |
+
+### Phase 2 — later
+- **Done when**: later.
+"""
+
+DEFERRED_CARD = (
+    "# handover\n\n## Open items\n"
+    "| id | kind | title | where |\n|---|---|---|---|\n"
+    "| deadbeef0001 | deferred-finding | the bar renders end-on | carried.json#deferrals (owner 2-later) |\n"
+)
+
+
+def write_bound_spec(project: Path) -> None:
+    """A spec whose R1.1.1 carries DW-1 and whose R1.1.2 does not, gate-stamped like `write_spec`."""
+    spec_dir = phase_dir(project) / "specs" / "1.1-a"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    path = spec_dir / "spec.md"
+    path.write_text(
+        "---\nfeature: demo\nphase: 1-demo\nspec: 1.1-a\ncriticality: standard\n---\n\n# Spec\n\n"
+        "## Requirements\n"
+        "- R1.1.1 — `binding: none` — `done_when: DW-1` — the bound one. Enforced by: nothing\n"
+        "- R1.1.2 — `binding: none` — the unbound one. Enforced by: nothing\n\n"
+        "## Acceptance criteria\n\nDone.\n"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(project / "scripts" / "spec_gate_cache.py"),
+            "stamp",
+            str(path),
+            "gate",
+            "APPROVED",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def deferred_pass(project: Path, spec_id: str = "R1.1.2") -> None:
+    (project / "docs" / "features" / "demo" / "plan.md").write_text(
+        DONE_WHEN_PLAN, encoding="utf-8"
+    )
+    write_bound_spec(project)
+    (phase_dir(project) / "verdict.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "verdict": "pass",
+                "findings": [
+                    {
+                        "id": "deadbeef0001",
+                        "spec_id": spec_id,
+                        "status": "deferred",
+                        "deferred_to": "2-later",
+                        # A deferral is a change deliberately not made, so the
+                        # finding still owes how it was established (issue #96).
+                        "method": "drove the renderer over the 10 catalogue bars",
+                    }
+                ],
+                "execution": {
+                    "evidence": "verification-evidence.json",
+                    "chain": record_evidence(project),
+                },
+            }
+        )
+    )
+
+
+def defer(project: Path, *extra: str) -> subprocess.CompletedProcess:
+    record = project / "record.md"
+    record.write_text(
+        "the bar renders end-on\n7.7 deg between bar axis and view direction\n",
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(project / "scripts" / "carried_items.py"),
+            "defer",
+            str(phase_dir(project)),
+            "deadbeef0001",
+            "--to",
+            "2-later",
+            "--record-file",
+            str(record),
+            "--finding",
+            "deadbeef0001",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "AVENGER_METRICS_OFF": "1"},
+    )
+
+
+def test_a_pass_over_a_deferred_stamp_nothing_backs_does_not_close(
+    project: Path,
+) -> None:
+    deferred_pass(project)
+
+    result = run_hook(project, DEFERRED_CARD, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 2
+    assert "deadbeef0001" in result.stderr
+    assert "nothing behind it" in result.stderr
+    assert (
+        "verifier:deferred-unbacked" in result.stderr
+        or "A stamp alone is an open finding" in result.stderr
+    )
+
+
+def test_a_recorded_deferral_with_its_row_lets_the_phase_close(project: Path) -> None:
+    deferred_pass(project)
+    recorded = defer(project)
+    assert recorded.returncode == 0, recorded.stderr
+
+    result = run_hook(project, DEFERRED_CARD, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 0, result.stderr
+    assert "1 deferral(s)" in result.stderr
+
+
+def test_a_recorded_deferral_with_no_row_on_the_card_does_not_close(
+    project: Path,
+) -> None:
+    deferred_pass(project)
+    assert defer(project).returncode == 0
+
+    result = run_hook(project, AVENGER_METRICS_OFF="1")  # the default card says `none`
+
+    assert result.returncode == 2
+    assert "no `deferred-finding` row" in result.stderr
+
+
+def test_a_finding_that_blocks_the_done_when_cannot_be_deferred_and_the_phase_does_not_close(
+    project: Path,
+) -> None:
+    deferred_pass(project, spec_id="R1.1.1")
+    refused = defer(project)
+    assert refused.returncode == 1
+    assert (
+        "blocks this phase's *Done when*" in refused.stderr and "DW-1" in refused.stderr
+    )
+
+    result = run_hook(project, DEFERRED_CARD, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 2
+    assert "nothing behind it" in result.stderr
+
+
+def test_a_pre_rule_phase_with_no_done_when_table_closes_exactly_as_before(
+    project: Path,
+) -> None:
+    """The applicability boundary: a phase that never deferred anything is untouched by the rule."""
+    write_spec(project)
+    attempts(project, [(1, 0, "pass")])
+
+    result = run_hook(project, AVENGER_METRICS_OFF="1")
+
+    assert result.returncode == 0, result.stderr
+    assert "0 deferral(s)" in result.stderr

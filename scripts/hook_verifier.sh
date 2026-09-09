@@ -40,6 +40,7 @@
 # $PHASE overrides the derived slug. Unresolvable phase -> full suite (minus e2e), never zero tests.
 set -uo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # plugin scripts dir (bypass_log)
+. "$SD/test_root_args.sh"   # one owner of "the declared test roots, as pytest arguments"
 . "$SD/load_env.sh"   # pipeline config from the project .env (real env always wins)
 INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
@@ -62,6 +63,23 @@ case "$FILE" in
     # Emitted HERE rather than at a caller: a stage cannot forget an emission it does not make.
     # Idempotent by finding id, so this and the close-time emission converge on one entry.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
+    # The verification ATTEMPT count, from the same record (issue #120). It used to be counted per
+    # invocation of a review script that no longer exists, and when that script went the count went
+    # with it: every record the pipeline wrote after that carried null while the phase's own verdict
+    # read `attempt: 4`. The verdict write is the moment an attempt is concluded, so it is stamped
+    # here, derived from `verdict.json` and its archives - the number the 3-attempt cap reads.
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$(dirname "$FILE")" >/dev/null || true
+    exit 0 ;;
+  */breaker.json)
+    # MEASUREMENT ONLY — never a gate, always exits 0.
+    #
+    # A `found` verdict here is the Breaker CONCLUDING a defect - the stage that found phase 8's
+    # credential leaks by constructing inputs - and until this branch existed nothing recorded it:
+    # `skills/verifier-triage` asked the Verifier to run `defect --found-by breaker` by hand, which
+    # is an instruction with no mechanism, and one measured phase closed recording 1 defect against
+    # at least 5 it produced (issue #120). Idempotent by counterexample, converging with the
+    # close-time emission below.
+    python3 "$SD/pipeline_metrics.py" breaker-findings "$(dirname "$FILE")" "$FILE" >/dev/null || true
     exit 0 ;;
   */handover.md)
     TRIGGER="handover" ;;
@@ -95,10 +113,12 @@ FEATURE="$(derive_feature "$FILE" || true)"
 # the phase landing — this hook still has to check the suite, the verdict, amendments and carried
 # items below, any of which can still route the phase back. Stamping here recorded `closed` and
 # `elapsed_minutes` for phases that were not, in fact, done: an open amendment, a further Verifier
-# finding, a blocked handover, nothing pushed. `commands/avenger-run.md` §5 stamps the close itself,
-# directly, right after the per-phase commit actually lands — the one moment this hook cannot see.
-# `record_phase_close` also refuses the write itself while the phase directory is still uncommitted,
-# so a caller that got the ordering wrong fails the write rather than recording a false close.
+# finding, a blocked handover, nothing pushed. `hook_phase_close.sh` stamps it instead, on the commit
+# that lands the phase - a `PostToolUse` hook on `Bash` runs after the commit, which is the moment
+# this hook cannot see - with `commands/avenger-run.md` §5 the other emitter and the only one on
+# opencode. `record_phase_close` also refuses the write itself until the contract card is COMMITTED
+# and nothing under the phase directory is uncommitted, so a caller that got the ordering wrong
+# fails the write rather than recording a false close.
 
 # Layout: tests/<feature>/<n>-<slug>/... ; fall back to tests/<slug> for repos on the older layout.
 TESTPATH=""
@@ -134,7 +154,19 @@ fail() {   # $1 = bypass tag, rest = message
 # `applicability.spec_shipped` reads, which flips the requirement cap from counting a shipped spec
 # to blocking it with a split it cannot take. A spec already stamped `done` at committed HEAD is
 # CLOSED: counted and named on stderr, never reverted, never blocked here.
+#
+# BINDING is a SEPARATE question from reverting, with its own evidence (issue #97's own fix round).
+# `STAMP_BINDS` answers "may this hook rewrite the stamp", and gating the BIND on it made the
+# documented remedy for a stale digest silently no-op: once a bound `done` spec is committed, a
+# route-back that adds a test case (locked-after-verify allows exactly that) makes
+# `verifier_precheck.done_stamp_problem` fire, and its remedy - stamp `done` again through a tool
+# write - lands here as "already stamped done at HEAD", binds nothing, and the finding stands on
+# every later run. A check reporting success while doing nothing is the class this issue exists to
+# close. So `STAMP_REBINDS` carries the bind path's own evidence: a digest IS recorded and no longer
+# matches. Nothing is reverted on that path and nothing new is blocked on it - a shipped spec that
+# cannot be re-bound is left exactly where it already was, with the precheck still reporting it.
 STAMP_BINDS=0
+STAMP_REBINDS=0
 STAMP_NOTE=""
 
 revert_premature_stamp() {
@@ -162,6 +194,21 @@ if [ "$TRIGGER" = "spec-done" ]; then
       "verifier ($TRIGGER): whether this 'status: done' stamp is NEW could not be DECIDED (cause" \
       "above) — this is not a premature stamp, and finishing the mapping will not repair it. The" \
       "stamp is left exactly as written. Fix what it named."
+  else
+    # The stamp has SHIPPED, so nothing here may rewrite it. Its DIGEST is a different question, and
+    # a recorded digest that no longer matches is the bind path's own evidence: the write that
+    # brought us here IS the documented remedy, and it re-binds below once the mapping and the suite
+    # have passed over the bytes that are actually there. Exit 3 (no digest at all) stays counted
+    # and never held - re-binding it would invent a certification from a stamp nobody checked.
+    # `bound`'s stderr names the remedy for a reader who has to act; on the path that IS the remedy
+    # it would be noise, so it is held back and printed only when this hook is not about to act.
+    bound_err=$(python3 "$SD/spec_done_guard.py" bound "$FILE" 2>&1); bound_rc=$?
+    if [ "$bound_rc" -eq 1 ]; then
+      STAMP_REBINDS=1
+      printf '%s\n' "[spec-done] this spec has SHIPPED, so its stamp is never rewritten here — but its recorded done_digest no longer matches its test-mapping.md or its own tests. Re-checking both and re-binding, which is what the precheck's remedy prescribes." >&2
+    elif [ -n "$bound_err" ]; then
+      printf '%s\n' "$bound_err" >&2
+    fi
   fi
 fi
 
@@ -193,19 +240,71 @@ if [ "$STAMP_BINDS" = "1" ]; then
   fi
 fi
 
+# The rebind path asks the same mapping question and answers it differently. A shipped spec whose
+# mapping does not hold (or cannot be decided) is left exactly where it already was: not reverted,
+# because its stamp has shipped, and not FAILED, because refusing a write that used to pass would be
+# a new block on closed work (§3a). Only the re-bind is withheld — the precheck goes on reporting the
+# stale digest, with the same remedy, which is the state this hook found rather than one it created.
+if [ "$STAMP_REBINDS" = "1" ]; then
+  if ! python3 "$SD/spec_done_guard.py" mapping-complete "$FILE" >/dev/null 2>&1; then
+    STAMP_REBINDS=0
+    printf '%s\n' "[spec-done] the re-bind is WITHHELD: this shipped spec's test-mapping.md does not hold (run 'spec_done_guard.py mapping-complete' on it for the cause). Its stamp is untouched and its recorded done_digest still does not match, so the precheck keeps reporting it." >&2
+  fi
+fi
+
+# The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
+# untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
+# is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
+# script can do: coverage judged per `binding:`, and adversarial execution against secrets, resource
+# lifetimes and concurrency invariants.
+#
+# Asked BEFORE the suite on the handover (issue #97, folded #122): the suite is the one thing here
+# that costs wall clock - roughly a minute on a measured phase - and it was run before every check
+# whose answer could not depend on it. A bookkeeping finding is static and free; paying the suite to
+# learn a mapping row names no test is the shape "re-runs the full suite before doing anything a
+# re-run could inform" describes. Nothing here reads the suite's result, so nothing moves.
+if [ "$TRIGGER" = "handover" ]; then
+  PHASE_DIR="$(dirname "$FILE")"
+  if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
+    fail "verifier:precheck" \
+      "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
+      "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
+  fi
+fi
+
 # Through `suite_outcome.py run`, never bare `pytest`: a suite that HANGS used to wedge this hook
 # until the harness killed it, and a suite that died before printing anything came back with an exit
 # code and no result to read. `suite_outcome` bounds the run in its own process group and answers
 # the one question an exit code cannot — did this suite RUN, or did it merely stop. The decision
 # lives there because the recorded transcript (`verifier_evidence.py`) asks it of the same suite,
 # and a rule written twice is a rule that drifts. `SUITE_BUDGET_S` is where a project puts the
-# watchdog inside this hook's own harness budget.
+# watchdog inside this hook's own harness budget. `python3 -m pytest`, never a bare `pytest`: which
+# interpreter runs the suite was load-bearing once (three tests failing under a bare `python3` and
+# passing under the venv, issue #98) and a PATH lookup pins nothing; the same `python3` that runs
+# every check in this hook runs the suite.
+#
+# THE FULL-SUITE FALLBACK RUNS THE PROJECT'S DECLARED TEST ROOTS, asked of the module that owns the
+# declaration (`subprocess_check.py --print-roots`, $SUBPROC_CHECK_PATHS else tests/) rather than
+# re-derived here. It used to pass pytest NO root and a hardcoded `--ignore=tests/e2e`, which is the
+# whole repository including the real e2e directory for any project whose tests are not at `tests/`
+# - so this gate ran one population while `pipeline_metrics.count_tests` stamped
+# `tests_before`/`tests_after` from another, measured at 4 against 3 on a scratch project with tests
+# at `suite/` (issue #120). Excluding each declared root's own `e2e/` is what §4b already says this
+# hook does; it simply did not do it anywhere but the default layout.
+#
+# Resolution failing is NOT a reason to widen back to the whole tree: with no roots readable the run
+# keeps its previous shape and says so, since a silent fallback to a different population is the
+# defect being removed.
 if [ -n "$TESTPATH" ]; then
   SCOPE="$TESTPATH ($TRIGGER)"
-  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
+  OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short "$TESTPATH" 2>&1); pc=$?
 else
-  SCOPE="full suite minus e2e ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
-  OUT=$(python3 "$SD/suite_outcome.py" run -- pytest -q --tb=short --ignore=tests/e2e 2>&1); pc=$?
+  # `test_root_args.sh` owns the assembly, and `gate_ci.sh` asks the same question of the same file:
+  # two shell copies of one rule is the drift this whole change removes, and these two gates ran
+  # different populations while it had two. `python3 -m pytest` for the reason above (issue #98).
+  test_root_pytest_args "$SD" || true
+  SCOPE="$TEST_ROOT_SCOPE ($TRIGGER; phase '${SLUG:-unresolved}' has no tests dir)"
+  OUT=$(python3 "$SD/suite_outcome.py" run -- python3 -m pytest -q --tb=short "${TEST_ROOT_ARGS[@]}" 2>&1); pc=$?
 fi
 
 # 86 = the run did not COMPLETE: killed by its watchdog, or over before it stated what it ran.
@@ -225,9 +324,10 @@ fi
 # Exit 5 = no tests collected. A phase whose tests don't exist yet is not a failure.
 #
 # The REVERT is spec-scoped, so the evidence it acts on must be scoped to the same thing. With no
-# phase test directory resolvable the run above is the whole repository minus e2e — the permanent
-# state of any project whose tests do not live under `tests/` (what SUBPROC_CHECK_PATHS exists for)
-# — and one unrelated red test there says nothing about whether THIS spec is done, while
+# phase test directory resolvable the run above is the project's DECLARED test roots, each minus its
+# own `e2e/` - `SUBPROC_CHECK_PATHS` is what STOPS that run being repository-wide - falling back to
+# the whole tree minus `tests/e2e` only when no declared root resolves on disk. Both are wider than
+# one spec, so one unrelated red test in either says nothing about whether THIS spec is done, while
 # `agents/avenger-backend-architect.md` tells the implementer outright that pre-existing failures
 # are expected and are to be surfaced rather than fixed. So an unscoped suite is UNDECIDABLE for the
 # revert: the hook still fails closed, and the stamp is left exactly as written. Same direction as
@@ -246,6 +346,34 @@ if [ "$pc" -ne 0 ] && [ "$pc" -ne 5 ]; then
   fail "verifier:tests" "verifier ($SCOPE): the suite is RED — the phase is not done." \
        "$STAMP_NOTE" \
        "$(printf '%s\n' "$OUT" | tail -20)"
+fi
+
+# The stamp NAMES THE BYTES it certified (issue #97, folded #121). Everything above closes the
+# moment `done` is written; nothing closed the moment after, when the implementer kept editing the
+# mapping and the tests behind a stamp the checks had already passed. `bind` writes `done_digest:`
+# over the spec's own test-mapping.md and its own test directory as they are RIGHT NOW - a later
+# edit to either makes the stamp read as work that moved on after `done`, which
+# `verifier_precheck.py` reports at handover with the remedy (stamp done again, through a tool
+# write, so this hook re-checks and re-binds). A stamp already `done` at HEAD has SHIPPED and is
+# never rewritten - but its digest is re-taken when one is recorded and no longer matches, which is
+# what makes that remedy real rather than a no-op (see STAMP_REBINDS above). Binding failing on a
+# NEW stamp is an ERROR named as such, never a silent `done` that binds nothing - that would be the
+# unbound state this exists to remove, with a hook that looked like it had bound it.
+if [ "$STAMP_BINDS" = "1" ]; then
+  if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then
+    fail "verifier:spec-done-unbound" \
+      "verifier ($TRIGGER): the 'status: done' stamp passed its checks but could NOT be bound to" \
+      "the bytes it certifies (cause above). An unbound stamp is a promise, not a completion, so" \
+      "this fails closed. The stamp is left exactly as written; fix what it named and stamp again."
+  fi
+elif [ "$STAMP_REBINDS" = "1" ]; then
+  # Same write, different applicability. A shipped stamp is never rewritten here, and its digest is
+  # re-taken over the mapping and the tests these checks just passed. A bind that fails is REPORTED
+  # and does not fail the hook: the spec returns to the state it arrived in, which the precheck
+  # already holds, and failing here would block a write that passed before this path existed.
+  if ! python3 "$SD/spec_done_guard.py" bind "$FILE"; then
+    printf '%s\n' "[spec-done] the re-bind FAILED (cause above). This shipped spec's stamp is untouched and its done_digest still does not match what is there now, so the precheck keeps reporting it — fix what the cause named and write the spec again." >&2
+  fi
 fi
 
 # Fixture realism, mechanically (issue #33). One measured phase shipped a credential refusal that
@@ -308,20 +436,44 @@ if [ "$TRIGGER" = "spec-done" ]; then
   fi
 fi
 
+# Behaviour drift (issue #107): a phase whose specs declare `work_kind: migration` or `refactor`
+# has SAID it changes no behaviour, and one measured phase then altered three live trading guards -
+# `-` became `+`, a `0` sentinel became `1` at three sites - through verification and 283 green
+# tests, because nothing compared behaviour against the declared contract. behaviour_drift.py
+# diffs the semantic surface (literals, operators, control-flow edges, per definition) against HEAD
+# holds every change to a citation: a `# behaviour: R<id>` comment naming a requirement a spec in
+# the phase declares, or a disclosed exception on the ledger. An uncited change BLOCKS.
+#
+# Asked at BOTH triggers. At `spec-done` because it is the first moment the code exists and the
+# implementer still owns it - and only when the stamp is a TRANSITION ($STAMP_BINDS), since a spec
+# already done at HEAD has shipped (§3a). At `handover` because that is the phase close the issue
+# names, and a spec-done check a phase drove around must not be the last word. A phase declaring no
+# contract exits 0 and says so; nothing here reverts the `done` stamp, for the same reason the
+# fixture and interface checks do not.
+if [ "$TRIGGER" = "handover" ] || [ "$STAMP_BINDS" = "1" ]; then
+  if [ "$TRIGGER" = "handover" ]; then BD_PHASE="$(dirname "$FILE")"; else BD_PHASE="$(dirname "$(dirname "$(dirname "$FILE")")")"; fi
+  python3 "$SD/behaviour_drift.py" check "$BD_PHASE"; bd_rc=$?
+  if [ "$bd_rc" -eq 1 ]; then
+    fail "verifier:behaviour-drift" \
+      "verifier ($TRIGGER): this phase declares behaviour preserved (work_kind migration/refactor)" \
+      "and its diff changes the semantic surface without citing what authorised it (named above)." \
+      "Cite the requirement on the changed statement with \`# behaviour: R<n>.<k>.<m>\`, or record" \
+      "a disclosed exception: scripts/applicability.py record <phase-dir> --rule behaviour-change" \
+      "--subject=<+key|-key|phase> --reason-file <f>. An uncited change to a no-change phase is" \
+      "the defect that shipped three altered trading guards." \
+      "$STAMP_NOTE"
+  elif [ "$bd_rc" -ne 0 ]; then
+    fail "verifier:behaviour-drift-undecidable" \
+      "verifier ($TRIGGER): whether this phase kept its behaviour contract could not be DECIDED" \
+      "(cause above) - a spec, a ledger or a source file could not be read or parsed. A check that" \
+      "cannot read the tree cannot clear it, so this fails closed. Fix what it named." \
+      "$STAMP_NOTE"
+  fi
+fi
+
 [ "$TRIGGER" = "handover" ] || exit 0
 
 PHASE_DIR="$(dirname "$FILE")"
-
-# The bookkeeping the Verifier used to raise by hand, once per phase, as 26% of its findings — an
-# untraced requirement id, a stale gate stamp, a deleted `## Acceptance criteria` heading. All of it
-# is mechanically decidable, so it is decided here, for no tokens. The Verifier keeps only what no
-# script can do: coverage judged per `binding:`, and adversarial execution against secrets, resource
-# lifetimes and concurrency invariants.
-if ! python3 "$SD/verifier_precheck.py" "$PHASE_DIR"; then
-  fail "verifier:precheck" \
-    "verifier pre-check: the phase's own bookkeeping does not hold (named above)." \
-    "These are mechanical, so fix them mechanically — do not spend a verification attempt on them."
-fi
 
 # Required skills a stage was owed and was never observed loading. A pointer is the cheap half of
 # delivery — it saves injecting a large skill body on every spawn — and this audit is the other half:
@@ -428,6 +580,26 @@ case "$V" in
       fail "verifier:inconsistent" \
         "verifier: verdict.json says 'pass' but still carries $OPEN open finding(s). Fail closed."
     fi
+    # A `status: deferred` finding is the fourth disposition (issue #115): real, not this phase's
+    # Done when, owned by a later phase. It is NOT believed on sight - the Verifier writes the stamp,
+    # and a stamp that resolved a finding by being written would be a waiver by omission. It is
+    # resolved only by a deferral `scripts/carried_items.py defer` recorded, which is gated on the
+    # phase's structured Done when and carries the measurement. `deferred` names every stamp with
+    # nothing behind it and every place the card, the ledger and the verdict disagree. Exit 1 is the
+    # obligation; anything else could not DECIDE it - the same split as every check here.
+    python3 "$SD/carried_items.py" deferred "$PHASE_DIR"; deferred_rc=$?
+    if [ "$deferred_rc" -eq 1 ]; then
+      fail "verifier:deferred-unbacked" \
+        "verifier: verdict.json says 'pass' over a deferred finding nothing backs (named above)." \
+        "A deferral is recorded with scripts/carried_items.py defer - gated on this phase's Done" \
+        "when, with the measurement - and its row sits on handover.md. A stamp alone is an open" \
+        "finding. Fail closed."
+    elif [ "$deferred_rc" -ne 0 ]; then
+      fail "verifier:deferred-undecidable" \
+        "verifier: whether this phase's deferred findings are backed could not be DECIDED (cause" \
+        "above) - this is not an unbacked deferral, and recording one will not repair it. Fix what" \
+        "it named."
+    fi
     # A pass must PROVE it executed. This used to read `test_quality.reviewed` — a boolean the
     # verifying agent wrote about itself, which a stage that skipped its work could set just as
     # easily as one that did it. `verifier_evidence.py` reads a transcript a RECORDER produced:
@@ -448,6 +620,28 @@ case "$V" in
         "verifier: whether this phase's verification actually ran could not be DECIDED (cause" \
         "above) — this is not missing evidence, and recording a run will not repair it. A check" \
         "that cannot be read enforces nothing, so this fails closed. Fix what it named."
+    fi
+    # A verdict is bound to a HEAD (issue #97, folded #122). The evidence above proves the runs
+    # happened and were about these specs and tests; it says nothing about the COMMIT the tree
+    # stood on, and a fix round that commits while a verification is open moves HEAD past every
+    # recorded run with the verdict still reading `pass`. `verdict_currency.py` anchors an
+    # uncommitted verdict on the newest head its evidence recorded and asks git what landed after
+    # it; the remedy is an amendment naming the ids the change touched, never a rewritten verdict.
+    # Fails OPEN where git cannot answer, and says so - the same boundary every check here uses.
+    #
+    # Exit 1 is the obligation; anything else is an ERROR that could not DECIDE it.
+    python3 "$SD/verdict_currency.py" check "$(dirname "$(dirname "$PHASE_DIR")")"; cur_rc=$?
+    if [ "$cur_rc" -eq 1 ]; then
+      fail "verifier:verdict-stale" \
+        "verifier: the tree moved past the head this phase was verified at, and no amendment" \
+        "records it (named above). The verdict describes a tree that no longer exists, so it is" \
+        "STALE, not passing. Open an amendment naming the requirement ids the change touched and" \
+        "re-verify only those - do NOT rewrite verdict.json."
+    elif [ "$cur_rc" -ne 0 ]; then
+      fail "verifier:verdict-currency-undecidable" \
+        "verifier: whether this phase's verdict still describes the tree could not be DECIDED" \
+        "(cause above) - this is not a stale verdict, and an amendment will not repair it. Fix" \
+        "what it named."
     fi
     # A phase that RESOLVES TO criticality: critical routes the Breaker (commands/avenger-run.md §4;
     # scripts/criticality.py resolves an absent, blank, unrecognised or unreadable field to critical,
@@ -492,6 +686,24 @@ case "$V" in
     # this is the pipeline's highest-volume defect-attribution path, and swallowing the diagnostic
     # would leave a run that dropped every verifier defect looking like one that found none.
     python3 "$SD/pipeline_metrics.py" verifier-findings "$PHASE_DIR" "$VERDICT" >/dev/null || true
+    # The Breaker's counterexamples and the attempt count, converging with their per-write emissions
+    # above: a breaker.json or verdict written outside a Write/Edit tool call reaches no per-write
+    # hook, and the handover is the one point every closing phase passes (issue #120).
+    if [ -f "$PHASE_DIR/breaker.json" ]; then
+      python3 "$SD/pipeline_metrics.py" breaker-findings "$PHASE_DIR" "$PHASE_DIR/breaker.json" >/dev/null || true
+    fi
+    python3 "$SD/pipeline_metrics.py" verifier-attempts "$PHASE_DIR" >/dev/null || true
+    # ...and how many of them this phase DEFERRED rather than fixed (issue #115), on the same terms:
+    # measurement, `|| true`, converging on one row. `defer`/`recarry` emit it the moment the fact is
+    # decided; this is the close-time convergence. A phase that defers everything is as visible in
+    # the record as one that fixes everything.
+    python3 "$SD/pipeline_metrics.py" deferrals "$PHASE_DIR" >/dev/null || true
+    # ...and WHICH COMMAND the suite behind this pass actually ran, beside the one the project
+    # declares (issue #119). A step that improvises an invocation while `.no-mistakes.yaml` names
+    # one leaves a record indistinguishable from the declared run passing, and which interpreter
+    # and which flags run decides the answer. `verifier_precheck` above is what REFUSES the pass;
+    # this is the measurement, on the same fail-open terms as every other emission here.
+    python3 "$SD/pipeline_metrics.py" test-command "$PHASE_DIR" >/dev/null || true
     # ...and the check that makes its absence visible. The emission above is fail-open by design, so
     # on its own a producer that stopped producing is indistinguishable from a phase that found
     # nothing — which is exactly what two measured phases looked like while their Verifiers were
@@ -530,8 +742,10 @@ case "$V" in
     if [ "$cap_rc" -eq 1 ]; then
       fail "verifier:attempt-cap" \
         "verifier: the verification loop is at its cap (the series is above) — a further attempt is" \
-        "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, waive them explicitly" \
-        "(scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to a human."
+        "refused. Carry the remaining findings as KNOWN-OPEN in handover.md, defer one that does not" \
+        "block this phase's Done when to the phase that owns it (scripts/carried_items.py defer)," \
+        "waive them explicitly (scripts/bypass_log.sh verifier <finding-id> <who>), or escalate to" \
+        "a human."
     elif [ "$cap_rc" -ne 0 ]; then
       # Exit 2 is an ERROR, not the cap, and it carries its own tag so the override log can tell the
       # two apart. Deliberately no cap guidance here: carrying, waiving or escalating cannot repair

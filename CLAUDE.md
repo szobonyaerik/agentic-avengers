@@ -233,14 +233,20 @@ with the verdict taken out of the model's hands entirely:
 3. **Decide** (`scripts/spec_gate_triage.py`) — derives the verdict deterministically. **No model
    decides whether a spec is blocked.**
 
-**The blocking set is CLOSED — exactly five things block:** a **missing requirement**, an internal
-**contradiction**, an **untestable criterion**, an **unhandled critical edge case**, and a
-**false acknowledgement**. Everything else
+**The blocking set is CLOSED — exactly six things block:** a **missing requirement**, an internal
+**contradiction**, an **untestable criterion**, an **unhandled critical edge case**, a
+**false acknowledgement**, and an **unevidenced universal** (a universal claim about how EXISTING
+code behaves, justifying a requirement, with no evidence beside it - §12). Everything else
 is a **note**; **notes never block** and land in the spec's known-open list (`spec-notes.md`, read
 once by the implementer). It is closed *mechanically*: a category the table does not know is a hard
 failure naming what was invented, never a judgement call — guessing "blocking" reinstates the ratchet
 and guessing "note" deletes a finding. A sixth category is a deliberate edit to
-`spec_gate_triage.BLOCKING`; **`false-acknowledgement` is the fifth, added by exactly that route.**
+`spec_gate_triage.BLOCKING`; **`false-acknowledgement` is the fifth and `unevidenced-universal` the
+sixth, each added by exactly that route.**
+**The line the gate prints to a rejected writer is RENDERED from that table, never restated**: it
+named four categories for as long as the fifth and sixth existed, so a rejected spec was told a
+rule the gate does not apply - a document asserting behaviour nothing enforces, inside the gate
+that enforces it (§12's own class).
 
 **`false-acknowledgement` — a reply must not assert a change that was not made.** Three write paths
 in one measured phase answered a **suppressed** write with a success reply, and **one requirement
@@ -266,6 +272,18 @@ cap binds a spec that can still be split** (§3a): a spec stamped `status: done`
 are already pointed at by test-mapping rows and verdict findings, and the remedy does not exist — two
 shipped specs declaring 30 and 29 requirements made every verdict unreachable, forever. There it is
 counted and named. Growth happens while a spec is being written, which is exactly where it still binds.
+
+**And the cap is asked AFTER scope resolution, never before it** (issue #123). `status: done` is one
+evidence that a split is unavailable; it is not the only state in which it is. A spec approved under
+the cap in force when it was written, then carried into a later phase, is over a lower cap on every
+single write of that file - before any model runs, with the same ids already pointed at by mapping
+rows and prior handovers, so the SPLIT it prescribes cannot be taken. `hook_spec_gate.sh` therefore
+asks `spec_gate_cache.py check` FIRST: a body this gate has already judged replays that verdict and
+the gate ends, exactly as it did for the frontmatter-only edit that step was written for. **Nothing
+is enforced less** - the cap and the criterion check both ran over those exact bytes when they were
+approved, and a body that moved on at all falls through to every check below, whole. The ordering
+generalises past the cap: every mechanical check below that line is answered by RE-AUTHORING the
+spec, and a wedge is what a re-authoring remedy becomes on text nobody may change.
 
 **The writer is primed from that same rubric before it writes, from ONE source.** Phase 9 ran
 **fourteen** gate rounds on its first spec and one, three and one on the next three, while total spec
@@ -472,14 +490,28 @@ gate stamp is fresh for every spec, and every spec still has its `## Acceptance 
 That defect recurred **twice, six attempts apart, in one phase**, because nothing checked it
 continuously — so it runs on **every commit**, and, like every other check here, **diff-scoped**: the
 phases that commit touches from `gate_ci.sh`, the whole phase at handover from `hook_verifier.sh`,
-and everything under `gate_ci.sh --full`. **It also holds the ROW, not only the id** (issue #52): the precheck used to confirm a
+and everything under `gate_ci.sh --full`. **A CARRIED spec is traced by the mapping it left behind** (issue #123): a spec carried into a later
+phase brings its `spec.md` and the tests the phase suite has to run, and its `test-mapping.md` stays
+in the phase that implemented it - so the phase's traced set held none of its ids and every
+requirement it declares was reported as appearing in no mapping row, a false blocker on shipped work
+whose only remedy was to duplicate a trace. `phase_artifacts.carried_mapping` resolves it by the
+spec's own DIRECTORY NAME within the same feature (a carried spec keeps its original ids, which is
+why renumbering it is unavailable), and both readers ask it: the precheck folds those rows into the
+TRACED ID SET only, and the Stop-hook artifact sweep stops asking for a second copy beside the
+carried spec. Deliberately not into `trace_claims`, which holds a row against **this** phase's test
+tree: widening the trace set can only remove findings, and widening the row check would add one for
+every carried spec whose tests stayed behind. **It also holds the ROW, not only the id** (issue #52): the precheck used to confirm a
 requirement id appeared in SOME row and never that the row's claim matched the test it names, so a
 row was free to assert anything and one measured row asserted the exact opposite of its own test
 with every check green. `trace_claims` now holds the minimum - the named test **exists** in the
 phase's own test tree and is **not skipped**. **What it does not do is stated rather than implied**:
 it does not read a row's prose against a test's assertions, so a row whose words contradict its
 existing, running test still passes; generating the claim from the test is the better fix and this
-is not it. Test definition and skip detection are Python-specific, so a tree that yields no test
+is not it. **It does hold the row's PAIRING** (issue #97, folded #122): `skills/tdd` asks every test
+to list the ids it covers, so each row's ids are paired with each row's tests and the test's own
+text is read - a test that lists ids and NOT the row's is a finding, and a test that lists none is
+counted and named, never held, since a corpus written before that instruction is exactly that
+shape. Test definition and skip detection are Python-specific, so a tree that yields no test
 definitions at all is **not held** - an unreadable scope, not a violated one. **An artifact that
 exists and cannot be OPENED is the other case, and it is a FINDING** (`read_artifact`): a
 `test-mapping.md`, a test file or a spec whose read is refused - a dangling symlink, a mode-000
@@ -593,7 +625,15 @@ phase records an amendment, which is exactly the remedy it prescribes, and it **
 anything git cannot answer** — no repository, no committed verdict to anchor on — saying so on
 stderr rather than passing invisibly. What it does NOT claim: the pipeline does not know which
 production file belongs to which phase, so this asks whether the feature owes a correction, never
-which phase owes it.
+which phase owes it. **A verdict is bound to a HEAD** (issue #97, folded #122): every run
+`verifier_evidence.py record` makes carries the commit the working copy stood on, in the chain where
+git could say, so a verdict not yet committed anchors on the newest head its evidence recorded and
+`hook_verifier.sh` asks this check at the handover - the moment it used to have no anchor and step
+aside, and the moment the folded instance happened in. A verdict the branch has moved past is stale,
+not passing, and the close refuses to carry it. A committed verdict keeps the commit it landed in as
+its anchor, deliberately not its evidence head, since the phase's own commit lands after its
+verification and carries the verified source. What it does not see is stated: an uncommitted edit at
+the same head, since it asks git what LANDED.
 
 ### 4e. Skills are delivered, not requested — pointer plus evidenced load
 The pipeline delegates core behaviour to 13 skills and used to delegate by *asking*: "Load
@@ -678,7 +718,16 @@ the attempt cap (`OBS-<n>`), and made binding** by `scripts/carried_items.py`, r
 `hook_verifier.sh` and from `gate_ci.sh` - both paths, for the same reason as the attempt cap.
 
 - **A phase states what it carries**: a row per item, or an explicit `none` row. **Silence is not
-  `none`** - silence is the state phase 8's prediction was written in.
+  `none`** - silence is the state phase 8's prediction was written in. **Nor is an UNPARSEABLE
+  section** (issue #123): the row parser skips what it cannot read, which is right for the prose a
+  card may carry above its table and wrong for a line plainly meant to be an item - a bullet row, a
+  table row whose id cell holds prose. Skipped, that line is dropped in SILENCE, so a card carrying
+  one readable row beside one malformed row closed exactly like a card that carried only the
+  readable one: an unparseable section and an empty one were indistinguishable, which is a check
+  that cannot go red. `unreadable_rows` names those lines and every reader refuses on them, exit 2,
+  **distinguishably** from the empty section beside it, which is still exit 1 and "state a row or an
+  explicit `none`". A template placeholder is neither - it parses perfectly and is simply not an
+  item - and keeps its own message and its own remedy.
 - **The next phase answers every row and does not close until it has**: `built` into a spec
   requirement, `tested`, or `declined` with a stated reason. **The name a `built`/`tested` discharge
   gives is RESOLVED**, not merely recorded - a requirement id no spec or test-mapping row under the
@@ -784,6 +833,138 @@ writer that accepted an effort and dropped it would look fixed, which is worse t
 the provider would drop, since a value that looks carried and is not is this same defect one runtime
 over.
 
+### 4h. Deferred findings - a phase can end its own discovery loop (issue #115)
+A finding had three dispositions - `open`, `fixed`, `acknowledged` (waived) - and none meant *"real,
+not this phase's Done when, owned by phase N"*. `faithful-rep` phase 3 ran about 48 hours because
+every amendment round found a real defect and a human had to be the terminator, judging each item
+against the phase's *Done when* by hand (`close-disclosures.md` § 8), because the *Done when* was a
+paragraph of prose in `plan.md` that no gate could read.
+
+**The *Done when* is structured beside its prose.** A `| done-when | outcome |` table under the
+phase in `plan.md` gives each condition a stable id (`DW-<n>`); the spec writer tags the requirements
+that make a condition true with `done_when: DW-<n>` on their declaration line, the same idiom as
+`binding:`. `scripts/done_when.py` decides from those two sources whether a finding against a
+requirement blocks the phase. **Nothing reads the prose.** Three shapes are UNDECIDABLE and never
+clear: no table (prose only), a declared condition no requirement carries, a tag naming no condition
+- each names its remedy, and a phase in that state simply cannot defer, which changes nothing else
+about how it closes (§3a).
+
+**A condition no gate can evaluate is DECLARED, and a passing verdict repeats it** (issue #116).
+Phase 3's deciding condition is what a person SEES - the captain can watch `handstand_hold` hold, no
+pike, no tumble, no feet on the mat - and **nothing rendered during verification**: 162 tests, 23
+recorded runs, `verdict: pass`. The verdict was honest about its tests and silent about its blind
+spot, so `pass` read as though the criterion had been checked; two visual defects shipped through
+that silence (`dips` renders one bar through the athlete's torso, `australian_pullups` renders its
+bar end-on at 7.7 degrees), both found by a person looking at phase close, not by a gate. The worker
+volunteered the limitation on its card - **a worker that did not would produce an identical-looking
+verdict**. So the row that DEFINES a condition carries a third column, `verification`, from a
+**closed** vocabulary of two: `gate-verifiable` or `human-observed`. A value the table does not know
+is a finding naming what was invented, because guessing `gate-verifiable` hides a criterion nobody
+checks and guessing `human-observed` invents a disclosure nobody wrote. Each `human-observed`
+condition is carried **verbatim** in the verdict's `unverified_by_gate` - an extension made at the
+schema (`skills/verifier-triage`), holding the outcome plus `verified_by_this_verdict: false` - and
+named on the contract card, so `pass` reads as *"pass on everything I can check, and here is what I
+cannot"*. `scripts/verifier_precheck.py`, the mechanical check that already decides verdicts,
+refuses a row that declares neither and a `pass` that omits one; nothing new runs, and no model
+decides any of it. **Diff-scoped on the declaration** (§3a): the obligation lives on `plan.md`'s
+row, so a plan this change does not write is counted and named rather than blocked, which is what
+lets a repository full of pre-rule plans adopt it, while a phase named outright - the handover hook,
+the one moment the phase is closing - is held whole. A **prose-only** *Done when* is UNDECIDABLE as
+#115 defined it and is left exactly there: the remedy for it is the table, which is #115's finding
+to make, and a second, weaker copy of that rule is the drift defect. **What this does NOT decide,
+said rather than implied** (§11): a row declared `gate-verifiable` is taken at its word, so a visual
+condition mis-declared as one discloses nothing and nothing here notices - what is closed is the row
+that declares nothing at all - and the declaration says a gate CAN evaluate the condition, never
+that one did. Closing the gap itself for rendered output - a checkpoint frame plus a cheap
+perceptual assertion, which would make such a condition `gate-verifiable` in fact - is the second
+half of the issue and a separate decision the issue itself defers.
+
+**The fourth disposition is `deferred`, and it is the same slot again**, not a parallel ledger:
+`scripts/carried_items.py defer` records a `deferred-finding` row on the card backed by a record in
+`carried.json`'s `deferrals` list carrying the owning phase and the finding's **measurement
+verbatim**. It refuses a finding that blocks the *Done when* (exit 1: decided, no), an owner that is
+not a later planned phase, and a record with no measurement; there is no command that edits one.
+The Verifier stamps the finding `status: deferred` with `deferred_to`, and **the stamp is not
+believed on sight**: `verdict_findings.open_findings` resolves it only for an id the ledger records,
+`carried_items.py deferred` names every stamp nothing backs and every disagreement between card,
+ledger and verdict, and `hook_verifier.sh` fails the handover on it. It reads the whole attempt
+history, because a passing verdict carries no findings and the attempt that raised one is usually
+archived - but it judges each finding by the **last** record that states anything about it,
+`verifier_attempts._check`'s own rule: a stamp on a superseded attempt whose finding was then fixed
+prescribed a remedy that no longer exists (`defer` refuses a finding carrying a *Done when*
+condition, and an archived attempt is not edited), so it wedged a phase with nothing open. `bypassed` stays false - a
+deferral is not a waiver. Between the deferring phase and the owner, each phase answers the row with
+`recarry`, and **re-carrying is unconditional**: the record copied byte-for-byte, the discharge
+recorded as `declined` with the structural reason; declining it by hand is refused. The *Done when*
+gate is **not** asked again there. It binds where its ids are the phase's own, which is the
+DEFERRING phase at `defer` time: `done_when.decide` matches the finding's requirement ids against
+the conditions THIS phase's specs tag, and a deferral carries the ids of the phase that raised it
+(`R<origin>.<k>.<m>`, §2), so from an intermediate phase the intersection is empty and BLOCKS was
+unreachable - a gate that can only answer one way reports a clean result stronger than anything it
+established (§11), and it is removed rather than left as a sentence nothing enforces. It also
+wedged an intermediate phase whose own *Done when* is prose only, which has no other route to
+answer an inherited row (§3a). A fresh `defer` still needs a decidable *Done when* and still
+refuses a finding that BLOCKS. The
+owner answers it like any row, and on the last card it must name an issue like a forward claim.
+Deferrals are counted in the phase record as a `gate_calls[]` row (`record_deferrals`, on
+`record_plugin_version`'s precedent, since firstmate's schema is closed), so a phase that defers
+everything is as visible as one that fixes everything. `amendments.py due` is untouched: an
+amendment is a change already made, a deferral a change deliberately not made.
+
+**What it must never be**: a way to weaken a check, delete a test or move a threshold. Phase 3's A3
+caught a clip containing no exercise, against the cyclic cut its *Done when* names; this gate refuses
+exactly that finding, and telling stages to care less would have shipped it.
+
+### 4i. A phase that says it changes no behaviour PROVES it (issue #107)
+grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change - a package split and a
+rename, `work_kind: migration` on both specs - and shipped **three changes to live trading
+behaviour** through verification and a 283-test suite: a capacity guard's `max_open_orders -
+open_orders_now` became `+` (12 open against a cap of 10 computed 22 instead of -2, and ten more
+live orders would have gone out), and a `.get(<asset>, 0)` insufficient-balance sentinel became `1`
+at three sites (an absent balance read as a fabricated holding). **Nothing compared behaviour against
+the contract the phase had declared.** `skills/tdd` already defined `migration` and `refactor` as
+behaviour-preserving - the rule existed and nothing enforced it, this repository's recurring shape.
+
+**The contract is `work_kind`, not a new axis beside it.** The plan's per-phase `Work kind` line is
+carried by the Spec Writer into each spec's own frontmatter, where the implementer and the gates
+already read it. `migration` and `refactor` carry it; **a phase that declares neither is untouched.**
+
+When declared, `scripts/behaviour_drift.py` holds the phase's diff to it. The semantic surface -
+literals, arithmetic/comparison/boolean/unary operators, membership and identity tests, control-flow
+edges (`if`, `else`, loops, `try`/`except:<builtin>`/`finally`, early returns, `raise`, `assert`,
+`with`, `match`, comprehension filters) - is reduced by `scripts/behaviour_atoms.py` to **atoms with
+no identifier in them**, so a rename can never change one. Every changed atom cites what authorised
+it - `# behaviour: R<n>.<k>.<m>` on the statement or compound-statement HEADER; for a REMOVAL, on its
+OWN line where the statement was, since a citation trailing a surviving statement speaks only for
+that statement and used to clear every deletion beside it; for a NEW file, once in its header - and the id must be one a
+spec in the phase declares (`requirement_cap.declared_ids`), so a citation of an id nobody declared
+authorises nothing and says so. The other route is the disclosed-exception ledger (`--rule
+behaviour-change`), subject one atom key (`+op:Add`, `-literal:int:0`) or the phase. **An uncited
+change is BLOCKING, never a warning**: a warning on a phase that claims to be safe is the state
+those three guards shipped in.
+
+**What a refactor actually does stays free, with no allowlist**: a rename changes no atom, a
+reformat changes no AST, a block cut and pasted cancels when the two sides READ alike (git's own
+rename evidence, one level down), a helper extracted or inlined cancels by containment. Accounting
+is **definition by definition** - netting a tree into one multiset hid two of the three measured
+defects, and a git hunk is a property of the DIFF, since git coalesces adjacent changes into one
+even at `-U0` and the `0` in a line added under a rewritten statement then cancels the `0` the
+rewrite removed. A top-level definition is the smallest unit that cannot do that while a reformat
+still cancels.
+
+**One owner, at the point of decision**: `spec-done` and `handover` in `hook_verifier.sh`, and
+diff-scoped from `gate_ci.sh`. Deliberately **not** folded into `scripts/interface_drift.py`, the
+alternative home that was measured: that guard asks whether a NAME resolves in the source tree - one
+document, one tree, no base and no diff - while this is a two-sided comparison against a base ref
+with its own citation grammar and cancellation rules. On the applicability boundary (§3a): an
+untouched phase is counted and named, a spec already `status: done` at HEAD has shipped and is not
+re-bound, a ledger exception closes a phase or a key; in CI the base is the branch, so it binds only
+when EVERY touched phase is under the contract, since a pull request mixing greenfield and no-change
+phases cannot be attributed file by file. **What a clean result does not establish is emitted on its
+own clean line** (§11), including the one limit worth naming here: cancellation is per definition, so
+an atom removed and an IDENTICAL atom added in the same definition cancel - the change still blocks
+on its other half, but the pair is not shown.
+
 ### 5. Phase Ordering
 Phases are built in dependency/risk order, one at a time, fully through build-and-verify.
 
@@ -791,8 +972,14 @@ Phases are built in dependency/risk order, one at a time, fully through build-an
 Gates run on a fresh **cross-family** model (family ≠ author) and **fail closed** — a gate that can't
 reach a verdict (missing key, provider down, non-JSON, same-family) stops, **and it names which**:
 every stop carries a `cause=` from `scripts/gate_errors.py` and reproduces the provider's own words
-verbatim. A **local** state lock is not a provider failure at all and
-is named as one: concurrent gate calls through opencode contend on a SQLite lock on the operator's
+verbatim. **An empty reply is not a timeout either** (issue #98): `opencode run` on an exhausted free tier
+exits 0, prints its banner and returns no content, and a leftover worker holds the pipe, so the gate
+waited out its whole budget and reported `cause=timeout`, whose remedy - a larger budget - cannot
+work; two full budgets were spent before probing both gate models by hand told a slow model from an
+empty tier. `cause=provider-empty-response` names it, decided from the direct child's own exit (a
+process still running at the budget reports the kill signal, never 0) and from the stream carrying
+no text event; a call still running when its budget elapses stays `timeout`. A **local** state lock
+is not a provider failure at all and is named as one: concurrent gate calls through opencode contend on a SQLite lock on the operator's
 own disk, and three parallel calls returned ZERO verdicts in 900s where the same three serially
 returned all three in 68s. It presented as `timeout` — the shape that most invites the wrong
 diagnosis — and it WAS diagnosed wrongly both times it appeared: once as a provider-wide outage (on
@@ -858,7 +1045,11 @@ in-process model, and says so on stderr every call rather than quietly doing not
 reaches, which is how a bypass aimed at the spec gate's subprocess check also waived a cross-family
 NO-GO in the same run; `GATE_BYPASS_GATES="<gate> <gate>"` limits it to exactly those, refuses
 anything else with the blocking exit and no log line, and matches names exactly, since a prefix would
-reinstate the leak one level down (issue #59).
+reinstate the leak one level down (issue #59). **One outcome is not waivable at all**: the mutation
+tree guard's two not-clean states - a mutant provably still on disk, and a tree nothing established
+either way - are refused in both callers, because that is authored code nobody authored rather than
+a weak gate signal an operator may accept. Only its `restored` outcome stays waivable and audited;
+`skills/pipeline-conventions` states the rule and its three outcomes once, under the mutation gate.
 
 **The feature-close ship gate (`no-mistakes`) is the one sanctioned same-family exception.** It runs
 once per feature — after the last phase is verified and the e2e suite is written — and covers what no
@@ -933,6 +1124,37 @@ since firstmate's schema is closed — from the missing-config branch and from e
 funnel. **Advisory still does not block**: that is the deliberate decision, not the defect, and the
 change is only that stderr is no longer the sole trace.
 
+**And exec may not leave the tree it ran on changed** (issue #95). `cosmic-ray exec` mutates source IN
+PLACE and reverts each mutant in a `finally`; the hook's kill path SIGTERMs then SIGKILLs the child's
+process group, and neither signal runs a `finally`, so the mutant applied at that moment stayed on
+disk - indistinguishable from an authored edit (`-` to `+`, `0` to `1`) - and was committed as one:
+four times in one measured phase, three under `verdict: pass`, in live trading code (an order-capacity
+guard inverted, an insufficient-balance guard defeated). `cleanup()` removed a temp directory and never
+touched the tree, and the hook's own comments cite overruns of 569s, 3818s and 4276s against 300s, so
+the kill path is the EXPECTED path on a real suite. `scripts/mutation_exec_guard.py` now brackets
+**every** `exec`, in `hook_mutation.sh` and `gate_ci.sh` alike: a **snapshot** of every file the
+session can write - the set read from the session itself, never the config - a **restore-and-compare**
+after exec that runs on the **kill path too** (after the reap, so a still-live worker cannot re-apply
+over it), and a tree that differed **fails the hook whatever the policy**: a corrupted tree is not a
+weak test signal, and `advisory` selects how much authority the SCORE has. The restore source is the
+snapshot, never `git checkout`, because the pipeline verifies UNCOMMITTED work and HEAD is not the
+state the implementer left. And where the kill can be **predicted**, exec is not started: the
+baseline's measured wall clock times the pending mutants, against what `MUTATION_HOOK_BUDGET_S`
+(default: the hook's own `hooks.json` timeout) has left, refuses up front and records `did-not-run` -
+a lower bound, said so, which is why the restore on the kill path stays. **That budget is validated
+where it is resolved**: unvalidated it reached bash arithmetic, where a non-numeric value left the
+remaining seconds unset and `set -u` exited 1 before the budget check, the snapshot and exec - the
+whole gate and its tree guard skipped, no record written, and 1 is not the blocking code either, so
+`enforce` did not stop. It is a configuration error, stopped and named exactly as an unrecognised
+`MUTATION_POLICY` is, and asked AFTER the policy so `off` still runs no mutation tool anywhere.
+**And only ONE restore outcome may claim the tree is clean**: exit 1 is *differed and every file put
+back*, exit 2 is *at least one was NOT*, and any other code is a restore that did not complete - a
+signal, a crash - which is why `main` has an exception boundary rather than letting a traceback exit
+1 and be read as the restored case. Both callers keep the three apart and the last two say to inspect
+the tree by hand. `MUTATION_POLICY=off` still
+exits before any cosmic-ray call. **What it cannot do is stated**: nothing runs when the hook ITSELF is
+SIGKILLed, and a test command that rewrites source under `module-path` reads as corruption.
+
 **Mutation is `advisory` by DEFAULT**: `MUTATION_POLICY` = `advisory` (default: runs and reports the
 score + survivors, **never blocks**) · `enforce` (fails closed) · `off` (no mutation tool runs
 anywhere). It was off; it is on because it is deterministic, diff-scoped, needs no model below the
@@ -990,6 +1212,20 @@ written through Bash (`sed -i`, a heredoc, `python3 -c`) never reaches it. It bi
 specifically and does not generalize to the pipeline's other stamps; the only reliable completion
 signal in this harness remains the agent/task notification, never a written marker.
 
+**And a stamp that stands NAMES THE BYTES it certified** (issue #97, folded #121). Both stamps do.
+The gate's: `spec_gate: approved` is written with `gate_gated_hash` over one body, and
+`spec_gate_state.status_of`, the one reader, answers **`stale`** - derived, never written - the
+moment the body no longer hashes to it, so `gate_ci.sh`, `pipeline_state.py` and the hook have no
+second freshness question to forget; a spec edited after approval used to pass CI's stamp check on
+the value alone. An unrecorded hash stays `approved` on the boundary and the CLI says so; a stamp
+the cache cannot bind to any body at all - two frontmatter parsers disagreeing - fails closed as not
+approved, because "we could not tell" is not "it is fine". The implementer's: after the mapping and the suite pass, the hook runs `spec_done_guard.py bind`, which
+writes `done_digest:` over the spec's own `test-mapping.md` and its own test directory, and
+`verifier_precheck.py` holds every bound `done` to it at handover - a `done` bound to different bytes
+is stamped again through a tool write, which re-checks and re-binds. With no per-spec test directory
+the digest covers the mapping alone and `bind` says so; a `done` with no digest (pre-rule, or written
+through Bash, the door #102 names) is counted, never held.
+
 **So that signal is now PRODUCED, and something acts on it.** Making the stamp self-correcting did
 not make it a completion signal, and issue #68's own fix direction rules out the remedy of telling
 people not to wait on one — that is a sentence claiming behaviour nothing enforces.
@@ -1005,12 +1241,22 @@ shared database produced foreign-key violations plus a spurious lint failure, wi
 one apart as the only tell. Which stages are bound is **one pattern in one place**
 (`IMPLEMENTER_AGENTS`), asked of the spawning stage and of every live entry by the same module, so
 the hook carries no copy of it; the Verifier, the Breaker and the bug-hunter run beside an
-implementer by design and are never bound. A crashed agent leaving a start with no stop ages out
-after `IMPLEMENTER_MAX_AGE_S` (default 4 hours) rather than holding the lock forever, and everything
-that is not a verdict — no `jq`, no `python3`, an unreadable payload, no activity log, an unusable
-pattern — lets the spawn through **and says so**. `GATE_BYPASS` proceeds, audited;
-`IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry it: its adapter hooks
-`tool.execute.after`, which is after the fact.
+implementer by design and are never bound. **A start with no stop is checked against two OBSERVED
+endings before any ceiling is consulted** (issue #98): a stage killed through the `TaskStop` tool
+fires no `SubagentStop`, so a killed implementer held its lock for the full four hours - measured at
+1410 activity rows, 33 starts, 1334 stops, exactly one unmatched. `hook_activity.sh` now records the
+harness's own `PostToolUse` for `TaskStop`, **only when the tool's response says the stop
+succeeded** (the attempt is not the outcome), and every start row carries `harness_pid`, the
+`claude` process the subagent ran inside, which `proc_group.process_exists` asks the kernel about. A
+row written before pids were recorded is unobservable on that axis and is judged by the ceiling
+alone, as before. What remains for `IMPLEMENTER_MAX_AGE_S` (default 4 hours) is an agent that died
+inside a live harness with no `TaskStop` - a crash - and that still ages out rather than holding the
+lock forever. Everything that is not a verdict — no `jq`, no `python3`, an unreadable payload, no
+activity log, an unusable pattern — lets the spawn through **and says so**. The refusal names the
+**scoped** override, `GATE_BYPASS_GATES="implementer-lock" GATE_BYPASS="<reason>"`, because bare
+`GATE_BYPASS` waives every gate the run reaches and the message used to send operators there for one
+dead lock; either proceeds, audited. `IMPLEMENTER_LOCK_OFF=1` disables it. opencode does not carry
+it: its adapter hooks `tool.execute.after`, which is after the fact.
 
 **No model runs in these hooks** except the spec gate: the
 Verifier is an *agent* that runs in chat and commits `verdict.json`, and the hook only checks that
@@ -1106,7 +1352,15 @@ another, because that stem is what a stage matches on. The Verifier's own `verif
 behind `|| true`, but its stderr is no longer discarded: the highest-volume attribution path must not
 drop every defect and look like a run that found none. An unwritable record makes firstmate's CLI
 *block* rather than fail, so one timeout abandons the writer for that process: fail-open has to hold
-in wall clock, not just exit codes.
+in wall clock, not just exit codes. **And a write the SEAL refuses is queued, never destroyed**
+(issue #98): a closed record refuses, exit 3, any write that would move a measurement, and this side
+used to answer with a log line and nothing else - five spec-gate rounds are permanently missing from
+one ledger. `metrics_sink.py` now appends the exact refused argv to `.avenger-metrics-spool.jsonl`
+(gitignored, one command per line) and replays it before the next write to that phase and on
+`pipeline_metrics.py spool --drain`, so a phase reopened with `set <phase> --reopen closed:=null`
+receives everything the seal turned away, in order. The sink still returns `False` for the refused
+write - it did not land - and only the seal is queued, since any other refusal fails identically on
+replay. The moment `closed` is stamped is a separate question (#120) and is not moved here.
 
 **A spec round has ONE definition, and it is recorded at the GATE.** It used to be measured at the
 writer — `hook_spec_gate.sh` counted the body the moment it got past the cache check, **before either
@@ -1145,22 +1399,51 @@ phase recorded **8** against a real attempt of 1 and a cap of 3 that had never f
 the cap having failed; the retries stay visible in `gate_calls[]` with their `failure_cause`, and only
 the attribution was wrong) · tests before/after — **collected pytest test items**
 (`pytest --collect-only`, minus the test root's `e2e/`), the same population `hook_verifier.sh`'s own
-`pytest -q` reports, never `def test_` lines — counted the same way at both ends
+`pytest -q` reports, never `def test_` lines — and "the same population" is now TRUE rather than
+claimed. The test-root declaration had **three** readers each re-deriving it, and they disagreed:
+`count_tests` collected the declared root and ignored ITS `e2e/`, while the verifier hook's
+full-suite fallback passed pytest **no root at all** and a hardcoded `--ignore=tests/e2e`. On the
+default layout the two agree by coincidence (2013 == 2013 measured here), so the divergence is
+invisible in this repository and permanent in any project whose tests are not at `tests/` — measured
+at **3 against 4** on a scratch project with tests at `suite/`, which also means §4b's exclusion of
+feature e2e from the phase verifier hook only ever applied to the default layout.
+`subprocess_check.test_roots()` is the one reader now (the module that owns `SUBPROC_CHECK_PATHS`);
+`pipeline_metrics.test_roots()` imports it and counts EVERY declared root, each minus its own
+`e2e/`, rather than the first - which is the same divergence one notch narrower. Both gates ask for
+it with `--print-roots`, a query
+routed deliberately AROUND `guard_scope.run` because it performs no scan and must not borrow a
+gate's clean-result line, and both turn the answer into pytest arguments through
+`scripts/test_root_args.sh`, which owns that translation alone: the in-session phase gate
+(`hook_verifier.sh`) and the pre-commit floor (`gate_ci.sh`) ran different populations for as long
+as it had two copies, since converting only the hook left the floor on the same hardcode. A root
+neither gate can resolve keeps the previous whole-tree scope and
+**says so** rather than silently switching population — counted the same way at both ends
 (`hook_spec_gate.sh` on the first spec write, and the orchestrator's `phase-close` after the phase's
-commit) · the phase's **close** and `elapsed_minutes`, stamped by the orchestrator right after that
-commit and by no hook, because **close means landed, not implemented**: `handover.md` being written
-is the Verifier's precondition, and `record_phase_close` refuses the write while anything under the
-phase directory is still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
-verdict write** and again at phase close, over the phase's **whole verdict history**;
+commit) · the phase's **close** and `elapsed_minutes`, stamped by `hook_phase_close.sh` on the commit
+that lands the phase and by the orchestrator's own `phase-close`, because **close means landed, not
+implemented**: `handover.md` being written is the Verifier's precondition, and `record_phase_close`
+refuses the write until the contract card is COMMITTED and nothing under the phase directory is
+still uncommitted · **which stage found each defect** (`hook_verifier.sh`, on **every
+verdict write** and again at phase close, over the phase's **whole verdict history**, and on every
+`breaker.json` write, one defect per counterexample, `found_by: breaker`; `spec_gate_triage.py` at
+its decide step, each blocker, `found_by: spec-gate`;
 `hook_mutation.sh`; and `pipeline_metrics.py defect` for stages no script sees) · which skills each
 stage actually loaded (`hook_skill_load.sh`, `hook_ponytail.sh` — an instruction to load is not a
 load). `found_by` is the field the record exists for and the only one unrecoverable afterwards. A
 defect summary is author-written free text, so it follows §6 — `--summary "$(cat <file>)"`, never
 inline prose. **`recorded_by` is a different question — WHO wrote the defect down, never derived from
 what caught it — and every route in `pipeline_metrics.py` answers `stage`**, because every one of them
-IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]`, held
-single by test so a fourth route cannot land unstamped, and nothing here can emit `operator` (a person
-transcribing afterwards is a different producer, using firstmate's own CLI). Its **third answer is
+IS a stage emitting as it runs; `record_defect` is the module's single write to `defects[]` - **true
+today and held by nothing**. `test_every_route_into_the_record_carries_the_recorder_stamp` drives
+every route that exists and asserts the stamp on the entries that LANDED, which is what the routes
+are worth; a route added later that calls `sink.add(phase, "defects", ...)` directly is driven by no
+test and turns nothing red. The two mechanisms that would catch it are refused rather than
+overlooked: a check over the record cannot tell an unstamped route from the version skew below, which
+drops `recorded_by` on purpose and would make the check fire on a lost measurement; and a
+`defects`-shaped rule inside `metrics_sink` would give the sink schema knowledge it deliberately has
+none of. So keeping the write single is a rule for whoever adds the next route, stated here because
+nothing will stop them. Nothing here can emit `operator` (a person transcribing afterwards is a
+different producer, using firstmate's own CLI). Its **third answer is
 absence**, meaning the record predates the field, which is why an unstamped emission would read as one
 of the two phases whose defects were entered by hand. Nothing back-fills. A firstmate too old to know
 the field refuses the whole entry over it — its key surface is closed — so the sink retries once
@@ -1201,10 +1484,24 @@ reader on the read path for this: **finding ids and kinds only, once per phase c
 `scripts/emission_gate.py defects` refuses a phase that closes carrying **fewer defects than its own
 verdicts describe**, from `hook_verifier.sh` at the handover and diff-scoped from `gate_ci.sh`.
 **What it does not cover is stated rather than implied**: the comparison reads the Verifier's own
-`findings[]` and nothing else, so a defect described only in a PR body, a status log or a commit
-message is invisible to it — it would have caught **four** of phase 12's five, not all — and no
-other stage's conclusions are compared to the record at all. It is a floor, never an equality: one
-finding may describe two defects and still pass.
+`findings[]` and the Breaker's `counterexamples[]` and nothing else, so a defect described only in
+a PR body, a status log or a commit message is invisible to it — it would have caught **four** of
+phase 12's five, not all — and no other stage's conclusions are compared to the record at all. It
+is a floor, never an equality: one finding may describe two defects and still pass.
+
+**Every stage that leaves a record of what it concluded now emits from that record** (issue #120).
+The Breaker's `breaker.json` reached no hook at all, so its counterexamples — the stage that found
+phase 8's credential leaks — were recorded only if the Verifier remembered to run `defect` by hand;
+`hook_verifier.sh` now has a `breaker.json` branch (`pipeline_metrics.py breaker-findings`, one
+defect per counterexample, `found_by: breaker`) and the handover re-emits it, and the floor above
+holds it. The spec gate recorded how MANY observations it blocked on and never which:
+`spec_gate_triage.py` now records each blocker at the decide step (`found_by: spec-gate`,
+`real: false`, since a spec is an artifact). `verification_attempts` was never emitted at all — the
+only caller went with the deleted review script, so every pipeline-written record carried null
+while the phase's own verdict read `attempt: 4`; `hook_verifier.sh` stamps it on every verdict
+write from `verifier_attempts.current()`, the number the cap reads. **Not covered, said rather than
+implied**: findings of the feature-close ship gate (`review-gate`) run in the daemon's own worktree
+where no hook of this pipeline fires, and the implementer's own catches have no record to read.
 
 **Something emits the close stamp at landing.** Issue #46 correctly moved `closed` from
 implementation-finish to landing; nothing emitted it *there*, so a premature stamp was replaced by
@@ -1216,7 +1513,21 @@ that *"no hook can see this commit land"*. One can: **`scripts/hook_phase_close.
 hook on `Bash`** that stamps every phase directory the commit it just ran actually touched.
 `record_phase_close` still refuses the write while anything under the phase is uncommitted, and now
 **converges** rather than re-stamping a phase already closed. `emission_gate.py close` fails a
-**landed phase carrying a null `closed`**. Note the trap it exists for: the hypothesis watching this
+**landed phase carrying a null `closed`**. **And landing is the committed contract card, not a clean
+directory** (issue #120): "nothing under the directory is uncommitted" is true of a SPEC commit too,
+and phase 5 of one measured feature was stamped `closed` at the exact second of its spec commit,
+`elapsed_minutes: 10`, two hours before it landed — and because a close SEALS the record, every
+defect and gate call the phase produced after that was refused by the writer, which is how "one
+phase recorded 1 of at least 5" happens with every emitter in place. `record_phase_close` now
+refuses until `handover.md` is committed (`CLOSING_DOCUMENT`), the one artifact §5 puts in the
+landing commit and no earlier commit can. A phase never opened (specs authored through a heredoc
+fire no `phase-open`) still closes, and its `elapsed_minutes` stays null and is SAID on stderr rather
+than invented from a later moment. **The record also says what the pipeline wrote itself**: every
+scalar this pipeline stamps goes through one `_stamp` and is named on a `gate_calls` row
+(`metrics-provenance`, the precedent `plugin-version` set for a fact firstmate's closed schema has
+no field for), written BEFORE `closed` seals the collections; `pipeline_metrics.py provenance
+<phase>` reports the fraction, intersecting the row with the scalars that actually hold a value.
+The proper home is a per-scalar `recorded_by` in firstmate's schema, which is their decision. Note the trap it exists for: the hypothesis watching this
 counted *overrides correcting a close stamp* and reported **zero**, which read as success and
 described a producer that had stopped — **a check that only looks for a wrong value can never see an
 absent one.**
@@ -1236,6 +1547,51 @@ corrections open with the word "CORRECTED", and a text match is what put them in
 a captain's waiver. `tag` refuses a class the set does not know, naming what was invented; a fourth
 species is a deliberate edit to `CLASSES`. **It is the metric, not a gate** — nothing fails a phase
 over an unclassified override; what it will not do is report three species as one number again.
+
+### 6f. Delegation is bounded - do not delegate a question a command answers (issue #118)
+A stage held **five helper agents at once**. Two captures of the harness panel ninety minutes apart
+showed **identical timers and token counts on all five** - frozen, not progressing - while the
+parent's own progress artifact had not moved for 64 minutes and its process stayed alive, so every
+liveness check read the run as healthy. The largest had spent **1h 8m and 341.4k tokens deciding
+whether two amendment ids were marked done**, which is one `grep`; three of the five were questions
+a shell command answers. The parent looked correct throughout, because delegating rather than
+guessing is what the pipeline wants everywhere else. An operator read the panel, told it to abandon
+the helpers and run the checks itself, and **it resumed within a minute** - a human doing timeout
+detection.
+
+**Two rules.** *Do not delegate a question a command answers* - a file's contents, a field's value,
+a test summary, a timestamp, whether an id is marked done. **What is still worth delegating is a
+genuine re-measurement**: re-running a suite, reading a large artifact set, a search whose breadth is
+the point. And *a helper you do dispatch declares a budget* - `Budget: 5m` on a line of its own in
+the prompt - *and is abandoned past it*.
+
+**Stated once, in `skills/pipeline-conventions`, which every stage is required to load**; the eleven
+agent definitions carry a pointer, never a copy, and `required_skills.py verify` now fails a
+canonical agent whose declared line drops that skill, because the audit can only prove the load of a
+skill the stage declares. **What is mechanism**: `scripts/hook_helper_budget.sh` at `PreToolUse` -
+the one event that can refuse - blocks a dispatch that declares **no** budget, blocks a declared
+budget over `HELPER_BUDGET_MAX_S` (a budget nothing bounds is a presence check), and blocks a
+dispatch made while an existing helper is **already past its own declared budget**, which is the
+measured state exactly. `avenger-*` stages are the chain, not helpers, and are not bound.
+**What is INSTRUCTION and not mechanism, said rather than implied**: abandoning an overrunning
+helper *mid-wait* - the harness exposes no timeout on a delegation and fires no event inside a
+blocked parent, so what is mechanised is that the next dispatch cannot proceed over the top of it;
+and whether a question has a one-command answer, which is a judgement no static rule makes.
+
+**Who it binds**: under Claude Code the canonical `avenger-*` stages carry no spawn tool, so the
+dispatching party is the **orchestrating session** - `/avenger-run` in the main thread, an operator
+by hand, or any project-grounded agent given a spawn tool - and that is where the refusal lands.
+Rule 1 still reaches every stage: one that cannot spawn a helper can still be handed the question
+and should still run the command.
+
+**Helper spend is recorded**, two `gate_calls` rows per helper, each at the moment it is observed:
+`helper-dispatch` with the declared budget, and `helper-spend` at `SubagentStop` carrying elapsed
+time in `latency_ms` and `NO-GO` when it overran. Tokens are recorded **where the harness reports
+them**, which today it does not, so that field says `unrecorded` rather than `0`. **A dispatch row
+with no matching spend row IS the helper that never came back** - which is why the dispatch is
+emitted separately and never reconstructed at the close. `HELPER_BUDGET_OFF=1` disables the refusal,
+`HELPER_SPEND_OFF=1` the recording; opencode carries neither hook (`tool.execute.after` is after the
+fact).
 
 ### 7. Canonical-source driven
 Edit `agents/`, `skills/`, `commands/`, `prompts/`, `scripts/`, `hooks/`; regenerate the opencode
@@ -1367,9 +1723,17 @@ old behaviour:
 statement per guard - `proves`, and `limits`, what a clean result does not establish - and
 `scripts/guard_scope.py` emits it. Every declared guard with runtime output calls
 `guard_scope.run(__file__, main)` at its entry point, or `guard_scope.py emit <name>` on its clean
-branch, **except where a declared, single-guard exception says why it cannot** - today exactly one,
+branch, **except where a declared, single-guard exception says why it cannot** - today exactly three:
 `hook_autoapprove.sh`, whose clean result is a per-tool-call ALLOW emitted thousands of times in one
-run, so it rides the DENY reason instead. An exception is never silent: `guard_proof.py scope` names
+run, so it rides the DENY reason instead; `hook_activity.sh`, whose clean result is one appended
+row per subagent event and which prints nothing by contract, since a `SubagentStart` hook's output
+reaches the agent being spawned - the one thing it decides is read by `implementer_liveness.py`,
+whose statement names it; and `pipeline_metrics.py`, whose clean result is a fail-open measurement
+write made from hooks that discard stderr, and one of whose clean results is contractually SILENT -
+`AVENGER_METRICS_OFF=1` records none deliberately and silently (§6d) - so a statement on the clean
+branch would break a documented contract rather than inform anybody; its one refusal, a spec round
+for a gate that reached no verdict, carries its own reason where somebody is being told a verdict.
+An exception is never silent: `guard_proof.py scope` names
 it and its reason beside its own clean line, so "N guards declare and emit" can never be read as
 "every guard emits". **Whether a guard emits is decided by PARSING, not by matching text** - a real
 `ast` call to `run`/`clean` for Python (following an aliased import), the invocation shape on
@@ -1400,6 +1764,37 @@ is what shipped. The one shape that recurs here is the attribute chain, and that
 nine allowlist entries instead of a fix to its extraction layer, and that lands as nine lines of
 routine-looking maintenance. `guard_scope.py allowlists [--base REF]` counts each declared allowlist
 now against its size at the merge-base and reports the delta from `gate_ci.sh`, where a reviewer
-reads it. It never fails a run: growth is often legitimate, and a blocking check would be answered
-with a bypass rather than with the attention this exists to buy. An unknowable comparison says so and
-is never reported as "no growth".
+reads it - and **each guard an allowlist quietens reports that allowlist's size, and its growth
+against `$GUARD_SCOPE_BASE`, beside its own clean line**, since a reader of one guard's output never
+sees the CI step; under GitHub Actions a growth line is also a `::warning` annotation, so it lands on
+the pull request as a finding rather than in a log nobody opens. `interface_drift.py` carries no
+allowlist, and the drift guard blind to `in` / `not in` / `is` / `is not` is
+grid-bot-platform's. It never fails a run: growth is often legitimate, and a blocking check would
+be answered with a bypass rather than with the attention this exists to buy. An unknowable
+comparison says so and is never reported as "no growth".
+
+### 12. A claim carries its measurement - a check states its method (issue #96)
+Every stage in one measured feature made the same mistake in a different costume: **a partial
+measurement written up as a complete result.** A sweep done by READING two adapters reported complete
+and missed two instances; a probe set what a collaborator *returns* and never what it *raises*, and a
+fix round scoped from it closed half the defect; an approved spec justified narrowing a handler with
+"only calls X, Y and float()" - false, past the gate, both reviews and the grill; a differential test
+was trusted past what it can detect ("both sides fail identically, so it is not a divergence"). Folded
+in from #117: three consecutive amendments and one contract card claimed a scope wider than their
+author had measured. **Five of seven were caught by a human reading artifacts against source, one by
+a gate, none by a test.** The rule: **a check states its method, a criterion names what it drives,
+and a scope claim carries the set it was measured over as a FIELD.** `scripts/measurement_claims.py`
+owns it and is asked at the point of decision: `hook_spec_gate.sh` refuses an acceptance criterion
+with no `drives:` before any paid call (presence only - `drives: undriven (<why>)` passes, because
+what that declaration must carry is **issue #116's decision, left open here**); `verifier_precheck.py`
+refuses a finding with no `method` (held for a verdict the diff writes or a phase named at handover,
+counted otherwise, under `--all` too); `amendments.py open` and `carried_items.py declared` refuse a
+universal - a CLOSED, pinned vocabulary, matched outside inline code - with no `measured_over`, on
+new records and the phase's own card only; the spec gate blocks an `unevidenced-universal`, asked
+about the evidence and never the truth. Parity tests state their blind spot in runtime output
+(`skills/tdd`); this repo's own four differential checks - `stage_effort.py`, `doc_read_path.py
+--contract`, `guard_scope.py allowlists`, `plugin_release.py check` - declare it in
+`guard_scope.toml` and emit it on their clean result. **Three
+instances are instruction only**, said rather than implied: a grep count for reading, an enumerated
+list taken as complete, a single-sample proof of a negative. Canonical statement in
+`skills/pipeline-conventions`.

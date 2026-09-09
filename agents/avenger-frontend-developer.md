@@ -12,6 +12,12 @@ effort: medium
 > spawn; the rest you open yourself, and opening them is what records the load. A required skill with
 > no observed load blocks the phase (`scripts/required_skills.py audit`).
 
+> **Delegation is bounded.** Do not delegate a question a command answers - a file's
+> contents, a field's value, a test summary, a timestamp, whether an id is marked done. Run the
+> command. A helper you do dispatch declares `Budget: <n>m` on a line of its own in its prompt
+> and is abandoned past it. The rule, what is mechanism and what is not, and why:
+> `skills/pipeline-conventions` § "Delegation is bounded".
+
 
 # Frontend Developer
 
@@ -47,6 +53,20 @@ For UI, the seam is the **rendered component driven through user-visible behavio
 Library: query by role and label, interact, assert on what the user observes. Never a shallow render
 asserting on props, internal state, or call counts; that is the implementation-coupled anti-pattern
 and the Verifier will route it back.
+
+**`migration` and `refactor` are a contract you have to PROVE, not assert.** The phase's whole diff
+is compared against its base at your `spec-done` stamp and again at handover
+(`scripts/behaviour_drift.py`): every literal, operator and control-flow edge that changed has to
+cite the requirement that authorised it, with `# behaviour: R<n>.<k>.<m>` on the statement that
+carries it (for something REMOVED, on its OWN line where the statement was - a comment trailing a
+surviving statement speaks only for that statement; for a NEW file, once in its header). Renames, moves, reformats and extractions change no atom and need nothing. **The
+comparison reads PYTHON only** - `.ts`, `.tsx` and `.js` are counted and named, never parsed, so on
+a TypeScript phase the guard clears nothing and a `//` citation does nothing: the contract is yours
+to keep by hand there, and this mechanism does not keep it for you. An
+uncited change BLOCKS - grid-bot-platform's okx-migration phase 1 was mandated zero behaviour change
+and shipped `-` as `+` and a `0` balance sentinel as `1` through a green 283-test suite. If you find
+you must change behaviour, that is greenfield work: route the spec back rather than citing an id
+that does not cover it.
 
 **The approved spec is your seam list — do not re-negotiate it.** A requirement with no reachable
 boundary is a spec defect: route it back to `avenger-spec-writer`.

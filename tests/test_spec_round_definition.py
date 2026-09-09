@@ -42,7 +42,7 @@ from pathlib import Path
 
 import pytest
 
-from metrics_support import stub_sink  # noqa: F401
+from metrics_support import DOUBLE, stub_sink  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -158,7 +158,11 @@ def test_a_gate_call_belongs_to_the_round_it_is_part_of(stub_sink) -> None:  # n
         del os.environ["AVENGER_METRICS_SPEC_PATH"]
 
     data = json.loads(sorted(store.glob("phase-*.json"))[0].read_text(encoding="utf-8"))
-    assert [call["attempt"] for call in data["gate_calls"]] == [2]
+    assert [
+        call["attempt"]
+        for call in data["gate_calls"]
+        if call["stage"] != metrics.PROVENANCE_STAGE
+    ] == [2]
 
 
 # --- and it binds through the real hook -----------------------------------------------------------
@@ -179,13 +183,7 @@ def gated(tmp_path: Path):
         )
     )
     double = tmp_path / "fm-pipeline-metrics.sh"
-    double.write_text(
-        (ROOT / "tests" / "metrics_support.py")
-        .read_text(encoding="utf-8")
-        .split("DOUBLE = r'''")[1]
-        .split("'''")[0],
-        encoding="utf-8",
-    )
+    double.write_text(DOUBLE, encoding="utf-8")
     double.chmod(0o755)
 
     spec = (

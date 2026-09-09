@@ -51,7 +51,7 @@ review_status: pending
 {requirements}
 
 ## Acceptance criteria
-- R1.1.1 — passes when: the caller sees a greeting; fails when: the caller is unauthenticated
+- R1.1.1 — passes when: the caller sees a greeting; fails when: the caller is unauthenticated — drives: GET /greet through the test client
 """
 
 #: A stub gate_runner driven entirely by the environment. It answers the OBSERVE pass with
@@ -378,6 +378,45 @@ def test_an_over_cap_spec_is_told_to_split_before_any_paid_call(project: Path) -
     assert calls(project) == [], "the cap must be decided before the gate is paid for"
 
 
+def test_a_criterion_naming_nothing_it_drives_is_refused_before_any_paid_call(
+    project: Path,
+) -> None:
+    """Issue #96: "sweep both adapters for this class" is satisfied by reading, and reading is
+    indistinguishable from driving until someone runs the code. The criterion names what it drives,
+    and its absence is decided mechanically, before the gate is paid for."""
+    spec = write_spec(project)
+    spec.write_text(
+        spec.read_text().replace(" — drives: GET /greet through the test client", "")
+    )
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+    assert result.returncode == 2
+    assert "drives:" in result.stderr and "R1.1.1" in result.stderr
+    assert "route_back: avenger-spec-writer" in result.stderr
+    assert calls(project) == [], (
+        "an undriven criterion is decided before the gate is paid for"
+    )
+
+
+def test_an_undriven_criterion_on_an_already_approved_spec_is_counted_not_blocked(
+    project: Path,
+) -> None:
+    """The applicability boundary: a spec the gate already approved shipped its criteria, and the
+    remedy is unavailable to a stage that has ended. Counted on stderr, and the gate still runs."""
+    spec = write_spec(project)
+    spec.write_text(
+        spec.read_text()
+        .replace(" — drives: GET /greet through the test client", "")
+        .replace("spec_gate: pending", "spec_gate: approved")
+    )
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+    assert "NOT enforced" in result.stderr and "measurement_claims" in result.stderr
+    assert calls(project) == ["observations", "classifications"]
+
+
 def test_a_spec_the_cap_cannot_count_is_not_told_to_split(project: Path) -> None:
     """Exit 1 is OVER the cap; exit 2 is "the count could not be decided". Collapsing the two sent
     the writer to SPLIT a document nobody could count — the same distinction the subprocess branch
@@ -404,6 +443,84 @@ def test_a_spec_at_the_cap_still_reaches_the_gate(project: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert calls(project) == ["observations", "classifications"]
+
+
+# ── scope resolution runs before the checks whose remedy is re-authoring (issue #123) ────────
+
+
+def test_an_approved_spec_carried_into_a_later_phase_is_not_told_to_split_forever(
+    project: Path,
+) -> None:
+    """The block issue #123 reproduces. A spec is approved under the cap in force when it was
+    written, implemented, and then CARRIED into a later phase - the same bytes, a new path, the
+    implementer's stamp on it. The cap in force there is lower, so it fires on every single write of
+    that file, before any model runs, and prescribes a SPLIT: renumbering requirement ids that
+    test-mapping rows, verdict findings and prior handovers already point at. The remedy does not
+    exist, so the phase cannot proceed at all - a wedge rather than a gate.
+
+    Scope resolution answers first: this gate already judged these exact bytes, so it replays that
+    verdict and ends. Nothing is enforced less - the cap ran over this body when it was approved."""
+    thirteen = "".join(
+        f"- R1.1.{i} — `binding: e2e` — behavior {i}\n" for i in range(1, 14)
+    )
+    spec = write_spec(project, requirements=thirteen)
+    approved = run_hook(
+        project,
+        spec,
+        SPEC_REQUIREMENT_MAX="13",
+        STUB_OBSERVATIONS=OBSERVATION,
+        STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+    assert approved.returncode == 0, approved.stderr
+    assert "spec_gate: approved" in spec.read_text()
+    paid = list(calls(project))
+
+    # The gate fires on a path ending in `/spec.md`, so the carry is a real spec path in the phase
+    # that inherited it - not a renamed file, which the hook would ignore outright.
+    carried = project / "docs" / "phases" / "2-later" / "specs" / "2.1-a" / "spec.md"
+    carried.parent.mkdir(parents=True)
+    carried.write_text(spec.read_text().replace("status: draft", "status: in-progress"))
+
+    result = run_hook(
+        project,
+        carried,
+        STUB_OBSERVATIONS=OBSERVATION,
+        STUB_CLASSIFICATIONS=NOTE_ONLY,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SPLIT" not in result.stderr
+    assert calls(project) == paid, (
+        "a body this gate already judged must cost no further call"
+    )
+
+
+def test_the_cap_still_binds_a_body_the_gate_has_not_judged(project: Path) -> None:
+    """The other direction, and the one that matters: scope resolution must not become an escape
+    hatch. A spec whose body moved on at all - here, one more requirement on an approved spec -
+    falls through to every mechanical check below, whole."""
+    twelve = "".join(
+        f"- R1.1.{i} — `binding: e2e` — behavior {i}\n" for i in range(1, 13)
+    )
+    spec = write_spec(project, requirements=twelve)
+    run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+    assert "spec_gate: approved" in spec.read_text()
+
+    spec.write_text(
+        spec.read_text().replace(
+            "- R1.1.12 — `binding: e2e` — behavior 12\n",
+            "- R1.1.12 — `binding: e2e` — behavior 12\n"
+            "- R1.1.13 — `binding: e2e` — behavior 13\n",
+        )
+    )
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=NOTE_ONLY
+    )
+
+    assert result.returncode == 2
+    assert "SPLIT TRIGGER" in result.stderr
 
 
 # ── the paid gate is not re-run on an unchanged body ─────────────────────────
@@ -1331,6 +1448,28 @@ def test_a_block_records_it_too(project: Path) -> None:
     )
     assert "BLOCKED" in result.stderr, result.stderr
     assert "x/observer" in attribution(spec)
+
+
+def test_the_blocked_message_renders_the_closed_set_it_does_not_restate_it(
+    project: Path,
+) -> None:
+    """The line naming the closed set was a hand-written copy of `spec_gate_triage.BLOCKING`, and it
+    still named FOUR categories after the fifth and sixth had been added - a document asserting a rule
+    nothing enforces, which is the class issue #96 is about, inside the gate that enforces it. It is
+    rendered from the table that derives the verdict, so a seventh category cannot leave it stale."""
+    import spec_gate_triage
+
+    spec = write_spec(project)
+    result = run_hook(
+        project, spec, STUB_OBSERVATIONS=OBSERVATION, STUB_CLASSIFICATIONS=BLOCKING
+    )
+
+    assert "BLOCKED" in result.stderr, result.stderr
+    for category in spec_gate_triage.BLOCKING:
+        assert category in result.stderr, (
+            f"the blocked message must name every blocking category; {category} is missing"
+        )
+    assert "note" not in result.stderr.split("--- blocking findings")[1].split("---")[0]
 
 
 def test_a_runner_that_attributes_nothing_leaves_a_named_state_not_a_silent_one(

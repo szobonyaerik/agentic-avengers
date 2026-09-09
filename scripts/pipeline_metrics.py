@@ -47,27 +47,33 @@ record converges instead of double-counting a round.
 CLI, for the shell emission points (all fail open, all exit 0, except `defect` — see above):
     pipeline_metrics.py spec-round <spec.md> --verdict approved|blocked
     pipeline_metrics.py gate-killed --stage <s> [--spec-path <p>] [--phase-dir <d>]
-    pipeline_metrics.py verifier-attempt <phase-dir>   (derived from verdict.json, not a counter)
+    pipeline_metrics.py verifier-attempts <phase-dir>  (derived from verdict.json, not a counter)
     pipeline_metrics.py verifier-findings <phase-dir> <verdict.json>
+    pipeline_metrics.py breaker-findings <phase-dir> <breaker.json>
     pipeline_metrics.py mutation-survivors <phase-dir> <mutation-score.json>
     pipeline_metrics.py skill-load --stage <s> --skill <k> --evidence <where>
     pipeline_metrics.py skill-required --stage <s>
     pipeline_metrics.py defect --phase-ref <p> --id <i> --summary <s> --found-by <f> ...
         (exits 1 when the write failed or no writer is configured, 2 when --phase-ref names no phase)
+    pipeline_metrics.py test-command <phase-dir>   (what ran, beside what the project declares)
     pipeline_metrics.py phase-open <phase-dir>
     pipeline_metrics.py phase-close <phase-dir>
+    pipeline_metrics.py provenance <phase-ref>   (report: what the pipeline stamped vs. hand-entered)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess  # noqa: S404 — `git ls-files`, fixed argv, to ask whether the closing document landed
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -77,6 +83,7 @@ import metrics_sink as sink  # noqa: E402
 import plugin_release  # noqa: E402
 import proc_group  # noqa: E402
 import skill_contract  # noqa: E402
+import subprocess_check  # noqa: E402
 import verifier_attempts  # noqa: E402
 from spec_gate_cache import keep, normalized, previous, split_spec  # noqa: E402
 
@@ -122,6 +129,11 @@ CAUSE_MAP: dict[str, tuple[str, str]] = {
     "provider-payment-required": ("error", "http-402"),
     "provider-unreachable": ("error", "provider-unreachable"),
     "no-verdict": ("error", "unparseable"),
+    # `unparseable`, not `timeout`: the call RETURNED and there was nothing in it to read, which is
+    # the state that token names; recording it as a timeout would reinstate the wrong remedy (raise
+    # the budget) the cause was split off to end. Not a token of its own - firstmate owns that
+    # vocabulary (§6d). The distinction lives on the gate's `cause=` line and its verbatim output.
+    "provider-empty-response": ("error", "unparseable"),
     # Not `unparseable`: the reply parsed fine. What failed is the CLAIM that a provider
     # produced it, so it is an error whose cause is the gate not having run.
     "implausible-latency": ("error", "other"),
@@ -262,7 +274,20 @@ def _spec_round(
 def _attempt(
     record: dict | None, stage: str, spec: str | None, spec_path: str | None = None
 ) -> int:
-    """The attempt a gate call belongs to: the spec's round, or the phase's verification attempt."""
+    """The attempt a gate call belongs to: the spec's round, or the phase's verification attempt.
+
+    `verification_attempts` counts the attempts already CONCLUDED - `verifier_attempts.current()`,
+    the highest attempt with a verdict on record (issue #120). It used to be written as
+    `current() + 1`, the attempt in flight, which this branch could read straight off. So the
+    conversion is now explicit here: a verifier gate call is made while an attempt is being decided,
+    before its verdict exists, which is `concluded + 1` - the same "closed, plus the one in flight"
+    shape `_spec_round` uses. Reading the field unconverted files every such call one attempt low.
+
+    Its limit, which `_spec_round` closes by comparing the body and this has no equivalent for: a
+    call made after the attempt's verdict landed is attributed to the next attempt. No gate runs in
+    the verification hooks today (§6a), so this branch is reached only through
+    `AVENGER_METRICS_STAGE=verifier`.
+    """
     declared = (os.environ.get("AVENGER_METRICS_ATTEMPT") or "").strip()
     if declared:
         try:
@@ -270,7 +295,11 @@ def _attempt(
         except ValueError:
             pass
     if stage == "verifier":
-        return max(1, int((record or {}).get("verification_attempts") or 1))
+        concluded = (record or {}).get("verification_attempts") or 0
+        try:
+            return max(1, int(concluded) + 1)
+        except (TypeError, ValueError):
+            return 1
     return _spec_round(record, spec, spec_path)
 
 
@@ -318,8 +347,18 @@ def record_gate_call(
             or stage_from_rubric(rubric)
         )
         spec = resolve_spec(spec_path, target)
-        record = sink.show(phase)
-        attempt = _attempt(record, stage, spec, spec_path)
+        read = open_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"gate call not recorded for phase {phase}: the record could not be READ, and "
+                    f"a call is filed under the attempt the record says is in flight - taken for a "
+                    f"record holding nothing it would be filed under attempt 1, where `sink.add` "
+                    f"converges by id and a later call REPLACES the first attempt's row. Nothing "
+                    f"is written; this call is lost rather than another one overwritten."
+                )
+            return False
+        attempt = _attempt(read.record, stage, spec, spec_path)
         token, failure_cause = _outcome(verdict, cause)
         return sink.add(
             phase,
@@ -474,8 +513,19 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
         except (OSError, ValueError):
             return None
 
-        record = sink.show(phase)
-        rounds = list(_spec_entry(record, spec).get("bytes_by_round") or [])
+        read = open_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"spec round not recorded for {spec}: the record could not be READ, and "
+                    f"`bytes_by_round` is rewritten from what it already holds - taken for an "
+                    f"empty series the upsert would replace every earlier round of this spec with "
+                    f"this one, and the growth this measures is exactly the history it would "
+                    f"delete. Nothing is written and the body is not cached, so the next verdict "
+                    f"records the round."
+                )
+            return None
+        rounds = list(_spec_entry(read.record, spec).get("bytes_by_round") or [])
         counted = previous(path, "metrics")
         if counted is not None and normalized(counted) == normalized(body) and rounds:
             return len(rounds)  # this exact body is already one of the rounds above
@@ -489,7 +539,9 @@ def record_spec_round(spec_path: str, verdict: str | None = None) -> int | None:
             bytes_by_round=rounds,
         ):
             return None
-        sink.set_fields(phase, spec_rounds=_spec_rounds(sink.show(phase)))
+        after = open_record(phase)
+        if after.usable:
+            _stamp(phase, spec_rounds=_spec_rounds(after.record))
         keep(path, "metrics", body)
         return len(rounds)
     except Exception as exc:  # noqa: BLE001
@@ -577,49 +629,160 @@ def record_plugin_version(phase: str) -> bool:
         return False
 
 
+#: What a helper agent's two rows are stamped with. No model decides either of them: the dispatch is
+#: observed by `scripts/hook_helper_budget.sh` at `PreToolUse` and the return by
+#: `scripts/hook_helper_spend.sh` at `SubagentStop`.
+HELPER_DISPATCH_STAGE = "helper-dispatch"
+HELPER_SPEND_STAGE = "helper-spend"
+HELPER_MODEL = "none (scripts/helper_budget.py)"
+
+#: A number the harness did not report is named as absent rather than defaulted to zero. Token
+#: counts are the case that matters: the harness panel shows them and the hook payload does not
+#: carry them, so `tokens=0` would read as a free helper rather than as an unmeasured one.
+HELPER_UNRECORDED = "unrecorded"
+
+
+def record_helper_dispatch(
+    phase: str, *, agent_type: str, budget_s: int, token: str
+) -> bool:
+    """Record that a helper agent was dispatched, and with what declared budget (issue #118).
+
+    Emitted at the DISPATCH rather than at the phase close, and separately from the spend row, for
+    the reason the issue exists: five helpers were measured frozen for 90 minutes and none of them
+    ever returned, so a record written only when a helper finishes cannot see the case. A dispatch
+    row with no matching `helper-spend` row IS the helper that never came back, and the count of
+    dispatches is the number `compare` had no way to ask for at all.
+
+    Not a new top-level field: firstmate's schema is closed and its producer contract is "add no
+    key" (pipeline-conventions §6d). This follows `record_plugin_version` and
+    `record_triage_decision` - an ordinary `gate_calls` row on existing keys, with the detail in
+    `note`. `verdict` is `NO_VERDICT` because a dispatch judges nothing; the budget check's own
+    verdict is the hook's exit code, and a refused dispatch never reaches this at all.
+    """
+    try:
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{HELPER_DISPATCH_STAGE}-{token}",
+            stage=HELPER_DISPATCH_STAGE,
+            spec=None,
+            attempt=1,
+            model=HELPER_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=_clean(f"agent={agent_type} budget_s={budget_s}"),
+        )
+    except Exception as exc:  # noqa: BLE001 - measurement never fails the phase it measures
+        sink.note(f"helper dispatch not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
+def record_helper_spend(
+    phase: str,
+    *,
+    agent_type: str,
+    token: str,
+    elapsed_s: int,
+    budget_s: int | None,
+    tokens: int | None = None,
+) -> bool:
+    """Record what a returning helper actually spent: its elapsed time, and its tokens if reported.
+
+    `latency_ms` carries the elapsed time because that is the field that already means "how long
+    this took", and the verdict says whether it stayed inside the budget its dispatch declared -
+    `NO-GO` for a helper that overran, which is the row a retrospective is looking for. A helper
+    with no paired dispatch (spawned before this rule, or under `HELPER_BUDGET_OFF=1`) has no
+    declared budget, so it is recorded as `NO_VERDICT` with the budget named absent rather than
+    judged against a number nobody stated.
+    """
+    try:
+        if budget_s is None:
+            verdict = NO_VERDICT
+        else:
+            verdict = "NO-GO" if elapsed_s > budget_s else "GO"
+        note = (
+            f"agent={agent_type} elapsed_s={elapsed_s} "
+            f"budget_s={HELPER_UNRECORDED if budget_s is None else budget_s} "
+            f"tokens={HELPER_UNRECORDED if tokens is None else tokens}"
+        )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{HELPER_SPEND_STAGE}-{token}",
+            stage=HELPER_SPEND_STAGE,
+            spec=None,
+            attempt=1,
+            model=HELPER_MODEL,
+            model_family=None,
+            latency_ms=max(0, int(elapsed_s)) * 1000,
+            verdict=verdict,
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 - measurement never fails the phase it measures
+        sink.note(f"helper spend not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 # --- verification attempts, suite size, phase boundaries -----------------------------------------
 
 
-def open_verification_attempt(phase_dir: str) -> int | None:
-    """The verification ATTEMPT this run belongs to, derived from the verdict record on disk.
+def record_verification_attempts(phase_dir: str) -> int | None:
+    """Record how many verification ATTEMPTS this phase has run, from the verdict record on disk.
 
-    It used to increment on every invocation of the removed cross-family reading pass's script, which is
-    not the same thing and reads as if it were. One measured phase recorded **8** — three review calls
-    that timed out plus five diagnostic retries — while `verdict.json` correctly said `attempt: 1` and the
-    real three-attempt cap sat at 1 of 3, never fired. Read against a cap of 3, that number says the
-    cap failed and a declared hypothesis was disproved. Both would have been false, and the metric is
-    the only thing that said so.
+    `verification_attempts` is firstmate's "how many verification attempts ran, whatever their
+    verdict", and it is read against a cap of 3. It used to increment on every invocation of the
+    removed cross-family reading pass's script: one measured phase recorded **8** - three timed-out
+    review calls plus five diagnostic retries - while `verdict.json` correctly said `attempt: 1` and
+    the real cap sat at 1 of 3, never fired. Read against that cap, 8 says the cap failed and a
+    declared hypothesis was disproved; both would have been false. Then the script that counted was
+    deleted, and with it the only caller, so every record the pipeline wrote after that carried
+    **null** while the phases' own verdicts read `attempt: 4` (issue #120).
 
-    So the attempt comes from where the cap gets it: `verifier_attempts.current()`, over
-    `verdict.json` and the `verdict-attempt-<n>.json` archives the Verifier writes. This run is the
-    one after the last one on record, and **repeated invocations converge** on that same number
-    rather than accumulating — which is the producer contract firstmate's record requires, and
-    exactly what a retry must not disturb.
+    So the count comes from where the cap gets it: `verifier_attempts.current()`, the highest attempt
+    on record across `verdict.json` and the `verdict-attempt-<n>.json` archives the Verifier writes.
+    It is emitted where the fact is DECIDED - on every verdict write (`hook_verifier.sh`) - and again
+    at the handover, and **repeated invocations converge** on the same number rather than
+    accumulating, which is the producer contract firstmate's record requires and exactly what a
+    retry must not disturb. Retries and provider failures are not lost, they are attributed
+    correctly: `gate_calls[]` carries one entry per call with its `failure_cause`.
 
-    Retries and provider failures are not lost, they are attributed correctly: `gate_calls[]` already
-    carries one entry per call with its `failure_cause`, written by `gate_runner.py`. Only the
-    attribution was wrong. No field is added — firstmate owns that schema.
-
-    An unreadable verdict record leaves the derivation to the record already stored, which is a
-    measurement failing open exactly like every other one here.
+    A phase with no verdict on record has run no attempt, so nothing is written: `null` keeps
+    meaning "not measured" and 0 would claim a measurement nobody took. An unreadable verdict record
+    leaves the stored value alone, which is a measurement failing open like every other one here.
     """
     try:
         phase = resolve_phase(phase_dir)
         if phase is None:
             return None
-        attempt = verifier_attempts.current(Path(phase_dir)) + 1
-        sink.set_fields(phase, verification_attempts=attempt)
-        return attempt
+        count = verifier_attempts.current(Path(phase_dir))
+        if count == 0:
+            return 0
+        _stamp(phase, verification_attempts=count)
+        return count
     except Exception as exc:  # noqa: BLE001
-        sink.note(f"verification attempt not recorded: {type(exc).__name__}: {exc}")
+        sink.note(f"verification attempts not recorded: {type(exc).__name__}: {exc}")
         return None
 
 
-def test_root() -> Path:
-    """Where the project's tests live — the same answer `subprocess_check.py` resolves."""
-    declared = (os.environ.get("SUBPROC_CHECK_PATHS") or "").strip()
+def test_roots() -> list[Path]:
+    """Where the project's tests live — EVERY root `subprocess_check.test_roots()` resolves.
+
+    IMPORTED rather than restated. This used to re-read `$SUBPROC_CHECK_PATHS` here, which is the
+    same declaration read in a second place, and the second copy is the one that drifts: the third
+    reader, `hook_verifier.sh`, never read the declaration at all and ran a hardcoded
+    `--ignore=tests/e2e` over no root, so on any project whose tests are not at `tests/` the suite
+    this counted and the suite the gate ran were different populations (issue #120).
+
+    All of them, not the first. Collapsing a multi-root declaration to `test_roots()[0]` is the same
+    defect one notch narrower: `hook_verifier.sh` runs `--ignore=<root>/e2e <root>` for every
+    declared root, so counting only the first stamps `tests_before`/`tests_after` from a population
+    the gate never ran. Absolute, against the project root a caller already knows.
+    """
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-    return root / (declared.split(os.pathsep)[0] if declared else "tests")
+    return [root / declared for declared in subprocess_check.test_roots()]
 
 
 def pytest_argv() -> list[str]:
@@ -639,10 +802,15 @@ def count_tests() -> int | None:
     """Suite size: the number of items `pytest --collect-only` would run, minus e2e.
 
     The SAME population `hook_verifier.sh` reports when it runs the phase's suite (`pytest -q`,
-    `--ignore=<test root>/e2e` on the full-suite fallback) — collected test items, not `def test_`
-    lines (issue #46). Both the collected root and the ignored e2e directory come from
-    `test_root()`, so a project that points `SUBPROC_CHECK_PATHS` elsewhere excludes ITS e2e
-    directory rather than a `tests/e2e` that does not exist there.
+    `--ignore=<test root>/e2e <test root>` per declared root on the full-suite fallback) — collected
+    test items, not `def test_` lines (issue #46). Both the collected roots and the ignored e2e
+    directories come from `test_roots()`, so a project that points `SUBPROC_CHECK_PATHS` elsewhere
+    excludes ITS e2e directories rather than a `tests/e2e` that does not exist there, and a project
+    declaring several roots counts all of them.
+
+    A declared root that does not EXIST is skipped rather than handed to pytest, the same rule the
+    hook applies: pytest treats a missing path as a usage error, which would read as a red suite
+    where a project with no tests yet must simply collect nothing.
 
     Bounded through `proc_group.run_bounded`, never `subprocess.run(timeout=…)`: this runs inside
     `hook_spec_gate.sh`, and a raw timeout stops the process it started and nothing else — leaving
@@ -654,17 +822,13 @@ def count_tests() -> int | None:
     import error — the same "not counted" the prior static count used, so `record_phase_open`/
     `record_phase_close` still treat a None here as "skip the field", never a 0.
     """
-    root = test_root()
-    if not root.is_dir():
+    roots = [root for root in test_roots() if root.is_dir()]
+    if not roots:
         return None
     project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-    argv = [
-        *pytest_argv(),
-        "-q",
-        "--collect-only",
-        f"--ignore={root / 'e2e'}",
-        str(root),
-    ]
+    argv = [*pytest_argv(), "-q", "--collect-only"]
+    for root in roots:
+        argv += [f"--ignore={root / 'e2e'}", str(root)]
     try:
         result = proc_group.run_bounded(
             argv, gate_timeouts.collect_timeout(), cwd=str(project_root)
@@ -681,13 +845,88 @@ def count_tests() -> int | None:
     return int(match.group(1)) if match else None
 
 
+#: The four states a read of a phase record can be in, and there are no others. `sink.show` answers
+#: a bare `None` for all four, and every caller here used to re-decide which one it meant - one
+#: state at a time, a round of review apart: an unreadable record read as an empty one re-stamped a
+#: sealed close, an absent one read as unreadable dropped the provenance row on the write that would
+#: have created it, and a writer that is simply switched OFF - the documented normal state of a
+#: standalone install with no firstmate home - was diagnosed as a record that could not be read,
+#: prescribing a retry to an operator who had turned emission off on purpose. The decision lives
+#: here now, once, and no caller in this module branches on a `None` again.
+RECORD_PRESENT = "present"
+RECORD_ABSENT = "absent"
+RECORD_UNREADABLE = "unreadable"
+RECORD_NOT_CONFIGURED = "not-configured"
+
+
+class RecordRead(NamedTuple):
+    """One read of a phase record: WHICH state it is in, and the contents when it has any."""
+
+    state: str
+    record: dict
+
+    @property
+    def usable(self) -> bool:
+        """Whether `record` may be read - it exists, whether this call opened it or found it."""
+        return self.state in (RECORD_PRESENT, RECORD_ABSENT)
+
+
+def read_record(phase: str) -> RecordRead:
+    """The phase's record, READ. This creates nothing, and no caller of it may.
+
+    Not configured is asked FIRST and is never a failure: emission off, no writer resolvable, or a
+    writer this process already abandoned all answer `None` to every call, and nothing was read
+    because nothing was asked. A read-failure diagnostic there sends its reader to repair a writer
+    they deliberately do not have.
+
+    A read alone cannot tell "no record yet" from "the writer refused" - `sink.show` answers `None`
+    to both - and the only thing that could tell them apart is OPENING the record, which is a write.
+    So a pure read reports what it can honestly claim, that it found no record, and `open_record` is
+    where a caller that is about to write asks the question a write may ask.
+    """
+    if not sink.enabled():
+        return RecordRead(RECORD_NOT_CONFIGURED, {})
+    record = sink.show(phase)
+    if record is None:
+        return RecordRead(RECORD_ABSENT, {})
+    return RecordRead(RECORD_PRESENT, record)
+
+
+def open_record(phase: str) -> RecordRead:
+    """The record a WRITER is about to write to, opened when it does not exist yet.
+
+    Every caller here goes on to write, and `sink.add`/`sink.set_fields` both `ensure` first, so
+    this opens nothing they were not already opening. It is a separate function from `read_record`
+    rather than a flag on it because the difference is whether the caller may CREATE a record: a
+    reporter that picked up the wrong default would fabricate the very population issue #120
+    counts - a phase record with a null `elapsed_minutes`, for a phase that never ran, seeded from
+    another phase's ledger by `init --from`.
+
+    Opening is also what tells the two states apart. An absent record is opened and returned with
+    its contents; one that is STILL not readable after a successful open is the genuine failure, and
+    `usable` is false for it - its contents are unknown, never empty, which is what stops a refused
+    read re-stamping a sealed close or narrowing a series the record already holds.
+    """
+    read = read_record(phase)
+    if read.state != RECORD_ABSENT:
+        return read
+    if sink.ensure(phase):
+        opened = sink.show(phase)
+        if opened is not None:
+            return RecordRead(RECORD_ABSENT, opened)
+    return RecordRead(RECORD_UNREADABLE, {})
+
+
 def record_phase_open(phase_dir: str) -> bool:
     """Stamp when the phase was dispatched and how big the suite was, once."""
     phase = resolve_phase(phase_dir)
-    if phase is None or not sink.ensure(phase):
+    if phase is None:
+        return False
+    read = open_record(phase)
+    if not read.usable:
         return False
     record_plugin_version(phase)
-    record = sink.show(phase) or {}
+    record = read.record
     fields: dict[str, object] = {}
     if record.get("opened") is None:
         fields["opened"] = _now()
@@ -695,30 +934,109 @@ def record_phase_open(phase_dir: str) -> bool:
         counted = count_tests()
         if counted is not None:
             fields["tests_before"] = counted
-    return sink.set_fields(phase, **fields) if fields else True
+    return _stamp(phase, **fields) if fields else True
+
+
+#: The document whose committed presence is what LANDING means. `commands/avenger-run.md` §5 commits
+#: a phase "after each phase has a passing verdict.json AND its handover.md", and a phase closed at
+#: the attempt cap still writes the card (its remainder is carried there). So the card is the one
+#: artifact every closing phase commits and no earlier commit can - a spec commit, a plan commit, an
+#: amendment commit all leave the directory clean and none of them is the phase landing.
+CLOSING_DOCUMENT = "handover.md"
+
+
+def _committed(path: Path) -> bool | None:
+    """Whether `path` is tracked by git - in the index, which with a clean scope means in HEAD.
+
+    None when git cannot answer (no repository, no `git`, a hung `git`), never read as "committed".
+    """
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            [
+                "git",
+                "-C",
+                str(path.parent),
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                path.name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=sink.timeout(),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode == 0:
+        return True
+    # `--error-unmatch` exits 1 for a path git knows nothing about; anything else is git failing.
+    return False if proc.returncode == 1 else None
+
+
+def not_landed_reason(phase_dir: Path) -> str | None:
+    """Why `phase_dir` has not LANDED, or None once it has.
+
+    `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
+    implementation completion understates the phase by verification, route-backs and close - its
+    most expensive stages - and the too-early number is indistinguishable from a good one (issue
+    #46). Landing has TWO evidences here, and issue #120 is what the first alone measured:
+
+    * **The closing document is committed.** "Nothing under the directory is uncommitted" was the
+      whole test, and a spec commit satisfies it: phase 5 of one measured feature was stamped
+      `closed` at its SPEC commit, `elapsed_minutes: 10`, two hours and sixteen minutes before it
+      landed and before any verdict existed - and because a close SEALS the record, every defect
+      and gate call the phase produced after that was refused by the writer. `handover.md` being
+      *written* is still not landing (it is the Verifier's precondition); `handover.md` being
+      *committed* is what §5 says the landing commit contains.
+    * **Nothing under the directory is uncommitted** - `applicability.changed_paths`, reused rather
+      than re-derived so this agrees with every other "what did the diff touch" question in the
+      pipeline. An amendment can still reopen a phase after its card exists; while it does, the
+      directory is dirty and this refuses.
+
+    Returns None when git cannot answer at all, WRAPPED as a reason by the caller - a producer that
+    cannot observe landing must not claim it.
+
+    The evidences are written ONCE, in `_landing`. This and `phase_landed` are projections of that
+    one answer, and their callers decide with different halves of it - `record_phase_close` with the
+    words, `emission_gate.landed_phases` with the verdict. Written twice, a third evidence added to
+    one leaves the gate calling a phase landed that the stamp refuses, and prescribing a
+    `phase-close` that by construction records nothing.
+    """
+    return _landing(phase_dir)[1]
 
 
 def phase_landed(phase_dir: Path) -> bool | None:
-    """Whether `phase_dir` has LANDED — nothing under it left uncommitted.
+    """Whether `phase_dir` has LANDED: its closing document committed and nothing left uncommitted.
 
-    `docs/pipeline-metrics.md` defines close as landed, not implemented, because a stamp taken at
-    implementation completion understates the phase by verification, route-backs and close — its
-    most expensive stages — and the too-early number is indistinguishable from a good one (issue
-    #46). `handover.md` being written is not landing: it is the Verifier's own precondition, checked
-    by `hook_verifier.sh` *after* this file exists, and a phase can still gain an open amendment, a
-    further Verifier finding, or a blocked handover before its commit happens.
+    True once landed; False when git answered and it has not; None when git cannot answer - never
+    read as "landed". `not_landed_reason` carries the words; `_landing` decides both.
+    """
+    return _landing(phase_dir)[0]
 
-    Landing IS observable, though — `commands/avenger-run.md` §5 commits everything under the phase
-    directory the moment it actually lands — so this checks the one thing every caller can see
-    without being told who they are or when they think they are: `applicability.changed_paths`,
-    reused rather than re-derived so this agrees with every other "what did the diff touch" question
-    in the pipeline. True once nothing under `phase_dir` is modified, staged, or untracked. None when
-    git cannot answer (no repo, no `git` on PATH) — never read as "landed".
+
+def _landing(phase_dir: Path) -> tuple[bool | None, str | None]:
+    """The one landing decision: (has it landed, why not). The evidences are stated only here.
+
+    Three verdicts, and the third is not a lighter version of the second: True with no reason;
+    False with the reason; and None - git could not answer - which also carries a reason and must
+    never be read as landed. Callers take the half they need and cannot disagree about the rest.
     """
     scope = applicability.changed_paths(phase_dir)
     if scope is None:
-        return None
-    return not applicability.touched(phase_dir, scope)
+        return None, "git could not say whether it has landed"
+    if applicability.touched(phase_dir, scope):
+        return False, "still has uncommitted changes"
+    committed = _committed(Path(phase_dir) / CLOSING_DOCUMENT)
+    if committed is None:
+        return None, f"git could not say whether its {CLOSING_DOCUMENT} is committed"
+    if not committed:
+        return False, (
+            f"has no committed {CLOSING_DOCUMENT} - a commit that leaves the phase directory clean "
+            f"is not the phase landing until its contract card is in it (a spec or plan commit "
+            f"is not a close)"
+        )
+    return True, None
 
 
 #: The mutation gate's stage name in `gate_calls[]`, and the cause a run that never happened carries.
@@ -765,33 +1083,185 @@ def record_mutation_unavailable(phase_dir: str, reason: str) -> bool:
         return False
 
 
+#: Deferrals in `gate_calls[]` (issue #115), on the precedent `record_plugin_version` and
+#: `record_mutation_unavailable` set for a fact firstmate's closed schema has no field for: an
+#: ordinary row on EXISTING keys, the counts in `note`. A phase that defers everything must be as
+#: visible as one that fixes everything, and the record is where that is read.
+DEFERRAL_STAGE = "deferral"
+DEFERRAL_MODEL = "none (scripts/carried_items.py)"
+
+
+def record_deferrals(phase_dir: str) -> bool:
+    """Record how many findings this phase deferred and how many it re-carried. Never fails the phase.
+
+    Idempotent by id: `carried_items.py defer`/`recarry` emit it the moment the fact is decided, and
+    `hook_verifier.sh` emits it again at the handover, so the row converges on the final counts
+    rather than appending one per call. Deferred and re-carried are counted separately because they
+    are different facts - a phase that originated five deferrals and one that passed five along both
+    read `deferred=5` if they were folded together.
+    """
+    try:
+        import carried_items  # lazy: carried_items emits through this module
+
+        phase = resolve_phase(phase_dir)
+        if phase is None:
+            return False
+        records = carried_items.deferrals(Path(phase_dir))
+        here = Path(phase_dir).name
+        originated = [r for r in records if str(r.get("origin") or here) == here]
+        recarried = [r for r in records if str(r.get("origin") or here) != here]
+        owners = sorted({str(r.get("owner")) for r in records if r.get("owner")})
+        note = (
+            f"deferred={len(originated)} recarried={len(recarried)} "
+            f"owners={','.join(owners) or '-'} "
+            f"ids={','.join(str(r.get('id')) for r in records) or '-'}"
+        )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{DEFERRAL_STAGE}",
+            stage=DEFERRAL_STAGE,
+            spec=None,
+            attempt=1,
+            model=DEFERRAL_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=_clean(note),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"deferrals not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
+#: What the declared-vs-run comparison is stamped with. No model decides it: `suite_command` reads
+#: the project's own `.no-mistakes.yaml` and the transcript `verifier_evidence.py` wrote.
+TEST_COMMAND_STAGE = "test-command"
+TEST_COMMAND_MODEL = "none (scripts/suite_command.py)"
+
+#: A project that DECLARES no test command. Not the same as one whose run could not be read
+#: (`suite_command.UNKNOWN`), and the row says which, because the first is a settled property of
+#: the project and the second is a measurement that failed.
+TEST_COMMAND_UNDECLARED = "undeclared"
+
+#: A `.no-mistakes.yaml` that exists and could not be read for its `test:` key - unreadable bytes,
+#: or the key stated twice with different values. A THIRD state, kept apart from `undeclared` for
+#: the reason every absence here is named rather than resolved to the nearest answer: "this project
+#: has no test command" and "nobody could tell what its test command is" have different remedies.
+TEST_COMMAND_UNREADABLE = "unreadable"
+
+
+def record_test_command(phase_dir: str) -> bool:
+    """Record the command the phase's suite actually ran, beside the one the project declares (#119).
+
+    The defect this measures is a step that logged `no test command configured` and improvised an
+    invocation while the project plainly declared one; the improvised run PASSED, so nothing in the
+    record distinguished it from the declared run passing. Recording the pair is what makes a
+    mismatch visible afterwards - `verifier_precheck` is what refuses the pass at the time.
+
+    Not a new top-level field: firstmate's schema is closed and its producer contract is "add no
+    key" (pipeline-conventions §6d). This follows `record_plugin_version`, `record_helper_dispatch`
+    and `record_deferrals` - an ordinary `gate_calls` row on existing keys with the detail in
+    `note`. `id` is fixed per phase, so the handover emitting it more than once converges on one
+    row instead of appending duplicates.
+
+    The verdict is the comparison itself: `GO` when the run is the declared command, `NO-GO` when
+    it is a different command or could not be read at all under a declaration, and `NO_VERDICT`
+    when there was nothing to compare against - the project declares nothing, or its declaration
+    could not be read - because a `GO` there would read as a comparison that was made. The note
+    keeps those last two apart (`undeclared` against `unreadable`), so the row says which.
+    """
+    try:
+        import suite_command  # lazy: only the handover asks this
+
+        phase = resolve_phase(phase_dir)
+        if phase is None:
+            return False
+        base = suite_command.repo_root(Path(phase_dir))
+        declaration = suite_command.declared(base)
+        run = suite_command.observed(Path(phase_dir))
+        if declaration.problem is not None:
+            declared_text, verdict = TEST_COMMAND_UNREADABLE, NO_VERDICT
+        elif declaration.command is None:
+            declared_text, verdict = TEST_COMMAND_UNDECLARED, NO_VERDICT
+        else:
+            declared_text = declaration.command
+            verdict = (
+                "GO"
+                if run.argv is not None
+                and suite_command.runs_declared(run.argv, declaration.command)
+                else "NO-GO"
+            )
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=f"p{phase}-{TEST_COMMAND_STAGE}",
+            stage=TEST_COMMAND_STAGE,
+            spec=None,
+            attempt=1,
+            model=TEST_COMMAND_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=verdict,
+            failure_cause=None,
+            note=_clean(f"declared={declared_text} ran={run.command}"),
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"test command not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
 def record_phase_close(phase_dir: str) -> bool:
     """Stamp when the phase landed, the suite it landed with, and the wall clock it took.
 
-    Refuses the write while `phase_dir` is not yet landed (issue #46) — a producer that cannot
-    observe landing must not claim it, and this one now can. Called at the wrong moment, this is a
-    no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on why.
+    Refuses the write while `phase_dir` is not yet landed (issue #46, sharpened by issue #120: landed
+    means the contract card is COMMITTED, not merely that a commit left the directory clean) - a
+    producer that cannot observe landing must not claim it, and this one now can. Called at the
+    wrong moment, this is a no-op: no `closed`, no `elapsed_minutes`, no `tests_after`, and a note on
+    why.
 
-    CONVERGES on a phase already closed, writing nothing at all. Two producers now stamp the close —
+    CONVERGES on a phase already closed, writing nothing at all. Two producers stamp the close -
     `hook_phase_close.sh` on every commit that touches the phase, and the orchestrator's own
-    `phase-close` — and a phase directory is routinely committed again after it closed. A closed
+    `phase-close` - and a phase directory is routinely committed again after it closed. A closed
     record SEALS its measurements, so a second stamp is not a repeat, it is drift: firstmate refuses
     it outright, and this would spend a refusal on every later commit to say what the record already
     says. Producing the same answer twice must cost nothing and change nothing.
+
+    `elapsed_minutes` is derived from `opened`, which only a spec WRITE through the Write/Edit hook
+    stamps (`hook_spec_gate.sh` -> `phase-open`). A phase whose specs were authored through a shell
+    heredoc has no `opened`, and its elapsed time is then genuinely unmeasured: it is left null and
+    SAID, never invented from a later moment, because a stamp is worth what its trigger point is
+    worth and "the first commit that touched the directory" is not dispatch.
+
+    Both of those read the record, so both take the state `read_record` names rather than deciding
+    for themselves what a `None` meant. Read as "empty", a transient refusal defeats the converge
+    guard and re-stamps a sealed record, and it prints the never-opened note above - a confident
+    diagnosis prescribing a remedy for a cause that does not apply, on the one field this whole
+    issue exists to repair. So an unreadable record writes NOTHING and says so; an ABSENT one is
+    opened and written as always; and emission being OFF writes nothing and says nothing, because a
+    writer nobody configured did not fail to read anything.
     """
     phase = resolve_phase(phase_dir)
     if phase is None:
         return False
-    landed = phase_landed(Path(phase_dir))
-    if landed is not True:
-        why = (
-            "still has uncommitted changes"
-            if landed is False
-            else "git could not say whether it has landed"
-        )
+    why = not_landed_reason(Path(phase_dir))
+    if why is not None:
         sink.note(f"phase {phase} close not recorded: {phase_dir} {why}")
         return False
-    record = sink.show(phase) or {}
+    read = open_record(phase)
+    if not read.usable:
+        if read.state == RECORD_UNREADABLE:
+            sink.note(
+                f"phase {phase} close not recorded: the record could not be READ. A failed read is "
+                f"not an empty record - taken for one it defeats the converge guard below and "
+                f"re-stamps a SEALED record, and it makes a phase that WAS opened look like one "
+                f"nothing ever opened, which is the single state `elapsed_minutes` is left null "
+                f"and explained for. Nothing is written; the next close stamp on this phase "
+                f"records it."
+            )
+        return False
+    record = read.record
     if record.get("closed") is not None:
         return True
     closed = _now()
@@ -802,7 +1272,16 @@ def record_phase_close(phase_dir: str) -> bool:
     elapsed = _elapsed_minutes(record.get("opened"), closed)
     if elapsed is not None:
         fields["elapsed_minutes"] = elapsed
-    return sink.set_fields(phase, **fields)
+    else:
+        sink.note(
+            f"phase {phase}: elapsed_minutes NOT recorded - the record carries no `opened` "
+            f"({record.get('opened')!r}). Nothing stamped the phase open: `phase-open` fires from "
+            f"hook_spec_gate.sh on a spec written through the Write/Edit tool, and a spec authored "
+            f"through a shell heredoc or on a runtime without that hook fires nothing. The close is "
+            f"still stamped; the elapsed time is genuinely unmeasured and stays null rather than "
+            f"being invented from a later moment."
+        )
+    return _stamp(phase, **fields)
 
 
 def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
@@ -815,6 +1294,154 @@ def _elapsed_minutes(opened: str | None, closed: str) -> int | None:
     except ValueError:
         return None
     return max(0, int((end - start).total_seconds() // 60))
+
+
+# --- provenance: what the pipeline stamped itself ---------------------------------------------------
+
+#: The measurement scalars a close SEALS (`docs/pipeline-metrics.md`, "A closed record seals its
+#: measurements"). These are the fields a person can type in afterwards and the fields this pipeline
+#: stamps as the run happens, under one name, so the record alone cannot say which happened - which
+#: is how four of fourteen records in one home came to carry a null `elapsed_minutes` and eleven
+#: hand-entered close stamps without anything noticing (issue #120).
+MEASUREMENT_SCALARS = (
+    "opened",
+    "closed",
+    "elapsed_minutes",
+    "spec_rounds",
+    "verification_attempts",
+    "connection_drops",
+    "tests_before",
+    "tests_after",
+    "turns",
+    "output_tokens",
+    "cache_read_tokens",
+)
+
+#: The row that says which of those the PIPELINE wrote. Not a new top-level field: firstmate's schema
+#: is closed and its producer contract is "add no key" (§6d), so this follows the precedent
+#: `record_triage_decision`, `record_plugin_version` and `record_mutation_unavailable` set for a fact
+#: the schema has no field for - an ordinary `gate_calls` row on EXISTING keys, the fact in `note`,
+#: bounded free text the schema already has. `defects[]` already carries this per entry as
+#: `recorded_by` (firstmate PR 17); this is the same statement for the scalars, in the form the
+#: contract allows. The proper home is a per-scalar `recorded_by` in the schema, which is firstmate's
+#: decision and is said in the PR that shipped this rather than pre-empted here.
+#:
+#: It is written BEFORE `closed`, because `closed` seals every collection, `gate_calls` included: a
+#: row that arrives after the close is refused, and a refused provenance row is the one thing this
+#: row must never be. The reader (`provenance_report`) intersects the list with the scalars that
+#: actually hold a value, so a field this row names that a failed write left null is not counted as
+#: stamped - which is what makes writing the row a step early safe rather than an over-claim.
+PROVENANCE_STAGE = "metrics-provenance"
+PROVENANCE_MODEL = "none (scripts/pipeline_metrics.py)"
+PROVENANCE_PREFIX = "pipeline-stamped:"
+
+
+def _provenance_id(phase: str) -> str:
+    return f"p{phase}-{PROVENANCE_STAGE}"
+
+
+def stamped_fields(record: dict | None) -> set[str]:
+    """The measurement scalars the pipeline says it stamped, read back off the provenance row."""
+    for entry in (record or {}).get("gate_calls") or []:
+        if isinstance(entry, dict) and entry.get("stage") == PROVENANCE_STAGE:
+            note = str(entry.get("note") or "")
+            if note.startswith(PROVENANCE_PREFIX):
+                return {
+                    name.strip()
+                    for name in note[len(PROVENANCE_PREFIX) :].split(",")
+                    if name.strip()
+                }
+    return set()
+
+
+def _record_provenance(phase: str, names: set[str]) -> bool:
+    """Merge `names` into the phase's provenance row. Fail-open, converging by id.
+
+    The row only ever GROWS within a phase, so the merge needs the names already on it — and it is
+    written by upsert, which REPLACES the row it converges on. A read that could not answer is
+    therefore not the same as a row holding nothing: merging a failed read against an empty set
+    would rewrite the row as the names of this stamp alone. Then `provenance_report` reports every
+    earlier pipeline-written scalar under `scalars_not_by_pipeline` — the instrument built to tell a
+    pipeline stamp from a hand-entered one, mislabelling its own, with no error anywhere.
+
+    So an unreadable record writes NOTHING and says so. The row keeps what it had: incomplete for as
+    long as the read fails, never narrowed to a wrong set. A record that simply does not exist yet
+    is the ordinary first stamp, is opened by `read_record`, and is written as always; emission
+    switched off writes nothing and says nothing, since there is no row anywhere to narrow.
+    """
+    try:
+        read = open_record(phase)
+        if not read.usable:
+            if read.state == RECORD_UNREADABLE:
+                sink.note(
+                    f"provenance not recorded for phase {phase}: the record could not be read, and "
+                    f"the row is merged into what it already names — writing it now would narrow "
+                    f"it to {','.join(sorted(n for n in names if n in MEASUREMENT_SCALARS))}"
+                )
+            return False
+        known = stamped_fields(read.record) | {
+            n for n in names if n in MEASUREMENT_SCALARS
+        }
+        if not known:
+            return True
+        return sink.add(
+            phase,
+            "gate_calls",
+            id=_provenance_id(phase),
+            stage=PROVENANCE_STAGE,
+            spec=None,
+            attempt=1,
+            model=PROVENANCE_MODEL,
+            model_family=None,
+            latency_ms=0,
+            verdict=NO_VERDICT,
+            failure_cause=None,
+            note=f"{PROVENANCE_PREFIX} {','.join(sorted(known))}",
+        )
+    except Exception as exc:  # noqa: BLE001 — measurement never fails the phase it measures
+        sink.note(f"provenance not recorded: {type(exc).__name__}: {exc}")
+        return False
+
+
+def _stamp(phase: str, **fields: object) -> bool:
+    """Set measurement scalars AND record that the pipeline set them.
+
+    Every scalar this module writes goes through here, so the provenance row cannot miss one by a
+    caller forgetting it. `closed` is written LAST and alone: it seals the collections, and the
+    provenance row has to be in `gate_calls` before that happens.
+    """
+    if not fields:
+        return True
+    ordinary = {k: v for k, v in fields.items() if k != "closed"}
+    if ordinary and not sink.set_fields(phase, **ordinary):
+        return False
+    _record_provenance(phase, set(fields))
+    if "closed" in fields:
+        return sink.set_fields(phase, closed=fields["closed"])
+    return True
+
+
+def provenance_report(record: dict) -> dict:
+    """What fraction of this record the pipeline wrote itself - the field that makes issue #120's
+    class self-detecting. A scalar with a value that the provenance row does not name was entered by
+    something other than this pipeline (a person, or a producer that predates the row)."""
+    stamped = stamped_fields(record)
+    held = [name for name in MEASUREMENT_SCALARS if record.get(name) is not None]
+    by_pipeline = [name for name in held if name in stamped]
+    by_hand = [name for name in held if name not in stamped]
+    defects: dict[str, int] = {}
+    for defect in record.get("defects") or []:
+        if isinstance(defect, dict):
+            key = defect.get("recorded_by") or "(absent)"
+            defects[key] = defects.get(key, 0) + 1
+    return {
+        "phase": record.get("phase"),
+        "scalars_held": len(held),
+        "scalars_by_pipeline": by_pipeline,
+        "scalars_not_by_pipeline": by_hand,
+        "fraction_by_pipeline": (len(by_pipeline) / len(held)) if held else None,
+        "defects_by_recorded_by": defects,
+    }
 
 
 # --- defects: which stage found each one ---------------------------------------------------------
@@ -981,6 +1608,158 @@ def record_mutation_survivors(phase_dir: str, score_path: str) -> bool:
     )
 
 
+#: `breaker.json`'s verdict that carries defects; `clean` names what was attacked and carries none.
+BREAKER_FOUND = "found"
+
+#: The id prefix a Breaker counterexample's defect carries, and the `found_by` `emission_gate` reads
+#: it back under.
+BREAKER_DEFECT_PREFIX = "breaker-"
+
+
+def counterexample_identity(counterexample: object) -> str | None:
+    """The defect id ONE Breaker counterexample gets. Asked by the emitter AND by the floor.
+
+    Identity was defined twice, independently, in two modules that have to agree: this emitter
+    hashed the whitespace-normalized text, while `emission_gate.described_counterexamples` counted
+    the set of raw `.strip()`ed strings and `check_defects` required the recorded count to reach the
+    described one. Two counterexamples differing only in internal whitespace were then ONE entry to
+    the emitter and TWO to the floor - a handover gate reporting a GAP whose own printed remedy,
+    re-running this emitter, could by construction never raise the count. That is the same wedge a
+    truncated id already produced once, surviving one normalization further along, which is what
+    makes the split the defect rather than either normalization. So there is one owner and both
+    sides ask it: a later change to what counts as "the same counterexample" moves both or neither.
+
+    Empty (or whitespace-only) is not a counterexample and has no identity - None, never a shared
+    id every blank would converge onto.
+
+    Two properties the earlier rounds established and this keeps. **Stable** across repeated
+    emission, so the per-write hook and the close-time pass converge on one entry each. **Bounded**,
+    so an arbitrarily long counterexample cannot become the record's identity field - the digest is
+    over the WHOLE text, so the readable prefix truncates without identity truncating with it.
+    """
+    text = str(counterexample or "").strip()
+    if not text:
+        return None
+    digest = hashlib.sha1(  # noqa: S324 — identity, not security
+        " ".join(text.split()).encode("utf-8")
+    ).hexdigest()[:10]
+    return f"{BREAKER_DEFECT_PREFIX}{text[:80]}-{digest}"
+
+
+def record_breaker_findings(phase_dir: str, breaker_path: str) -> int:
+    """Turn every counterexample the Breaker LANDED into a defect attributed to it.
+
+    The Breaker is the stage that found phase 8's plaintext-credential leaks by constructing inputs,
+    and until this existed nothing recorded what it found: `skills/verifier-triage` asked the
+    Verifier to run `defect --found-by breaker` by hand, which is an instruction with no mechanism
+    (issue #120, "stages find defects they never emit"). `breaker.json` is the Breaker's own record
+    and `breaker_gate.py` already refuses a `found` verdict naming no counterexample, so the
+    counterexamples are the finding set, read where they are written - `hook_verifier.sh` on every
+    `breaker.json` write - and again at the handover. Idempotent by counterexample, so the two
+    converge on one entry each.
+
+    Identity is a digest of the WHOLE counterexample, the construction `record_spec_gate_findings`
+    already uses, with a readable prefix. A truncated id is not identity: `emission_gate` counts the
+    full strings, so two counterexamples sharing a long prefix upserted onto one entry while the
+    floor counted two - a permanent handover GAP whose own printed remedy, re-running this emitter,
+    could never raise the count. Bounded, and stable across repeated emission, so the per-write hook
+    and the close-time pass still converge on one entry each.
+
+    `breaker.json` carries no severity, so every entry is `correctness`; the Breaker attacks
+    security paths, and a reader who needs the split reads the counterexample test. Said here rather
+    than guessed at.
+
+    `stage_reached` is `verification`, firstmate's "the last stage the defect passed through
+    undetected". The Breaker runs only AFTER a passing verdict - `pipeline_state.py` reaches its
+    branch once the verdict passes and no amendment is owed - so a counterexample it lands got past
+    implementation AND verification, and recording `implementation` would read as a defect
+    verification would still have caught, crediting the Verifier in the one column beside `found_by`
+    that cannot be recovered after the run. `record_mutation_survivors`, the other post-verdict
+    recorder here, already says `verification`.
+    """
+    phase = resolve_phase(phase_dir)
+    if phase is None:
+        return 0
+    try:
+        payload = json.loads(Path(breaker_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        sink.note(f"breaker findings not recorded: {exc}")
+        return 0
+    if not isinstance(payload, dict) or payload.get("verdict") != BREAKER_FOUND:
+        return 0
+    written = 0
+    for counterexample in payload.get("counterexamples") or []:
+        text = str(counterexample or "").strip()
+        identity = counterexample_identity(counterexample)
+        if identity is None:
+            continue
+        if record_defect(
+            phase,
+            identifier=identity,
+            summary=f"Breaker counterexample: {text}",
+            found_by="breaker",
+            real=True,
+            stage_reached="verification",
+            severity="correctness",
+        ):
+            written += 1
+    return written
+
+
+def record_spec_gate_findings(spec_path: str | None, blocking: list[dict]) -> int:
+    """Record each BLOCKING observation the spec gate derived as a defect the spec gate found.
+
+    `found_by: spec-gate` is in firstmate's vocabulary - "caught while judging the spec, before
+    implementation" - and nothing emitted it: `record_triage_decision` records the arithmetic (how
+    many observations, how many blocked) and the blockers themselves went to the spec writer and
+    nowhere else. Called from `spec_gate_triage.py` at the decide step, the one place the verdict is
+    derived, so it is reached on exactly the path the defect is found on.
+
+    `real` is False: a spec is an artifact, and the schema keeps artifact defects out of the
+    product-defect count. Idempotent by statement, so a body re-gated over the same blocker
+    converges on one entry.
+
+    **Fail-open at the definition, not at the call site**, like every other recorder here. Its one
+    caller is `spec_gate_triage.py`, whose exit code IS the gate's verdict and whose only escape
+    hatch is `guard_scope.run`, which re-raises anything that is not a `SystemExit`: an exception
+    from this emission would leave the process exiting 1, the code that script spells `BLOCKED`. A
+    measurement may not decide a verdict (§6d), and putting the guard here rather than around the
+    call is what stops the next caller reintroducing the hole by forgetting the wrapper.
+    """
+    try:
+        if not spec_path or not blocking:
+            return 0
+        phase = resolve_phase(spec_path)
+        spec = resolve_spec(spec_path)
+        if phase is None or spec is None:
+            return 0
+        written = 0
+        for observation in blocking:
+            if not isinstance(observation, dict):
+                continue
+            statement = str(observation.get("statement") or "").strip()
+            if not statement:
+                continue
+            digest = hashlib.sha1(  # noqa: S324 — identity, not security
+                " ".join(statement.split()).encode("utf-8")
+            ).hexdigest()[:10]
+            category = str(observation.get("category") or "blocking")
+            if record_defect(
+                phase,
+                identifier=f"spec-gate-{spec}-{digest}",
+                summary=f"[{category}] {statement}",
+                found_by="spec-gate",
+                real=False,
+                stage_reached="spec",
+                severity="correctness",
+            ):
+                written += 1
+        return written
+    except Exception as exc:  # noqa: BLE001 — measurement never decides a verdict
+        sink.note(f"spec gate findings not recorded: {type(exc).__name__}: {exc}")
+        return 0
+
+
 # --- skill loads ----------------------------------------------------------------------------------
 
 
@@ -1069,7 +1848,10 @@ def record_skill_load(
     stage = observing_stage(stage)
     identity = f"{stage}:{skill}"
     if not loaded:
-        for entry in (sink.show(phase) or {}).get("skill_loads") or []:
+        read = open_record(phase)
+        if not read.usable:
+            return False
+        for entry in read.record.get("skill_loads") or []:
             if entry.get("id") == identity and entry.get("loaded"):
                 return True
     fields: dict[str, object] = {
@@ -1117,17 +1899,23 @@ def _build_parser() -> argparse.ArgumentParser:
     killed.add_argument("--phase-dir")
     killed.add_argument("--model", default=os.environ.get("GATE_MODEL", "unknown"))
 
-    attempt = sub.add_parser(
-        "verifier-attempt",
-        help="print the verification ATTEMPT this run belongs to, derived from verdict.json",
+    attempts = sub.add_parser(
+        "verifier-attempts",
+        help="record how many verification attempts are on record, derived from verdict.json",
     )
-    attempt.add_argument("phase_dir")
+    attempts.add_argument("phase_dir")
 
     findings = sub.add_parser(
-        "verifier-findings", help="record the review's findings as defects"
+        "verifier-findings", help="record the Verifier's findings as defects"
     )
     findings.add_argument("phase_dir")
     findings.add_argument("verdict")
+
+    breaker = sub.add_parser(
+        "breaker-findings", help="record the Breaker's counterexamples as defects"
+    )
+    breaker.add_argument("phase_dir")
+    breaker.add_argument("breaker")
 
     survivors = sub.add_parser(
         "mutation-survivors", help="record surviving mutants as defects"
@@ -1158,6 +1946,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     required.add_argument("--stage", required=True)
 
+    deferrals = sub.add_parser(
+        "deferrals", help="record how many findings a phase deferred and re-carried"
+    )
+    deferrals.add_argument("phase_dir")
+
+    test_command = sub.add_parser(
+        "test-command",
+        help="record the suite command that ran beside the one the project declares",
+    )
+    test_command.add_argument("phase_dir")
+
     defect = sub.add_parser("defect", help="record a defect and what caught it")
     defect.add_argument(
         "--phase-ref",
@@ -1181,6 +1980,25 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("phase-open", "phase-close"):
         boundary = sub.add_parser(name, help=f"stamp the phase {name.split('-')[1]}")
         boundary.add_argument("phase_dir")
+
+    provenance = sub.add_parser(
+        "provenance",
+        help="report what fraction of the record the pipeline wrote itself",
+    )
+    provenance.add_argument("phase_ref")
+
+    spool = sub.add_parser(
+        "spool",
+        help="list the writes firstmate's seal turned away; --drain replays them (issue #98)",
+    )
+    spool.add_argument(
+        "--phase", default=None, help="a two-digit phase; default every phase"
+    )
+    spool.add_argument(
+        "--drain",
+        action="store_true",
+        help="replay the queued writes now; exit 1 while any is still refused",
+    )
 
     return parser
 
@@ -1216,14 +2034,20 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
             cause=HOOK_KILLED,
             detail="the harness killed the hook while the gate was still running",
         )
-    elif args.command == "verifier-attempt":
-        print(open_verification_attempt(args.phase_dir) or 1)
+    elif args.command == "verifier-attempts":
+        record_verification_attempts(args.phase_dir)
     elif args.command == "verifier-findings":
         record_verifier_findings(args.phase_dir, args.verdict)
+    elif args.command == "breaker-findings":
+        record_breaker_findings(args.phase_dir, args.breaker)
     elif args.command == "mutation-survivors":
         record_mutation_survivors(args.phase_dir, args.score)
     elif args.command == "mutation-unavailable":
         record_mutation_unavailable(args.phase_dir, args.reason)
+    elif args.command == "deferrals":
+        record_deferrals(args.phase_dir)
+    elif args.command == "test-command":
+        record_test_command(args.phase_dir)
     elif args.command == "skill-load":
         phase = _phase_of_ref(args.phase_ref) or current_phase()
         if phase:
@@ -1259,7 +2083,53 @@ def _dispatch(args: argparse.Namespace) -> bool | None:
         record_phase_open(args.phase_dir)
     elif args.command == "phase-close":
         record_phase_close(args.phase_dir)
+    elif args.command == "provenance":
+        phase = _phase_of_ref(args.phase_ref)
+        if phase is None:
+            raise UnresolvablePhaseRef(args.phase_ref)
+        read = read_record(phase)
+        if read.state == RECORD_NOT_CONFIGURED:
+            sink.note(
+                f"provenance: nothing to report for {args.phase_ref!r} - no metrics writer is "
+                f"configured, so this project keeps no phase record for anyone to have written."
+            )
+        elif read.state != RECORD_PRESENT:
+            sink.note(f"provenance: no record for {args.phase_ref!r} yet")
+        else:
+            print(json.dumps(provenance_report(read.record), indent=2, sort_keys=True))
+    elif args.command == "spool":
+        return _spool_command(args.phase, args.drain)
     return None
+
+
+def _spool_command(phase: str | None, drain: bool) -> bool:
+    """Report the queue, and replay it when asked. Reports the OUTCOME: what landed, what did not."""
+    waiting = sink.queued(phase)
+    if not waiting:
+        print(
+            f"{sink.PREFIX} spool: nothing queued at {sink.spool_path()}",
+            file=sys.stderr,
+        )
+        return True
+    for entry in waiting:
+        print(
+            f"{sink.PREFIX} spool: phase {entry.get('phase')} refused at {entry.get('refused_at')}: "
+            f"{' '.join(str(a) for a in entry.get('argv') or [])}",
+            file=sys.stderr,
+        )
+    if not drain:
+        print(
+            f"{sink.PREFIX} spool: {len(waiting)} write(s) waiting. Reopen the phase "
+            f"(`fm-pipeline-metrics.sh set <phase> --reopen closed:=null`), then `spool --drain`.",
+            file=sys.stderr,
+        )
+        return True
+    landed, remaining = sink.drain(phase)
+    print(
+        f"{sink.PREFIX} spool: drained - {landed} landed, {remaining} still refused.",
+        file=sys.stderr,
+    )
+    return remaining == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1298,7 +2168,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ok = _dispatch(args)
     except UnresolvablePhaseRef:
-        print(_defect_phase_ref_message(args), file=sys.stderr)
+        print(
+            _defect_phase_ref_message(args)
+            if args.command == "defect"
+            else _phase_ref_message(args),
+            file=sys.stderr,
+        )
         return USAGE_ERROR
     except Exception as exc:  # noqa: BLE001 — measurement never fails the thing it measures
         sink.note(f"{args.command} not recorded: {type(exc).__name__}: {exc}")
@@ -1310,6 +2185,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(_defect_failure_message(args), file=sys.stderr)
         return 1
+    if args.command == "spool" and ok is False:
+        return 1  # an operator asked for a drain and something is still refused: say so in the exit
     return 0
 
 
@@ -1332,6 +2209,22 @@ def _defect_lost(args: argparse.Namespace) -> str:
         f"{args.identifier} (found_by={args.found_by}) was NOT written to the metrics record. This "
         "is the single field the record exists for and it cannot be reconstructed once the run is "
         "over."
+    )
+
+
+def _phase_ref_message(args: argparse.Namespace) -> str:
+    """What any non-`defect` command whose ref names no phase says: the ARGUMENT is the cause.
+
+    A ref that resolves to nothing never reached the record, so it is not one of the four states a
+    read can be in and must not borrow one: reported as an unreadable record it sends its reader to
+    repair a writer that is working perfectly, which is the same mis-diagnosis those states were
+    named to remove, one layer further out.
+    """
+    return (
+        f"{sink.PREFIX} {args.command}: {args.phase_ref!r} does not resolve to a phase, so there "
+        "was no record to read. The metrics writer was never reached and nothing about it is known "
+        "to be wrong - the remedy is the ARGUMENT: name an existing phase directory (or a path "
+        "inside one), such as docs/features/<feature>/phases/<n>-<slug>, or the phase number."
     )
 
 
@@ -1369,4 +2262,13 @@ def _defect_failure_message(args: argparse.Namespace) -> str:
 
 
 if __name__ == "__main__":
+    # NOT routed through `guard_scope.run`, and that is a decision rather than an omission. This
+    # module carries a scope statement in `guard_scope.toml` - what a clean run does NOT establish
+    # (issue #97) - but emitting it on the clean branch would break a documented contract:
+    # `AVENGER_METRICS_OFF=1` records none deliberately and SILENTLY (CLAUDE.md 6d), and most
+    # callers are hooks that discard stderr, so the statement would be noise where it is read and a
+    # broken promise where it is not. `scripts/guard_proof.py` carries the matching entry in
+    # `EMISSION_EXCEPTIONS`, which is what keeps a statement-without-emission honest rather than
+    # invisible. The one thing this module REFUSES - a spec round for a gate that reached no
+    # verdict - carries its own reason where somebody is being told a verdict.
     raise SystemExit(main())

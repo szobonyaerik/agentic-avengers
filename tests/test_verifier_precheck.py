@@ -10,6 +10,7 @@ the tiered-binding rule removed: a `binding: none` requirement is never owed a t
 an untraced id.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -464,8 +465,13 @@ def test_named_phases_still_check_the_whole_phase(phase: Path) -> None:
 
 
 def write_phase_tests(phase: Path, body: str, *, name: str = "test_thing.py") -> Path:
-    """The phase's own test tree, at the path `hook_verifier.sh` resolves: tests/<feature>/<slug>."""
-    root = phase.parents[3] / "tests" / "demo" / "1-core"
+    """The phase's own test tree, at the path `hook_verifier.sh` resolves: tests/<feature>/<slug>.
+
+    Anchored on the repository root - the directory ABOVE `docs/` - which is where a real project
+    puts `tests/`. It used to be written under `docs/tests/`, the same off-by-one the resolver had,
+    so the two agreed with each other and with no repository on disk.
+    """
+    root = phase.parents[4] / "tests" / "demo" / "1-core"
     root.mkdir(parents=True, exist_ok=True)
     path = root / name
     path.write_text(body, encoding="utf-8")
@@ -603,7 +609,7 @@ def test_an_undecodable_phase_test_file_is_reported_rather_than_hiding_its_tests
     stamp(spec)
     write_mapping(phase, "| R1.1.1 | test_real | integration |\n")
     write_phase_tests(phase, "def test_real():\n    assert True\n")
-    broken = phase.parents[3] / "tests" / "demo" / "1-core" / "test_broken.py"
+    broken = phase.parents[4] / "tests" / "demo" / "1-core" / "test_broken.py"
     broken.write_bytes(b"# caf\xe9\ndef test_other():\n    assert True\n")
 
     findings = check_phase(phase)
@@ -690,8 +696,8 @@ def test_an_unopenable_phase_test_file_is_reported_rather_than_hiding_its_tests(
     stamp(spec)
     write_mapping(phase, "| R1.1.1 | test_real | integration |\n")
     write_phase_tests(phase, "def test_real():\n    assert True\n")
-    broken = phase.parents[3] / "tests" / "demo" / "1-core" / "test_broken.py"
-    broken.symlink_to(phase.parents[3] / "tests" / "demo" / "1-core" / "gone.py")
+    broken = phase.parents[4] / "tests" / "demo" / "1-core" / "test_broken.py"
+    broken.symlink_to(phase.parents[4] / "tests" / "demo" / "1-core" / "gone.py")
 
     findings = check_phase(phase)
 
@@ -706,3 +712,340 @@ def test_a_phase_that_owes_no_mapping_at_all_is_still_clean(phase: Path) -> None
 
     assert not (phase / "specs" / "1.1-a" / "test-mapping.md").exists()
     assert check_phase(phase) == []
+
+
+# ── the `done` stamp names the bytes it certified (issue #97, folded #121) ───
+
+
+def done_spec(phase: Path, tmp_path: Path) -> Path:
+    """A spec stamped `done`, traced, fresh, with its own test directory - clean before binding."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    spec.write_text(
+        spec.read_text().replace(
+            "spec_gate: approved", "spec_gate: approved\nstatus: done"
+        )
+    )
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_the_seam | integration |\n")
+    own = tmp_path / "tests" / "demo" / "1-core" / "1.1-a"
+    own.mkdir(parents=True, exist_ok=True)
+    (own / "test_a.py").write_text("def test_the_seam():\n    assert True\n")
+    return spec
+
+
+def test_a_done_stamp_whose_mapping_moved_on_after_binding_is_a_finding(
+    phase: Path, tmp_path: Path
+) -> None:
+    """RED before the fix: the precheck never asked what a `done` stamp certified."""
+    import spec_done_guard
+
+    spec = done_spec(phase, tmp_path)
+    spec_done_guard.bind(spec)
+    assert check_phase(phase) == []
+    write_mapping(
+        phase,
+        "| R1.1.1 | test_the_seam | integration |\n| R1.1.1 | test_the_seam | e2e |\n",
+    )
+    (finding,) = [f for f in check_phase(phase) if "done" in f]
+    assert "different bytes" in finding
+    assert "again" in finding
+
+
+def test_a_done_stamp_whose_own_tests_moved_on_is_a_finding(
+    phase: Path, tmp_path: Path
+) -> None:
+    import spec_done_guard
+
+    spec = done_spec(phase, tmp_path)
+    spec_done_guard.bind(spec)
+    (tmp_path / "tests" / "demo" / "1-core" / "1.1-a" / "test_b.py").write_text(
+        "def test_added_after_done():\n    assert True\n"
+    )
+    assert any("different bytes" in f for f in check_phase(phase))
+
+
+def test_a_done_stamp_with_no_digest_is_counted_and_never_held(
+    phase: Path, tmp_path: Path, capsys
+) -> None:
+    """The applicability boundary: a stamp from before the rule names no bytes to hold it to."""
+    done_spec(phase, tmp_path)
+    assert check_phase(phase) == []
+    assert "done_digest" in capsys.readouterr().err
+
+
+def test_a_spec_that_is_not_done_owes_no_digest(
+    phase: Path, tmp_path: Path, capsys
+) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | test_the_seam | integration |\n")
+    assert check_phase(phase) == []
+    assert "done_digest" not in capsys.readouterr().err
+
+
+# ── the ROW is held to its test, not only the id to some row (issue #97, folded #122) ────────
+
+
+def _traced(phase: Path, rows: str) -> None:
+    spec = write_spec(
+        phase,
+        "- R1.1.1 — `binding: integration` — a\n- R1.1.2 — `binding: integration` — b\n",
+    )
+    stamp(spec)
+    write_mapping(phase, rows)
+
+
+def test_a_row_pairing_a_requirement_with_a_test_that_lists_other_ids_is_a_finding(
+    phase: Path,
+) -> None:
+    """RED before the fix: R1.1.2 appeared in a row and test_b existed, so the claim `test_b proves
+    R1.1.2` was unfalsifiable - test_b says in its own text that it covers R1.1.1 only."""
+    _traced(
+        phase, "| R1.1.1 | test_a | integration |\n| R1.1.2 | test_b | integration |\n"
+    )
+    write_phase_tests(
+        phase,
+        '''def test_a():\n    """Covers R1.1.1."""\n    assert True\n\n\n'''
+        '''def test_b():\n    """Covers R1.1.1 too."""\n    assert True\n''',
+    )
+    (finding,) = [f for f in check_phase(phase) if "proved by" in f]
+    assert "R1.1.2" in finding and "test_b" in finding and "R1.1.1" in finding
+
+
+def test_a_row_whose_test_lists_the_same_id_is_clean(phase: Path) -> None:
+    _traced(phase, "| R1.1.1, R1.1.2 | test_journey | e2e |\n")
+    write_phase_tests(
+        phase,
+        '''def test_journey():\n    """R1.1.1, R1.1.2: the user path."""\n    assert True\n''',
+    )
+    assert check_phase(phase) == []
+
+
+def test_a_test_that_lists_no_id_corroborates_nothing_and_is_counted_not_held(
+    phase: Path, capsys
+) -> None:
+    """The applicability boundary: a corpus written before `skills/tdd` asked for the ids."""
+    _traced(
+        phase, "| R1.1.1 | test_a | integration |\n| R1.1.2 | test_a | integration |\n"
+    )
+    write_phase_tests(phase, "def test_a():\n    assert True\n")
+    assert check_phase(phase) == []
+    err = capsys.readouterr().err
+    assert "row claim(s)" in err and "counted, not held" in err
+
+
+def test_the_id_may_be_listed_in_a_marker_above_the_def_or_a_comment_in_the_body(
+    phase: Path,
+) -> None:
+    _traced(
+        phase, "| R1.1.1 | test_a | integration |\n| R1.1.2 | test_b | integration |\n"
+    )
+    write_phase_tests(
+        phase,
+        "import pytest\n\n\n@pytest.mark.requirement('R1.1.1')\ndef test_a():\n    assert True\n\n\n"
+        "def test_b():\n    # R1.1.2\n    assert True\n",
+    )
+    assert check_phase(phase) == []
+
+
+def test_ids_in_one_test_are_not_read_into_the_next(phase: Path) -> None:
+    """The window ends at the next definition: test_b must not inherit test_a's ids."""
+    _traced(
+        phase, "| R1.1.2 | test_b | integration |\n| R1.1.1 | test_a | integration |\n"
+    )
+    write_phase_tests(
+        phase,
+        '''def test_a():\n    """R1.1.1, R1.1.2."""\n    assert True\n\n\n'''
+        '''def test_b():\n    """R1.1.1."""\n    assert True\n''',
+    )
+    assert any("R1.1.2" in f and "test_b" in f for f in check_phase(phase))
+
+
+def test_row_claims_pairs_by_row_never_by_proximity(phase: Path) -> None:
+    from verifier_precheck import row_claims
+
+    write_mapping(
+        phase,
+        "| R1.1.1 | test_a, test_a2 | integration |\n| R1.1.2, R1.1.3 | test_b | e2e |\n",
+    )
+    mappings, _ = read_mappings(phase)
+    assert sorted(row_claims(mappings)) == sorted(
+        [
+            ("R1.1.1", "test_a", "1.1-a"),
+            ("R1.1.1", "test_a2", "1.1-a"),
+            ("R1.1.2", "test_b", "1.1-a"),
+            ("R1.1.3", "test_b", "1.1-a"),
+        ]
+    )
+
+
+# ── a verifier finding names its method (issue #96) ──────────────────────────
+# A sweep done by reading reported complete and missed two instances; a probe that drove one axis of
+# two scoped a fix round that closed half a defect. The finding names HOW - what was driven, over
+# which axes - and its absence is bookkeeping, decided here for no tokens.
+
+
+def write_verdict(phase: Path, findings: list[dict]) -> None:
+    (phase / "verdict.json").write_text(
+        json.dumps({"verdict": "fail", "attempt": 1, "findings": findings}),
+        encoding="utf-8",
+    )
+
+
+def test_a_finding_with_no_method_is_a_finding(phase: Path) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(
+        phase,
+        [{"id": "abc123", "status": "open", "instruction": "sweep both adapters"}],
+    )
+    problems = check_phase(phase)
+    assert any("abc123" in p and "method" in p for p in problems), problems
+
+
+def test_a_finding_that_names_its_method_is_clean(phase: Path) -> None:
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(
+        phase,
+        [
+            {
+                "id": "abc123",
+                "status": "open",
+                "method": "drove every public method of both adapters",
+            }
+        ],
+    )
+    assert check_phase(phase) == []
+
+
+def test_a_verdict_the_diff_did_not_touch_is_counted_not_enforced(
+    phase: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pre-rule verdict in a phase the diff touches for another reason - an amendment opened on a
+    closed phase - is outside what this change is responsible for. The finding is counted and named,
+    in the boundary's one spelling, and the phase is not blocked over it; a verdict the diff DOES
+    write is held, and so is a phase the hook names outright."""
+    git_repo(tmp_path)
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(phase, [{"id": "abc123", "status": "fixed"}])
+    commit_all(tmp_path)
+    (phase / "amendments.json").write_text("{}")
+    assert main(["--root", str(tmp_path)]) == 0
+    assert "NOT enforced" in capsys.readouterr().err
+    assert main([str(phase)]) == 1, (
+        "the hook names its phase and the whole verdict is held"
+    )
+    write_verdict(
+        phase,
+        [
+            {"id": "abc123", "status": "fixed", "method": "x"},
+            {"id": "def", "status": "open"},
+        ],
+    )
+    assert main(["--root", str(tmp_path)]) == 1, "a verdict this diff writes is held"
+
+
+def test_all_counts_pre_rule_verdicts_rather_than_failing_a_full_audit(
+    phase: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Under `--all` (gate_ci.sh --full) the verdict is a document class every consumer repo already
+    has on disk, so this follows carried_items' precedent rather than the read path's: counted,
+    never a failed build over verdicts written before the rule."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: none` — a\n")
+    stamp(spec)
+    write_verdict(phase, [{"id": "abc123", "status": "fixed"}])
+    assert main(["--all", "--root", str(tmp_path)]) == 0
+    assert "NOT enforced" in capsys.readouterr().err
+
+
+# ── a carried spec brings its mapping with it (issue #123) ───────────────────
+
+
+def carried_into(phase: Path, *, from_phase: str = "1-core") -> Path:
+    """A spec implemented in `from_phase` and CARRIED into a second phase of the same feature.
+
+    The carry copies `spec.md` (and, in the pipeline, the tests the phase suite has to run) and
+    leaves `test-mapping.md` where the spec was implemented. Returns the phase it was carried into.
+    """
+    later = phase.parent / "2-later"
+    (later / "specs" / "1.1-a").mkdir(parents=True)
+    (later / "specs" / "1.1-a" / "spec.md").write_text(
+        (phase / "specs" / "1.1-a" / "spec.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return later
+
+
+def test_a_carried_spec_is_traced_by_the_mapping_it_left_behind(phase: Path) -> None:
+    """The false blocker issue #123 names. The spec is carried into a later phase with its tests;
+    its mapping stays in the phase that implemented it. Read from the later phase alone, EVERY
+    requirement it declares was reported as appearing in no mapping row - on work that is fine, and
+    whose only remedy was to duplicate a trace that already exists."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | tests/demo/test_a.py::test_a | integration |\n")
+
+    later = carried_into(phase)
+
+    assert not any(
+        "appear in no test-mapping.md row" in f for f in check_phase(later)
+    ), (
+        "the mapping travels with the spec; asking for a second copy prescribes duplicating a trace"
+    )
+
+
+def test_a_carried_spec_with_no_mapping_anywhere_is_still_a_finding(
+    phase: Path,
+) -> None:
+    """The refusal must not widen into never reporting a gap. A spec whose mapping does not exist in
+    ANY phase of the feature is genuinely untraced, and carrying nothing changes nothing."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "")
+
+    later = carried_into(phase)
+
+    assert any(
+        "R1.1.1" in f and "appear in no test-mapping.md row" in f
+        for f in check_phase(later)
+    )
+
+
+def test_a_mapping_beside_the_carried_spec_wins(phase: Path) -> None:
+    """Nothing here overrides a mapping the phase holds: a spec with one beside it is read from it,
+    and a gap in that mapping is still a gap."""
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | tests/demo/test_a.py::test_a | integration |\n")
+
+    later = carried_into(phase)
+    (later / "specs" / "1.1-a" / "test-mapping.md").write_text(
+        "| requirement | test | level |\n|---|---|---|\n", encoding="utf-8"
+    )
+
+    assert any(
+        "R1.1.1" in f and "appear in no test-mapping.md row" in f
+        for f in check_phase(later)
+    )
+
+
+def test_a_carried_mapping_is_not_read_across_features(phase: Path) -> None:
+    """Resolution is by spec directory name WITHIN one feature. A spec directory of the same name in
+    another feature is another feature's spec, and reading it would trace a requirement against a row
+    nobody wrote about it."""
+    import phase_artifacts
+
+    spec = write_spec(phase, "- R1.1.1 — `binding: integration` — a thing\n")
+    stamp(spec)
+    write_mapping(phase, "| R1.1.1 | tests/demo/test_a.py::test_a | integration |\n")
+
+    other = phase.parents[2] / "other" / "phases" / "2-later" / "specs" / "1.1-a"
+    other.mkdir(parents=True)
+    (other / "spec.md").write_text(
+        (phase / "specs" / "1.1-a" / "spec.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    assert phase_artifacts.carried_mapping(other / "spec.md") is None

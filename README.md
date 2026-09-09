@@ -133,6 +133,9 @@ PER PHASE (specs iterate; the verifier runs once, after all specs are green)
           adding one a later gate demands is always allowed.
   mutation (MUTATION_POLICY advisory by default — runs, reports, never blocks | enforce | off)
                  an extra signal, NOT a dedicated reader for gamed tests; there is none
+                 the policy governs the SCORE only: every cosmic-ray exec is bracketed by a
+                 snapshot and an explicit restore (scripts/mutation_exec_guard.py), and a tree
+                 that differed fails the run under every policy (skills/mutation-interpret)
   breaker (criticality: critical) -> counterexample -> implementer adds the test, fixes the code
                  persists breaker.json beside verdict.json - a `clean` verdict naming what it
                  ATTACKED, or `found` naming its counterexample. A critical phase does not close
@@ -266,7 +269,12 @@ agentic-avengers/
 │   ├── spec_rubric.py         the gate's rubric rendered for the WRITER, from the gate's own
 │   │                          sources - data plus verbatim prompt sections, never a second copy
 │   ├── carried_items.py       a handover's forward-looking claims, answered by the next phase or
-│   │                          the phase does not close
+│   │                          the phase does not close; and DEFERRED findings - real, not this
+│   │                          phase's Done when, owned by a later phase, measurement attached
+│   ├── done_when.py           a phase's Done when as a table beside its prose, and the two decisions
+│   │                          read from it: does this finding block the phase, or may it be deferred;
+│   │                          and which conditions no gate can evaluate, which a `pass` then carries
+│   │                          verbatim in `unverified_by_gate` instead of passing over in silence
 │   ├── amendments.py          change a verified phase; only the named requirement ids re-verify
 │   ├── breaker_gate.py        the Breaker's record: a phase resolving to `criticality: critical` does
 │   │                          not close without a valid breaker.json (a vacuous one is refused like

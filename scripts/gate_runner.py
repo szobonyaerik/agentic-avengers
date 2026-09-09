@@ -275,7 +275,10 @@ def opencode_text(raw):
     `opencode run --format json` streams one JSON event per line; the reply text
     lives in the `part.text` of `type:"text"` events. opencode sends the full
     text per part (snapshot), so we keep the latest text seen for each part id
-    and join the parts. Returns "" if no text events were found.
+    and join the parts. Returns "" if no text events were found - which is the
+    definition of "the provider returned no reply content" that `call_opencode`
+    decides on: under `--format json` a reply IS a text event, and banner lines,
+    progress lines and an empty stream all carry none.
     """
     parts = {}
     for line in raw.splitlines():
@@ -332,6 +335,7 @@ def call_opencode(model, system, user):
         raise GateError(
             "provider-not-found", "opencode CLI not found on PATH", str(exc)
         ) from exc
+    reply = opencode_text(result.stdout)
     if result.timed_out:
         # A timeout is a symptom, and local state-lock contention wears it (issue #50): a call that
         # BLOCKS on the CLI's own SQLite lock is killed by the budget, so the lock message only ever
@@ -348,6 +352,19 @@ def call_opencode(model, system, user):
                 f"{result.elapsed:.1f}s of its {budget}s budget",
                 result.stderr,
             )
+        # An exhausted tier wears the timeout too (issue #98): the CLI exits 0 with its banner and
+        # no content while a leftover worker holds the pipe, so the budget elapses around a call
+        # that had already ENDED. The direct child's own exit status tells the two apart - a
+        # process still running when the group was killed reports the kill signal, never 0 - and
+        # that is the outcome the failure names. A call killed while still running stays `timeout`.
+        if result.returncode == 0 and not reply:
+            raise GateError(
+                "provider-empty-response",
+                f"opencode exited 0 after producing no reply content; the {budget}s budget "
+                f"elapsed only because something it left behind held the pipe, so raising "
+                f"GATE_CALL_TIMEOUT cannot help - check the model's tier or quota",
+                result.stderr or result.stdout,
+            )
         raise GateError(
             "timeout",
             f"opencode exceeded its {budget}s budget and its process group was killed after "
@@ -360,9 +377,23 @@ def call_opencode(model, system, user):
             f"opencode run exited {result.returncode} after {result.elapsed:.1f}s",
             result.stderr or result.stdout,
         )
-    # Reconstruct the model's reply from the event stream; fall back to raw
-    # stdout if the output shape was unexpected (so extract_verdict can still try).
-    return opencode_text(result.stdout) or result.stdout
+    if not reply:
+        # The stream carried no text event, so the model produced NOTHING. Before this a banner-only
+        # stdout fell through to `extract_verdict` and was reported as `no-verdict` - "the provider
+        # replied, but…" - which asserts a reply that never happened. One tolerance survives: an
+        # event shape this parser does not know that still carries a verdict object is a verdict,
+        # so `extract_verdict` is given the raw stream before the empty call is made.
+        if extract_verdict(result.stdout, "verdict") or extract_verdict(
+            result.stdout, "observations"
+        ):
+            return result.stdout
+        raise GateError(
+            "provider-empty-response",
+            f"opencode exited 0 after {result.elapsed:.1f}s with no reply content - no text "
+            f"event in its stream; an exhausted tier or quota answers exactly like this",
+            result.stderr or result.stdout,
+        )
+    return reply
 
 
 def extract_verdict(raw, key="verdict"):

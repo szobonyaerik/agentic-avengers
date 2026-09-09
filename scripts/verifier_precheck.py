@@ -24,6 +24,14 @@ So they move here. Three checks, no model, run from `hook_verifier.sh` and from 
      deleted one, and the finding that caught it noted that no pipeline script parses the heading,
      so nothing broke - which is exactly the argument for a script that does.
 
+**And the ROW is held to its test, not only the id to some row** (issue #97, folded #122). A
+`test-mapping.md` row is the claim that a named test proves a named requirement. The check above
+confirmed the id appeared somewhere and the test existed somewhere, which made the claim itself
+unfalsifiable - a row could pair any id with any test. `skills/tdd` already asks every test to list
+the ids it covers, so `row_claims` pairs each row's ids with each row's tests and asks the test's own
+text: a test that lists ids and NOT the row's is a finding; a test that lists none is counted and
+named, never held, since a corpus written before that instruction is exactly that shape.
+
 What this deliberately does NOT do is judge anything. Coverage judged per `binding:` and adversarial
 execution against secrets, resource lifetimes and concurrency invariants stay with the Verifier: they
 are the two jobs no script can do, and they produced all three of its user-visible defects. The third
@@ -53,9 +61,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -80,8 +90,13 @@ from applicability import (  # noqa: E402
     report_unenforced,
     touched,
 )
+import done_when  # noqa: E402 — the one owner of a phase's structured *Done when*
+from phase_artifacts import carried_mapping  # noqa: E402 — one owner of "where is this spec's mapping"
+from measurement_claims import finding_problems  # noqa: E402
 from requirement_cap import declared_bindings  # noqa: E402
+import spec_done_guard  # noqa: E402 — the one place "what does this `done` certify" is decided
 import spec_gate_state  # noqa: E402 — the one place "is this spec gated" is decided
+import suite_command  # noqa: E402 — the one owner of "declared command vs. the command that ran"
 
 ACCEPTANCE_HEADING = re.compile(
     r"^##+[ \t]*Acceptance criteria\b", re.IGNORECASE | re.MULTILINE
@@ -167,6 +182,46 @@ def read_mappings(phase_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
     return texts, unreadable
 
 
+def carried_mappings(phase_dir: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """The mappings of specs CARRIED into this phase, plus a finding per unreadable one.
+
+    A spec carried into a later phase arrives with its `spec.md` and, because the phase suite has to
+    run them, its tests - and its `test-mapping.md` stays in the phase that implemented it. Read from
+    this phase alone, the traced set held none of that spec's ids, so EVERY requirement it declares
+    was reported as appearing in no mapping row: a false blocker on correct, shipped work whose only
+    remedy was to duplicate a trace that already exists somewhere else under the feature, and a
+    second copy of a rule is the drift defect (issue #123). So the mapping travels with the spec.
+
+    Deliberately kept OUT of `read_mappings`, and that boundary is the point: these rows feed the
+    TRACED ID set and nothing else. `trace_claims` holds a row against this phase's own test tree,
+    and a carried spec whose tests stayed behind would then produce a fresh false finding - a row
+    naming a test that is real and simply lives elsewhere. Widening the trace set can only remove
+    findings; widening the row check would add them.
+
+    A mapping beside the spec always wins: nothing here overrides one this phase holds.
+    """
+    texts: list[tuple[str, str]] = []
+    unreadable: list[str] = []
+    for spec in sorted(phase_dir.glob("specs/*/spec.md")):
+        if (spec.parent / "test-mapping.md").is_file():
+            continue
+        mapping = carried_mapping(spec)
+        if mapping is None:
+            continue
+        name = f"{mapping.parents[2].name}/specs/{mapping.parent.name}"
+        text, finding = read_artifact(mapping)
+        if finding is not None:
+            unreadable.append(finding)
+            continue
+        print(
+            f"[verifier_precheck] {phase_dir.name}: {spec.parent.name} is carried - its mapping is "
+            f"{name}, and its rows count as this phase's trace",
+            file=sys.stderr,
+        )
+        texts.append((name, text or ""))
+    return texts, unreadable
+
+
 def traced_ids(mappings: list[tuple[str, str]]) -> set[str]:
     """Every requirement id mentioned anywhere in the phase's `test-mapping.md` tables.
 
@@ -194,11 +249,20 @@ def _test_root(phase_dir: Path) -> Path | None:
     The same resolution `verifier_evidence` and `hook_verifier.sh` use, so a row is held against
     exactly the tree the gate then runs. A project laid out otherwise resolves to None and is not
     held at all, which is the fail-open every check on this boundary uses.
+
+    The root is the directory ABOVE `docs/`, recognised by the layout itself
+    (`docs/features/<feature>/phases/<n>-<slug>`) rather than by counting parents from an assumed
+    depth: counting reached `docs/` and looked for `docs/tests/<feature>/<phase>`, a path the
+    canonical layout never has, so every row claim in a real repository resolved to "no readable
+    test definitions" and was reported as an unreadable scope. A check that can only run on a
+    layout nobody uses is the clean result this issue is about.
     """
     phase = Path(phase_dir).resolve()
-    if len(phase.parents) < 2:
+    if len(phase.parents) < 5:
         return None
-    root = phase.parents[3] if len(phase.parents) >= 4 else Path.cwd()
+    if phase.parents[0].name != "phases" or phase.parents[2].name != "features":
+        return None
+    root = phase.parents[4]
     feature = phase.parents[1].name
     for candidate in (
         root / "tests" / feature / phase.name,
@@ -222,15 +286,36 @@ def named_tests(mappings: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return out
 
 
-def _defined_tests(tests: Path) -> tuple[dict[str, bool], list[str]]:
-    """(every test defined under `tests` mapped to whether it is skipped, unreadable findings).
+#: A requirement id, as a row states it and as a test lists it (`skills/tdd`: every test lists the
+#: ids it covers - in its name, its docstring, a comment or a marker; this reads the test's TEXT
+#: and does not care which).
+REQUIREMENT_ID = re.compile(r"R\d+\.\d+\.\d+")
+
+#: A markdown table's separator row. Imported rather than re-spelled: `spec_done_guard` owns it.
+SEPARATOR_ROW = spec_done_guard.SEPARATOR_ROW
+
+
+class DefinedTest(NamedTuple):
+    """One test definition: whether it is skipped, and the requirement ids its own text lists."""
+
+    skipped: bool
+    lists: frozenset[str]
+
+
+def _defined_tests(tests: Path) -> tuple[dict[str, DefinedTest], list[str]]:
+    """(every test defined under `tests`, by name, with what its text says; unreadable findings).
 
     Definition and skip detection are Python-specific, and that is the honest bound of this check:
     a project whose tests are written in another language resolves no definitions here, so every
     row would read as naming a missing test. `check_phase` therefore holds a row only when the tree
     yielded at least one definition — the scope is unreadable otherwise, not violated.
+
+    A test's TEXT runs from the decorators above its `def` to the next definition at its own
+    indentation or shallower, and the requirement ids in it are what the test itself claims to
+    cover. That is what lets a row be held to its test (`row_claims`) rather than to the id's mere
+    presence somewhere in the mapping.
     """
-    found: dict[str, bool] = {}
+    found: dict[str, DefinedTest] = {}
     unreadable: list[str] = []
     for path in sorted(tests.rglob("*.py")):
         if "__pycache__" in path.parts or path.is_dir():
@@ -240,13 +325,63 @@ def _defined_tests(tests: Path) -> tuple[dict[str, bool], list[str]]:
             unreadable.append(finding)
             continue
         lines = (text or "").splitlines()
+        definition = re.compile(r"([ \t]*)(?:async +)?def +(test_[A-Za-z0-9_]+)")
         for index, line in enumerate(lines):
-            match = re.match(r"[ \t]*(?:async +)?def +(test_[A-Za-z0-9_]+)", line)
+            match = definition.match(line)
             if not match:
                 continue
-            above = "\n".join(lines[max(0, index - 6) : index])
-            found[match.group(1)] = bool(SKIP_DECORATOR.search(above))
+            indent = len(match.group(1).expandtabs())
+            above = lines[max(0, index - 6) : index]
+            end = index + 1
+            while end < len(lines):
+                candidate = lines[end]
+                if (
+                    candidate.strip()
+                    and (len(candidate) - len(candidate.lstrip()) <= indent)
+                    and re.match(r"[ \t]*(?:@|(?:async +)?def |class )", candidate)
+                ):
+                    break
+                end += 1
+            # The ids a test LISTS are read from its own decorators and comments directly above
+            # the `def` (contiguous, so the previous test's docstring never leaks in) plus its body
+            # down to the next definition. The skip window stays the six lines it always was.
+            start = index
+            while start > 0 and lines[start - 1].lstrip().startswith(("@", "#")):
+                start -= 1
+            own = "\n".join(lines[start:end])
+            found[match.group(2)] = DefinedTest(
+                skipped=bool(SKIP_DECORATOR.search("\n".join(above))),
+                lists=frozenset(REQUIREMENT_ID.findall(own)),
+            )
     return found, unreadable
+
+
+def row_claims(mappings: list[tuple[str, str]]) -> list[tuple[str, str, str]]:
+    """(requirement id, test name, spec directory) for every claim a table ROW makes.
+
+    A row is a claim that THIS test proves THIS requirement - the pairing is the trace. Read by
+    cell, past the header separator, so an id in one row and a test name in another are never
+    paired: that pairing-by-proximity is exactly what let a row assert anything (issue #97, folded
+    #122: the precheck confirmed an id appeared in SOME row and never that the row was the one the
+    requirement was proved by).
+    """
+    out: list[tuple[str, str, str]] = []
+    for spec_name, text in mappings:
+        seen_separator = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            if not seen_separator:
+                seen_separator = bool(SEPARATOR_ROW.fullmatch(stripped))
+                continue
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            for rid in REQUIREMENT_ID.findall(cells[0]):
+                for name in dict.fromkeys(TEST_NAME.findall(cells[1])):
+                    out.append((rid, name, spec_name))
+    return out
 
 
 def trace_claims(
@@ -286,11 +421,39 @@ def trace_claims(
                 f"this phase's tests ({tests}). A row that names nothing is a trace that proves "
                 f"nothing."
             )
-        elif defined[name]:
+        elif defined[name].skipped:
             out.append(
                 f"{spec_name}/test-mapping.md names {name}, which is SKIPPED. A skipped test is "
                 f"green output over a requirement nothing exercises."
             )
+    # The row's PAIRING, not only its parts: a row that says `R1.1.3 | test_journey` is the claim
+    # that test_journey proves R1.1.3, and the test's own text either lists that id or it does not.
+    # A test that lists ids and NOT this one contradicts the row - a finding. A test that lists no
+    # id at all can corroborate nothing, and is counted and named rather than held (§3a): tests
+    # written before `skills/tdd` asked for the ids are exactly that shape, and holding them would
+    # owe every consumer repo a rewrite of its test corpus.
+    uncorroborated = 0
+    for rid, name, spec_name in sorted(set(row_claims(mappings))):
+        test = defined.get(name)
+        if test is None or test.skipped:
+            continue  # already a finding above
+        if not test.lists:
+            uncorroborated += 1
+            continue
+        if rid not in test.lists:
+            out.append(
+                f"{spec_name}/test-mapping.md says {rid} is proved by {name}, but {name} lists "
+                f"{', '.join(sorted(test.lists))} and not {rid}. The row is not the row that "
+                f"requirement was proved by; a trace the test itself contradicts is decorative."
+            )
+    if uncorroborated:
+        report_unenforced(
+            "verifier_precheck",
+            uncorroborated,
+            f"row claim(s) in {phase_dir.name} name a test whose text lists NO requirement id, so "
+            f"the row cannot be corroborated from the test (skills/tdd: every test lists the ids "
+            f"it covers) - counted, not held",
+        )
     return out, unreadable
 
 
@@ -331,8 +494,107 @@ def excepted_stamp(phase_dir: Path, spec: Path) -> str | None:
     return record.describe() if record else None
 
 
-def check_phase(phase_dir: Path) -> list[str]:
+def done_stamp_problem(spec: Path, body: str) -> str | None:
+    """A `status: done` whose bound digest no longer matches the mapping and tests here now.
+
+    The stamp is bound at the hook that checks it (`spec_done_guard.bind`, issue #97); this is the
+    reader at the other end, and the two are one rule by construction because both ask
+    `spec_done_guard.done_subject_digest`. A `done` that carries NO digest is a stamp from before the
+    rule or from a write no hook saw - counted and named on stderr, never held (§3a), since its
+    remedy would be to rewrite a stamp this check has no evidence against. A spec that is not `done`
+    owes nothing here.
+    """
+    if spec_gate_state.frontmatter(body).get("status") != spec_done_guard.DONE:
+        return None
+    state = spec_done_guard.bound(spec)
+    if state is None:
+        report_unenforced(
+            "verifier_precheck",
+            1,
+            f"{spec} is `status: done` with no `{spec_done_guard.DONE_DIGEST_FIELD}` - what that "
+            f"stamp certifies is UNKNOWABLE (stamped before the rule, or through a write no hook "
+            f"sees), so it is counted rather than held",
+        )
+        return None
+    if state:
+        return None
+    return (
+        f"{spec}: `status: done` was bound to different bytes than are here now - its "
+        f"test-mapping.md or its own tests changed AFTER it declared done, so the stamp certifies "
+        f"work this spec no longer has. Write the spec again through a tool write (it already says "
+        f"`status: done`); the hook re-checks the mapping and the suite over what is actually there "
+        f"and re-binds, whether or not the spec has shipped."
+    )
+
+
+def verdict_problems(phase_dir: Path) -> list[str]:
+    """Every finding in the phase's verdict.json that names no `method` (issue #96).
+
+    A sweep done by reading reported complete and missed two instances; a probe that drove one axis
+    of two scoped a fix round that closed half a defect. The finding says HOW - what was driven, over
+    which axes - and its absence is bookkeeping about the verdict, decided here like every other
+    absence on it. An unreadable verdict is a finding of its own, never a clean result.
+    """
+    target = Path(phase_dir) / "verdict.json"
+    if not target.is_file():
+        return []
+    try:
+        verdict = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"{target}: cannot be read ({exc}) - UNDECIDABLE, not clean."]
+    return [f"{target}: {line}" for line in finding_problems(verdict)]
+
+
+def done_when_problems(phase_dir: Path, *, plan_in_scope: bool = True) -> list[str]:
+    """A *Done when* condition no gate can evaluate is declared, and a `pass` repeats it (#116).
+
+    Two obligations, one rule, and `done_when.py` owns both readings. The DECLARATION lives on the
+    plan's row, so it is held on the plan's own applicability (`plan_in_scope`): a plan this change
+    does not write is a plan written before the rule, counted and named rather than blocked (§3a).
+    The DISCLOSURE lives on the verdict and the card this phase is closing - artifacts this phase
+    writes, over conditions its plan already declares `human-observed` - so it rides the phase like
+    every other finding here, and is never softened by how old the plan is.
+    """
+    declaration = done_when.declaration_problems(phase_dir)
+    if not plan_in_scope:
+        report_unenforced(
+            "verifier_precheck",
+            len(declaration),
+            f"{phase_dir}'s plan.md is not written by this diff; its undeclared *Done when* "
+            f"condition(s) are counted, not held",
+        )
+        declaration = []
+    return declaration + done_when.disclosure_problems(phase_dir)
+
+
+def command_problems(phase_dir: Path) -> list[str]:
+    """A pass may not rest on an improvised test run when the project declares one (issue #119).
+
+    `suite_command` owns the whole reading - what the project declares, what the transcript says
+    ran, and whether they are the same command. This is the point of DECISION: the precheck is
+    already the mechanical half of the verdict, it already opens `verdict.json`, and it already
+    runs on every commit. A project that declares no test command is untouched, which is what keeps
+    the pre-issue behaviour available to every repository that never had a declaration.
+    """
+    return suite_command.problems(phase_dir)
+
+
+def check_phase(
+    phase_dir: Path, *, verdict_in_scope: bool = True, plan_in_scope: bool = True
+) -> list[str]:
     """Every mechanical finding for one phase, as lines. Empty means clean.
+
+    `verdict_in_scope` is the applicability boundary for the verdict's own bookkeeping: a phase the
+    diff touches for another reason - an amendment opened on a closed phase - carries a verdict this
+    change did not write, and its findings are counted rather than held. A phase named outright (the
+    handover hook) and a verdict the diff writes are held whole. `plan_in_scope` is the same
+    boundary one document over, for the *Done when*'s own declaration (`done_when_problems`).
+
+    `command_problems` rides the same boundary, and that is what makes issue #119's rule bind only
+    phases this change is responsible for: a phase verified before the rule existed carries a
+    transcript nobody could have matched against a declaration, and holding it would be a wedge
+    rather than a gate (§3a). A phase still closing has the remedy - re-run the declared command
+    through the recorder - so the handover holds it whole.
 
     The mappings here and the phase's test files inside `trace_claims` are opened once each: there
     is deliberately no preliminary sweep re-reading them to discover unreadable ones — the reader
@@ -343,12 +605,33 @@ def check_phase(phase_dir: Path) -> list[str]:
     is a larger change than this check warrants.
     """
     out: list[str] = []
+    out.extend(done_when_problems(phase_dir, plan_in_scope=plan_in_scope))
+    verdict = verdict_problems(phase_dir)
+    command = command_problems(phase_dir)
+    if verdict_in_scope:
+        out.extend(verdict)
+        out.extend(command)
+    else:
+        report_unenforced(
+            "verifier_precheck",
+            len(verdict),
+            f"{phase_dir}/verdict.json is not written by this diff; its findings' `method` is "
+            f"counted, not held",
+        )
+        report_unenforced(
+            "verifier_precheck",
+            len(command),
+            f"{phase_dir}/verdict.json is not written by this diff; whether its pass rests on the "
+            f"project's declared test command is counted, not held",
+        )
     specs = sorted(phase_dir.glob("specs/*/spec.md"))
     if not specs:
         return out
     mappings, unreadable = read_mappings(phase_dir)
     out.extend(unreadable)
-    traced = traced_ids(mappings)
+    carried, carried_unreadable = carried_mappings(phase_dir)
+    out.extend(carried_unreadable)
+    traced = traced_ids(mappings) | traced_ids(carried)
     claims, unreadable_tests = trace_claims(phase_dir, mappings)
     out.extend(unreadable_tests)
     out.extend(claims)
@@ -364,7 +647,8 @@ def check_phase(phase_dir: Path) -> list[str]:
         if untraced:
             out.append(
                 f"{spec}: {len(untraced)} requirement id(s) appear in no test-mapping.md row for "
-                f"this phase: {', '.join(untraced)}. (binding: none ids are exempt and not counted.)"
+                f"this phase, and in none carried with a spec from another phase of this feature: "
+                f"{', '.join(untraced)}. (binding: none ids are exempt and not counted.)"
             )
 
         if not ACCEPTANCE_HEADING.search(body):
@@ -372,6 +656,10 @@ def check_phase(phase_dir: Path) -> list[str]:
                 f"{spec}: no `## Acceptance criteria` heading. Nothing parses it, which is exactly "
                 f"why an edit can delete it and no gate notice."
             )
+
+        stamp_problem = done_stamp_problem(spec, body)
+        if stamp_problem is not None:
+            out.append(stamp_problem)
 
         fresh = stamp_fresh(spec)
         if fresh is False:
@@ -404,17 +692,39 @@ def phase_dirs(root: Path) -> list[Path]:
     )
 
 
-def changed_phase_dirs(root: Path) -> list[Path] | None:
-    """The phases the current diff touches, or None when git cannot say what changed.
+def changed_phase_dirs(root: Path, scope: set[str] | None) -> list[Path] | None:
+    """The phases `scope` touches, or None when git could not say what changed.
 
     None is not "nothing changed" and must never be read as one: the scope is unknowable, so the
     caller enforces nothing and says so. Falling back to every phase would hold a repository hostage
     to history it has not touched, which is the whole reason this is scoped.
+
+    The scope is passed in rather than fetched here because `main` asks git the same question twice -
+    once for which phases to visit, once for whether each phase's verdict is one this diff writes -
+    and two calls could disagree about the tree.
     """
-    scope = changed_paths(Path(root))
     if scope is None:
         return None
     return [phase for phase in phase_dirs(root) if touched(phase, scope)]
+
+
+def plan_in_scope(phase_dir: Path, scope: set[Path] | None) -> bool:
+    """Whether this change writes the plan a phase's *Done when* lives in (issue #116).
+
+    Deliberately NOT `verdict_in_scope`'s rule. A verdict is written by the phase that is closing,
+    so a phase named outright is evidence enough to hold its verdict whole; a **plan** was written
+    phases earlier, so "the handover hook named this phase" says nothing about whether its plan was
+    written after the `verification` column existed. Asking git directly - from the plan's own
+    location, so a named phase anywhere resolves its own repository - is the only evidence that
+    answers the question. A scope git cannot state holds nothing, exactly like everywhere else here.
+    """
+    plan = done_when.plan_path(phase_dir)
+    if plan is None:
+        return False
+    if scope is not None:
+        return touched(plan, scope)
+    local = changed_paths(plan.parent)
+    return local is not None and touched(plan, local)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -426,15 +736,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", type=Path)
     args = parser.parse_args(argv)
 
+    # Which phases' VERDICTS are held whole. A named phase always is; under `--all` and in the
+    # diff-scoped sweep only a verdict the diff itself writes is, because the verdict is a document
+    # class every consumer repo already has on disk and a full audit would fail its build over
+    # verdicts written before the `method` rule existed (carried_items' precedent, CLAUDE.md §4f).
+    scope = None
     if args.all:
         targets, mode = phase_dirs(args.root), "--all: every phase under docs/features/"
+        scope = changed_paths(Path(args.root)) or set()
     elif args.phases:
         targets, mode = (
             list(args.phases),
             "the phase directories named on the command line",
         )
     else:
-        scoped = changed_phase_dirs(args.root)
+        scope = changed_paths(Path(args.root))
+        scoped = changed_phase_dirs(args.root, scope)
         if scoped is None:
             print(
                 f"[verifier_precheck] git cannot say what changed under {args.root}, so the scope "
@@ -461,7 +778,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"[verifier_precheck] no such phase directory: {phase}", file=sys.stderr
             )
             return ERROR
-        findings.extend(check_phase(Path(phase)))
+        findings.extend(
+            check_phase(
+                Path(phase),
+                verdict_in_scope=scope is None
+                or touched(Path(phase) / "verdict.json", scope),
+                plan_in_scope=plan_in_scope(Path(phase), scope),
+            )
+        )
 
     if not findings:
         return CLEAN
